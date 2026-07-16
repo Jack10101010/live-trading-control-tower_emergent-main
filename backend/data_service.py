@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import bisect
 import json
+import logging
 import os
 import ssl
 import time
@@ -47,6 +48,8 @@ def _https_context() -> ssl.SSLContext:
 
 
 _SSL_CTX = _https_context()
+
+_log = logging.getLogger("data_service")
 
 TIMEFRAME_S = {"M1": 60, "M5": 300, "M15": 900, "H1": 3600, "H4": 14400, "D1": 86400}
 DEFAULT_TF = "M15"
@@ -254,6 +257,7 @@ class PolygonAdapter(MarketDataProviderPort):
         self._timeout = timeout_s
         self._last_error: str | None = None
         self._cache: dict[tuple, tuple[float, list[Bar]]] = {}  # key -> (fetched_at, bars)
+        self.last_from_cache = False  # diagnostics: did the last history() hit the cache?
 
     def available(self) -> bool:
         return bool(self._key)
@@ -279,13 +283,20 @@ class PolygonAdapter(MarketDataProviderPort):
     def history(self, symbol: str, timeframe: str, start_s: int, end_s: int) -> list[Bar]:
         if not self.available():
             return []
-        # Closed historical ranges are immutable → cache permanently; the range
-        # touching "now" gets a short TTL so the forming bar keeps updating.
-        live_edge = end_s >= int(time.time()) - TIMEFRAME_S.get(timeframe, 900)
+        # Floor the window to timeframe boundaries BEFORE the cache lookup — the raw
+        # bounds carry a per-call `now`, which made every key unique and the cache
+        # useless (the root cause of the free-tier 429 storms). Floored keys are
+        # stable within a bar, so the live-edge TTL actually deduplicates polls.
+        step = TIMEFRAME_S.get(timeframe, TIMEFRAME_S[DEFAULT_TF])
+        start_s -= start_s % step
+        end_s -= end_s % step
+        live_edge = end_s >= int(time.time()) - step
         key = (symbol, timeframe, start_s, end_s)
         hit = self._cache.get(key)
         if hit and (not live_edge or time.time() - hit[0] < 12.0):
+            self.last_from_cache = True
             return hit[1]
+        self.last_from_cache = False
         try:
             bars = self._fetch(symbol, timeframe, start_s, end_s)
             self._last_error = None
@@ -294,6 +305,18 @@ class PolygonAdapter(MarketDataProviderPort):
         except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError) as exc:
             self._last_error = f"polygon: {exc.__class__.__name__}"
             return []
+
+    def history_before(self, symbol: str, timeframe: str, end_s: int, count: int) -> list[Bar]:
+        # Override the widening default: at most TWO remote attempts. The 3-level
+        # widening tripled every failure against a rate-limited feed, amplifying
+        # the very 429s that caused it.
+        step = TIMEFRAME_S.get(timeframe, TIMEFRAME_S[DEFAULT_TF])
+        window = max(count + 20, (3 * 86400) // step)
+        bars = self.history(symbol, timeframe, end_s - step * window, end_s)
+        if len(bars) < count and bars is not None and not self._last_error:
+            wide = max(count * 8, (30 * 86400) // step)
+            bars = self.history(symbol, timeframe, end_s - step * wide, end_s) or bars
+        return bars[-count:] if bars else []
 
     def latest(self, symbol: str, timeframe: str, count: int) -> list[Bar]:
         step = TIMEFRAME_S.get(timeframe, 900)
@@ -313,8 +336,11 @@ class PolygonAdapter(MarketDataProviderPort):
 # ---------------------------------------------------------------------------
 
 class DataService:
+    _req_seq = 0
+
     def __init__(self, store: HistoricalStore | None = None,
                  polygon: PolygonAdapter | None = None):
+        self.last_query: dict = {}  # diagnostics for the most recent candles() call
         self.store = store or HistoricalStore()
         self.polygon = polygon or PolygonAdapter()
         preferred = (os.environ.get("MARKET_DATA_SOURCE") or "auto").lower()
@@ -348,10 +374,31 @@ class DataService:
                 return p.history_before(symbol, timeframe, end_s, count)
             return p.latest(symbol, timeframe, count)
 
+        DataService._req_seq += 1
+        req_id = f"md-{DataService._req_seq}"
         primary = self._first()
         bars = query(primary)
+        source = primary.provider_id
+        fell_back = False
         if not bars and primary is not self.store:
             bars = query(self.store)
+            source = self.store.provider_id
+            fell_back = True
+        cache_hit = bool(self.polygon.last_from_cache) if source == "polygon" else False
+        self.last_query = {
+            "requestId": req_id, "timeframe": timeframe, "source": source,
+            "fellBack": fell_back, "cacheHit": cache_hit, "count": len(bars),
+            "first": bars[0]["time"] if bars else None,
+            "last": bars[-1]["time"] if bars else None,
+        }
+        _log.info(
+            "candles %s tf=%s provider=%s%s cache=%s count=%d first=%s last=%s%s",
+            req_id, timeframe, source, " (FELL BACK)" if fell_back else "",
+            cache_hit, len(bars),
+            datetime.fromtimestamp(bars[0]["time"], tz=timezone.utc).isoformat() if bars else "-",
+            datetime.fromtimestamp(bars[-1]["time"], tz=timezone.utc).isoformat() if bars else "-",
+            f" polyErr={self.polygon._last_error}" if fell_back else "",
+        )
         return bars
 
     def m1_window(self, symbol: str, start_s: int, end_s: int) -> list[Bar]:

@@ -114,14 +114,26 @@ export function ChartWorkspace({
 
   // Historical back-scroll (live only): older bars fetched as RANGE queries and
   // merged in front of the base window. Reset when the series identity changes.
+  // `seriesKey` guards against two bug classes found in the Phase-24 debug pass:
+  // (a) a late range response landing after a timeframe switch must be IGNORED
+  //     (it belongs to the old series), and
+  // (b) each prepend re-fires the left-edge callback while still zoomed out, so
+  //     chunk loads are cooled down and capped — without this a single zoom-out
+  //     cascaded into dozens of requests, blowing the provider rate budget.
+  const seriesKey = `${instrument}|${effectiveTf}|${mode}`;
+  const seriesKeyRef = useRef(seriesKey);
+  seriesKeyRef.current = seriesKey;
   const [olderBars, setOlderBars] = useState<Candle[]>([]);
   const loadingOlder = useRef(false);
   const exhausted = useRef(false);
+  const lastChunkAt = useRef(0);
+  const MAX_OLDER_BARS = 3000;
   useEffect(() => {
     setOlderBars([]);
     exhausted.current = false;
     loadingOlder.current = false;
-  }, [instrument, effectiveTf, mode]);
+    lastChunkAt.current = 0;
+  }, [seriesKey]);
 
   const baseCandles = feed?.candles ?? [];
   const candles: Candle[] = useMemo(
@@ -131,9 +143,13 @@ export function ChartWorkspace({
 
   const handleNearLeftEdge = useCallback(() => {
     if (mode !== 'live' || loadingOlder.current || exhausted.current) return;
+    if (Date.now() - lastChunkAt.current < 1_000) return; // cooldown: no cascades
+    if (olderBars.length >= MAX_OLDER_BARS) return; // hard cap per series
     const first = (olderBars.length ? olderBars : baseCandles)[0];
     if (!first) return;
     loadingOlder.current = true;
+    lastChunkAt.current = Date.now();
+    const requestKey = seriesKeyRef.current;
     const step = TF_S[effectiveTf] ?? 900;
     api
       .marketCandles({
@@ -144,6 +160,14 @@ export function ChartWorkspace({
         count: SCROLL_CHUNK,
       })
       .then((r) => {
+        if (requestKey !== seriesKeyRef.current) {
+          console.debug('[chart] back-scroll response IGNORED (stale series)', { requestKey, now: seriesKeyRef.current });
+          return; // timeframe/instrument changed while in flight — drop it
+        }
+        console.debug('[chart] back-scroll response accepted', {
+          requestId: (r as { requestId?: string }).requestId, tf: effectiveTf, count: r.candles.length,
+          first: r.candles[0]?.time, last: r.candles[r.candles.length - 1]?.time,
+        });
         if (!r.candles.length) {
           exhausted.current = true; // beginning of stored history
         } else {

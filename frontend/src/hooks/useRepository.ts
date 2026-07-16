@@ -291,7 +291,16 @@ export function useMarketCandles(
   const { provider, count = 220, endISO, timeframe = 'M15', live = false } = opts;
   const { data } = useQuery({
     queryKey: QK.marketCandles(symbol, provider, count, endISO, timeframe),
-    queryFn: () => api.marketCandles({ symbol, provider, count, end: endISO, timeframe }),
+    queryFn: async () => {
+      const r = await api.marketCandles({ symbol, provider, count, end: endISO, timeframe });
+      const meta = r as { requestId?: string; source?: string; cacheHit?: boolean; fellBack?: boolean };
+      console.debug('[md] response', {
+        requestId: meta.requestId, tf: timeframe, source: meta.source,
+        cacheHit: meta.cacheHit, fellBack: meta.fellBack, count: r.candles.length,
+        first: r.candles[0]?.time, last: r.candles[r.candles.length - 1]?.time,
+      });
+      return r;
+    },
     // Live charts poll the service (Phase 24 — polling now, WebSocket later);
     // replay/historical windows are immutable → never stale.
     staleTime: live ? 12_000 : Infinity,

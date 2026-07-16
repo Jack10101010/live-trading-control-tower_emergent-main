@@ -285,7 +285,17 @@ export function ChartPanel({
       chart.timeScale().fitContent();
       return;
     }
-    const next = resolvedCandles;
+    let next = resolvedCandles;
+    // Defensive: Lightweight Charts hard-asserts ascending unique times in setData/
+    // update — a violation crashes the chart (blank canvas until remount). Guard and
+    // warn loudly so any future data-composition bug degrades visibly instead.
+    const unordered = next.some((c, i) => i > 0 && c.time <= next[i - 1].time);
+    if (unordered) {
+      console.warn('[chart] candle array unsorted/duplicated — sanitizing (data-composition bug upstream)');
+      const byTime = new Map<number, Candle>();
+      for (const c of next) byTime.set(c.time, c);
+      next = [...byTime.values()].sort((a, b) => a.time - b.time);
+    }
     const prev = prevCandlesRef.current;
     candlesRef.current = next;
     const cs = s as ISeriesApi<'Candlestick'>;

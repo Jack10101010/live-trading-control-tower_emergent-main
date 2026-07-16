@@ -1351,9 +1351,14 @@ async def market_data_candles(symbol: str = "EURUSD", timeframe: str = market_da
     else:
         end_iso = None  # engine substitutes real now → DataService live edge
     series = _MARKET_DATA_ENGINE.candles(symbol, timeframe, count, end_iso, provider, start)
+    # Diagnostics (Phase 24 debug): which service provider actually answered, the
+    # request id, and cache state — correlates frontend logs with backend logs.
+    q = dict(_DATA_SERVICE.last_query) if provider is None else {}
     return {
         "symbol": symbol, "timeframe": timeframe,
         "provider": provider or _MARKET_DATA_ENGINE._active,
+        "requestId": q.get("requestId"), "source": q.get("source"),
+        "cacheHit": q.get("cacheHit"), "fellBack": q.get("fellBack"),
         "start": start, "end": end_iso or "live", "count": len(series), "candles": series,
     }
 
