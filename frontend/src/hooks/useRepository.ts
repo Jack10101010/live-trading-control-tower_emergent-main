@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react';
-import { useQuery, useSuspenseQueries, useSuspenseQuery } from '@tanstack/react-query';
+import { useQuery, useSuspenseQueries, useSuspenseQuery, keepPreviousData } from '@tanstack/react-query';
 import { deriveOrderBlocks, type OrderBlock } from '@/lib/orderBlocks';
 import { deriveFairValueGaps, type FairValueGap } from '@/lib/fairValueGaps';
 import { deriveLiquidityPools, type LiquidityPool } from '@/lib/liquidity';
@@ -301,6 +301,14 @@ export function useMarketCandles(
       });
       return r;
     },
+    // Keep the prior timeframe's bars on screen while the new key fetches. Without
+    // this, switching TF changed the query key → data=undefined → candles=[] →
+    // ChartPanel fully UNMOUNTED and remounted (chart teardown + createChart,
+    // doubled by StrictMode). That churn (a) flashed the chart black on rapid
+    // switches and (b) emitted a burst of synchronous setState that starved the
+    // router's startTransition-wrapped navigation. keepPreviousData keeps the
+    // chart mounted so the data effect swaps series in place (its reset branch).
+    placeholderData: keepPreviousData,
     // Live charts poll the service (Phase 24 — polling now, WebSocket later);
     // replay/historical windows are immutable → never stale.
     staleTime: live ? 12_000 : Infinity,

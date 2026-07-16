@@ -1,6 +1,7 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { lazy, Suspense, type ReactNode } from 'react';
 import { AppShell } from '@/components/shell/AppShell';
+import { RouteErrorBoundary } from '@/components/RouteErrorBoundary';
 import { FleetOverview } from '@/views/FleetOverview';
 import { PairWorkspace } from '@/views/PairWorkspace';
 import {
@@ -45,8 +46,13 @@ function Lazy({ children }: { children: ReactNode }) {
 }
 
 export default function App() {
+  // Reset the boundary on navigation so a prior page's error never sticks. The
+  // sidebar/shell lives OUTSIDE this boundary, so navigation always survives a
+  // page-level throw (Market Data chart included).
+  const { pathname } = useLocation();
   return (
     <AppShell>
+      <RouteErrorBoundary resetKey={pathname}>
       <Routes>
         <Route path="/" element={<Navigate to="/fleet" replace />} />
 
@@ -78,6 +84,7 @@ export default function App() {
 
         <Route path="*" element={<Navigate to="/fleet" replace />} />
       </Routes>
+      </RouteErrorBoundary>
     </AppShell>
   );
 }

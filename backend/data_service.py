@@ -341,6 +341,10 @@ class DataService:
     def __init__(self, store: HistoricalStore | None = None,
                  polygon: PolygonAdapter | None = None):
         self.last_query: dict = {}  # diagnostics for the most recent candles() call
+        # Last successful LIVE-edge Polygon window per (symbol, timeframe). When a
+        # later live fetch is rate-limited (429 → empty), we serve this instead of
+        # the month-old store — a live chart must never regress to ancient bars.
+        self._last_good_live: dict[tuple, list[Bar]] = {}
         self.store = store or HistoricalStore()
         self.polygon = polygon or PolygonAdapter()
         preferred = (os.environ.get("MARKET_DATA_SOURCE") or "auto").lower()
@@ -376,24 +380,45 @@ class DataService:
 
         DataService._req_seq += 1
         req_id = f"md-{DataService._req_seq}"
+        # Live-edge = no explicit start and an end at (or after) ~now. The engine
+        # substitutes now for a live request's end (market_data.py: `end_iso or now`),
+        # so end_s is never None here — detect "ends at now" instead. Historical
+        # back-scroll (start given, or end far in the past) is NOT live and keeps the
+        # normal store fallback.
+        step = TIMEFRAME_S.get(timeframe, TIMEFRAME_S[DEFAULT_TF])
+        is_live = start_s is None and (end_s is None or end_s >= int(time.time()) - step)
+        lg_key = (symbol, timeframe)
         primary = self._first()
         bars = query(primary)
         source = primary.provider_id
         fell_back = False
+        stale_live = False
+        if bars and primary is self.polygon and is_live:
+            # Record the freshest good live window so a later 429 can reuse it.
+            self._last_good_live[lg_key] = bars
         if not bars and primary is not self.store:
-            bars = query(self.store)
-            source = self.store.provider_id
-            fell_back = True
-        cache_hit = bool(self.polygon.last_from_cache) if source == "polygon" else False
+            if is_live and self._last_good_live.get(lg_key):
+                # Live edge, Polygon empty (rate-limited): serve the last good
+                # Polygon window rather than regressing to the month-old store.
+                # Trim to the requested count (the cached window may be larger).
+                bars = self._last_good_live[lg_key][-count:]
+                source = self.polygon.provider_id
+                stale_live = True
+            else:
+                bars = query(self.store)
+                source = self.store.provider_id
+                fell_back = True
+        cache_hit = bool(self.polygon.last_from_cache) if source == "polygon" and not stale_live else False
         self.last_query = {
             "requestId": req_id, "timeframe": timeframe, "source": source,
-            "fellBack": fell_back, "cacheHit": cache_hit, "count": len(bars),
+            "fellBack": fell_back, "staleLive": stale_live, "cacheHit": cache_hit, "count": len(bars),
             "first": bars[0]["time"] if bars else None,
             "last": bars[-1]["time"] if bars else None,
         }
         _log.info(
             "candles %s tf=%s provider=%s%s cache=%s count=%d first=%s last=%s%s",
-            req_id, timeframe, source, " (FELL BACK)" if fell_back else "",
+            req_id, timeframe, source,
+            " (FELL BACK)" if fell_back else (" (STALE-LIVE cache)" if stale_live else ""),
             cache_hit, len(bars),
             datetime.fromtimestamp(bars[0]["time"], tz=timezone.utc).isoformat() if bars else "-",
             datetime.fromtimestamp(bars[-1]["time"], tz=timezone.utc).isoformat() if bars else "-",

@@ -240,8 +240,15 @@ export function ChartPanel({
     mainRef.current = main;
     prevCandlesRef.current = [];
 
+    // `disposed` gates every async chart callback: once cleanup runs (unmount, or
+    // StrictMode's synthetic remount), a late crosshair/range/resize callback must
+    // NOT touch the removed chart — lightweight-charts throws "Object is disposed",
+    // which with no ErrorBoundary would tear down the tree (black screen).
+    let disposed = false;
+
     // Floating OHLC legend — defaults to the last bar, tracks the crosshair on hover.
     const onMove = (param: Parameters<Parameters<IChartApi['subscribeCrosshairMove']>[0]>[0]) => {
+      if (disposed) return;
       const bar = param.seriesData?.get(main) as { open?: number; high?: number; low?: number; close?: number } | undefined;
       const cur = candlesRef.current;
       if (bar && bar.open != null && bar.close != null) {
@@ -255,13 +262,15 @@ export function ChartPanel({
 
     // Bar click → M1 inspector (Phase 24).
     const onClick = (param: Parameters<Parameters<IChartApi['subscribeClick']>[0]>[0]) => {
+      if (disposed) return;
       if (param.time != null) onBarClickRef.current?.(param.time as number);
     };
     chart.subscribeClick(onClick);
 
-    const bump = () => setRedraw((n) => n + 1);
+    const bump = () => { if (!disposed) setRedraw((n) => n + 1); };
     // Visible-range changes drive overlay repositioning AND left-edge history loading.
     const onRange = () => {
+      if (disposed) return;
       bump();
       const lr = chart.timeScale().getVisibleLogicalRange();
       if (lr && lr.from < 12) onNearLeftEdgeRef.current?.();
@@ -272,9 +281,13 @@ export function ChartPanel({
     bump();
 
     return () => {
+      disposed = true;
       ro.disconnect();
+      // Tear down EVERY subscription before remove() (the range handler was
+      // previously left attached — an asymmetry that risked a disposed-chart call).
       if (kind === 'candles') chart.unsubscribeCrosshairMove(onMove);
       chart.unsubscribeClick(onClick);
+      chart.timeScale().unsubscribeVisibleTimeRangeChange(onRange);
       priceLineHandles.current = [];
       chart.remove();
       chartRef.current = null;
