@@ -45,6 +45,11 @@ interface ChartPanelProps {
   zones?: ChartZone[];
   /** Replay cursor time (unix seconds); draws a vertical line. */
   cursorTime?: number;
+  /** Fired (throttled) when the user scrolls near the oldest loaded bar —
+   *  ChartWorkspace uses it to range-load older history (Phase 24). */
+  onNearLeftEdge?: () => void;
+  /** Fired with the clicked bar's time — drives the M1 inspector (Phase 24). */
+  onBarClick?: (time: number) => void;
 }
 
 /** Resolve `var(--token)` to a concrete colour for canvas drawing. */
@@ -87,10 +92,19 @@ export function ChartPanel({
   markers = [],
   zones = [],
   cursorTime,
+  onNearLeftEdge,
+  onBarClick,
 }: ChartPanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const mainRef = useRef<ISeriesApi<'Candlestick'> | ISeriesApi<'Line'> | null>(null);
+  const volRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+  const prevCandlesRef = useRef<Candle[]>([]);
+  const candlesRef = useRef<Candle[]>([]);
+  const onNearLeftEdgeRef = useRef(onNearLeftEdge);
+  const onBarClickRef = useRef(onBarClick);
+  onNearLeftEdgeRef.current = onNearLeftEdge;
+  onBarClickRef.current = onBarClick;
   const priceLineHandles = useRef<Array<ReturnType<ISeriesApi<'Candlestick'>['createPriceLine']>>>([]);
   const [redraw, setRedraw] = useState(0);
   const [boxes, setBoxes] = useState<
@@ -169,7 +183,6 @@ export function ChartPanel({
         crosshairMarkerRadius: 3,
         priceFormat: { type: 'price', precision: linePrecision, minMove: Math.pow(10, -linePrecision) },
       });
-      main.setData(lineData.map((p) => ({ time: p.time as Time, value: p.value })));
     } else {
       const up = resolveColor('var(--positive)');
       const down = resolveColor('var(--negative)');
@@ -188,9 +201,6 @@ export function ChartPanel({
         priceLineStyle: LineStyle.Dashed,
         lastValueVisible: true,
       });
-      cs.setData(
-        resolvedCandles.map((c) => ({ time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close }))
-      );
       main = cs;
     }
 
@@ -202,31 +212,40 @@ export function ChartPanel({
         priceLineVisible: false,
       });
       vol.priceScale().applyOptions({ scaleMargins: { top: 0.86, bottom: 0 } });
-      vol.setData(deriveVolume(resolvedCandles).map((v) => ({ time: v.time as Time, value: v.value, color: v.color })));
+      volRef.current = vol;
     }
 
-    chart.timeScale().fitContent();
     chartRef.current = chart;
     mainRef.current = main;
+    prevCandlesRef.current = [];
 
     // Floating OHLC legend — defaults to the last bar, tracks the crosshair on hover.
-    if (kind === 'candles' && resolvedCandles.length) {
-      const last = resolvedCandles[resolvedCandles.length - 1];
-      setLegend(toLegend(last.open, last.high, last.low, last.close));
-    }
     const onMove = (param: Parameters<Parameters<IChartApi['subscribeCrosshairMove']>[0]>[0]) => {
       const bar = param.seriesData?.get(main) as { open?: number; high?: number; low?: number; close?: number } | undefined;
+      const cur = candlesRef.current;
       if (bar && bar.open != null && bar.close != null) {
         setLegend(toLegend(bar.open, bar.high ?? bar.close, bar.low ?? bar.close, bar.close));
-      } else if (resolvedCandles.length) {
-        const last = resolvedCandles[resolvedCandles.length - 1];
+      } else if (cur.length) {
+        const last = cur[cur.length - 1];
         setLegend(toLegend(last.open, last.high, last.low, last.close));
       }
     };
     if (kind === 'candles') chart.subscribeCrosshairMove(onMove);
 
+    // Bar click → M1 inspector (Phase 24).
+    const onClick = (param: Parameters<Parameters<IChartApi['subscribeClick']>[0]>[0]) => {
+      if (param.time != null) onBarClickRef.current?.(param.time as number);
+    };
+    chart.subscribeClick(onClick);
+
     const bump = () => setRedraw((n) => n + 1);
-    chart.timeScale().subscribeVisibleTimeRangeChange(bump);
+    // Visible-range changes drive overlay repositioning AND left-edge history loading.
+    const onRange = () => {
+      bump();
+      const lr = chart.timeScale().getVisibleLogicalRange();
+      if (lr && lr.from < 12) onNearLeftEdgeRef.current?.();
+    };
+    chart.timeScale().subscribeVisibleTimeRangeChange(onRange);
     const ro = new ResizeObserver(bump);
     ro.observe(el);
     bump();
@@ -234,13 +253,67 @@ export function ChartPanel({
     return () => {
       ro.disconnect();
       if (kind === 'candles') chart.unsubscribeCrosshairMove(onMove);
+      chart.unsubscribeClick(onClick);
       priceLineHandles.current = [];
       chart.remove();
       chartRef.current = null;
       mainRef.current = null;
+      volRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [instrument, kind, resolvedCandles.length, lineData.length]);
+  }, [instrument, kind, volume, linePrecision]);
+
+  // Data application — update-in-place so live ticks and history prepends never
+  // recreate the chart (Phase 24). Three cases: tail update (same first bar →
+  // series.update per new/changed last bars), prepend (same last bar, new first →
+  // setData + shift the visible logical range so the view doesn't jump), reset
+  // (symbol/timeframe change → setData + fitContent).
+  useEffect(() => {
+    const s = mainRef.current;
+    const chart = chartRef.current;
+    if (!s || !chart) return;
+    if (kind === 'line') {
+      (s as ISeriesApi<'Line'>).setData(lineData.map((p) => ({ time: p.time as Time, value: p.value })));
+      chart.timeScale().fitContent();
+      return;
+    }
+    const next = resolvedCandles;
+    const prev = prevCandlesRef.current;
+    candlesRef.current = next;
+    const cs = s as ISeriesApi<'Candlestick'>;
+    const toBar = (c: Candle) => ({ time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close });
+    const volAll = () => volRef.current?.setData(
+      deriveVolume(next).map((v) => ({ time: v.time as Time, value: v.value, color: v.color })));
+
+    if (prev.length && next.length && next[0].time === prev[0].time && next.length >= prev.length) {
+      // Tail update (live polling): update the last known bar + any new bars.
+      const volSeries = deriveVolume(next);
+      for (let i = Math.max(0, prev.length - 1); i < next.length; i++) {
+        cs.update(toBar(next[i]));
+        volRef.current?.update({ time: volSeries[i].time as Time, value: volSeries[i].value, color: volSeries[i].color });
+      }
+    } else if (prev.length && next.length && next[next.length - 1].time === prev[prev.length - 1].time && next[0].time < prev[0].time) {
+      // Prepend (historical scrolling): keep the user's view stable.
+      const added = next.length - prev.length;
+      const range = chart.timeScale().getVisibleLogicalRange();
+      cs.setData(next.map(toBar));
+      volAll();
+      if (range) chart.timeScale().setVisibleLogicalRange({ from: range.from + added, to: range.to + added });
+    } else {
+      // Reset (first load / symbol / timeframe change).
+      cs.setData(next.map(toBar));
+      volAll();
+      chart.timeScale().fitContent();
+    }
+    prevCandlesRef.current = next;
+    if (next.length) {
+      const last = next[next.length - 1];
+      setLegend(toLegend(last.open, last.high, last.low, last.close));
+    } else {
+      setLegend(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolvedCandles, lineData, kind]);
 
   // Price lines
   useEffect(() => {

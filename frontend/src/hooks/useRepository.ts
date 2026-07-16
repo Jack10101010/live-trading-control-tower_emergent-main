@@ -286,13 +286,16 @@ export function useMarketSnapshot(): MarketSnapshot {
  */
 export function useMarketCandles(
   symbol: string,
-  opts: { provider?: string; count?: number; endISO?: string } = {}
+  opts: { provider?: string; count?: number; endISO?: string; timeframe?: string; live?: boolean } = {}
 ): MarketCandles | undefined {
-  const { provider, count = 220, endISO } = opts;
+  const { provider, count = 220, endISO, timeframe = 'M15', live = false } = opts;
   const { data } = useQuery({
-    queryKey: QK.marketCandles(symbol, provider, count, endISO),
-    queryFn: () => api.marketCandles({ symbol, provider, count, end: endISO }),
-    staleTime: Infinity, // deterministic series — never goes stale for a given key
+    queryKey: QK.marketCandles(symbol, provider, count, endISO, timeframe),
+    queryFn: () => api.marketCandles({ symbol, provider, count, end: endISO, timeframe }),
+    // Live charts poll the service (Phase 24 — polling now, WebSocket later);
+    // replay/historical windows are immutable → never stale.
+    staleTime: live ? 4_000 : Infinity,
+    refetchInterval: live ? 5_000 : false,
   });
   return data;
 }

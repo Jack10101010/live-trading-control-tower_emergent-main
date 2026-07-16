@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChartPanel } from '@/components/domain/ChartPanel';
 import { type Candle } from '@/lib/chartData';
 import {
@@ -8,35 +8,48 @@ import {
   type LayerContext,
 } from '@/lib/chartLayers';
 import { useTrades, useMarketCandles, useOrderBlocks, useFairValueGaps, useLiquidityPools, useMarketStructure } from '@/hooks/useRepository';
+import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 /**
- * ChartWorkspace — the canonical chart surface of the Control Tower (Phase 15/16).
+ * ChartWorkspace — the canonical chart surface of the Control Tower.
  *
- * It is the ONE place that: (1) sources candles from the MARKET DATA ENGINE via
- * `useMarketCandles` (the single candle pipeline — replay asks the ReplayProvider,
- * live asks the active provider; no frontend OHLC generation), (2) assembles the
- * shared `LayerContext` from the existing React-Query hooks (no duplicate state),
- * (3) composes the enabled `ChartLayer`s into one annotation bundle, and (4) renders
- * ONE `ChartPanel`.
- *
- * Replay and live use the SAME instance/path — the only difference is which provider
- * is asked (`mode`) and the `cursor`. Every future overlay is an additive
- * `ChartLayer`; this component never needs to change to gain one.
+ * Phase 24: candles come from the Market Data Service through the SAME pipeline
+ * (useMarketCandles → /market-data/candles → engine → active provider). This
+ * component additionally owns: the timeframe switcher (M1…D1), range-based
+ * historical back-scroll (older bars are RANGE queries merged in front of the
+ * base window), live polling (in `useMarketCandles`), and the M1 inspector
+ * (click a parent bar → its underlying M1 candles). Replay is unchanged: fixed
+ * M15, replay provider, cursor-driven — no polling, no back-scroll.
  */
+
+const TIMEFRAMES = ['M1', 'M5', 'M15', 'H1', 'H4', 'D1'] as const;
+const TF_S: Record<string, number> = { M1: 60, M5: 300, M15: 900, H1: 3600, H4: 14400, D1: 86400 };
+const SCROLL_CHUNK = 300; // bars per historical range request
+
+const isoOf = (unix: number) => new Date(unix * 1000).toISOString();
+
+/** Merge older (prepended) bars in front of the base window, deduped by time. */
+function mergeBars(older: Candle[], base: Candle[]): Candle[] {
+  if (!older.length) return base;
+  if (!base.length) return older;
+  const cut = base[0].time;
+  const head = older.filter((b) => b.time < cut);
+  return head.length ? [...head, ...base] : base;
+}
 
 export interface ChartWorkspaceProps {
   instrument: string;
   mode: 'live' | 'replay';
   /** Replay virtual time (unix seconds). Omit for live. */
   cursor?: number;
-  /** Candle window end (replay session end, or now for live). */
+  /** Candle window end (replay session end). Omit for the live edge. */
   endISO?: string;
   count?: number;
   height?: number;
   className?: string;
   volume?: boolean;
-  /** Show the layer-toggle bar (default true). */
+  /** Show the layer-toggle / timeframe bar (default true). */
   controls?: boolean;
 }
 
@@ -51,25 +64,84 @@ export function ChartWorkspace({
   volume = true,
   controls = true,
 }: ChartWorkspaceProps) {
-  // Single candle source: the Market Data Engine (Phase 16). Replay asks the
-  // ReplayProvider; live asks the active provider (switch provider ⇒ chart follows,
-  // no ChartWorkspace change). This is the ONLY candle pipeline in the Control Tower.
+  // Timeframe — operator-selectable on live charts; replay stays on M15 (its
+  // recorded scenario timeframe).
+  const [timeframe, setTimeframe] = useState<string>('M15');
+  const effectiveTf = mode === 'replay' ? 'M15' : timeframe;
+
+  // Base window from the Market Data Service (live: polled; replay: immutable).
   const feed = useMarketCandles(instrument, {
     provider: mode === 'replay' ? 'replay' : undefined,
     count,
     endISO,
+    timeframe: effectiveTf,
+    live: mode === 'live',
   });
-  const candles: Candle[] = feed?.candles ?? [];
+
+  // Historical back-scroll (live only): older bars fetched as RANGE queries and
+  // merged in front of the base window. Reset when the series identity changes.
+  const [olderBars, setOlderBars] = useState<Candle[]>([]);
+  const loadingOlder = useRef(false);
+  const exhausted = useRef(false);
+  useEffect(() => {
+    setOlderBars([]);
+    exhausted.current = false;
+    loadingOlder.current = false;
+  }, [instrument, effectiveTf, mode]);
+
+  const baseCandles = feed?.candles ?? [];
+  const candles: Candle[] = useMemo(
+    () => mergeBars(olderBars, baseCandles),
+    [olderBars, baseCandles]
+  );
+
+  const handleNearLeftEdge = useCallback(() => {
+    if (mode !== 'live' || loadingOlder.current || exhausted.current) return;
+    const first = (olderBars.length ? olderBars : baseCandles)[0];
+    if (!first) return;
+    loadingOlder.current = true;
+    const step = TF_S[effectiveTf] ?? 900;
+    api
+      .marketCandles({
+        symbol: instrument,
+        timeframe: effectiveTf,
+        start: isoOf(first.time - step * SCROLL_CHUNK),
+        end: isoOf(first.time - 1),
+        count: SCROLL_CHUNK,
+      })
+      .then((r) => {
+        if (!r.candles.length) {
+          exhausted.current = true; // beginning of stored history
+        } else {
+          setOlderBars((prev) => mergeBars(r.candles, prev));
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        loadingOlder.current = false;
+      });
+  }, [mode, instrument, effectiveTf, olderBars, baseCandles]);
+
+  // M1 inspector (Phase 24): click a parent bar → its underlying M1 candles.
+  const [inspect, setInspect] = useState<{ time: number; bars: Candle[] } | null>(null);
+  const handleBarClick = useCallback(
+    (time: number) => {
+      if (mode !== 'live' || effectiveTf === 'M1') return;
+      const step = TF_S[effectiveTf] ?? 900;
+      api
+        .m1Window(instrument, isoOf(time), isoOf(time + step - 1))
+        .then((r) => setInspect(r.candles.length ? { time, bars: r.candles } : null))
+        .catch(() => setInspect(null));
+    },
+    [mode, instrument, effectiveTf]
+  );
+  useEffect(() => setInspect(null), [instrument, effectiveTf, mode]);
 
   // Shared data from the existing hooks (React Query dedupes — no duplicate fetch/state).
   const { live, ghost } = useTrades({ pair: instrument });
-  // Order blocks (Phase 17) via the swappable provider — one line, populated once here.
   const orderBlocks = useOrderBlocks(instrument, candles);
-  // Fair value gaps (Phase 18) — identical seam, one line.
   const fairValueGaps = useFairValueGaps(instrument, candles);
-  // Liquidity pools (Phase 19) — identical seam, one line.
   const liquidityPools = useLiquidityPools(instrument, candles);
-  // Market structure — swings + BOS/CHOCH (Phase 20) — ONE provider, TWO layers.
   const marketStructure = useMarketStructure(instrument, candles);
 
   // Layer visibility — local workspace state seeded from the registry defaults.
@@ -118,6 +190,27 @@ export function ChartWorkspace({
               </button>
             );
           })}
+          {mode === 'live' && (
+            <>
+              <span className="ml-auto text-2xs text-text-muted uppercase tracking-wide mr-1 shrink-0">TF</span>
+              {TIMEFRAMES.map((tf) => (
+                <button
+                  key={tf}
+                  onClick={() => setTimeframe(tf)}
+                  data-testid={`tf-${tf}`}
+                  aria-pressed={timeframe === tf}
+                  className="h-5 px-1.5 text-2xs mono rounded-sm shrink-0 transition-colors"
+                  style={{
+                    color: timeframe === tf ? 'var(--text)' : 'var(--text-muted)',
+                    background: timeframe === tf ? 'var(--panel-2)' : 'transparent',
+                    border: `1px solid ${timeframe === tf ? 'var(--border)' : 'transparent'}`,
+                  }}
+                >
+                  {tf}
+                </button>
+              ))}
+            </>
+          )}
         </div>
       )}
 
@@ -126,6 +219,7 @@ export function ChartWorkspace({
           {candles.length > 0 ? (
             <ChartPanel
               instrument={instrument}
+              timeframe={effectiveTf}
               candles={candles}
               height={height}
               className="h-full w-full"
@@ -135,6 +229,8 @@ export function ChartWorkspace({
               zones={zones}
               priceLines={priceLines}
               cursorTime={cursor}
+              onNearLeftEdge={handleNearLeftEdge}
+              onBarClick={handleBarClick}
             />
           ) : (
             <div
@@ -154,10 +250,7 @@ export function ChartWorkspace({
                 </>
               ) : (
                 <>
-                  <div
-                    className="flex items-end gap-[3px] h-5 opacity-40"
-                    aria-hidden
-                  >
+                  <div className="flex items-end gap-[3px] h-5 opacity-40" aria-hidden>
                     {[9, 15, 7, 12, 5].map((h, i) => (
                       <span key={i} className="w-[3px] rounded-sm" style={{ height: h, background: 'var(--text-muted)' }} />
                     ))}
@@ -169,6 +262,43 @@ export function ChartWorkspace({
             </div>
           )}
         </div>
+
+        {/* M1 inspector (Phase 24) — the clicked bar's underlying M1 candles. */}
+        {inspect && (
+          <div
+            className="absolute top-2 right-2 z-30 rounded-md border shadow-lg"
+            style={{ width: 380, background: 'var(--panel)', borderColor: 'var(--border)' }}
+            data-testid="m1-inspector"
+          >
+            <div
+              className="flex items-center gap-2 px-2.5 h-7 border-b"
+              style={{ borderColor: 'var(--border-subtle)' }}
+            >
+              <span className="text-2xs mono text-text">
+                M1 · {new Date(inspect.time * 1000).toISOString().slice(0, 16).replace('T', ' ')} ·{' '}
+                {effectiveTf} bar · {inspect.bars.length} candles
+              </span>
+              <button
+                className="ml-auto text-text-muted hover:text-text text-xs leading-none"
+                onClick={() => setInspect(null)}
+                aria-label="Close M1 inspector"
+                data-testid="m1-inspector-close"
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ height: 200 }}>
+              <ChartPanel
+                instrument={`${instrument}-M1`}
+                timeframe="M1"
+                candles={inspect.bars}
+                height={0}
+                className="h-full w-full"
+                volume={false}
+              />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -361,17 +361,24 @@ export const api = {
     apiFetch<MarketSnapshot>(
       `/market-data/snapshot?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`
     ),
-  /** Deterministic OHLC candle series from the Market Data Engine (Phase 16). The
-   *  single candle pipeline: `provider=replay` for replay, omit for the active feed. */
-  marketCandles: (opts: { symbol?: string; timeframe?: string; count?: number; end?: string; provider?: string } = {}) => {
+  /** OHLC candle series from the Market Data Service (Phase 24). The single candle
+   *  pipeline: `provider=replay` for replay; `start` makes it a RANGE query
+   *  (historical scrolling); otherwise end-anchored `count` bars. */
+  marketCandles: (opts: { symbol?: string; timeframe?: string; count?: number; end?: string; start?: string; provider?: string } = {}) => {
     const q = new URLSearchParams();
     q.set('symbol', opts.symbol ?? 'EURUSD');
     q.set('timeframe', opts.timeframe ?? 'M15');
     q.set('count', String(opts.count ?? 220));
     if (opts.end) q.set('end', opts.end);
+    if (opts.start) q.set('start', opts.start);
     if (opts.provider) q.set('provider', opts.provider);
     return apiFetch<MarketCandles>(`/market-data/candles?${q.toString()}`);
   },
+  /** M1 inspector (Phase 24): canonical M1 bars inside a parent-bar window. */
+  m1Window: (symbol: string, startISO: string, endISO: string) =>
+    apiFetch<MarketCandles>(
+      `/market-data/m1-window?symbol=${encodeURIComponent(symbol)}&start=${encodeURIComponent(startISO)}&end=${encodeURIComponent(endISO)}`
+    ),
   /** Active risk limit set (Phase 12, read-only). */
   riskLimits: (account?: string) =>
     apiFetch<RiskLimits>(`/risk/limits${account ? `?account=${encodeURIComponent(account)}` : ''}`),
@@ -447,8 +454,8 @@ export const QK = {
   strategyDecisions: ['strategy-decisions'] as const,
   schedulerStatus: ['scheduler-status'] as const,
   marketDataSnapshot: ['market-data-snapshot'] as const,
-  marketCandles: (symbol: string, provider: string | undefined, count: number, end: string | undefined) =>
-    ['market-candles', symbol, provider ?? 'active', count, end ?? 'default'] as const,
+  marketCandles: (symbol: string, provider: string | undefined, count: number, end: string | undefined, timeframe = 'M15') =>
+    ['market-candles', symbol, provider ?? 'active', count, end ?? 'default', timeframe] as const,
   riskLimits: ['risk-limits'] as const,
   decision: (id: string) => ['decision', id] as const,
   policyMatrix: (instrument: string, version?: number) =>
