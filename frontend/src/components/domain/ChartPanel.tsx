@@ -63,6 +63,13 @@ function resolveColor(c: string): string {
   return c;
 }
 
+// Stable empties: default-parameter literals (`= []`) create a NEW identity every
+// render; used as effect deps they re-run the effect per render — combined with an
+// unconditional setState below, that was a silent infinite re-render loop that
+// starved React Router's startTransition-based navigation (URL changed, view froze).
+const EMPTY_CANDLES: Candle[] = [];
+const EMPTY_LINE: LinePoint[] = [];
+
 interface Legend {
   open: number;
   high: number;
@@ -77,6 +84,12 @@ function toLegend(o: number, h: number, l: number, c: number): Legend {
   return { open: o, high: h, low: l, close: c, changePct, up: c >= o };
 }
 
+/** setState updater that keeps the previous object when values are equal —
+ *  breaks any render→effect→setState cycle at the state-identity level. */
+const sameLegend = (next: Legend) => (prev: Legend | null): Legend =>
+  prev && prev.open === next.open && prev.high === next.high &&
+  prev.low === next.low && prev.close === next.close ? prev : next;
+
 export function ChartPanel({
   candles,
   instrument = 'EURUSD',
@@ -84,7 +97,7 @@ export function ChartPanel({
   height = 380,
   className,
   kind = 'candles',
-  lineData = [],
+  lineData = EMPTY_LINE,
   linePrecision = 2,
   volume = false,
   sessionShading = false,
@@ -113,7 +126,7 @@ export function ChartPanel({
   const [cursorX, setCursorX] = useState<number | null>(null);
   const [legend, setLegend] = useState<Legend | null>(null);
 
-  const resolvedCandles: Candle[] = candles ?? [];
+  const resolvedCandles: Candle[] = candles ?? EMPTY_CANDLES;
   const allZones: ChartZone[] = sessionShading ? [...sessionBands(resolvedCandles), ...zones] : zones;
   const precision = kind === 'line' ? linePrecision : 5;
 
@@ -232,10 +245,10 @@ export function ChartPanel({
       const bar = param.seriesData?.get(main) as { open?: number; high?: number; low?: number; close?: number } | undefined;
       const cur = candlesRef.current;
       if (bar && bar.open != null && bar.close != null) {
-        setLegend(toLegend(bar.open, bar.high ?? bar.close, bar.low ?? bar.close, bar.close));
+        setLegend(sameLegend(toLegend(bar.open, bar.high ?? bar.close, bar.low ?? bar.close, bar.close)));
       } else if (cur.length) {
         const last = cur[cur.length - 1];
-        setLegend(toLegend(last.open, last.high, last.low, last.close));
+        setLegend(sameLegend(toLegend(last.open, last.high, last.low, last.close)));
       }
     };
     if (kind === 'candles') chart.subscribeCrosshairMove(onMove);
@@ -326,7 +339,7 @@ export function ChartPanel({
     prevCandlesRef.current = next;
     if (next.length) {
       const last = next[next.length - 1];
-      setLegend(toLegend(last.open, last.high, last.low, last.close));
+      setLegend(sameLegend(toLegend(last.open, last.high, last.low, last.close)));
     } else {
       setLegend(null);
     }

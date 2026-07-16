@@ -211,7 +211,15 @@ export function ChartWorkspace({
       return next;
     });
 
-  const nowISO = cursor != null ? new Date(cursor * 1000).toISOString() : endISO ?? new Date().toISOString();
+  // Stable per data-set: a per-render `new Date()` regenerated the layer context
+  // (and every annotation array) on every render cycle. Live mode anchors "now"
+  // to the last bar of the current feed instead of the wall clock.
+  const lastBarTime = baseCandles.length ? baseCandles[baseCandles.length - 1].time : 0;
+  const nowISO = useMemo(
+    () => (cursor != null ? new Date(cursor * 1000).toISOString()
+      : endISO ?? (lastBarTime ? new Date((lastBarTime + 3600) * 1000).toISOString() : new Date().toISOString())),
+    [cursor, endISO, lastBarTime]
+  );
 
   const ctx: LayerContext = useMemo(
     () => ({ instrument, candles, nowISO, cursor, mode, trades: live, ghosts: ghost, snapshot: null, orderBlocks, fairValueGaps, liquidityPools, marketStructure }),
