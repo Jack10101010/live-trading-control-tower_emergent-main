@@ -28,10 +28,25 @@ from __future__ import annotations
 import bisect
 import json
 import os
+import ssl
 import time
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
+
+
+def _https_context() -> ssl.SSLContext:
+    """TLS context with an explicit CA bundle where available. Some Python installs
+    (notably python.org macOS builds) ship without OS trust-store wiring, which makes
+    every HTTPS call fail CERTIFICATE_VERIFY_FAILED; certifi fixes that portably."""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:  # pragma: no cover - certifi absent → system default
+        return ssl.create_default_context()
+
+
+_SSL_CTX = _https_context()
 
 TIMEFRAME_S = {"M1": 60, "M5": 300, "M15": 900, "H1": 3600, "H4": 14400, "D1": 86400}
 DEFAULT_TF = "M15"
@@ -66,9 +81,15 @@ class MarketDataProviderPort:
 
     def history_before(self, symbol: str, timeframe: str, end_s: int, count: int) -> list[Bar]:
         """The last `count` bars at-or-before `end_s`. Default: progressively widening
-        range queries (remote adapters); stores override with an exact index lookup."""
+        range queries (remote adapters); stores override with an exact index lookup.
+        Widening has absolute floors (3d, 30d) so small counts still bridge weekends
+        and end-of-day feed plans that lag the live edge."""
         step = TIMEFRAME_S.get(timeframe, TIMEFRAME_S[DEFAULT_TF])
-        for widen in (count + 20, count * 8, count * 64):
+        levels = (count + 20,
+                  max(count * 8, (3 * 86400) // step),
+                  max(count * 64, (30 * 86400) // step))
+        bars: list[Bar] = []
+        for widen in levels:
             bars = self.history(symbol, timeframe, end_s - step * widen, end_s)
             if len(bars) >= count:
                 return bars[-count:]
@@ -239,11 +260,17 @@ class PolygonAdapter(MarketDataProviderPort):
 
     def _fetch(self, symbol: str, timeframe: str, start_s: int, end_s: int) -> list[Bar]:
         mult, span = _POLY_SPAN.get(timeframe, _POLY_SPAN[DEFAULT_TF])
+        # Floor the window to timeframe boundaries: Polygon anchors multi-minute
+        # aggregates to the requested `from`, so an unaligned start yields :28/:43-style
+        # buckets that would never line up with the store's :00/:15/:30/:45 series.
+        step = TIMEFRAME_S.get(timeframe, TIMEFRAME_S[DEFAULT_TF])
+        start_s -= start_s % step
+        end_s -= end_s % step
         url = (f"https://api.polygon.io/v2/aggs/ticker/C:{symbol}/range/{mult}/{span}/"
-               f"{start_s * 1000}/{end_s * 1000}?adjusted=true&sort=asc&limit=50000"
+               f"{start_s * 1000}/{(end_s + step - 1) * 1000}?adjusted=true&sort=asc&limit=50000"
                f"&apiKey={self._key}")
         req = urllib.request.Request(url, headers={"User-Agent": "control-tower/1.0"})
-        with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+        with urllib.request.urlopen(req, timeout=self._timeout, context=_SSL_CTX) as resp:
             payload = json.loads(resp.read().decode())
         return [{"time": int(r["t"] // 1000), "open": float(r["o"]), "high": float(r["h"]),
                  "low": float(r["l"]), "close": float(r["c"]), "volume": float(r.get("v", 0))}
@@ -257,7 +284,7 @@ class PolygonAdapter(MarketDataProviderPort):
         live_edge = end_s >= int(time.time()) - TIMEFRAME_S.get(timeframe, 900)
         key = (symbol, timeframe, start_s, end_s)
         hit = self._cache.get(key)
-        if hit and (not live_edge or time.time() - hit[0] < 5.0):
+        if hit and (not live_edge or time.time() - hit[0] < 12.0):
             return hit[1]
         try:
             bars = self._fetch(symbol, timeframe, start_s, end_s)
@@ -308,19 +335,32 @@ class DataService:
     def candles(self, symbol: str, timeframe: str = DEFAULT_TF, count: int = 220,
                 start_s: int | None = None, end_s: int | None = None) -> list[Bar]:
         """Range-first query. start+end → that range; end only → `count` bars
-        ending at/before end; neither → the latest `count` bars (live edge)."""
+        ending at/before end; neither → the latest `count` bars (live edge).
+        If the primary provider returns nothing (e.g. Polygon rate-limited), the
+        historical store answers instead — degradation stays on REAL data."""
         timeframe = timeframe if timeframe in TIMEFRAME_S else DEFAULT_TF
         count = max(1, min(5000, count))
-        p = self._first()
-        if start_s is not None:
-            return p.history(symbol, timeframe, start_s, end_s or int(time.time()))
-        if end_s is not None:
-            return p.history_before(symbol, timeframe, end_s, count)
-        return p.latest(symbol, timeframe, count)
+
+        def query(p: MarketDataProviderPort) -> list[Bar]:
+            if start_s is not None:
+                return p.history(symbol, timeframe, start_s, end_s or int(time.time()))
+            if end_s is not None:
+                return p.history_before(symbol, timeframe, end_s, count)
+            return p.latest(symbol, timeframe, count)
+
+        primary = self._first()
+        bars = query(primary)
+        if not bars and primary is not self.store:
+            bars = query(self.store)
+        return bars
 
     def m1_window(self, symbol: str, start_s: int, end_s: int) -> list[Bar]:
         """M1 magnifier support: the canonical M1 bars inside a window."""
-        return self._first().history(symbol, "M1", start_s, end_s)
+        primary = self._first()
+        bars = primary.history(symbol, "M1", start_s, end_s)
+        if not bars and primary is not self.store:
+            bars = self.store.history(symbol, "M1", start_s, end_s)
+        return bars
 
     def status(self) -> dict:
         active = self._first()

@@ -1340,12 +1340,21 @@ async def market_data_candles(symbol: str = "EURUSD", timeframe: str = market_da
     latest `count` bars from the live edge. `provider=replay` keeps sourcing from the
     ReplayProvider (unchanged). Read-only."""
     count = max(1, min(5000, count))
-    end_iso = end or WORLD.get("meta", {}).get("asOf") or _now_iso()
+    # Live-edge default: the un-parameterised live chart path (no provider, no end)
+    # must follow the CURRENT market time — not the fixture asOf, which would clamp
+    # a live Polygon feed to 1 July. Explicitly-named providers (replay/mock_live/…)
+    # keep the deterministic fixture anchor their tests and scenarios rely on.
+    if end:
+        end_iso = end
+    elif provider:
+        end_iso = WORLD.get("meta", {}).get("asOf") or _now_iso()
+    else:
+        end_iso = None  # engine substitutes real now → DataService live edge
     series = _MARKET_DATA_ENGINE.candles(symbol, timeframe, count, end_iso, provider, start)
     return {
         "symbol": symbol, "timeframe": timeframe,
         "provider": provider or _MARKET_DATA_ENGINE._active,
-        "start": start, "end": end_iso, "count": len(series), "candles": series,
+        "start": start, "end": end_iso or "live", "count": len(series), "candles": series,
     }
 
 

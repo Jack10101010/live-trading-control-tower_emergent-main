@@ -294,8 +294,8 @@ export function useMarketCandles(
     queryFn: () => api.marketCandles({ symbol, provider, count, end: endISO, timeframe }),
     // Live charts poll the service (Phase 24 — polling now, WebSocket later);
     // replay/historical windows are immutable → never stale.
-    staleTime: live ? 4_000 : Infinity,
-    refetchInterval: live ? 5_000 : false,
+    staleTime: live ? 12_000 : Infinity,
+    refetchInterval: live ? 15_000 : false, // 15s: within Polygon free-tier 5 req/min
   });
   return data;
 }
