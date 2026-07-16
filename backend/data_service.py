@@ -64,6 +64,16 @@ class MarketDataProviderPort:
     def latest(self, symbol: str, timeframe: str, count: int) -> list[Bar]:
         raise NotImplementedError  # pragma: no cover
 
+    def history_before(self, symbol: str, timeframe: str, end_s: int, count: int) -> list[Bar]:
+        """The last `count` bars at-or-before `end_s`. Default: progressively widening
+        range queries (remote adapters); stores override with an exact index lookup."""
+        step = TIMEFRAME_S.get(timeframe, TIMEFRAME_S[DEFAULT_TF])
+        for widen in (count + 20, count * 8, count * 64):
+            bars = self.history(symbol, timeframe, end_s - step * widen, end_s)
+            if len(bars) >= count:
+                return bars[-count:]
+        return bars[-count:] if bars else []
+
     def status(self) -> dict:  # pragma: no cover - interface
         return {"providerId": self.provider_id, "available": self.available()}
 
@@ -178,6 +188,13 @@ class HistoricalStore(MarketDataProviderPort):
     def latest(self, symbol: str, timeframe: str, count: int) -> list[Bar]:
         series = self._series(symbol, timeframe)
         return series[-count:]
+
+    def history_before(self, symbol: str, timeframe: str, end_s: int, count: int) -> list[Bar]:
+        # Exact: index of the last bar at-or-before end_s, then count bars back.
+        series = self._series(symbol, timeframe)
+        times = [b["time"] for b in series]
+        hi = bisect.bisect_right(times, end_s)
+        return series[max(0, hi - count):hi]
 
     def coverage(self, symbol: str) -> dict | None:
         m1 = self._load(symbol)
@@ -298,9 +315,7 @@ class DataService:
         if start_s is not None:
             return p.history(symbol, timeframe, start_s, end_s or int(time.time()))
         if end_s is not None:
-            step = TIMEFRAME_S[timeframe]
-            bars = p.history(symbol, timeframe, end_s - step * (count + 20), end_s)
-            return bars[-count:]
+            return p.history_before(symbol, timeframe, end_s, count)
         return p.latest(symbol, timeframe, count)
 
     def m1_window(self, symbol: str, start_s: int, end_s: int) -> list[Bar]:

@@ -123,80 +123,9 @@ def synth_candles(symbol: str, count: int, end_iso: str, timeframe: str = DEFAUL
 
 
 # ---------------------------------------------------------------------------
-# Genuine historical OHLC (Phase 23). Real Dukascopy EURUSD M15 bars bundled at
-# backend/data/<SYMBOL>_M15.csv replace the synthetic series for symbols we have
-# real data for. The candle CONTRACT is unchanged: the last `count` real bars are
-# returned with times re-anchored to the requested `end` (uniform timeframe
-# spacing) so the engine / endpoint / chart are byte-for-byte compatible — only
-# the values are now real. No RNG; deterministic per (symbol, end, count).
+# (Phase 23's bundled-CSV loader was retired in Phase 24: real candles now come
+# from the Market Data Service via the injected candle_source on FixtureProvider.)
 # ---------------------------------------------------------------------------
-
-_REAL_BARS: dict[str, list[dict]] = {}
-
-
-def _load_real_m15(symbol: str) -> list[dict]:
-    """Load + cache the bundled real M15 series for a symbol (open/high/low/close,
-    in chronological order). Returns [] when no bundled data exists for the symbol."""
-    if symbol in _REAL_BARS:
-        return _REAL_BARS[symbol]
-    path = os.path.join(os.path.dirname(__file__), "data", f"{symbol}_M15.csv")
-    bars: list[dict] = []
-    if os.path.exists(path):
-        try:
-            with open(path) as fh:
-                next(fh, None)  # header: time,open,high,low,close,volume
-                for line in fh:
-                    p = line.rstrip("\n").split(",")
-                    if len(p) >= 5:
-                        try:
-                            bars.append({"open": float(p[1]), "high": float(p[2]),
-                                         "low": float(p[3]), "close": float(p[4])})
-                        except ValueError:
-                            continue
-        except OSError:  # pragma: no cover - defensive
-            bars = []
-    _REAL_BARS[symbol] = bars
-    return bars
-
-
-def _real_series(symbol: str, timeframe: str) -> list[dict]:
-    """Real bars for the requested timeframe: M15 as bundled, higher timeframes
-    aggregated from M15 (open=first, high=max, low=min, close=last). M1/M5 (finer
-    than the bundled M15) fall back to the M15 series."""
-    base = _load_real_m15(symbol)
-    if not base:
-        return []
-    m15_ms = _TIMEFRAME_MS["M15"]
-    tf_ms = _TIMEFRAME_MS.get(timeframe, m15_ms)
-    factor = tf_ms // m15_ms
-    if factor <= 1:
-        return base
-    agg: list[dict] = []
-    for j in range(0, len(base), factor):
-        chunk = base[j:j + factor]
-        if not chunk:
-            continue
-        agg.append({"open": chunk[0]["open"], "high": max(c["high"] for c in chunk),
-                    "low": min(c["low"] for c in chunk), "close": chunk[-1]["close"]})
-    return agg
-
-
-def real_candles(symbol: str, count: int, end_iso: str, timeframe: str = DEFAULT_TIMEFRAME) -> list[dict]:
-    """The most recent `count` REAL bars, re-timestamped to end at `end_iso` with
-    uniform timeframe spacing (matching the synthetic convention: last bar at
-    end − step). Returns [] when no bundled real data exists for the symbol."""
-    series = _real_series(symbol, timeframe)
-    if not series:
-        return []
-    step = (_TIMEFRAME_MS.get(timeframe, _TIMEFRAME_MS[DEFAULT_TIMEFRAME])) // 1000
-    end = _iso_to_ms(end_iso) // 1000
-    tail = series[-count:]
-    n = len(tail)
-    return [{
-        "time": end - (n - i) * step,
-        "open": round(b["open"], 5), "high": round(b["high"], 5),
-        "low": round(b["low"], 5), "close": round(b["close"], 5),
-    } for i, b in enumerate(tail)]
 
 
 # ---------------------------------------------------------------------------
@@ -299,11 +228,12 @@ class MarketDataProvider:
     def snapshot(self, symbol: str, timeframe: str, now: str) -> MarketSnapshot:  # pragma: no cover
         raise NotImplementedError
 
-    def candles(self, symbol: str, timeframe: str, count: int, end_iso: str) -> list[dict]:
-        """Deterministic OHLC series for this provider. Base implementation is the
-        single canonical generator (`synth_candles`); every provider shares it, so the
-        ONLY difference between live and replay is which provider is asked. A real feed
-        (future MT5) would override this to return actual terminal bars."""
+    def candles(self, symbol: str, timeframe: str, count: int, end_iso: str,
+                start_iso: str | None = None) -> list[dict]:
+        """OHLC series for this provider. Base implementation is the deterministic
+        synthetic generator (`start_iso` unsupported there — count-anchored only);
+        the ONLY difference between live and replay is which provider is asked.
+        Range-capable providers (Fixture→DataService) honour `start_iso`."""
         return synth_candles(symbol, count, end_iso, timeframe)
 
     def status(self) -> dict:
@@ -324,18 +254,26 @@ class MarketDataProvider:
 
 class FixtureProvider(MarketDataProvider):
     """The default active provider. Snapshots (market-state path) are derived from the
-    frozen fixture regime; CANDLES are now GENUINE historical OHLC (Phase 23) — real
-    Dukascopy EURUSD M15 bars for symbols we have bundled data for, falling back to the
-    deterministic synthetic series for others. Same `candles()` contract as before."""
+    frozen fixture regime; CANDLES come from the injected Market Data Service source
+    (Phase 24 — real bars, real timestamps, range-capable), falling back to the
+    deterministic synthetic series for symbols the service has no data for. The
+    provider never knows where candles came from (Architecture V1.2 §4.2/§13)."""
     provider_id = "fixture"
     name = "Fixture"
 
-    def __init__(self, fixture_regime: Callable[[str], dict | None]):
+    def __init__(self, fixture_regime: Callable[[str], dict | None],
+                 candle_source: Callable[..., list] | None = None):
         self._regime = fixture_regime
+        # candle_source(symbol, timeframe, count, end_iso, start_iso) -> list[Bar]
+        self._candle_source = candle_source
 
-    def candles(self, symbol: str, timeframe: str, count: int, end_iso: str) -> list[dict]:
-        real = real_candles(symbol, count, end_iso, timeframe)
-        return real if real else synth_candles(symbol, count, end_iso, timeframe)
+    def candles(self, symbol: str, timeframe: str, count: int, end_iso: str,
+                start_iso: str | None = None) -> list[dict]:
+        if self._candle_source is not None:
+            bars = self._candle_source(symbol, timeframe, count, end_iso, start_iso)
+            if bars:
+                return bars
+        return synth_candles(symbol, count, end_iso, timeframe)
 
     def snapshot(self, symbol: str, timeframe: str, now: str) -> MarketSnapshot:
         regime = self._regime(symbol)
@@ -485,10 +423,12 @@ class MT5MarketDataProvider(MarketDataProvider):
                 "high": round(float(r["high"]), 5), "low": round(float(r["low"]), 5),
                 "close": round(float(r["close"]), 5)}
 
-    def candles(self, symbol: str, timeframe: str, count: int, end_iso: str) -> list[dict]:
+    def candles(self, symbol: str, timeframe: str, count: int, end_iso: str,
+                start_iso: str | None = None) -> list[dict]:
         """Genuine MT5 OHLC series. Completed bars via `copy_rates_from_pos` (cached per
         (symbol,timeframe); only re-fetched when a new bar has formed), plus the current
         forming bar (position 0) refreshed from the latest bar + live tick every request.
+        `start_iso` ranges are not implemented for MT5 yet (count-anchored only).
         Returns [] when MT5 is unavailable — the engine simply has no MT5 data here."""
         if not self._connect():
             return []
@@ -663,14 +603,16 @@ class MarketDataEngine:
         return self._providers.get(provider_id) if provider_id else self.active_provider()
 
     def candles(self, symbol: str, timeframe: str = DEFAULT_TIMEFRAME, count: int = 220,
-                end_iso: str | None = None, provider_id: str | None = None) -> list[dict]:
+                end_iso: str | None = None, provider_id: str | None = None,
+                start_iso: str | None = None) -> list[dict]:
         """The single candle-series entry point. Delegates to a named provider (replay)
         or the active provider (live) — switching the active provider automatically
-        changes live candles with no chart change. Read-only; produces no side effects."""
+        changes live candles with no chart change. `start_iso` makes it a RANGE query
+        (Phase 24 — historical scrolling). Read-only; produces no side effects."""
         p = self.provider(provider_id)
         if p is None:
             return []
-        return p.candles(symbol, timeframe, count, end_iso or self._now())
+        return p.candles(symbol, timeframe, count, end_iso or self._now(), start_iso)
 
     def symbols(self, provider_id: str | None = None) -> list[dict]:
         p = self.provider(provider_id)

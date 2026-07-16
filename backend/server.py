@@ -26,6 +26,7 @@ import execution as execution_layer
 import strategy as strategy_layer
 import scheduler as scheduler_layer
 import market_data as market_data_layer
+import data_service as data_service_layer
 import risk_engine as risk_layer
 import portfolio as portfolio_layer
 
@@ -897,8 +898,27 @@ _MT5_ALIASES = {"EURUSD": "EURUSD.r", "GBPUSD": "GBPUSD.r", "XAUUSD": "XAUUSD.a"
 _MD_PROVIDER = (os.environ.get("MARKET_DATA_PROVIDER") or "fixture").strip().lower()
 _MT5_MD_ENABLED = _MD_PROVIDER == "mt5" or (os.environ.get("MT5_MARKET_DATA_ENABLED") or "").strip() in ("1", "true", "yes")
 
+# Market Data Service (Phase 24, Architecture V1.2 §4.2): provider adapters
+# (Polygon when POLYGON_API_KEY is set, else the owned historical store — real
+# Dukascopy M1 canonical, higher TFs aggregated) behind one facade. The engine's
+# active provider consumes the service via an injected source; nothing else
+# knows where candles come from.
+_DATA_SERVICE = data_service_layer.DataService()
+
+
+def _service_candles(symbol: str, timeframe: str, count: int, end_iso: str,
+                     start_iso: str | None = None) -> list:
+    to_s = data_service_layer._iso_to_unix
+    return _DATA_SERVICE.candles(
+        symbol, timeframe, count,
+        start_s=to_s(start_iso) if start_iso else None,
+        end_s=to_s(end_iso) if end_iso else None,
+    )
+
+
 _MARKET_DATA_ENGINE = market_data_layer.MarketDataEngine(now_fn=_now_iso)
-_MARKET_DATA_ENGINE.register(market_data_layer.FixtureProvider(_fixture_regime), active=True)
+_MARKET_DATA_ENGINE.register(
+    market_data_layer.FixtureProvider(_fixture_regime, candle_source=_service_candles), active=True)
 _MARKET_DATA_ENGINE.register(market_data_layer.ReplayProvider(_fixture_regime, _replay_session_for))
 _MARKET_DATA_ENGINE.register(market_data_layer.MockLiveProvider(_fixture_regime))
 _MARKET_DATA_ENGINE.register(market_data_layer.MT5MarketDataProvider(
@@ -1312,19 +1332,41 @@ async def market_data_snapshot(symbol: str = "EURUSD", timeframe: str = market_d
 
 @api_router.get("/market-data/candles")
 async def market_data_candles(symbol: str = "EURUSD", timeframe: str = market_data_layer.DEFAULT_TIMEFRAME,
-                              count: int = 220, end: str | None = None, provider: str | None = None):
-    """Deterministic OHLC candle series (Phase 16) — the SINGLE candle pipeline for
-    every chart. `provider=replay` sources from the ReplayProvider; omit `provider`
-    for the active (live) provider. `end` defaults to the fixture reference time so
-    live and replay both land where the fixture trades are. Read-only."""
-    count = max(1, min(1000, count))
+                              count: int = 220, end: str | None = None, provider: str | None = None,
+                              start: str | None = None):
+    """OHLC candle series — the SINGLE candle pipeline for every chart. RANGE-first
+    (Phase 24): pass `start` (+optional `end`) for an explicit range (historical
+    scrolling); pass `end`+`count` for an end-anchored window; pass neither for the
+    latest `count` bars from the live edge. `provider=replay` keeps sourcing from the
+    ReplayProvider (unchanged). Read-only."""
+    count = max(1, min(5000, count))
     end_iso = end or WORLD.get("meta", {}).get("asOf") or _now_iso()
-    series = _MARKET_DATA_ENGINE.candles(symbol, timeframe, count, end_iso, provider)
+    series = _MARKET_DATA_ENGINE.candles(symbol, timeframe, count, end_iso, provider, start)
     return {
         "symbol": symbol, "timeframe": timeframe,
         "provider": provider or _MARKET_DATA_ENGINE._active,
-        "end": end_iso, "count": len(series), "candles": series,
+        "start": start, "end": end_iso, "count": len(series), "candles": series,
     }
+
+
+@api_router.get("/market-data/m1-window")
+async def market_data_m1_window(symbol: str = "EURUSD", start: str = "", end: str = ""):
+    """M1 inspector (Phase 24): the canonical M1 bars inside a parent-bar window —
+    click an M15 candle, see its underlying M1 candles. Read-only."""
+    to_s = data_service_layer._iso_to_unix
+    s, e = to_s(start), to_s(end)
+    if not s or not e or e <= s:
+        raise HTTPException(status_code=422, detail="start and end (ISO) required, end > start")
+    bars = _DATA_SERVICE.m1_window(symbol, s, e)
+    return {"symbol": symbol, "timeframe": "M1", "start": start, "end": end,
+            "count": len(bars), "candles": bars}
+
+
+@api_router.get("/market-data/service")
+async def market_data_service_status():
+    """Market Data Service status: active source, provider availability, store
+    coverage + gap report (Architecture V1.2 §4.2). Read-only."""
+    return _DATA_SERVICE.status()
 
 
 @api_router.get("/market-data/history")
