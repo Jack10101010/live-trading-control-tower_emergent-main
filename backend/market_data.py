@@ -290,9 +290,22 @@ class ReplayProvider(MarketDataProvider):
     name = "Replay"
 
     def __init__(self, fixture_regime: Callable[[str], dict | None],
-                 replay_sessions: Callable[[str], dict | None]):
+                 replay_sessions: Callable[[str], dict | None],
+                 candle_source: Callable[..., list] | None = None):
         self._regime = fixture_regime
         self._session = replay_sessions
+        # Same real-data seam as FixtureProvider: candles come from the Market Data
+        # Service anchored at the replay window end, so replay shows REAL bars rather
+        # than the synthetic template. Falls back to synth only if no source/no data.
+        self._candle_source = candle_source
+
+    def candles(self, symbol: str, timeframe: str, count: int, end_iso: str,
+                start_iso: str | None = None) -> list[dict]:
+        if self._candle_source is not None:
+            bars = self._candle_source(symbol, timeframe, count, end_iso, start_iso)
+            if bars:
+                return bars
+        return synth_candles(symbol, count, end_iso, timeframe)
 
     def snapshot(self, symbol: str, timeframe: str, now: str) -> MarketSnapshot:
         regime = self._regime(symbol)

@@ -919,7 +919,8 @@ def _service_candles(symbol: str, timeframe: str, count: int, end_iso: str,
 _MARKET_DATA_ENGINE = market_data_layer.MarketDataEngine(now_fn=_now_iso)
 _MARKET_DATA_ENGINE.register(
     market_data_layer.FixtureProvider(_fixture_regime, candle_source=_service_candles), active=True)
-_MARKET_DATA_ENGINE.register(market_data_layer.ReplayProvider(_fixture_regime, _replay_session_for))
+_MARKET_DATA_ENGINE.register(market_data_layer.ReplayProvider(
+    _fixture_regime, _replay_session_for, candle_source=_service_candles))
 _MARKET_DATA_ENGINE.register(market_data_layer.MockLiveProvider(_fixture_regime))
 _MARKET_DATA_ENGINE.register(market_data_layer.MT5MarketDataProvider(
     _fixture_regime, available_symbols=_MT5_SYMBOLS, aliases=_MT5_ALIASES, enabled=_MT5_MD_ENABLED))

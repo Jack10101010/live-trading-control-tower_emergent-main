@@ -107,7 +107,7 @@ const sessionLayer: ChartLayer = {
   id: 'session',
   label: 'Sessions',
   group: 'market',
-  defaultOn: true,
+  defaultOn: false,
   build: (ctx) => ({ zones: sessionBands(ctx.candles) }),
 };
 
@@ -115,7 +115,7 @@ const tradesLayer: ChartLayer = {
   id: 'trades',
   label: 'Trades',
   group: 'trades',
-  defaultOn: true,
+  defaultOn: false,
   build: (ctx) => {
     const visible = visibleTrades(ctx);
     const active = activeTrade(ctx);
@@ -147,7 +147,7 @@ const orderBlockLayer: ChartLayer = {
   id: 'orderBlocks',
   label: 'Order Blocks',
   group: 'market',
-  defaultOn: true,
+  defaultOn: false,
   build: (ctx) => ({
     zones: (ctx.orderBlocks ?? [])
       .map((ob) => orderBlockZone(ob, ctx))
@@ -165,7 +165,7 @@ const fairValueGapLayer: ChartLayer = {
   id: 'fairValueGaps',
   label: 'Fair Value Gaps',
   group: 'market',
-  defaultOn: true,
+  defaultOn: false,
   build: (ctx) => ({
     zones: (ctx.fairValueGaps ?? [])
       .map((fvg) => fairValueGapZone(fvg, ctx))
@@ -184,7 +184,7 @@ const liquidityLayer: ChartLayer = {
   id: 'liquidity',
   label: 'Liquidity',
   group: 'market',
-  defaultOn: true,
+  defaultOn: false,
   build: (ctx) => {
     const priceLines: ChartPriceLine[] = [];
     const zones: ChartZone[] = [];
@@ -207,7 +207,7 @@ const swingLayer: ChartLayer = {
   id: 'swings',
   label: 'Swings',
   group: 'market',
-  defaultOn: true,
+  defaultOn: false,
   build: (ctx) => ({ markers: swingMarkers(ctx.marketStructure, ctx) }),
 };
 
@@ -220,7 +220,7 @@ const structureLayer: ChartLayer = {
   id: 'structure',
   label: 'BOS / CHOCH',
   group: 'market',
-  defaultOn: true,
+  defaultOn: false,
   build: (ctx) => {
     const a = structureAnnotations(ctx.marketStructure, ctx);
     return { zones: a.zones, markers: a.markers };

@@ -291,9 +291,15 @@ class PolygonAdapter(MarketDataProviderPort):
         start_s -= start_s % step
         end_s -= end_s % step
         live_edge = end_s >= int(time.time()) - step
+        # Timeframe-aware live-edge TTL: the forming bar only needs refreshing on the
+        # order of the bar interval, so cache it ~half a bar (min 20s, max 5min). This
+        # keeps the free tier's 5-req/min budget from being spent on 15s polls — the
+        # frontend polls 4x/min but most polls are served from cache, leaving budget
+        # for timeframe switches. Under-budget requests => far fewer 429 fallbacks.
+        live_ttl = min(max(step * 0.5, 20.0), 300.0)
         key = (symbol, timeframe, start_s, end_s)
         hit = self._cache.get(key)
-        if hit and (not live_edge or time.time() - hit[0] < 12.0):
+        if hit and (not live_edge or time.time() - hit[0] < live_ttl):
             self.last_from_cache = True
             return hit[1]
         self.last_from_cache = False
@@ -307,16 +313,25 @@ class PolygonAdapter(MarketDataProviderPort):
             return []
 
     def history_before(self, symbol: str, timeframe: str, end_s: int, count: int) -> list[Bar]:
-        # Override the widening default: at most TWO remote attempts. The 3-level
-        # widening tripled every failure against a rate-limited feed, amplifying
-        # the very 429s that caused it.
+        # Widen ONLY to gather more bars, NEVER at the cost of recency. Polygon's free
+        # tier truncates large windows to an OLDER slice: an 8-40 day H1 request reaches
+        # the live edge (07-15), but a 60-day request returns data ending ~2 weeks stale
+        # (07-03). Weekend gaps mean the narrow window often has < count bars, which the
+        # old code "fixed" by widening — silently regressing the chart to stale bars.
+        # Try narrow→wide and keep the result whose LAST bar is most recent (ties broken
+        # by bar count). Fewer-but-recent beats more-but-stale on a live chart.
         step = TIMEFRAME_S.get(timeframe, TIMEFRAME_S[DEFAULT_TF])
-        window = max(count + 20, (3 * 86400) // step)
-        bars = self.history(symbol, timeframe, end_s - step * window, end_s)
-        if len(bars) < count and bars is not None and not self._last_error:
-            wide = max(count * 8, (30 * 86400) // step)
-            bars = self.history(symbol, timeframe, end_s - step * wide, end_s) or bars
-        return bars[-count:] if bars else []
+        best: list[Bar] = []
+        for widen in (max(count + 20, (3 * 86400) // step),
+                      max(count * 8, (30 * 86400) // step)):
+            bars = self.history(symbol, timeframe, end_s - step * widen, end_s)
+            if bars and (not best
+                         or bars[-1]["time"] > best[-1]["time"]
+                         or (bars[-1]["time"] == best[-1]["time"] and len(bars) > len(best))):
+                best = bars
+            if len(best) >= count:
+                break
+        return best[-count:] if best else []
 
     def latest(self, symbol: str, timeframe: str, count: int) -> list[Bar]:
         step = TIMEFRAME_S.get(timeframe, 900)
@@ -405,6 +420,12 @@ class DataService:
                 source = self.polygon.provider_id
                 stale_live = True
             else:
+                # Polygon unavailable and no last-good yet: the bundled store is the
+                # final fallback so the endpoint ALWAYS serves a series (invariant the
+                # UI + tests rely on). This is the only path that can still show older
+                # bars on the live edge; the timeframe-aware cache above keeps Polygon
+                # under its budget so this cold-429 case is rare and self-heals on the
+                # next poll (which serves fresh Polygon or the last-good window).
                 bars = query(self.store)
                 source = self.store.provider_id
                 fell_back = True
