@@ -51,7 +51,15 @@ export interface ChartWorkspaceProps {
   volume?: boolean;
   /** Show the layer-toggle / timeframe bar (default true). */
   controls?: boolean;
+  /** TradingView-style vertical resize: the workspace owns its height and renders a
+   *  drag divider at the bottom (persisted). Replay stays non-resizable (fills its
+   *  own layout). */
+  resizable?: boolean;
+  initialHeight?: number;
 }
+
+const HEIGHT_KEY = 'ct.chartHeight';
+const clampHeight = (h: number) => Math.min(900, Math.max(220, h));
 
 export function ChartWorkspace({
   instrument,
@@ -63,7 +71,33 @@ export function ChartWorkspace({
   className,
   volume = true,
   controls = true,
+  resizable = false,
+  initialHeight = 420,
 }: ChartWorkspaceProps) {
+  // Resizable height (live dashboards): owned here, persisted across sessions.
+  const [chartHeight, setChartHeight] = useState<number>(() => {
+    const saved = Number(typeof localStorage !== 'undefined' ? localStorage.getItem(HEIGHT_KEY) : NaN);
+    return clampHeight(Number.isFinite(saved) && saved > 0 ? saved : initialHeight);
+  });
+  const heightRef = useRef(chartHeight);
+  heightRef.current = chartHeight;
+  const onResizeHandleDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = heightRef.current;
+    let latest = startH;
+    const move = (ev: PointerEvent) => {
+      latest = clampHeight(startH + (ev.clientY - startY));
+      setChartHeight(latest);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      try { localStorage.setItem(HEIGHT_KEY, String(latest)); } catch { /* ignore */ }
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }, []);
   // Timeframe — operator-selectable on live charts; replay stays on M15 (its
   // recorded scenario timeframe).
   const [timeframe, setTimeframe] = useState<string>('M15');
@@ -163,7 +197,10 @@ export function ChartWorkspace({
   const { markers, zones, priceLines } = useMemo(() => buildAnnotations(enabled, ctx), [enabled, ctx]);
 
   return (
-    <div className={cn('flex flex-col min-h-0 h-full', className)}>
+    <div
+      className={cn('flex flex-col min-h-0', resizable ? '' : 'h-full', className)}
+      style={resizable ? { height: chartHeight } : undefined}
+    >
       {controls && (
         <div
           className="flex items-center gap-1.5 px-3 h-8 shrink-0 border-b overflow-x-auto"
@@ -300,6 +337,19 @@ export function ChartWorkspace({
           </div>
         )}
       </div>
+
+      {/* Drag divider (resizable mode) — TradingView-style vertical resize. */}
+      {resizable && (
+        <div
+          data-testid="chart-resize-handle"
+          onPointerDown={onResizeHandleDown}
+          className="h-1.5 shrink-0 cursor-row-resize transition-colors"
+          style={{ background: 'var(--border-subtle)' }}
+          onMouseEnter={(e) => ((e.currentTarget as HTMLDivElement).style.background = 'var(--primary)')}
+          onMouseLeave={(e) => ((e.currentTarget as HTMLDivElement).style.background = 'var(--border-subtle)')}
+          title="Drag to resize chart"
+        />
+      )}
     </div>
   );
 }

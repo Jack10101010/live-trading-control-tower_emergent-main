@@ -168,7 +168,15 @@ export function ChartPanel({
       },
       autoSize: true,
       handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
-      handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
+      // TradingView-style scaling: drag the price axis to scale vertically (this
+      // switches the scale to manual), drag the time axis to stretch bars, wheel to
+      // zoom, double-click either axis to reset back to auto-fit.
+      handleScale: {
+        mouseWheel: true,
+        pinch: true,
+        axisPressedMouseMove: { time: true, price: true },
+        axisDoubleClickReset: { time: true, price: true },
+      },
       kineticScroll: { touch: true, mouse: false },
     });
 

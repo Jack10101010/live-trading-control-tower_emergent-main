@@ -88,11 +88,9 @@ export function MarketDataView() {
     >
       <div className="grid grid-cols-12 gap-4">
         <Panel title={`${pair} · Live Feed`} className="col-span-12" bodyClassName="p-0">
-          <div style={{ height: 340 }}>
-            <FeatureGate flag="charts">
-              <ChartWorkspace instrument={pair} mode="live" count={240} volume />
-            </FeatureGate>
-          </div>
+          <FeatureGate flag="charts">
+            <ChartWorkspace instrument={pair} mode="live" count={240} volume resizable initialHeight={460} />
+          </FeatureGate>
         </Panel>
 
         <Panel title="Feed Health" className="col-span-4">

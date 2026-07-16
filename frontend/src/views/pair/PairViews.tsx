@@ -111,13 +111,12 @@ export function PairDashboardView() {
           </div>
         </Panel>
 
-        {/* Chart — the canonical ChartWorkspace (same rendering path as Replay). */}
+        {/* Chart — the canonical ChartWorkspace (same rendering path as Replay).
+            Resizable: drag the divider under the chart (persisted height). */}
         <Panel title="Recent Price Action" className="col-span-8" bodyClassName="p-0">
-          <div style={{ height: 320 }}>
-            <FeatureGate flag="charts">
-              <ChartWorkspace instrument={pair} mode="live" count={180} volume />
-            </FeatureGate>
-          </div>
+          <FeatureGate flag="charts">
+            <ChartWorkspace instrument={pair} mode="live" count={180} volume resizable initialHeight={420} />
+          </FeatureGate>
         </Panel>
 
         <Panel title="Market State" className="col-span-4">
