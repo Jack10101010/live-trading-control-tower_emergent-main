@@ -329,25 +329,48 @@ export function ChartPanel({
     const volAll = () => volRef.current?.setData(
       deriveVolume(next).map((v) => ({ time: v.time as Time, value: v.value, color: v.color })));
 
-    if (prev.length && next.length && next[0].time === prev[0].time && next.length >= prev.length) {
-      // Tail update (live polling): update the last known bar + any new bars.
-      const volSeries = deriveVolume(next);
-      for (let i = Math.max(0, prev.length - 1); i < next.length; i++) {
-        cs.update(toBar(next[i]));
-        volRef.current?.update({ time: volSeries[i].time as Time, value: volSeries[i].value, color: volSeries[i].color });
-      }
-    } else if (prev.length && next.length && next[next.length - 1].time === prev[prev.length - 1].time && next[0].time < prev[0].time) {
-      // Prepend (historical scrolling): keep the user's view stable.
-      const added = next.length - prev.length;
-      const range = chart.timeScale().getVisibleLogicalRange();
-      cs.setData(next.map(toBar));
-      volAll();
-      if (range) chart.timeScale().setVisibleLogicalRange({ from: range.from + added, to: range.to + added });
-    } else {
-      // Reset (first load / symbol / timeframe change).
+    const applyReset = () => {
+      // Full replace — always valid regardless of prior series contents.
       cs.setData(next.map(toBar));
       volAll();
       chart.timeScale().fitContent();
+    };
+    // Tail update requires next to be a genuine forward extension of prev: the
+    // overlap must match at BOTH ends. Checking only next[0] was too weak — after
+    // keepPreviousData, prev holds the PREVIOUS timeframe's bars, and two
+    // timeframes can share a first-bar timestamp while diverging after, which made
+    // series.update() fire on a non-increasing time ("Cannot update oldest data").
+    const isTail =
+      prev.length > 0 && next.length >= prev.length &&
+      next[0].time === prev[0].time &&
+      next[prev.length - 1].time === prev[prev.length - 1].time;
+    const isPrepend =
+      prev.length > 0 && next.length > 0 &&
+      next[next.length - 1].time === prev[prev.length - 1].time &&
+      next[0].time < prev[0].time;
+    try {
+      if (isTail) {
+        // Tail update (live polling): update the last known bar + any new bars.
+        const volSeries = deriveVolume(next);
+        for (let i = Math.max(0, prev.length - 1); i < next.length; i++) {
+          cs.update(toBar(next[i]));
+          volRef.current?.update({ time: volSeries[i].time as Time, value: volSeries[i].value, color: volSeries[i].color });
+        }
+      } else if (isPrepend) {
+        // Prepend (historical scrolling): keep the user's view stable.
+        const added = next.length - prev.length;
+        const range = chart.timeScale().getVisibleLogicalRange();
+        cs.setData(next.map(toBar));
+        volAll();
+        if (range) chart.timeScale().setVisibleLogicalRange({ from: range.from + added, to: range.to + added });
+      } else {
+        applyReset();
+      }
+    } catch (err) {
+      // Bulletproofing: any residual in-place ordering inconsistency degrades to a
+      // full setData (which cannot throw on ordering) instead of crashing the view.
+      console.warn('[chart] in-place update failed — resetting series', err);
+      applyReset();
     }
     prevCandlesRef.current = next;
     if (next.length) {
