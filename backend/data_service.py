@@ -1,0 +1,316 @@
+"""
+Market Data Service (Phase 24) — Architecture V1.2 §4.2.
+
+Provider adapters behind ONE contract, an OWNED historical store, gap detection,
+timeframe aggregation, and caching. Everything else consumes `DataService` only —
+nothing outside this module knows where candles came from (V1.2 §13.1 rule 2:
+concretes depend on contracts; only this module's registry names the adapters).
+
+Layering (V1.2 §13.1): this is a *driver/infrastructure* module — I/O is allowed
+here and only here. It imports nothing from the engine/UI layers.
+
+  DataService
+    ├─ PolygonAdapter        (genuine Polygon.io REST; requires POLYGON_API_KEY;
+    │                         degrades to unavailable without it — never fakes)
+    └─ HistoricalStore       (owned store: real Dukascopy M1 CSVs, M1 canonical,
+                              higher timeframes aggregated M1→M5/M15/H1/H4/D1)
+
+Timeframes: M1 M5 M15 H1 H4 D1. M1 is the canonical source (locked decision);
+the Polygon adapter MAY use native higher-timeframe aggregates (the abstraction
+lets the implementation choose without affecting consumers — Phase 24 req #4).
+
+Bars are REAL: real timestamps (unix seconds, UTC), real OHLC, real volume.
+Range queries (`start`/`end`) are first-class — consumers ask for ranges, not
+"latest N" (though count-anchored queries are supported for compatibility).
+"""
+from __future__ import annotations
+
+import bisect
+import json
+import os
+import time
+import urllib.request
+import urllib.error
+from datetime import datetime, timezone
+
+TIMEFRAME_S = {"M1": 60, "M5": 300, "M15": 900, "H1": 3600, "H4": 14400, "D1": 86400}
+DEFAULT_TF = "M15"
+
+Bar = dict  # {"time": int, "open": f, "high": f, "low": f, "close": f, "volume": f}
+
+
+def _iso_to_unix(iso: str) -> int:
+    try:
+        return int(datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp())
+    except Exception:
+        return 0
+
+
+# ---------------------------------------------------------------------------
+# Provider contract (V1.2 §11.1: subscribe, history, backfill). `history` is a
+# RANGE query; `latest` covers the live/polling path. Adapters implement this
+# and nothing else in the platform may import them by name.
+# ---------------------------------------------------------------------------
+
+class MarketDataProviderPort:
+    provider_id = "port"
+
+    def available(self) -> bool:  # pragma: no cover - interface
+        return False
+
+    def history(self, symbol: str, timeframe: str, start_s: int, end_s: int) -> list[Bar]:
+        raise NotImplementedError  # pragma: no cover
+
+    def latest(self, symbol: str, timeframe: str, count: int) -> list[Bar]:
+        raise NotImplementedError  # pragma: no cover
+
+    def status(self) -> dict:  # pragma: no cover - interface
+        return {"providerId": self.provider_id, "available": self.available()}
+
+
+# ---------------------------------------------------------------------------
+# Owned historical store — M1 canonical, aggregation, gap detection, caching.
+# Data dir: MARKET_DATA_DIR env (e.g. the full Lux master) or backend/data/history
+# (bundled real Dukascopy slice). File convention: {SYMBOL}_M1.csv
+# (time,open,high,low,close,volume — chronological).
+# ---------------------------------------------------------------------------
+
+class HistoricalStore(MarketDataProviderPort):
+    provider_id = "store"
+
+    def __init__(self, data_dir: str | None = None):
+        self._dir = data_dir or os.environ.get("MARKET_DATA_DIR") or os.path.join(
+            os.path.dirname(__file__), "data", "history")
+        self._m1: dict[str, list[Bar]] = {}      # symbol -> chronological M1 bars
+        self._times: dict[str, list[int]] = {}   # symbol -> bar times (for bisect)
+        self._agg: dict[tuple, list[Bar]] = {}   # (symbol, tf) -> aggregated series
+        self._gaps: dict[str, dict] = {}
+
+    # --- loading & caching ---
+    def _load(self, symbol: str) -> list[Bar]:
+        if symbol in self._m1:
+            return self._m1[symbol]
+        path = os.path.join(self._dir, f"{symbol}_M1.csv")
+        bars: list[Bar] = []
+        if os.path.exists(path):
+            with open(path) as fh:
+                next(fh, None)
+                for line in fh:
+                    p = line.rstrip("\n").split(",")
+                    if len(p) >= 5:
+                        try:
+                            bars.append({
+                                "time": _iso_to_unix(p[0]),
+                                "open": float(p[1]), "high": float(p[2]),
+                                "low": float(p[3]), "close": float(p[4]),
+                                "volume": float(p[5]) if len(p) > 5 and p[5] else 0.0,
+                            })
+                        except ValueError:
+                            continue
+        self._m1[symbol] = bars
+        self._times[symbol] = [b["time"] for b in bars]
+        self._gaps[symbol] = self._detect_gaps(bars)
+        return bars
+
+    @staticmethod
+    def _detect_gaps(bars: list[Bar]) -> dict:
+        """Gap detection over the M1 series. FX closes over the weekend, so runs
+        that span a Saturday are classified separately from true data gaps."""
+        gaps = 0
+        weekend = 0
+        largest = 0
+        for i in range(1, len(bars)):
+            delta = bars[i]["time"] - bars[i - 1]["time"]
+            if delta <= 60:
+                continue
+            # weekend if the missing span contains any Saturday hour
+            t0 = bars[i - 1]["time"]
+            is_weekend = any(
+                datetime.fromtimestamp(t0 + k * 3600, tz=timezone.utc).weekday() == 5
+                for k in range(0, min(int(delta // 3600) + 1, 72), 6)
+            )
+            if is_weekend:
+                weekend += 1
+            else:
+                gaps += 1
+                largest = max(largest, delta)
+        return {"dataGaps": gaps, "weekendClosures": weekend, "largestGapS": largest}
+
+    # --- aggregation (M1 canonical → higher timeframes; V1.2 locked decision) ---
+    def _series(self, symbol: str, timeframe: str) -> list[Bar]:
+        if timeframe == "M1":
+            return self._load(symbol)
+        key = (symbol, timeframe)
+        if key in self._agg:
+            return self._agg[key]
+        m1 = self._load(symbol)
+        step = TIMEFRAME_S.get(timeframe, TIMEFRAME_S[DEFAULT_TF])
+        out: list[Bar] = []
+        cur: Bar | None = None
+        for b in m1:
+            bucket = b["time"] - (b["time"] % step)
+            if cur is None or cur["time"] != bucket:
+                if cur is not None:
+                    out.append(cur)
+                cur = {"time": bucket, "open": b["open"], "high": b["high"],
+                       "low": b["low"], "close": b["close"], "volume": b["volume"]}
+            else:
+                cur["high"] = max(cur["high"], b["high"])
+                cur["low"] = min(cur["low"], b["low"])
+                cur["close"] = b["close"]
+                cur["volume"] += b["volume"]
+        if cur is not None:
+            out.append(cur)
+        self._agg[key] = out
+        return out
+
+    # --- port implementation ---
+    def available(self) -> bool:
+        return True
+
+    def history(self, symbol: str, timeframe: str, start_s: int, end_s: int) -> list[Bar]:
+        series = self._series(symbol, timeframe)
+        times = [b["time"] for b in series]
+        lo = bisect.bisect_left(times, start_s)
+        hi = bisect.bisect_right(times, end_s)
+        return series[lo:hi]
+
+    def latest(self, symbol: str, timeframe: str, count: int) -> list[Bar]:
+        series = self._series(symbol, timeframe)
+        return series[-count:]
+
+    def coverage(self, symbol: str) -> dict | None:
+        m1 = self._load(symbol)
+        if not m1:
+            return None
+        return {"firstBar": m1[0]["time"], "lastBar": m1[-1]["time"], "m1Bars": len(m1),
+                **self._gaps.get(symbol, {})}
+
+    def symbols(self) -> list[str]:
+        try:
+            return sorted(f[:-7] for f in os.listdir(self._dir) if f.endswith("_M1.csv"))
+        except OSError:
+            return []
+
+    def status(self) -> dict:
+        return {"providerId": self.provider_id, "available": True, "dataDir": self._dir,
+                "symbols": {s: self.coverage(s) for s in self.symbols()}}
+
+
+# ---------------------------------------------------------------------------
+# Polygon.io adapter — GENUINE REST integration (no simulation). Requires
+# POLYGON_API_KEY; without it, `available()` is False and the service falls
+# back to the historical store. Uses Polygon's NATIVE aggregates per timeframe
+# (permitted by the abstraction; consumers never see the difference).
+# ---------------------------------------------------------------------------
+
+_POLY_SPAN = {"M1": (1, "minute"), "M5": (5, "minute"), "M15": (15, "minute"),
+              "H1": (1, "hour"), "H4": (4, "hour"), "D1": (1, "day")}
+
+
+class PolygonAdapter(MarketDataProviderPort):
+    provider_id = "polygon"
+
+    def __init__(self, api_key: str | None = None, timeout_s: float = 6.0):
+        self._key = api_key if api_key is not None else os.environ.get("POLYGON_API_KEY", "")
+        self._timeout = timeout_s
+        self._last_error: str | None = None
+        self._cache: dict[tuple, tuple[float, list[Bar]]] = {}  # key -> (fetched_at, bars)
+
+    def available(self) -> bool:
+        return bool(self._key)
+
+    def _fetch(self, symbol: str, timeframe: str, start_s: int, end_s: int) -> list[Bar]:
+        mult, span = _POLY_SPAN.get(timeframe, _POLY_SPAN[DEFAULT_TF])
+        url = (f"https://api.polygon.io/v2/aggs/ticker/C:{symbol}/range/{mult}/{span}/"
+               f"{start_s * 1000}/{end_s * 1000}?adjusted=true&sort=asc&limit=50000"
+               f"&apiKey={self._key}")
+        req = urllib.request.Request(url, headers={"User-Agent": "control-tower/1.0"})
+        with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            payload = json.loads(resp.read().decode())
+        return [{"time": int(r["t"] // 1000), "open": float(r["o"]), "high": float(r["h"]),
+                 "low": float(r["l"]), "close": float(r["c"]), "volume": float(r.get("v", 0))}
+                for r in payload.get("results", []) or []]
+
+    def history(self, symbol: str, timeframe: str, start_s: int, end_s: int) -> list[Bar]:
+        if not self.available():
+            return []
+        # Closed historical ranges are immutable → cache permanently; the range
+        # touching "now" gets a short TTL so the forming bar keeps updating.
+        live_edge = end_s >= int(time.time()) - TIMEFRAME_S.get(timeframe, 900)
+        key = (symbol, timeframe, start_s, end_s)
+        hit = self._cache.get(key)
+        if hit and (not live_edge or time.time() - hit[0] < 5.0):
+            return hit[1]
+        try:
+            bars = self._fetch(symbol, timeframe, start_s, end_s)
+            self._last_error = None
+            self._cache[key] = (time.time(), bars)
+            return bars
+        except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError) as exc:
+            self._last_error = f"polygon: {exc.__class__.__name__}"
+            return []
+
+    def latest(self, symbol: str, timeframe: str, count: int) -> list[Bar]:
+        step = TIMEFRAME_S.get(timeframe, 900)
+        now = int(time.time())
+        return self.history(symbol, timeframe, now - step * (count + 10), now)[-count:]
+
+    def status(self) -> dict:
+        return {"providerId": self.provider_id, "available": self.available(),
+                "configured": bool(self._key), "note": self._last_error or
+                (None if self._key else "POLYGON_API_KEY not set")}
+
+
+# ---------------------------------------------------------------------------
+# The service facade — the ONLY thing the rest of the platform consumes.
+# Provider preference: Polygon when configured (live-capable), historical store
+# otherwise. Selection is config (env), never automatic mid-flight switching.
+# ---------------------------------------------------------------------------
+
+class DataService:
+    def __init__(self, store: HistoricalStore | None = None,
+                 polygon: PolygonAdapter | None = None):
+        self.store = store or HistoricalStore()
+        self.polygon = polygon or PolygonAdapter()
+        preferred = (os.environ.get("MARKET_DATA_SOURCE") or "auto").lower()
+        if preferred == "polygon":
+            self._order = [self.polygon, self.store]
+        elif preferred == "store":
+            self._order = [self.store]
+        else:  # auto: polygon when genuinely configured, else store
+            self._order = ([self.polygon, self.store] if self.polygon.available()
+                           else [self.store])
+
+    def _first(self) -> MarketDataProviderPort:
+        for p in self._order:
+            if p.available():
+                return p
+        return self.store
+
+    def candles(self, symbol: str, timeframe: str = DEFAULT_TF, count: int = 220,
+                start_s: int | None = None, end_s: int | None = None) -> list[Bar]:
+        """Range-first query. start+end → that range; end only → `count` bars
+        ending at/before end; neither → the latest `count` bars (live edge)."""
+        timeframe = timeframe if timeframe in TIMEFRAME_S else DEFAULT_TF
+        count = max(1, min(5000, count))
+        p = self._first()
+        if start_s is not None:
+            return p.history(symbol, timeframe, start_s, end_s or int(time.time()))
+        if end_s is not None:
+            step = TIMEFRAME_S[timeframe]
+            bars = p.history(symbol, timeframe, end_s - step * (count + 20), end_s)
+            return bars[-count:]
+        return p.latest(symbol, timeframe, count)
+
+    def m1_window(self, symbol: str, start_s: int, end_s: int) -> list[Bar]:
+        """M1 magnifier support: the canonical M1 bars inside a window."""
+        return self._first().history(symbol, "M1", start_s, end_s)
+
+    def status(self) -> dict:
+        active = self._first()
+        return {
+            "active": active.provider_id,
+            "timeframes": list(TIMEFRAME_S.keys()),
+            "providers": [self.polygon.status(), self.store.status()],
+        }
