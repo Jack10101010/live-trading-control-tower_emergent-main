@@ -1,0 +1,54 @@
+{
+  "summary": "Iteration 3 frontend BREADTH verification of the Control Tower app-shell + new pages. Backend suite re-run as a smoke-check: 19/19 pytest tests still pass (no backend touched this iteration). Frontend: ALL spec-listed items verified — (1) `/` → `/fleet` redirect works; Fleet Overview renders as before (3 deployment cards, System Confidence 82 CAUTION). (2) Sidebar (ScopeNavigator) shows FULL new Global section — 9 primary links (Fleet Overview, Broker Health, Accounts & Protection, Market Data, Deployments, Strategy Packages, Edge Monitor, System, Settings) + 2 deferred (Version History, Package Comparison) with Lock icons. (3) Pairs section shows EURUSD expandable — all 9 tab labels (Dashboard, Policy Engine, Replay, Orders, Trades, Analytics, Edge Monitor, Strategy Health, Activity Timeline) visible when expanded. Ghost placeholder rows GBPUSD/XAUUSD/NQ/ES/BTC render dimmed with Lock icons and cursor-not-allowed (non-clickable — by design). (4) `/pair/EURUSD` redirects to `/pair/EURUSD/dashboard`. (5) PairWorkspace top tab strip has exactly 9 tabs in the correct order; every tab navigates without JS errors, all `<h1>` renders `EURUSD` heading + subtitle. (6) All 4 new global pages render: Market Data (chart canvas + Feed Health list + Market State + latency histogram + snapshot integrity KPIs), Deployments (11-column table + 4 KPI cards + Coming-Soon), Strategy Packages (Active Package KV + 2-row All Packages table + 'Compare versions →' link), Settings (6 SettingsSections, 14 feature-flag cards, 8 <kbd> shortcut chips; Midnight Navy theme button changes `data-theme` from `console-dark` → `midnight-navy`; Premium Light is disabled). (7) Pair views: Trades tab-strip has 4 chips (Open 1 / Closed 1 / Ghost 3 / Blocked 5) — clicking swaps the table content; row click opens Inspector (inspector-close testid present). Orders shows Pending Orders section. Pair Edge Monitor has 6 metric stats + Comparisons KV + Expectancy trajectory. Strategy Health shows a circular Health Score gauge (numeric 47/100, band badge), Cell Coverage grid with total 144 cells, Package Integrity KV, Component Versions list. Activity Timeline shows category filter chips (All 3, policy 1, trade 1, manual 1) and 3-event 5-column list. (8) ContextBar breadcrumbs update for every new route: `/market-data` → 'Global > Market Data'; `/pair/EURUSD/policy` → 'Fleet > FTMO > Funded USD > EURUSD > Policy'. (9) CommandPalette (⌘K) opens and searching 'orders' surfaces 'Open EURUSD · Orders' in the Pair group. (10) EventDock (event-dock-toggle) renders on every route tested. (11) Regression: Policy Engine still shows 144 matrix cells, 6 lens buttons, all 6 rail cards (Active Package, Recommendations, Drafts, Native Validation, Promotion Ladder, Live Overrides), and clicking pkg-edit-btn fires the sonner toast 'Read-only preview — Mutation flows arrive once the backend policy service is wired.' No page errors or console errors captured across the run.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Deployments toolbar",
+        "issues": [
+          "Only ONE lane chip ('live 1') renders next to the 'All 3' chip because the fixture has three deployments all in the same lane. Spec says 'lane toolbar chips with counts' (plural). Current behaviour is correct given the data — but once more lanes are seeded (paper/mock/shadow) the row should still fit; consider a wrap or overflow-x on the toolbar for future-proofing."
+        ]
+      },
+      {
+        "screen": "PairOrdersView placeholder charts",
+        "issues": [
+          "Two placeholder charts (Execution Queue Depth, Rejections 24h) do not render <canvas> — they use pure-SVG PlaceholderChart. This matches the spec's intent (placeholder = shape-only) but any test asserting a canvas on this page will fail. Not a bug, just noting for future selectors."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_control_tower_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "None blocking. Optional polish suggestions listed under design_issues."
+  ],
+  "critical_code_review_comments": [
+    "ScopeNavigator.tsx keeps a local `expanded` Set<string> in useState. State is lost on remount (e.g. when the shell is re-created after a route boundary error). If persistence of the expansion is desirable, promote it to shellStore (Zustand) alongside `activePair`.",
+    "PairViews.tsx (PairOrdersView) imports { Play, Pause, RotateCw } from lucide-react but never uses them. Small dead-import; ESLint would flag `@typescript-eslint/no-unused-vars`. Same file imports `Filter` and `Download` which ARE used.",
+    "GlobalViews.tsx imports { Radio, Wifi, Shield } from lucide-react but never uses them (Radio is used in SettingsSection? no, it isn't). Prune to keep the icon bundle lean.",
+    "GlobalViews.tsx SettingsView `notYet(name)` toast handler is attached to a button styled `cursor-not-allowed` — clicks still fire (button has no `disabled` attr). This is the same read-only-preview pattern as Policy Engine and is intentional; consider adding `aria-disabled=\"true\"` for a11y parity.",
+    "PairStrategyHealthView.tsx computes `healthScore` in a formula that mixes (native/total)*0.5 + (allowed/total)*0.5 — currently yields 47 (band 'At risk'). Ensure the 'band' thresholds (>70 healthy, >50 caution, else at risk) still hold once real fixtures land or the score will jump around visibly on every fixture refresh.",
+    "PairWorkspace.tsx `Navigate to /pair/${pair}/dashboard` runs INSIDE the component instead of using a nested index route. It works but a `<Route index element={<Navigate to='dashboard' replace/>} />` inside `/pair/:pairId` in App.tsx is idiomatic and avoids the re-render before the redirect fires.",
+    "Deployments cell renders `d.deploymentId.slice(0, 20) + '…'` — a full deployment id can be much longer; consider a monospace tooltip so operators can copy the full id from the row without opening the Inspector.",
+    "PairOrdersView's Coming-Soon block is inside the same panel column but sits after a two-column chart grid; on <1280px viewports the Coming-Soon and the chart grid re-flow to a single column which is fine, but the ComingSoon callout ends up visually detached from the Orders table. Consider grouping in a single Panel or adding a divider.",
+    "No error boundary is registered per-route — if any view throws in prod the whole shell falls back to the AppShell error boundary (if one exists) or a blank frame. Given the number of new routes (14 total) and their placeholder wiring, a single ErrorBoundary at `<Route path='/pair/:pairId'>` and one at the global routes group would isolate blast radius."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "100%"
+  },
+  "test_credentials": "N/A — no auth in v1",
+  "seed_data_creation": "None — same frozen /app/backend/fixtures/world.v1.json used by iterations 1 and 2.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend regression suite unchanged and still passes: /app/backend/tests/test_control_tower_api.py (19 tests, junit at /app/test_reports/pytest/pytest_results.xml). New DOM anchors verified: PairWorkspace tab strip has 9 `<a>` children under [data-testid='pair-workspace-tabs']; Deployments table has exactly 11 `<th>`; Settings has 14 feature-flag cells in `.grid.grid-cols-3 > div`, 8 <kbd> elements, and 3 theme buttons ('Console Dark' active by default, 'Midnight Navy' clickable, 'Premium Light (deferred)' disabled). Trades has 4 filter chips (Open/Closed/Ghost/Blocked) with counts 1/1/3/5. Ghost pair sidebar rows (GBPUSD/XAUUSD/NQ/ES/BTC) are <div>s (not <a>/<button>), by design; do NOT try to click them. Innerbody text uses CSS text-transform: uppercase on panel titles — `page.innerText` returns the transformed string in some browsers, so match by uppercase substring (e.g. `body.includes('OPERATOR PROFILE')`, not 'Operator Profile') if you assert against innerText. Command Palette id is [data-testid='command-palette']; input id [data-testid='command-palette-input']. Theme toggling writes `document.documentElement.dataset.theme` (values 'console-dark' | 'midnight-navy'). All 3 iterations' testids are intact.",
+  "rca of the issue": "N/A — no bugs found. Iteration 3 delivered exactly the breadth the spec asked for: 9 global workspaces (7 real + 2 deferred placeholders) and 9 pair-scoped tabs, all wired into ScopeNavigator, ContextBar (breadcrumb map), CommandPalette (Navigate + Pair groups), and PairWorkspace tab strip. No JS/console errors, no page errors, no regressions in prior policy-engine / matrix / event-dock / theme-toggle / global-kill flows."
+}

@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 2 end-to-end verification of Control Tower after Vite/TanStack Query refactor. Backend: 19/19 pytest tests still pass (no regressions in /api/*). Frontend: All four spec-listed new features verified. (1) TanStack Query wiring works — no fixture imports remain in the tree (`grep -rn FixtureDataProvider frontend/src` returns 0 hits). Navigating /fleet → /pair/EURUSD/overview → /pair/EURUSD/policy → /pair/EURUSD/replay keeps `/api/world` cached (only 2 total /api/world requests over full run, dedupe working; feature-flags fetched exactly once). (2) Policy Engine rail renders the full 6-card stack (Active Package, Recommendations (2), Drafts (1), Native Validation (latest), Promotion Ladder, Live Overrides). All read-only affordances present with proper disabled styling. pkg-edit-btn + draft-validate-* + draft-promote-* + deploy-btn all have cursor-not-allowed + opacity-60 + Lock icons; clicking pkg-edit-btn fires the sonner toast 'Read-only preview — Mutation flows arrive once the backend policy service is wired.' exactly as spec'd. (3) ChartPanel: /pair/EURUSD/replay renders a real TradingView Lightweight Charts canvas — `[data-testid='chart-panel-EURUSD'] canvas` returns 7 canvas nodes (LWC uses multiple canvases per pane for wicks/candles/grid/crosshair) and green/red candlesticks are visible; no drawing tools / no click-to-trade / no annotations on the chart itself; play/pause/skip toolbar renders above. (4) Version History (/version-history) and Package Comparison (/package-comparison) placeholders render correctly with breadcrumbs, timeline (v18 active/NATIVE + v17 superseded/NATIVE), read-only lock badges, and Phase-2 callouts. ScopeNavigator Global section contains all 7 expected links in order. Iteration-1 regression suite intact: 144 matrix cells, 6 lens buttons, command palette, event dock, theme toggle, global kill, deployment card click-through — all still working.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "/api/world initial fetch",
+        "issue": "Two /api/world requests fire on initial page load in dev-mode instead of one. Likely caused by React.StrictMode double-render in Vite dev interacting with useSuspenseQuery's promise throwing before TanStack Query can dedupe. TanStack Query dedupes in-flight fetches by queryKey; observed 2 network hits, so either (a) the query is being called with a slightly different key on second render, or (b) StrictMode's synchronous double-invocation issues both fetches before either resolves. Not user-visible and staleTime:Infinity means all subsequent navigations reuse the cache (verified — no further /api/world hits after nav between /fleet, /pair/EURUSD/overview, /pair/EURUSD/policy, /pair/EURUSD/replay). Impact: minor perf. Production build (no StrictMode + no dev double-mount) should collapse to 1 request. Spec called out 'exactly one' — flagging for main agent awareness.",
+        "affected_selectors": []
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_control_tower_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: Investigate the extra /api/world request in dev (React.StrictMode + useSuspenseQuery double-fetch). If undesirable, either drop StrictMode or wrap the app in a stable queryClient (already stable). Non-blocking — cache still works and no subsequent refetches occur.",
+    "Consider adding an explicit `text-testid` on the Native Validation card content so future testers don't have to rely on textContent scraping. Same for the Promotion Ladder stage indicators (e.g. `promotion-stage-live`, `promotion-stage-draft`) if you want stage-level assertions in future regressions.",
+    "The spec text listed 'FIVE cards' but then enumerated SIX card titles (Active Package, Recommendations, Drafts, Native Validation, Promotion Ladder, Live Overrides) — implementation renders all six. Just a spec-vs-doc typo, code matches the enumerated list."
+  ],
+  "critical_code_review_comments": [
+    "useRepository.ts:90 caches expanded matrix via WeakMap keyed on the world object — clean pattern that survives TanStack cache re-references but will re-expand if the query ever refetches into a new object. With staleTime:Infinity today it's a one-shot expansion; still worth a comment noting the invalidation semantics.",
+    "api.ts:11 relies on `import.meta.env.REACT_APP_BACKEND_URL`, exposed via Vite's `define` block in vite.config. This works but is non-idiomatic; standard Vite convention is `VITE_*` env vars. The current define shim is intentional (to preserve the CRA-era .env key) — fine, but drop a comment in api.ts pointing to vite.config so a future contributor doesn't get confused when a plain `import.meta.env.REACT_APP_*` reference doesn't resolve elsewhere.",
+    "PolicyEngineView.tsx:410 — DisabledActionButton uses onClick={onClick} on a button that also has cursor-not-allowed. It's semantically not-disabled (no HTML `disabled` attribute) so the click *does* fire and shows the toast — which is the intended behaviour. Just noting that this diverges from strict a11y (a truly disabled button would neither be focusable nor clickable). Given the read-only-preview UX, current impl is correct; consider `aria-disabled='true'` for screen readers.",
+    "ChartPanel.tsx:99 imports synthCandles from matrixExpand.ts — fine for v1 but the naming (`matrixExpand`) is now misleading since it also hosts unrelated chart data synthesis. Consider renaming to `synth.ts` or splitting into two modules before more helpers accumulate.",
+    "ReplayView.tsx:16 uses `session as any` to escape the WorldFixture type — the replaySessions shape should be added to types/domain.ts to remove the escape hatch (currently only 1 escape hatch in the whole view layer, so low priority but easy win)."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "100%"
+  },
+  "test_credentials": "N/A — no auth in v1",
+  "seed_data_creation": "None — same frozen /app/backend/fixtures/world.v1.json used by iteration 1.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend regression suite: /app/backend/tests/test_control_tower_api.py (19 tests, pytest -q, JUnit at /app/test_reports/pytest/pytest_results.xml). All new testids reachable in DOM: pkg-edit-btn, draft-validate-{last8}, draft-promote-{last8}, deploy-btn, chart-panel-EURUSD, recommendation-{last8}, draft-{last8}. The Policy Engine rail is scrollable inside `aside.border-l` — to reach Promotion Ladder / Live Overrides in Playwright use `document.querySelector('aside.border-l').scrollTop = 9999`. Lightweight Charts renders 7 canvases per instrument (grid + candles + wicks + crosshair etc.) — assert `>=1`, not `==1`. TanStack Query fires 2 /api/world requests on cold load in dev (StrictMode). This is a known dev-mode idiosyncrasy that would need investigation only if production builds also do it. All iteration-1 tests still pass unchanged.",
+  "rca of the issue": "N/A — no bugs found this iteration. The only observation (2× /api/world on cold load) is dev-mode React.StrictMode behaviour interacting with useSuspenseQuery, not a functional defect."
+}

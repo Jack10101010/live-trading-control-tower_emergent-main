@@ -1,0 +1,189 @@
+{
+  "meta": {
+    "contractVersion": "1.0.0",
+    "fixtureVersion": "world.v1",
+    "asOf": "2026-07-01T09:14:22Z",
+    "note": "One coherent universe instantiating TRACK-B-CANONICAL-CONTRACTS.md. Policy matrices are abbreviated to a representative subset of cells (full matrices are 144 cells/instrument). Every id cross-references a real sibling."
+  },
+
+  "vocabulary": {
+    "domain": "FX",
+    "sessions": ["London", "Lull", "NewYork", "NY_PM", "Asia", "Outside"],
+    "structures": ["BOS", "CHoCH"],
+    "directions": ["Long", "Short"],
+    "marketStates": ["BullExpand", "BullCompress", "BullChop", "BearExpand", "BearCompress", "BearChop"],
+    "rrLadder": [0.5,0.6,0.7,0.8,0.9,1.0,1.25,1.5,1.75,2.0,2.25,2.5,2.75,3.0,3.25,3.5,3.75,4.0,4.25,4.5,4.75,5.0]
+  },
+
+  "operators": [
+    { "operatorId": "op_01J8Z5A2C4E6G8J0M2P4R6T8V0XZ", "displayName": "Jack (Lead)", "startedAt": "2026-07-01T08:02:10Z", "lastSeenAt": "2026-07-01T09:14:00Z", "permissions": ["read","operate","manage","editPolicy","validate","promote","override","deploy","deployLive","safety"], "activeScope": "EURUSD", "handoffNote": null }
+  ],
+
+  "brokers": [
+    { "brokerId": "brk_01J8Z3E5G7J9M1P3R5T7V9X1Z3B", "adapterType": "mt5", "venue": "FTMO", "status": "connected", "lastHeartbeat": "2026-07-01T09:14:20Z", "lastReconcileAt": "2026-07-01T09:14:00Z", "capabilities": { "trailingStop": true, "minLot": 0.01, "lotStep": 0.01 } },
+    { "brokerId": "brk_01J8Z3F8K1M4P7R0T3V6X9Z2B5D", "adapterType": "mt5", "venue": "MT5-Demo", "status": "connected", "lastHeartbeat": "2026-07-01T09:14:19Z", "lastReconcileAt": "2026-07-01T09:13:58Z", "capabilities": { "trailingStop": true, "minLot": 0.01, "lotStep": 0.01 } }
+  ],
+
+  "accounts": [
+    { "accountId": "acct_01J8Z4K7M9P2R4T6V8X0Z2B4D6F", "brokerId": "brk_01J8Z3E5G7J9M1P3R5T7V9X1Z3B", "type": "funded", "baseCurrency": "USD", "timezone": "Europe/Prague", "balance": 100000.00, "equity": 100412.00,
+      "fundedRules": { "accountSize": 100000, "dailyLossLimit": 5000, "maxDrawdown": 10000, "ddType": "trailing", "trailingAnchor": "highwater", "profitTarget": 10000, "minTradingDays": 4, "consistencyRule": null, "newsRestrictions": true, "weekendHolding": false, "maxLot": 20, "maxRiskExposure": 0.02, "accountTimezone": "Europe/Prague", "dailyResetTime": "00:00" } },
+    { "accountId": "acct_01J8Z4M0P3R5T7V9X1Z3B5D7F9H", "brokerId": "brk_01J8Z3F8K1M4P7R0T3V6X9Z2B5D", "type": "demo", "baseCurrency": "USD", "timezone": "UTC", "balance": 50000.00, "equity": 50000.00, "fundedRules": null }
+  ],
+
+  "marketStateSnapshots": [
+    { "instrument": "EURUSD", "state": "BullExpand", "confidence": 0.96, "confirmed": true, "stateKnownAt": "2026-07-01T00:00:00Z", "shiftedDays": 1, "source": "engine", "modelVersion": "regime@2.3.0", "components": { "ema": 1.08910, "emaRelation": "above", "pxVsEma": 0.0043, "bbwValue": 0.0121, "bbwThreshold": 0.0090, "adxValue": 27.4 }, "asOf": "2026-07-01T00:00:05Z" }
+  ],
+
+  "packages": [
+    {
+      "packageId": "pkg_01J8Z6QK3E9R7F2M4C0AB5D6EF", "version": 18, "packageHash": "sha256:7f3a91c2b8e0d5a4f1c3e7b9d2a6c4f80b1e3d5a7c9f2b4d6e8a0c1f3b5d7e9a1",
+      "contractVersion": "1.0.0", "label": "EURUSD Balanced — NY discipline", "stage": "production", "status": "active", "domain": "FX", "instruments": ["EURUSD"],
+      "componentVersions": { "marketStateModel": "regime@2.3.0", "policyEngine": "policy-engine@1.4.0", "executionPolicy": "exec-policy@2.0.0", "protection": "protection@1.2.0", "strategyBrain": "strategy-brain@1.1.0", "configHash": "sha256:aa17f0c9d3b2e5148a6c0f7b9d1e3a5c7f9b2d4e6a8c0f1b3d5e7a9c1f3b5d7e9" },
+      "researchLineage": { "labProject": "fx-ob-research-lab", "researchRunId": "EURUSD_M15_RR3.3_real", "researchVersion": "research@2026-06-30", "labCommit": "e6e9fbb", "exportedAt": "2026-06-30T18:00:00Z" },
+      "validation": { "badge": "NATIVE", "nDecided": 412, "portfolioDeltas": { "netR": 0.18, "drawdown": -0.4, "stability": 0.91 }, "validationId": "nv_01J8ZBK5R8U1X4A7D0G3J6M9P2S" },
+      "parentVersion": 17, "createdAt": "2026-06-30T18:05:00Z", "promotedAt": "2026-06-30T20:11:00Z", "promotedBy": "op_01J8Z5A2C4E6G8J0M2P4R6T8V0XZ", "supersededBy": null, "notes": "NY BOS Short discipline tightened; BullExpand target raised.",
+      "policy": { "matrices": { "EURUSD": {
+        "instrument": "EURUSD",
+        "cohortAxis": { "sessions": ["London","Lull","NewYork","NY_PM","Asia","Outside"], "structures": ["BOS","CHoCH"], "directions": ["Long","Short"] },
+        "cohortBaseTargets": { "london:BOS:long": 2.5, "newYork:BOS:short": 3.0, "asia:CHoCH:long": 2.0 },
+        "cells": {
+          "london:BOS:long:BullExpand": { "policyCellKey": "london:BOS:long:BullExpand", "cohort": { "session": "London", "structure": "BOS", "direction": "Long", "instrument": "EURUSD" }, "marketState": "BullExpand", "eligibility": { "action": "DIRECTION_AWARE", "mode": "Custom", "resolvedAllowed": true }, "target": { "rr": 2.75, "source": "cell" }, "risk": { "pct": 1.0, "source": "cell" }, "evidence": { "badge": "NATIVE", "sampleSize": 67, "expectancyR": 0.41, "winRate": 0.34, "profitFactor": 1.62, "confidence": 0.96, "inSampleCaveat": "incumbent fit on ~same history" }, "recommendationStatus": "deployed", "provenanceRecommendationId": "rec_01J8ZB3C6F9K2N5Q8T1W4Z7A0D" },
+          "newYork:BOS:short:BearChop": { "policyCellKey": "newYork:BOS:short:BearChop", "cohort": { "session": "NewYork", "structure": "BOS", "direction": "Short", "instrument": "EURUSD" }, "marketState": "BearChop", "eligibility": { "action": "DISABLE", "mode": "Block", "resolvedAllowed": false }, "target": { "rr": 3.0, "source": "cohortBase" }, "risk": { "pct": 0.0, "source": "cell" }, "evidence": { "badge": "NATIVE", "sampleSize": 51, "expectancyR": -0.12, "winRate": 0.28, "profitFactor": 0.88, "confidence": 0.9, "inSampleCaveat": "negative expectancy — disabled" }, "recommendationStatus": "deployed", "provenanceRecommendationId": null },
+          "asia:CHoCH:long:BullChop": { "policyCellKey": "asia:CHoCH:long:BullChop", "cohort": { "session": "Asia", "structure": "CHoCH", "direction": "Long", "instrument": "EURUSD" }, "marketState": "BullChop", "eligibility": { "action": "STATE_ONLY", "mode": "Custom", "resolvedAllowed": true }, "target": { "rr": 2.0, "source": "cohortBase" }, "risk": { "pct": 0.5, "source": "cell" }, "evidence": { "badge": "RESCORE", "sampleSize": 19, "expectancyR": 0.14, "winRate": 0.31, "profitFactor": 1.18, "confidence": 0.62, "inSampleCaveat": "thin sample — risk reduced" }, "recommendationStatus": "none", "provenanceRecommendationId": null },
+          "london:CHoCH:short:BearExpand": { "policyCellKey": "london:CHoCH:short:BearExpand", "cohort": { "session": "London", "structure": "CHoCH", "direction": "Short", "instrument": "EURUSD" }, "marketState": "BearExpand", "eligibility": { "action": "DIRECTION_AWARE", "mode": "Custom", "resolvedAllowed": true }, "target": { "rr": 1.75, "source": "cell" }, "risk": { "pct": 1.0, "source": "cell" }, "evidence": { "badge": "RESCORE", "sampleSize": 22, "expectancyR": 0.23, "winRate": 0.36, "profitFactor": 1.31, "confidence": 0.7, "inSampleCaveat": "candidate for target increase" }, "recommendationStatus": "validating", "provenanceRecommendationId": "rec_01J8ZB9H4M7Q0T3W6Z9C2F5J8L1" }
+        }
+      } } }
+    },
+    {
+      "packageId": "pkg_01J8Z6QK3E9R7F2M4C0AB5D6EF", "version": 17, "packageHash": "sha256:5c1d0b7a9e2f4c6b8d0a2c4e6f8b1d3a5c7e9f0b2d4a6c8e0f1b3d5a7c9e1f3b",
+      "contractVersion": "1.0.0", "label": "EURUSD Balanced (prior)", "stage": "production", "status": "superseded", "domain": "FX", "instruments": ["EURUSD"],
+      "componentVersions": { "marketStateModel": "regime@2.3.0", "policyEngine": "policy-engine@1.4.0", "executionPolicy": "exec-policy@2.0.0", "protection": "protection@1.1.0", "strategyBrain": "strategy-brain@1.1.0", "configHash": "sha256:bb28e1dac4c3f6259b7d1f8cae2f4b6d8f0c3e5a9d1f4b6e8a0d2c4f6b8e0d2c4" },
+      "researchLineage": { "labProject": "fx-ob-research-lab", "researchRunId": "EURUSD_M15_RR3.3_real", "researchVersion": "research@2026-06-20", "labCommit": "fae2135", "exportedAt": "2026-06-20T17:00:00Z" },
+      "validation": { "badge": "NATIVE", "nDecided": 398, "portfolioDeltas": { "netR": 0.0, "drawdown": 0.0, "stability": 0.89 }, "validationId": null },
+      "parentVersion": 16, "createdAt": "2026-06-20T17:05:00Z", "promotedAt": "2026-06-20T19:30:00Z", "promotedBy": "op_01J8Z5A2C4E6G8J0M2P4R6T8V0XZ", "supersededBy": 18, "notes": "Prior production; superseded by v18.",
+      "policy": { "matrices": { "EURUSD": { "instrument": "EURUSD", "cohortAxis": { "sessions": ["London","Lull","NewYork","NY_PM","Asia","Outside"], "structures": ["BOS","CHoCH"], "directions": ["Long","Short"] }, "cohortBaseTargets": { "london:BOS:long": 2.5, "newYork:BOS:short": 3.0, "asia:CHoCH:long": 2.0 }, "cells": {
+        "london:BOS:long:BullExpand": { "policyCellKey": "london:BOS:long:BullExpand", "marketState": "BullExpand", "eligibility": { "action": "DIRECTION_AWARE", "mode": "Custom", "resolvedAllowed": true }, "target": { "rr": 2.5, "source": "cell" }, "risk": { "pct": 1.0, "source": "cell" }, "evidence": { "badge": "NATIVE", "sampleSize": 61, "expectancyR": 0.33, "winRate": 0.33, "profitFactor": 1.5, "confidence": 0.93, "inSampleCaveat": "" }, "recommendationStatus": "none" },
+        "newYork:BOS:short:BearChop": { "policyCellKey": "newYork:BOS:short:BearChop", "marketState": "BearChop", "eligibility": { "action": "DIRECTION_AWARE", "mode": "Custom", "resolvedAllowed": true }, "target": { "rr": 3.0, "source": "cohortBase" }, "risk": { "pct": 1.0, "source": "cell" }, "evidence": { "badge": "BASE", "sampleSize": 51, "expectancyR": -0.05, "winRate": 0.29, "profitFactor": 0.95, "confidence": 0.6, "inSampleCaveat": "borderline" }, "recommendationStatus": "none" },
+        "asia:CHoCH:long:BullChop": { "policyCellKey": "asia:CHoCH:long:BullChop", "marketState": "BullChop", "eligibility": { "action": "STATE_ONLY", "mode": "Custom", "resolvedAllowed": true }, "target": { "rr": 2.0, "source": "cohortBase" }, "risk": { "pct": 1.0, "source": "cell" }, "evidence": { "badge": "RESCORE", "sampleSize": 19, "expectancyR": 0.1, "winRate": 0.3, "profitFactor": 1.1, "confidence": 0.6, "inSampleCaveat": "thin" }, "recommendationStatus": "none" }
+      } } } }
+    }
+  ],
+
+  "drafts": [
+    { "draftId": "drf_01J8ZB8H1M4P7S0V3Y6B9E2G5J", "baseVersion": 18, "status": "open", "owner": "op_01J8Z5A2C4E6G8J0M2P4R6T8V0XZ", "lockedBy": "op_01J8Z5A2C4E6G8J0M2P4R6T8V0XZ", "createdAt": "2026-07-01T09:05:00Z",
+      "changes": [
+        { "policyCellKey": "london:CHoCH:short:BearExpand", "before": { "target": { "rr": 1.75 } }, "after": { "target": { "rr": 2.0 } }, "sourceRecommendationId": "rec_01J8ZB9H4M7Q0T3W6Z9C2F5J8L1" },
+        { "policyCellKey": "asia:CHoCH:long:BullChop", "before": { "risk": { "pct": 0.5 } }, "after": { "risk": { "pct": 0.75 } }, "sourceRecommendationId": null }
+      ], "validation": null }
+  ],
+
+  "nativeValidations": [
+    { "validationId": "nv_01J8ZBK5R8U1X4A7D0G3J6M9P2S", "target": { "scope": "package", "ref": "pkg_01J8Z6QK3E9R7F2M4C0AB5D6EF@18" }, "badge": "NATIVE", "nDecided": 412, "portfolioDeltas": { "netR": 0.18, "drawdown": -0.4, "stability": 0.91 }, "vsDeployed": { "netR": 0.18 }, "vsNaiveBase": { "netR": 0.52 }, "runRef": "native-run-2026-06-30T19:40Z", "engineVersion": "lux-backtester@c3c1f16", "at": "2026-06-30T19:52:00Z" }
+  ],
+
+  "recommendations": [
+    { "recommendationId": "rec_01J8ZB3C6F9K2N5Q8T1W4Z7A0D", "scenarioKey": "EURUSD:london:BOS:long:BullExpand", "proposedChange": { "field": "target", "from": 2.5, "to": 2.75 }, "status": "deployed", "createdAt": "2026-06-29T14:00:00Z", "actor": "op_01J8Z5A2C4E6G8J0M2P4R6T8V0XZ", "lineage": { "draftId": null, "resultingPackageVersion": 18 },
+      "evidence": { "researchVersion": "research@2026-06-30", "supportingStats": { "expectancyDelta": 0.08, "pBetter": 0.94, "winRate": 0.34, "profitFactor": 1.62 }, "sampleSize": 67, "confidence": 0.96, "nativeValidation": { "badge": "NATIVE", "portfolioDeltas": { "netR": 0.18, "drawdown": -0.4, "stability": 0.91 } }, "promotionHistory": [ { "version": 18, "at": "2026-06-30T20:11:00Z", "by": "op_01J8Z5A2C4E6G8J0M2P4R6T8V0XZ" } ], "deploymentHistory": [ { "lane": "live", "accountId": "acct_01J8Z4K7M9P2R4T6V8X0Z2B4D6F", "since": "2026-06-30T20:11:00Z", "realisedVsExpected": "+0.06R over 11 trades" } ], "evidenceSummary": "London BOS Long in Bull/Expand supports 2.75R (P=0.94, n=67, NATIVE).", "sourceLinks": ["lab://run/EURUSD_M15_RR3.3_real/cohort/london_BOS_long/state/BullExpand"], "explainabilityText": "Bookable MFE shows a durable reach to 2.75R; incumbent 2.5R beaten at P=0.94 on canonical evidence.", "inSampleCaveat": "incumbent fit on ~same history" } },
+
+    { "recommendationId": "rec_01J8ZB9H4M7Q0T3W6Z9C2F5J8L1", "scenarioKey": "EURUSD:london:CHoCH:short:BearExpand", "proposedChange": { "field": "target", "from": 1.75, "to": 2.0 }, "status": "validating", "createdAt": "2026-07-01T08:40:00Z", "actor": "op_01J8Z5A2C4E6G8J0M2P4R6T8V0XZ", "lineage": { "draftId": "drf_01J8ZB8H1M4P7S0V3Y6B9E2G5J", "resultingPackageVersion": null },
+      "evidence": { "researchVersion": "research@2026-06-30", "supportingStats": { "expectancyDelta": 0.05, "pBetter": 0.82, "winRate": 0.36, "profitFactor": 1.31 }, "sampleSize": 22, "confidence": 0.7, "nativeValidation": { "badge": "RESCORE", "portfolioDeltas": { "netR": 0.06, "drawdown": -0.1, "stability": 0.88 } }, "promotionHistory": [], "deploymentHistory": [], "evidenceSummary": "Candidate 2.0R for London CHoCH Short / Bear Expand — thin sample, rescore only.", "sourceLinks": ["lab://run/EURUSD_M15_RR3.3_real/cohort/london_CHoCH_short/state/BearExpand"], "explainabilityText": "Rescore suggests 2.0R > 1.75R at P=0.82 but n=22; native validation pending before promotion.", "inSampleCaveat": "thin sample (n=22) — do not promote without NATIVE" } }
+  ],
+
+  "deployments": [
+    { "deploymentId": "dpl_01J8Z7R2M9K4E1P3T5V7W9X0YZ", "packageHash": "sha256:7f3a91c2b8e0d5a4f1c3e7b9d2a6c4f80b1e3d5a7c9f2b4d6e8a0c1f3b5d7e9a1", "accountId": "acct_01J8Z4K7M9P2R4T6V8X0Z2B4D6F", "pair": "EURUSD", "lane": "live", "status": "InTrade", "executionMode": "live", "liveEnabled": true, "lastAction": "Placed BUY LIMIT 1.08450 (London BOS Long / Bull Expand / TE) — target 2.75R", "riskState": { "dailyPl": 412.00, "floatingPl": 96.40, "riskTodayPct": 1.0, "ddBufferPct": 72.0, "openOrders": 1, "openTrades": 1 }, "pinnedInFlight": { "tr_01J8ZC4H2N8M6K1E3R5T7V9W0XZ": "sha256:7f3a91c2b8e0d5a4f1c3e7b9d2a6c4f80b1e3d5a7c9f2b4d6e8a0c1f3b5d7e9a1" } },
+    { "deploymentId": "dpl_01J8Z7S5P2N7R0T3V6X9Z2B5D8F", "packageHash": "sha256:7f3a91c2b8e0d5a4f1c3e7b9d2a6c4f80b1e3d5a7c9f2b4d6e8a0c1f3b5d7e9a1", "accountId": "acct_01J8Z4M0P3R5T7V9X1Z3B5D7F9H", "pair": "EURUSD", "lane": "ghost", "status": "Armed", "executionMode": "mock", "liveEnabled": false, "lastAction": "Ghost tracking TE-50 + OB-edge alternates", "riskState": { "dailyPl": 0, "floatingPl": 0, "riskTodayPct": 0, "ddBufferPct": 100, "openOrders": 0, "openTrades": 0 }, "pinnedInFlight": {} },
+    { "deploymentId": "dpl_01J8Z7T8R5Q0T3W6Z9C2F5J8L1N", "packageHash": "sha256:draft-drf_01J8ZB8H1M4P7S0V3Y6B9E2G5J", "accountId": "acct_01J8Z4M0P3R5T7V9X1Z3B5D7F9H", "pair": "EURUSD", "lane": "experimental", "status": "Waiting", "executionMode": "mock", "liveEnabled": false, "lastAction": "Running draft (London CHoCH Short 2.0R candidate)", "riskState": { "dailyPl": 0, "floatingPl": 0, "riskTodayPct": 0, "ddBufferPct": 100, "openOrders": 0, "openTrades": 0 }, "pinnedInFlight": {} }
+  ],
+
+  "signals": [
+    { "signalId": "sig_01J8ZC1A4D7G0K3N6Q9T2W5Z8B", "at": "2026-07-01T08:31:00Z", "instrument": "EURUSD", "cohortKey": "london:BOS:long", "structureEvent": { "type": "BOS", "obId": "OB-2261", "levels": { "top": 1.08520, "bottom": 1.08410 }, "timeframe": "M15" }, "direction": "Long", "scenarioKeyCandidate": "EURUSD:london:BOS:long:BullExpand" }
+  ],
+
+  "decisionChains": [
+    { "decisionId": "dec_01J8ZCH2E5R8T1V4X7Z0A3C6D9F", "scenarioKey": "EURUSD:london:BOS:long:BullExpand", "packageHash": "sha256:7f3a91c2b8e0d5a4f1c3e7b9d2a6c4f80b1e3d5a7c9f2b4d6e8a0c1f3b5d7e9a1", "terminal": "Outcome",
+      "nodes": [
+        { "node": "Signal", "status": "pass", "value": "London BOS Long OB-2261", "why": "M15 BOS with bullish OB; TE candidate", "ref": "sig_01J8ZC1A4D7G0K3N6Q9T2W5Z8B", "at": "2026-07-01T08:31:00Z" },
+        { "node": "MarketState", "status": "pass", "value": "Bull / Expand (0.96, confirmed)", "why": "Confirmed prior-day state; known at 2026-07-01T00:00Z, shifted 1d", "ref": "EURUSD@2026-07-01T00:00:00Z", "at": "2026-07-01T08:31:00Z" },
+        { "node": "PolicyCell", "status": "pass", "value": "london:BOS:long:BullExpand", "why": "Cell resolved from cohort + confirmed state", "ref": "EURUSD:london:BOS:long:BullExpand", "at": "2026-07-01T08:31:01Z" },
+        { "node": "Eligibility", "status": "pass", "value": "FollowTrend ⇒ allowed", "why": "DIRECTION_AWARE + Long in Bull ⇒ with-trend ⇒ allowed", "ref": "rule:direction_aware", "at": "2026-07-01T08:31:01Z" },
+        { "node": "Target", "status": "pass", "value": "2.75R", "why": "Cell target (source=cell), from rec_…A0D", "ref": "EURUSD:london:BOS:long:BullExpand", "at": "2026-07-01T08:31:01Z" },
+        { "node": "Risk", "status": "pass", "value": "1.0%", "why": "Cell risk", "ref": "EURUSD:london:BOS:long:BullExpand", "at": "2026-07-01T08:31:01Z" },
+        { "node": "Protection", "status": "pass", "value": "OK (BE@1R armed)", "why": "Within funded buffer (72%); FFT enabled", "ref": "protection@1.2.0", "at": "2026-07-01T08:31:02Z" },
+        { "node": "Execution", "status": "pass", "value": "BUY LIMIT 1.08450 → filled 1.08450", "why": "Resting TE-25 entry filled", "ref": "tr_01J8ZC4H2N8M6K1E3R5T7V9W0XZ", "at": "2026-07-01T08:47:12Z" },
+        { "node": "Broker", "status": "pass", "value": "FTMO ack ord#88213", "why": "Reconciled clean", "ref": "brk_01J8Z3E5G7J9M1P3R5T7V9X1Z3B", "at": "2026-07-01T08:47:12Z" },
+        { "node": "Management", "status": "pass", "value": "SL→BE at +1R", "why": "Auto-management moved SL to entry at 1R", "ref": "tr_01J8ZC4H2N8M6K1E3R5T7V9W0XZ", "at": "2026-07-01T09:02:40Z" },
+        { "node": "Outcome", "status": "pass", "value": "Open +0.9R (floating)", "why": "In trade; not yet closed", "ref": "tr_01J8ZC4H2N8M6K1E3R5T7V9W0XZ", "at": "2026-07-01T09:14:00Z" }
+      ],
+      "downstreamInfluence": { "contributesTo": ["analytics:EURUSD:london:BOS:long:BullExpand", "rec_01J8ZB3C6F9K2N5Q8T1W4Z7A0D:evidence"] } }
+  ],
+
+  "liveTrades": [
+    { "tradeId": "tr_01J8ZC4H2N8M6K1E3R5T7V9W0XZ", "clientOrderId": "coid_01J8ZC3F1N5Q8T1W4Z7A0D3G6J", "brokerOrderId": "88213", "deploymentId": "dpl_01J8Z7R2M9K4E1P3T5V7W9X0YZ", "packageHash": "sha256:7f3a91c2b8e0d5a4f1c3e7b9d2a6c4f80b1e3d5a7c9f2b4d6e8a0c1f3b5d7e9a1", "scenarioKey": "EURUSD:london:BOS:long:BullExpand", "lane": "live", "decisionId": "dec_01J8ZCH2E5R8T1V4X7Z0A3C6D9F",
+      "originalPlan": { "entry": 1.08450, "sl": 1.08300, "tp": 1.08862, "rr": 2.75, "risk": 1.0 }, "entry": 1.08450, "sl": 1.08450, "tp": 1.08862, "size": 0.65, "riskPct": 1.0, "state": "managing", "currentR": 0.9, "floatingPl": 96.40, "protectionStatus": "protected (SL@BE)", "sessionEntered": "London", "openedAt": "2026-07-01T08:47:12Z", "closedAt": null, "realizedR": null, "closePrice": null,
+      "management": [ { "at": "2026-07-01T09:02:40Z", "type": "SL_TO_BE", "before": { "sl": 1.08300 }, "after": { "sl": 1.08450 }, "actor": "system", "reason": "reached +1R" } ] },
+    { "tradeId": "tr_01J8ZC7K4Q0T3W6Z9C2F5J8L1N4", "clientOrderId": "coid_01J8ZC6H2N5Q8T1W4Z7A0D3G6K", "brokerOrderId": "88190", "deploymentId": "dpl_01J8Z7R2M9K4E1P3T5V7W9X0YZ", "packageHash": "sha256:7f3a91c2b8e0d5a4f1c3e7b9d2a6c4f80b1e3d5a7c9f2b4d6e8a0c1f3b5d7e9a1", "scenarioKey": "EURUSD:asia:CHoCH:long:BullChop", "lane": "live", "decisionId": null, "originalPlan": { "entry": 1.08210, "sl": 1.08120, "tp": 1.08390, "rr": 2.0, "risk": 0.5 }, "entry": 1.08210, "sl": 1.08120, "tp": 1.08390, "size": 0.30, "riskPct": 0.5, "state": "closed", "currentR": null, "floatingPl": 0, "protectionStatus": "closed", "sessionEntered": "Asia", "openedAt": "2026-07-01T01:12:00Z", "closedAt": "2026-07-01T03:40:00Z", "realizedR": 2.0, "closePrice": 1.08390, "management": [] }
+  ],
+
+  "ghostTrades": [
+    { "ghostTradeId": "gh_01J8ZC9F5P2Q7R4T6V8X0Z1A3BC", "ghostModelId": "TE-50", "sourceSignalId": "sig_01J8ZC1A4D7G0K3N6Q9T2W5Z8B", "deploymentId": "dpl_01J8Z7S5P2N7R0T3V6X9Z2B5D8F", "packageHash": "sha256:7f3a91c2b8e0d5a4f1c3e7b9d2a6c4f80b1e3d5a7c9f2b4d6e8a0c1f3b5d7e9a1", "scenarioKey": "EURUSD:london:BOS:long:BullExpand", "lane": "ghost", "ghostOutcome": "WIN", "ghostR": 2.75, "ghostMae": -0.4, "ghostMfe": 3.1, "ghostFillDelayCandles": 3, "note": "TE-50 alternate on same signal — reached target" },
+    { "ghostTradeId": "gh_01J8ZCB8R5T0W3Z6C9F2J5M8P1Q", "ghostModelId": "OB-edge", "sourceSignalId": "sig_01J8ZC1A4D7G0K3N6Q9T2W5Z8B", "deploymentId": "dpl_01J8Z7S5P2N7R0T3V6X9Z2B5D8F", "packageHash": "sha256:7f3a91c2b8e0d5a4f1c3e7b9d2a6c4f80b1e3d5a7c9f2b4d6e8a0c1f3b5d7e9a1", "scenarioKey": "EURUSD:london:BOS:long:BullExpand", "lane": "ghost", "ghostOutcome": "BE", "ghostR": 0.0, "ghostMae": -0.7, "ghostMfe": 1.2, "ghostFillDelayCandles": 1, "note": "OB-edge entry — never reached target" },
+    { "ghostTradeId": "gh_01J8ZCD2N7Q0T3W6Z9C2F5J8L4R", "ghostModelId": "no-BE", "sourceSignalId": "sig_01J8ZC1A4D7G0K3N6Q9T2W5Z8B", "deploymentId": "dpl_01J8Z7S5P2N7R0T3V6X9Z2B5D8F", "packageHash": "sha256:7f3a91c2b8e0d5a4f1c3e7b9d2a6c4f80b1e3d5a7c9f2b4d6e8a0c1f3b5d7e9a1", "scenarioKey": "EURUSD:london:BOS:long:BullExpand", "lane": "ghost", "ghostOutcome": "WIN", "ghostR": 2.75, "ghostMae": -0.9, "ghostMfe": 3.1, "ghostFillDelayCandles": 3, "note": "no-BE variant — survived the BE pullback" }
+  ],
+
+  "blockedIntents": [
+    { "blockedIntentId": "blk_01J8ZCD7K3M9N1P4R6T8V0X2Z4A", "scenarioKey": "EURUSD:newYork:BOS:short:BearChop", "packageHash": "sha256:7f3a91c2b8e0d5a4f1c3e7b9d2a6c4f80b1e3d5a7c9f2b4d6e8a0c1f3b5d7e9a1", "lane": "live", "blockReason": "COHORT_DISABLED", "ruleFired": "cell.eligibility=DISABLE", "decisionId": "dec_01J8ZCF3P6S9V2Y5B8E1H4K7N0M", "marketStateRef": "EURUSD@2026-07-01T00:00:00Z", "at": "2026-07-01T13:05:00Z" },
+    { "blockedIntentId": "blk_01J8ZCE0M4P7R0T3V6X9Z2B5D8G", "scenarioKey": "EURUSD:newYork:CHoCH:short:BullExpand", "packageHash": "sha256:7f3a91c2b8e0d5a4f1c3e7b9d2a6c4f80b1e3d5a7c9f2b4d6e8a0c1f3b5d7e9a1", "lane": "live", "blockReason": "PM_POLICY_BLOCK", "ruleFired": "direction_aware:counter_trend", "decisionId": null, "marketStateRef": "EURUSD@2026-07-01T00:00:00Z", "at": "2026-07-01T13:20:00Z" },
+    { "blockedIntentId": "blk_01J8ZCEB8R5T0W3Z6C9F2J5M8P2", "scenarioKey": "EURUSD:asia:BOS:long:BearCompress", "packageHash": "sha256:7f3a91c2b8e0d5a4f1c3e7b9d2a6c4f80b1e3d5a7c9f2b4d6e8a0c1f3b5d7e9a1", "lane": "live", "blockReason": "REGIME_BLOCKED", "ruleFired": "regime_filter:disallowed_state", "decisionId": null, "marketStateRef": "EURUSD@2026-07-01T00:00:00Z", "at": "2026-07-01T01:40:00Z" },
+    { "blockedIntentId": "blk_01J8ZCF5P2N7R0T3V6X9Z2B5D8H", "scenarioKey": "EURUSD:london:BOS:long:BearChop", "packageHash": "sha256:7f3a91c2b8e0d5a4f1c3e7b9d2a6c4f80b1e3d5a7c9f2b4d6e8a0c1f3b5d7e9a1", "lane": "live", "blockReason": "STATE_BLOCKED", "ruleFired": "state_override:block", "decisionId": null, "marketStateRef": "EURUSD@2026-07-01T00:00:00Z", "at": "2026-07-01T08:10:00Z" },
+    { "blockedIntentId": "blk_01J8ZCG2M4P7R0T3V6X9Z2B5D8J", "scenarioKey": "EURUSD:newYork:BOS:long:BullExpand", "packageHash": "sha256:7f3a91c2b8e0d5a4f1c3e7b9d2a6c4f80b1e3d5a7c9f2b4d6e8a0c1f3b5d7e9a1", "lane": "live", "blockReason": "PROTECTION_VETO", "ruleFired": "funded:daily_buffer_insufficient", "decisionId": null, "marketStateRef": "EURUSD@2026-07-01T00:00:00Z", "at": "2026-07-01T14:02:00Z" }
+  ],
+
+  "brokerHealth": [
+    { "brokerId": "brk_01J8Z3E5G7J9M1P3R5T7V9X1Z3B", "latencyMs": 42, "reconnects": 0, "executionSpeedMs": 118, "orderRejects": 0, "spread": 0.00008, "slippage": 0.00002, "heartbeatAgeMs": 2000, "reconciliation": { "clean": true, "diff": null }, "syncStatus": "in_sync", "timeline": [ { "at": "2026-07-01T06:00:00Z", "code": "RECONCILE_DIVERGENCE", "detail": "1 orphan order — resolved", "resolved": true } ] }
+  ],
+
+  "edgeMonitor": {
+    "instrument": "EURUSD", "asOf": "2026-07-01T09:14:00Z",
+    "metrics": { "expectancyR": 0.39, "winRate": 0.335, "edgeDrift": "-0.02R vs research", "distributionDrift": "low", "featureDrift": "n/a", "policyHealth": "green", "researchVsLive": "+0.06R", "ghostVsLive": "ghost +0.10R (TE-50)", "forwardTestHealth": "on-track", "recommendationGeneration": 2, "operatorConfidence": "high", "futureCandidates": ["london:CHoCH:short:BearExpand → 2.0R"] }
+  },
+
+  "systemConfidence": {
+    "score": 82, "band": "caution", "worstSignal": "dataFreshness", "explanation": "Caution — market-data feed 40s behind on EURUSD since 09:12; all safety-critical signals healthy.", "updatedAt": "2026-07-01T09:14:20Z",
+    "signals": [
+      { "key": "brokerHealth", "state": "ok", "weight": 0.15, "value": "latency 42ms", "message": "FTMO connected, latency nominal", "since": "2026-07-01T06:05:00Z" },
+      { "key": "reconciliation", "state": "ok", "weight": 0.20, "value": "clean", "message": "Internal state matches broker", "since": "2026-07-01T06:05:00Z" },
+      { "key": "marketStateConfidence", "state": "ok", "weight": 0.10, "value": "0.96", "message": "Confirmed Bull/Expand", "since": "2026-07-01T00:00:05Z" },
+      { "key": "policyValidation", "state": "ok", "weight": 0.10, "value": "NATIVE", "message": "Package v18 native-validated", "since": "2026-06-30T20:11:00Z" },
+      { "key": "protectionHealth", "state": "ok", "weight": 0.20, "value": "72% buffer", "message": "Funded buffer healthy", "since": "2026-07-01T00:00:00Z" },
+      { "key": "dataFreshness", "state": "warn", "weight": 0.10, "value": "40s lag", "message": "EURUSD feed 40s behind", "since": "2026-07-01T09:12:00Z" },
+      { "key": "executionLatency", "state": "ok", "weight": 0.05, "value": "118ms", "message": "Execution speed nominal", "since": "2026-07-01T06:05:00Z" },
+      { "key": "edgeHealth", "state": "ok", "weight": 0.05, "value": "+0.06R vs research", "message": "Edge tracking research", "since": "2026-07-01T00:00:00Z" },
+      { "key": "replayVerification", "state": "ok", "weight": 0.03, "value": "reproducible", "message": "Last replay byte-matched", "since": "2026-06-30T22:00:00Z" },
+      { "key": "configIntegrity", "state": "ok", "weight": 0.02, "value": "hash match", "message": "Package hash verified", "since": "2026-06-30T20:11:00Z" }
+    ]
+  },
+
+  "packageComparisons": [
+    { "comparisonId": "cmp_01J8ZF4J7M0P3R6T9V2X5Z8B1D4", "a": { "packageId": "pkg_01J8Z6QK3E9R7F2M4C0AB5D6EF", "version": 17, "packageHash": "sha256:5c1d0b7a9e2f4c6b8d0a2c4e6f8b1d3a5c7e9f0b2d4a6c8e0f1b3d5a7c9e1f3b" }, "b": { "packageId": "pkg_01J8Z6QK3E9R7F2M4C0AB5D6EF", "version": 18, "packageHash": "sha256:7f3a91c2b8e0d5a4f1c3e7b9d2a6c4f80b1e3d5a7c9f2b4d6e8a0c1f3b5d7e9a1" },
+      "cellDiffs": [
+        { "scenarioKey": "EURUSD:london:BOS:long:BullExpand", "eligibility": null, "target": { "from": 2.5, "to": 2.75 }, "risk": null, "recommendationId": "rec_01J8ZB3C6F9K2N5Q8T1W4Z7A0D", "evidenceDelta": { "expectancyR": { "from": 0.33, "to": 0.41 }, "winRate": { "from": 0.33, "to": 0.34 }, "badge": { "from": "NATIVE", "to": "NATIVE" } } },
+        { "scenarioKey": "EURUSD:newYork:BOS:short:BearChop", "eligibility": { "from": "DIRECTION_AWARE", "to": "DISABLE" }, "target": null, "risk": { "from": 1.0, "to": 0.0 }, "recommendationId": null, "evidenceDelta": { "expectancyR": { "from": -0.05, "to": -0.12 }, "winRate": { "from": 0.29, "to": 0.28 }, "badge": { "from": "BASE", "to": "NATIVE" } } },
+        { "scenarioKey": "EURUSD:asia:CHoCH:long:BullChop", "eligibility": null, "target": null, "risk": { "from": 1.0, "to": 0.5 }, "recommendationId": null, "evidenceDelta": { "expectancyR": { "from": 0.1, "to": 0.14 }, "winRate": { "from": 0.3, "to": 0.31 }, "badge": { "from": "RESCORE", "to": "RESCORE" } } }
+      ],
+      "componentVersionDiffs": [ { "component": "protection", "from": "protection@1.1.0", "to": "protection@1.2.0" } ],
+      "validationComparison": { "a": { "badge": "NATIVE", "portfolioDeltas": { "netR": 0.0 } }, "b": { "badge": "NATIVE", "portfolioDeltas": { "netR": 0.18 } } },
+      "projectedImprovement": { "netR": 0.18, "drawdown": -0.4, "stability": 0.02, "nDecided": 412, "inSampleCaveat": "2025+ under-powered out-of-sample read" },
+      "deploymentHistoryDelta": { "a": { "lanes": ["live"], "accounts": 1 }, "b": { "lanes": ["live","ghost","experimental"], "accounts": 2 } },
+      "generatedAt": "2026-07-01T09:10:00Z" }
+  ],
+
+  "replaySessions": [
+    { "replayId": "rs_01J8ZE2G5J8M1P4R7T0V3X6Z9B2D", "scope": { "scenarioKeys": ["EURUSD:london:BOS:long:BullExpand"], "pair": "EURUSD", "deploymentId": "dpl_01J8Z7R2M9K4E1P3T5V7W9X0YZ" }, "window": { "start": "2026-07-01T08:30:00Z", "end": "2026-07-01T09:14:00Z" }, "speed": 4.0, "packageHashAtTime": "sha256:7f3a91c2b8e0d5a4f1c3e7b9d2a6c4f80b1e3d5a7c9f2b4d6e8a0c1f3b5d7e9a1", "consumedDataHashes": { "EURUSD:M15": "sha256:c0ffee00d1e5b7a9c3f5e7b9d1a3c5e7f9b1d3a5c7e9f0b2d4a6c8e0f1b3d5a7" }, "clock": "replay", "createdBy": "op_01J8Z5A2C4E6G8J0M2P4R6T8V0XZ", "createdAt": "2026-07-01T09:12:30Z" }
+  ],
+
+  "events": [
+    { "eventId": "ev_01J8ZD0M3P6S9V2Y5B8E1H4K7N0", "seq": 100231, "category": "policy", "code": "PACKAGE_PROMOTED", "humanExplanation": "Package v18 promoted to production by Jack (Lead).", "scenarioKey": null, "packageHash": "sha256:7f3a91c2b8e0d5a4f1c3e7b9d2a6c4f80b1e3d5a7c9f2b4d6e8a0c1f3b5d7e9a1", "who": "op_01J8Z5A2C4E6G8J0M2P4R6T8V0XZ", "causedBy": "cmd_01J8ZD5R8U1X4A7D0G3J6M9P2ST", "before": { "activeVersion": 17 }, "after": { "activeVersion": 18 }, "at": "2026-06-30T20:11:00Z" },
+    { "eventId": "ev_01J8ZD3P6S9V2Y5B8E1H4K7N0Q3", "seq": 100987, "category": "trade", "code": "TRADE_FILLED", "humanExplanation": "EURUSD London BOS Long filled at 1.08450 (target 2.75R).", "scenarioKey": "EURUSD:london:BOS:long:BullExpand", "packageHash": "sha256:7f3a91c2b8e0d5a4f1c3e7b9d2a6c4f80b1e3d5a7c9f2b4d6e8a0c1f3b5d7e9a1", "who": "system", "causedBy": "sig_01J8ZC1A4D7G0K3N6Q9T2W5Z8B", "before": null, "after": { "tradeId": "tr_01J8ZC4H2N8M6K1E3R5T7V9W0XZ" }, "at": "2026-07-01T08:47:12Z" },
+    { "eventId": "ev_01J8ZD6S9V2Y5B8E1H4K7N0Q3T6", "seq": 101204, "category": "manual", "code": "TRADE_SL_MOVED", "humanExplanation": "Auto-management moved SL to break-even at +1R.", "scenarioKey": "EURUSD:london:BOS:long:BullExpand", "packageHash": "sha256:7f3a91c2b8e0d5a4f1c3e7b9d2a6c4f80b1e3d5a7c9f2b4d6e8a0c1f3b5d7e9a1", "who": "system", "causedBy": "tr_01J8ZC4H2N8M6K1E3R5T7V9W0XZ", "before": { "sl": 1.08300 }, "after": { "sl": 1.08450 }, "at": "2026-07-01T09:02:40Z" }
+  ]
+}

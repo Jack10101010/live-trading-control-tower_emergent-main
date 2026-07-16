@@ -1,0 +1,317 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------------------------------------------------------------------------
+ * DESIGN TOKENS — Console Dark (default)
+ * Values match §D2 of the Master Generation Brief exactly.
+ * Themes are token swaps: switch by setting `data-theme` on <html>.
+ * ------------------------------------------------------------------------- */
+
+:root,
+[data-theme='console-dark'] {
+  color-scheme: dark;
+
+  --bg: #0e1116;
+  --bg-elevated: #12161d;
+  --panel: #161b24;
+  --panel-2: #1c222d;
+  --panel-3: #232a37;
+
+  --text: #e7eaf0;
+  --text-2: #a7afbe;
+  --text-muted: #6e7683;
+
+  --border-subtle: #222a35;
+  --border: #2c3542;
+
+  --focus: #4c82f7;
+  --primary: #4c82f7;
+  --on-primary: #ffffff;
+  --selection: rgba(76, 130, 247, 0.14);
+
+  --positive: #3fb27f;
+  --negative: #e5565b;
+  --neutral: #8b93a1;
+  --warning: #e0a030;
+  --info: #4c82f7;
+
+  --bull: #2fb6c9;
+  --bear: #c07be0;
+
+  --draft: #e0a030;
+  --validated: #35b0a7;
+  --ghost: #8e8ac0;
+  --blocked: #b05867;
+  --paused: #9aa0ab;
+  --live: #e5565b;
+  --healthy: #3fb27f;
+  --recommendation: #7c6ce4;
+
+  --mode-mock: #64748b;
+  --mode-demo: #e0a030;
+  --mode-live: #e5565b;
+
+  /* Market state palette (categorical) */
+  --ms-bull-expand: #22b8a6;
+  --ms-bull-compress: #2e8fb0;
+  --ms-bull-chop: #4e6c8c;
+  --ms-bear-expand: #d98a3a;
+  --ms-bear-compress: #c56a55;
+  --ms-bear-chop: #8c6a5e;
+
+  /* Eligibility */
+  --elig-always-allow: var(--positive);
+  --elig-follow-trend: var(--primary);
+  --elig-block-chop: var(--warning);
+  --elig-never-trade: var(--text-muted);
+  --elig-custom: var(--recommendation);
+
+  /* Validation */
+  --valid-native: var(--validated);
+  --valid-rescore: var(--info);
+  --valid-base: var(--neutral);
+  --valid-insufficient: var(--warning);
+  --valid-nottested: var(--text-muted);
+
+  /* Protection */
+  --protect-ok: var(--positive);
+  --protect-danger: var(--warning);
+  --protect-veto: var(--negative);
+  --locked: #c33a3f;
+
+  /* Chart */
+  --grid: rgba(35, 42, 55, 0.6);
+  --axis: var(--border);
+  --crosshair: var(--text-muted);
+}
+
+[data-theme='premium-light'] {
+  color-scheme: light;
+
+  --bg: #f5f4f1;
+  --bg-elevated: #fbfaf8;
+  --panel: #ffffff;
+  --panel-2: #f2f1ec;
+  --panel-3: #e9e7e1;
+
+  --text: #1a1f27;
+  --text-2: #48505e;
+  --text-muted: #78808e;
+
+  --border-subtle: #e7e5df;
+  --border: #d9d6cf;
+
+  --focus: #2b6cf0;
+  --primary: #2b6cf0;
+  --on-primary: #ffffff;
+  --selection: rgba(43, 108, 240, 0.1);
+
+  --positive: #1e9e6a;
+  --negative: #d23b3b;
+  --neutral: #78808e;
+  --warning: #b8791e;
+  --info: #2b6cf0;
+
+  --bull: #127c8c;
+  --bear: #7a3fa0;
+
+  --draft: #b8791e;
+  --validated: #12857c;
+  --ghost: #6a66a0;
+  --blocked: #9a3d4c;
+  --paused: #8a8f98;
+  --live: #d23b3b;
+  --healthy: #1e9e6a;
+  --recommendation: #6355c8;
+
+  --mode-mock: #6b7280;
+  --mode-demo: #b8791e;
+  --mode-live: #d23b3b;
+
+  /* Market state palette — darkened for contrast on light surfaces */
+  --ms-bull-expand: #0e8c7e;
+  --ms-bull-compress: #216f8c;
+  --ms-bull-chop: #3b5470;
+  --ms-bear-expand: #b26e22;
+  --ms-bear-compress: #a0503c;
+  --ms-bear-chop: #6e5044;
+
+  --locked: #b3282d;
+
+  --grid: rgba(120, 128, 142, 0.22);
+  --axis: var(--border);
+  --crosshair: var(--text-muted);
+}
+
+[data-theme='midnight-navy'] {
+  color-scheme: dark;
+  --bg: #0a0f1e;
+  --bg-elevated: #0e1426;
+  --panel: #111832;
+  --panel-2: #16203f;
+  --panel-3: #1d294c;
+  --text: #dbe2f1;
+  --text-2: #96a2c0;
+  --text-muted: #626e8c;
+  --border-subtle: #1a2340;
+  --border: #24304f;
+  --focus: #5b8def;
+  --primary: #5b8def;
+  --selection: rgba(91, 141, 239, 0.16);
+  --positive: #46b487;
+  --negative: #e86a6e;
+  --warning: #e3a63c;
+  --info: #5b8def;
+  --bull: #37aec0;
+  --bear: #b98be4;
+  --recommendation: #8577e8;
+}
+
+/* ---------------------------------------------------------------------------
+ * BASE
+ * ------------------------------------------------------------------------- */
+
+* {
+  border-color: var(--border-subtle);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'IBM Plex Sans', Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.35;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'ss01', 'cv01';
+}
+
+::selection {
+  background: var(--selection);
+}
+
+/* Custom scrollbars — quieter than defaults */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--panel-3);
+  border-radius: 9999px;
+  border: 2px solid var(--bg);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--border);
+}
+
+/* Utility helpers */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+.mono {
+  font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Focus ring */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Grid noise overlay — very subtle, gives dark surfaces depth */
+.ct-noise::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' seed='4'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.5 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+}
+
+/* Value tick animation */
+@keyframes ct-tick-up {
+  0% {
+    background-color: rgba(63, 178, 127, 0.16);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+@keyframes ct-tick-down {
+  0% {
+    background-color: rgba(229, 86, 91, 0.16);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+.ct-tick-up {
+  animation: ct-tick-up 400ms ease-out;
+}
+.ct-tick-down {
+  animation: ct-tick-down 400ms ease-out;
+}
+
+/* Slow pulse for live states */
+@keyframes ct-pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(0.85);
+  }
+}
+.ct-pulse-dot {
+  animation: ct-pulse-dot 1600ms ease-in-out infinite;
+}
+
+/* Panel base */
+.ct-panel {
+  background: var(--panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+
+.ct-hairline {
+  border-color: var(--border-subtle);
+}
+
+/* Elevation */
+.ct-elev-1 {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.32);
+}
+.ct-elev-2 {
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.42);
+}
+.ct-elev-3 {
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.6);
+}

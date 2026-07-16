@@ -1,0 +1,48 @@
+{
+  "summary": "First-pass end-to-end testing of Live Trading Control Tower (Vite+TS+Tailwind FE, FastAPI BE). Backend: 19/19 pytest tests pass (100%) — all /api/* endpoints in server.py return the expected fixture shapes with correct counts (3 deployments / 2 brokers / 2 accounts; 2 live / 3 ghost / 5 blocked EURUSD trades; 144-cell-seed matrix; 82 CAUTION confidence). Frontend: All spec-required flows work — redirect to /fleet, 3 deployment cards render, System Confidence gauge shows 82 CAUTION, CT wordmark visible, deployment click navigates to /pair/EURUSD/overview with EURUSD, Bull/Expand 96%, v18 header, all 6 pair tabs render error-free, Policy Matrix has exactly 144 cells with 5 lens buttons all switchable, cell click opens Inspector with Policy Cell details (cohort/target/risk/eligibility/evidence/market-state), Command Palette opens with all 4 command groups (Navigate/Pair/Policy Matrix/Deployments), Trading tab shows 1 open trade (+0.90R managing), 1 closed, 5 blocked intents with 5 distinct reasons, 3 ghost trades and execution queue, clicking the trade opens Inspector with DecisionChain, EventDock toggles collapse/expand, Theme toggle flips console-dark ↔ midnight-navy (bg rgb changes and data-theme attribute set), all 5 global nav routes navigate. No JS page errors captured.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Card (components/structures/Panel.tsx)",
+        "issue": "The <Card> component did not accept/forward the `data-testid` prop, so every consumer (FleetOverview deployment cards, blocked-intent cards, etc.) had its data-testid dropped before reaching the DOM. This broke test automation for `deployment-card-{id}` and any other Card-wrapped testid. FIXED by testing agent — added `'data-testid'?: string` to CardProps and spread it onto the underlying <div>. Verified: 3 deployment-card-* testids now render and clicking one navigates to /pair/EURUSD/overview.",
+        "selector": "[data-testid^='deployment-card-']",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_control_tower_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix applied by tester: Card now forwards data-testid. Main agent should confirm no regressions and consider extending the same pattern to any other primitive that owns interactive DOM (IconButton, Panel etc.) so consumer testids never get silently dropped.",
+    "React Router v6 future-flag warnings (v7_startTransition, v7_relativeSplatPath) appear in console — non-blocking but easy to silence by adding `future` prop on BrowserRouter."
+  ],
+  "critical_code_review_comments": [
+    "Card in Panel.tsx originally destructured a fixed prop list and did NOT spread rest, silently dropping `data-testid` and any other HTML pass-through attribute — anti-pattern for a design-system primitive; prefer `...rest` spread or an explicit allow-list including data-* attrs.",
+    "Backend policy_matrix() route accepts an optional `version` query param but the fixture-provider abstraction on FE synthesises the 144 cells from just 4 seed cells — that expansion logic lives only on the FE. When the API is wired later, the same deterministic expansion must move server-side or be duplicated, otherwise UI-vs-API contracts will drift.",
+    "server.py uses `@app.on_event('shutdown')` which is deprecated in modern FastAPI; consider migrating to lifespan context manager.",
+    "Backend imports motor and opens an AsyncIOMotorClient at module load even though no route uses it yet — will fail-fast if MONGO_URL is unset, which is fine, but adds startup coupling for a stub. Consider lazy init.",
+    "No _id field leakage detected — endpoints serve dict data straight from JSON fixture, so MongoDB ObjectID pitfalls are avoided in v1."
+  ],
+  "updated_files": [
+    "/app/frontend/src/components/structures/Panel.tsx",
+    "/app/backend/tests/test_control_tower_api.py"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "100%"
+  },
+  "test_credentials": "N/A — no auth in v1",
+  "seed_data_creation": "None — all backend responses come from the frozen /app/backend/fixtures/world.v1.json fixture.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend regression suite lives at /app/backend/tests/test_control_tower_api.py (19 tests, pytest, JUnit output at /app/test_reports/pytest/pytest_results.xml). It hits the public REACT_APP_BACKEND_URL. Frontend fixture provider synthesises 144 cells from 4 seed cells in world.v1.json; the /api/policy/{pair}/matrix endpoint returns only the seed cells today — this is by design per the PRD (fixtures still primary in v1). One fix was applied by the tester: Card component now forwards data-testid. All spec-listed data-testids are now reachable in the DOM: deployment-card-{id}, matrix-lens-{lens}, matrix-cell-{cellKey}, policy-matrix, command-palette-trigger, command-palette, command-palette-input, inspector-close, pair-workspace-tabs, event-dock-toggle, event-dock-content, theme-toggle, global-kill-button, decision-chain, scope-navigator, replay-play.",
+  "rca of the issue": "Root cause of the initial deployment-card-* invisibility: Card component in components/structures/Panel.tsx declared its props via a closed CardProps interface and destructured only {children,className,onClick,interactive,selected}. Any additional prop passed by consumers (including data-testid) was silently dropped before the returned <div>. FleetOverview did the right thing (`data-testid={\\`deployment-card-${d.deploymentId}\\`}`) but React never reached the DOM. Fix: extended CardProps with `'data-testid'?: string`, kept the explicit destructure for known props and added `...rest`, then spread `data-testid={rest['data-testid']}` on the div. Reproduction was: page.eval_on_selector_all('[data-testid^=\"deployment-card-\"]', ...) returned length 0 even though 3 cards were visually rendered. After the fix, the same selector returns exactly 3 ids and clicking the first navigates to /pair/EURUSD/overview as expected."
+}

@@ -1,0 +1,392 @@
+import { useEffect, useRef, useState } from 'react';
+import {
+  createChart,
+  ColorType,
+  CrosshairMode,
+  LineStyle,
+  type IChartApi,
+  type ISeriesApi,
+  type Time,
+  type SeriesMarker,
+} from 'lightweight-charts';
+import { cn } from '@/lib/utils';
+import {
+  deriveVolume,
+  sessionBands,
+  type Candle,
+  type ChartMarker,
+  type ChartZone,
+  type ChartPriceLine,
+  type LinePoint,
+} from '@/lib/chartData';
+
+/**
+ * ChartPanel — the single reusable Lightweight Charts renderer (Phase 22: pro-terminal
+ * polish). READ-ONLY: no drawing tools, no click-to-trade, no order drag. Everything
+ * comes through props; presentation only. Reused across Replay, Trades, Inspector,
+ * Edge Monitor and Analytics.
+ */
+
+interface ChartPanelProps {
+  /** Candle series (always supplied by ChartWorkspace from the Market Data Engine). */
+  candles?: Candle[];
+  instrument?: string;
+  /** Timeframe label for the floating badge (default M15 — the engine default). */
+  timeframe?: string;
+  height?: number;
+  className?: string;
+  kind?: 'candles' | 'line';
+  lineData?: LinePoint[];
+  linePrecision?: number;
+  volume?: boolean;
+  sessionShading?: boolean;
+  priceLines?: ChartPriceLine[];
+  markers?: ChartMarker[];
+  zones?: ChartZone[];
+  /** Replay cursor time (unix seconds); draws a vertical line. */
+  cursorTime?: number;
+}
+
+/** Resolve `var(--token)` to a concrete colour for canvas drawing. */
+function resolveColor(c: string): string {
+  if (!c) return '#888';
+  if (c.startsWith('var(')) {
+    const name = c.slice(4, -1).trim();
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || '#888';
+  }
+  return c;
+}
+
+interface Legend {
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  changePct: number;
+  up: boolean;
+}
+
+function toLegend(o: number, h: number, l: number, c: number): Legend {
+  const changePct = o ? ((c - o) / o) * 100 : 0;
+  return { open: o, high: h, low: l, close: c, changePct, up: c >= o };
+}
+
+export function ChartPanel({
+  candles,
+  instrument = 'EURUSD',
+  timeframe = 'M15',
+  height = 380,
+  className,
+  kind = 'candles',
+  lineData = [],
+  linePrecision = 2,
+  volume = false,
+  sessionShading = false,
+  priceLines = [],
+  markers = [],
+  zones = [],
+  cursorTime,
+}: ChartPanelProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const mainRef = useRef<ISeriesApi<'Candlestick'> | ISeriesApi<'Line'> | null>(null);
+  const priceLineHandles = useRef<Array<ReturnType<ISeriesApi<'Candlestick'>['createPriceLine']>>>([]);
+  const [redraw, setRedraw] = useState(0);
+  const [boxes, setBoxes] = useState<
+    Array<{ left: number; top: number; width: number; height: number; color: string; label?: string; band: boolean }>
+  >([]);
+  const [cursorX, setCursorX] = useState<number | null>(null);
+  const [legend, setLegend] = useState<Legend | null>(null);
+
+  const resolvedCandles: Candle[] = candles ?? [];
+  const allZones: ChartZone[] = sessionShading ? [...sessionBands(resolvedCandles), ...zones] : zones;
+  const precision = kind === 'line' ? linePrecision : 5;
+
+  // Create chart + main series once per data identity.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const axisText = resolveColor('var(--text-muted)');
+    const border = resolveColor('var(--border-subtle)');
+    const grid = resolveColor('var(--grid)');
+    const crosshair = resolveColor('var(--crosshair)');
+    const labelBg = resolveColor('var(--panel-3)');
+
+    const chart = createChart(el, {
+      layout: {
+        background: { type: ColorType.Solid, color: 'transparent' },
+        textColor: axisText,
+        fontFamily: "'JetBrains Mono', ui-monospace, SFMono-Regular, monospace",
+        fontSize: 11,
+        attributionLogo: false, // drop the TradingView watermark — reads as a custom terminal
+      },
+      localization: {
+        locale: 'en-US',
+        priceFormatter: (p: number) => p.toFixed(precision),
+      },
+      grid: {
+        vertLines: { color: grid, style: LineStyle.Dotted },
+        horzLines: { color: grid, style: LineStyle.Dotted },
+      },
+      rightPriceScale: {
+        borderColor: border,
+        borderVisible: true,
+        entireTextOnly: true,
+        ticksVisible: false,
+        scaleMargins: { top: 0.08, bottom: volume && kind === 'candles' ? 0.26 : 0.1 },
+      },
+      timeScale: {
+        borderColor: border,
+        timeVisible: true,
+        secondsVisible: false,
+        rightOffset: 6, // breathing room past the last bar
+        barSpacing: 9,
+        minBarSpacing: 2,
+        ticksVisible: false,
+        lockVisibleTimeRangeOnResize: true,
+      },
+      crosshair: {
+        mode: kind === 'candles' ? CrosshairMode.Magnet : CrosshairMode.Normal,
+        vertLine: { color: crosshair, width: 1, style: LineStyle.Dashed, labelBackgroundColor: labelBg },
+        horzLine: { color: crosshair, width: 1, style: LineStyle.Dashed, labelBackgroundColor: labelBg },
+      },
+      autoSize: true,
+      handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+      handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
+      kineticScroll: { touch: true, mouse: false },
+    });
+
+    let main: ISeriesApi<'Candlestick'> | ISeriesApi<'Line'>;
+    if (kind === 'line') {
+      main = chart.addLineSeries({
+        color: resolveColor('var(--primary)'),
+        lineWidth: 2,
+        priceLineVisible: false,
+        lastValueVisible: true,
+        crosshairMarkerVisible: true,
+        crosshairMarkerRadius: 3,
+        priceFormat: { type: 'price', precision: linePrecision, minMove: Math.pow(10, -linePrecision) },
+      });
+      main.setData(lineData.map((p) => ({ time: p.time as Time, value: p.value })));
+    } else {
+      const up = resolveColor('var(--positive)');
+      const down = resolveColor('var(--negative)');
+      const cs = chart.addCandlestickSeries({
+        upColor: up,
+        downColor: down,
+        borderUpColor: up,
+        borderDownColor: down,
+        wickUpColor: up,
+        wickDownColor: down,
+        borderVisible: true,
+        priceFormat: { type: 'price', precision: 5, minMove: 0.00001 },
+        priceLineVisible: true, // dashed line + label at the last price (like a pro terminal)
+        priceLineColor: resolveColor('var(--text-muted)'),
+        priceLineWidth: 1,
+        priceLineStyle: LineStyle.Dashed,
+        lastValueVisible: true,
+      });
+      cs.setData(
+        resolvedCandles.map((c) => ({ time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close }))
+      );
+      main = cs;
+    }
+
+    if (volume && kind === 'candles') {
+      const vol = chart.addHistogramSeries({
+        priceScaleId: 'volume',
+        priceFormat: { type: 'volume' },
+        lastValueVisible: false,
+        priceLineVisible: false,
+      });
+      vol.priceScale().applyOptions({ scaleMargins: { top: 0.86, bottom: 0 } });
+      vol.setData(deriveVolume(resolvedCandles).map((v) => ({ time: v.time as Time, value: v.value, color: v.color })));
+    }
+
+    chart.timeScale().fitContent();
+    chartRef.current = chart;
+    mainRef.current = main;
+
+    // Floating OHLC legend — defaults to the last bar, tracks the crosshair on hover.
+    if (kind === 'candles' && resolvedCandles.length) {
+      const last = resolvedCandles[resolvedCandles.length - 1];
+      setLegend(toLegend(last.open, last.high, last.low, last.close));
+    }
+    const onMove = (param: Parameters<Parameters<IChartApi['subscribeCrosshairMove']>[0]>[0]) => {
+      const bar = param.seriesData?.get(main) as { open?: number; high?: number; low?: number; close?: number } | undefined;
+      if (bar && bar.open != null && bar.close != null) {
+        setLegend(toLegend(bar.open, bar.high ?? bar.close, bar.low ?? bar.close, bar.close));
+      } else if (resolvedCandles.length) {
+        const last = resolvedCandles[resolvedCandles.length - 1];
+        setLegend(toLegend(last.open, last.high, last.low, last.close));
+      }
+    };
+    if (kind === 'candles') chart.subscribeCrosshairMove(onMove);
+
+    const bump = () => setRedraw((n) => n + 1);
+    chart.timeScale().subscribeVisibleTimeRangeChange(bump);
+    const ro = new ResizeObserver(bump);
+    ro.observe(el);
+    bump();
+
+    return () => {
+      ro.disconnect();
+      if (kind === 'candles') chart.unsubscribeCrosshairMove(onMove);
+      priceLineHandles.current = [];
+      chart.remove();
+      chartRef.current = null;
+      mainRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instrument, kind, resolvedCandles.length, lineData.length]);
+
+  // Price lines
+  useEffect(() => {
+    const s = mainRef.current as ISeriesApi<'Candlestick'> | null;
+    if (!s) return;
+    priceLineHandles.current.forEach((h) => s.removePriceLine(h));
+    priceLineHandles.current = priceLines.map((pl) =>
+      s.createPriceLine({
+        price: pl.price,
+        color: resolveColor(pl.color),
+        lineWidth: 1,
+        lineStyle: pl.lineStyle === 'dashed' ? LineStyle.Dashed : LineStyle.Solid,
+        axisLabelVisible: true,
+        title: pl.label,
+      })
+    );
+  }, [priceLines, redraw]);
+
+  // Markers
+  useEffect(() => {
+    const s = mainRef.current;
+    if (!s) return;
+    const sm: SeriesMarker<Time>[] = markers
+      .map((m) => ({
+        time: m.time as Time,
+        position: m.position,
+        color: resolveColor(m.color),
+        shape: m.shape,
+        text: m.text,
+      }))
+      // Lightweight Charts requires markers in ascending time order; callers may
+      // pass them in entity order (e.g. by trade), so sort defensively here.
+      .sort((a, b) => (a.time as number) - (b.time as number));
+    s.setMarkers(sm);
+  }, [markers]);
+
+  // Overlay layer: zones + replay cursor, positioned from chart coordinates.
+  useEffect(() => {
+    const chart = chartRef.current;
+    const s = mainRef.current as ISeriesApi<'Candlestick'> | null;
+    const el = containerRef.current;
+    if (!chart || !s || !el) return;
+    const ts = chart.timeScale();
+    const H = el.clientHeight;
+
+    const nextBoxes = allZones
+      .map((z) => {
+        const x0 = ts.timeToCoordinate(z.time0 as Time);
+        const x1 = ts.timeToCoordinate(z.time1 as Time);
+        if (x0 == null || x1 == null) return null;
+        let top = 0;
+        let h = H;
+        const band = !!z.fullHeight;
+        if (!z.fullHeight && z.price0 != null && z.price1 != null) {
+          const y0 = s.priceToCoordinate(z.price0);
+          const y1 = s.priceToCoordinate(z.price1);
+          if (y0 == null || y1 == null) return null;
+          top = Math.min(y0, y1);
+          h = Math.abs(y1 - y0);
+        }
+        const left = Math.min(x0, x1);
+        const width = Math.max(2, Math.abs(x1 - x0));
+        return { left, top, width, height: h, color: z.color, label: z.label, band };
+      })
+      .filter((b): b is NonNullable<typeof b> => b !== null);
+    setBoxes(nextBoxes);
+
+    if (cursorTime != null) {
+      setCursorX(ts.timeToCoordinate(cursorTime as Time));
+    } else {
+      setCursorX(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [redraw, cursorTime, allZones.length]);
+
+  const fmt = (n: number) => n.toFixed(precision);
+
+  return (
+    <div
+      ref={containerRef}
+      className={cn('relative w-full', className)}
+      style={height > 0 ? { height } : undefined}
+      data-testid={`chart-panel-${instrument}`}
+    >
+      {/* Overlay layer — pointer-events none, purely visual (read-only) */}
+      <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">
+        {boxes.map((b, i) => (
+          <div
+            key={i}
+            className="absolute"
+            style={{
+              left: b.left,
+              top: b.top,
+              width: b.width,
+              height: b.height,
+              background: b.color,
+              // Session bands stay flat; SMC zones get a hairline for a crisper edge.
+              ...(b.band
+                ? {}
+                : { borderRadius: 1, boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.05)' }),
+            }}
+            title={b.label}
+          />
+        ))}
+        {cursorX != null && (
+          <div
+            className="absolute top-0 bottom-0"
+            style={{ left: cursorX, width: 1.5, background: 'var(--warning)', boxShadow: '0 0 6px var(--warning)' }}
+          />
+        )}
+      </div>
+
+      {/* Floating instrument · timeframe + OHLC legend (top-left), pro-terminal style */}
+      {kind === 'candles' && (
+        <div className="absolute top-2 left-2.5 z-20 pointer-events-none select-none flex flex-col gap-0.5">
+          <div className="flex items-center gap-2 text-2xs mono">
+            <span className="text-text font-medium tracking-wide">{instrument}</span>
+            <span
+              className="px-1 rounded-sm text-text-muted"
+              style={{ background: 'color-mix(in srgb, var(--panel-3) 70%, transparent)' }}
+            >
+              {timeframe}
+            </span>
+          </div>
+          {legend && (
+            <div
+              className="flex items-center gap-2 text-2xs mono px-1.5 py-0.5 rounded-sm"
+              style={{
+                background: 'color-mix(in srgb, var(--panel) 62%, transparent)',
+                backdropFilter: 'blur(2px)',
+              }}
+            >
+              <span className="text-text-muted">O<span className="text-text-2 ml-1">{fmt(legend.open)}</span></span>
+              <span className="text-text-muted">H<span className="text-text-2 ml-1">{fmt(legend.high)}</span></span>
+              <span className="text-text-muted">L<span className="text-text-2 ml-1">{fmt(legend.low)}</span></span>
+              <span className="text-text-muted">
+                C<span className="ml-1" style={{ color: legend.up ? 'var(--positive)' : 'var(--negative)' }}>{fmt(legend.close)}</span>
+              </span>
+              <span style={{ color: legend.up ? 'var(--positive)' : 'var(--negative)' }}>
+                {legend.changePct >= 0 ? '+' : ''}
+                {legend.changePct.toFixed(2)}%
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
