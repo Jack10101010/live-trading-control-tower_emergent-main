@@ -1365,6 +1365,8 @@ async def market_data_candles(symbol: str = "EURUSD", timeframe: str = market_da
         "requestId": q.get("requestId"), "source": q.get("source"),
         "cacheHit": q.get("cacheHit"), "fellBack": q.get("fellBack"), "staleLive": q.get("staleLive"),
         "polygonStatus": q.get("polygonStatus"), "cacheAgeSeconds": q.get("cacheAgeSeconds"),
+        "lastSuccessAt": q.get("lastSuccessAt"), "lastFailedAt": q.get("lastFailedAt"),
+        "providerNote": q.get("providerNote"),
         "start": start, "end": end_iso or "live", "count": len(series), "candles": series,
     }
 

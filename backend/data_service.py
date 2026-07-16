@@ -260,6 +260,8 @@ class PolygonAdapter(MarketDataProviderPort):
         self.last_from_cache = False  # diagnostics: did the last history() hit the cache?
         self.last_status: str | None = None  # Polygon's own status for the last fetch (e.g. "DELAYED")
         self.last_cache_age_s = 0.0  # age of the served cache entry (0 = freshly fetched)
+        self.last_success_at: float | None = None  # unix s of the last successful fetch
+        self.last_failed_at: float | None = None   # unix s of the last failed request
 
     def available(self) -> bool:
         return bool(self._key)
@@ -314,9 +316,11 @@ class PolygonAdapter(MarketDataProviderPort):
         try:
             bars = self._fetch(symbol, timeframe, start_s, end_s)
             self._last_error = None
+            self.last_success_at = time.time()
             self._cache[key] = (time.time(), bars)
             return bars
         except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError) as exc:
+            self.last_failed_at = time.time()
             self._last_error = f"polygon: {exc.__class__.__name__}"
             return []
 
@@ -444,6 +448,11 @@ class DataService:
             "fellBack": fell_back, "staleLive": stale_live, "cacheHit": cache_hit, "count": len(bars),
             "polygonStatus": self.polygon.last_status if on_polygon else None,
             "cacheAgeSeconds": round(self.polygon.last_cache_age_s, 1) if cache_hit else None,
+            # Provider health (Chart Status System PART E) — reuse what the adapter
+            # already tracks; no invented "remaining requests".
+            "lastSuccessAt": self.polygon.last_success_at,
+            "lastFailedAt": self.polygon.last_failed_at,
+            "providerNote": self.polygon._last_error,
             "first": bars[0]["time"] if bars else None,
             "last": bars[-1]["time"] if bars else None,
         }

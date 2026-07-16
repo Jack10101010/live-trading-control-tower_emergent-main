@@ -11,7 +11,8 @@ import { useTrades, useMarketCandles, useOrderBlocks, useFairValueGaps, useLiqui
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { ChartDataStatusStrip } from '@/components/domain/ChartDataStatusStrip';
-import { deriveChartContext, resolveChartMode, type ChartMode } from '@/lib/chartContext';
+import { deriveChartContext, resolveWorkspaceMode } from '@/lib/chartContext';
+import { resolveBarWindow, totalRequestedBars, type WorkspaceMode } from '@/lib/chartWindowPolicy';
 
 /**
  * ChartWorkspace — the canonical chart surface of the Control Tower.
@@ -47,7 +48,6 @@ export interface ChartWorkspaceProps {
   cursor?: number;
   /** Candle window end (replay session end). Omit for the live edge. */
   endISO?: string;
-  count?: number;
   height?: number;
   className?: string;
   volume?: boolean;
@@ -58,9 +58,10 @@ export interface ChartWorkspaceProps {
    *  own layout). */
   resizable?: boolean;
   initialHeight?: number;
-  /** Explicit ChartMode for the status system (e.g. 'historical-explorer'). Defaults
-   *  to a mapping of `mode` ('live'→'live-trading', 'replay'→'replay'). */
-  chartMode?: ChartMode;
+  /** Explicit WORKSPACE mode (e.g. 'historical-explorer'). Defaults to a mapping of
+   *  `mode` ('live'→'market-monitor', 'replay'→'replay'). Never 'live trading' —
+   *  execution authority is a separate axis (see ChartContext.execution). */
+  workspaceMode?: WorkspaceMode;
 }
 
 const HEIGHT_KEY = 'ct.chartHeight';
@@ -71,15 +72,20 @@ export function ChartWorkspace({
   mode,
   cursor,
   endISO,
-  count = 220,
   height = 0,
   className,
   volume = true,
   controls = true,
   resizable = false,
   initialHeight = 420,
-  chartMode,
+  workspaceMode,
 }: ChartWorkspaceProps) {
+  // Bar window: named + owned in ONE place (chartWindowPolicy), never a magic number
+  // at a call site. `count` is what we ask the backend for = window + warm-up.
+  const wsMode = resolveWorkspaceMode(mode, workspaceMode);
+  const windowPolicy = resolveBarWindow(wsMode);
+  const count = totalRequestedBars(windowPolicy);
+
   // Resizable height (live dashboards): owned here, persisted across sessions.
   const [chartHeight, setChartHeight] = useState<number>(() => {
     const saved = Number(typeof localStorage !== 'undefined' ? localStorage.getItem(HEIGHT_KEY) : NaN);
@@ -133,7 +139,6 @@ export function ChartWorkspace({
   const loadingOlder = useRef(false);
   const exhausted = useRef(false);
   const lastChunkAt = useRef(0);
-  const MAX_OLDER_BARS = 3000;
   useEffect(() => {
     setOlderBars([]);
     exhausted.current = false;
@@ -148,9 +153,11 @@ export function ChartWorkspace({
   );
 
   const handleNearLeftEdge = useCallback(() => {
-    if (mode !== 'live' || loadingOlder.current || exhausted.current) return;
+    // Backfill is governed by the window policy: replay windows are exact and must
+    // never silently widen; monitor/explorer may pull older bars up to policy.maxBars.
+    if (!windowPolicy.allowBackfill || loadingOlder.current || exhausted.current) return;
     if (Date.now() - lastChunkAt.current < 1_000) return; // cooldown: no cascades
-    if (olderBars.length >= MAX_OLDER_BARS) return; // hard cap per series
+    if (olderBars.length >= windowPolicy.maxBars) return; // policy cap, not a magic number
     const first = (olderBars.length ? olderBars : baseCandles)[0];
     if (!first) return;
     loadingOlder.current = true;
@@ -184,7 +191,7 @@ export function ChartWorkspace({
       .finally(() => {
         loadingOlder.current = false;
       });
-  }, [mode, instrument, effectiveTf, olderBars, baseCandles]);
+  }, [mode, instrument, effectiveTf, olderBars, baseCandles, windowPolicy]);
 
   // M1 inspector (Phase 24): click a parent bar → its underlying M1 candles.
   const [inspect, setInspect] = useState<{ time: number; bars: Candle[] } | null>(null);
@@ -241,17 +248,19 @@ export function ChartWorkspace({
   // every render, so it can't churn other memos.
   const chartContext = useMemo(
     () => deriveChartContext({
-      mode: resolveChartMode(mode, chartMode),
+      mode: wsMode,
       instrument,
       timeframe: effectiveTf,
       feed,
-      candles,
-      requestedCount: count,
+      candles,                       // base + any back-scrolled bars
+      baseBars: baseCandles.length,  // what the policy window itself returned
+      policy: windowPolicy,
       isLive: mode === 'live',
       nowMs: Date.now(),
+      // execution omitted → EXECUTION_DISABLED (honest: nothing is bound/armed)
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mode, chartMode, instrument, effectiveTf, feed, candles, count]
+    [wsMode, instrument, effectiveTf, feed, candles, baseCandles, windowPolicy, mode]
   );
 
   return (

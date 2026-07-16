@@ -152,7 +152,6 @@ export function ReplayView() {
                 mode="replay"
                 cursor={cursor}
                 endISO={session?.window.end}
-                count={220}
                 volume
               />
             </FeatureGate>

@@ -162,6 +162,9 @@ export interface MarketCandles {
   staleLive?: boolean | null;
   polygonStatus?: string | null;
   cacheAgeSeconds?: number | null;
+  lastSuccessAt?: number | null; // unix seconds
+  lastFailedAt?: number | null;  // unix seconds
+  providerNote?: string | null;  // last provider error class, if any
 }
 
 /** Active risk limit set (Phase 12) — engine defaults overlaid with fixture fundedRules. */

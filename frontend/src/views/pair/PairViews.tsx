@@ -115,7 +115,7 @@ export function PairDashboardView() {
             Resizable: drag the divider under the chart (persisted height). */}
         <Panel title="Recent Price Action" className="col-span-8" bodyClassName="p-0">
           <FeatureGate flag="charts">
-            <ChartWorkspace instrument={pair} mode="live" count={180} volume resizable initialHeight={420} />
+            <ChartWorkspace instrument={pair} mode="live" volume resizable initialHeight={420} />
           </FeatureGate>
         </Panel>
 
