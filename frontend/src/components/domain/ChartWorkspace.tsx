@@ -10,6 +10,8 @@ import {
 import { useTrades, useMarketCandles, useOrderBlocks, useFairValueGaps, useLiquidityPools, useMarketStructure } from '@/hooks/useRepository';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { ChartDataStatusStrip } from '@/components/domain/ChartDataStatusStrip';
+import { deriveChartContext, resolveChartMode, type ChartMode } from '@/lib/chartContext';
 
 /**
  * ChartWorkspace — the canonical chart surface of the Control Tower.
@@ -56,6 +58,9 @@ export interface ChartWorkspaceProps {
    *  own layout). */
   resizable?: boolean;
   initialHeight?: number;
+  /** Explicit ChartMode for the status system (e.g. 'historical-explorer'). Defaults
+   *  to a mapping of `mode` ('live'→'live-trading', 'replay'→'replay'). */
+  chartMode?: ChartMode;
 }
 
 const HEIGHT_KEY = 'ct.chartHeight';
@@ -73,6 +78,7 @@ export function ChartWorkspace({
   controls = true,
   resizable = false,
   initialHeight = 420,
+  chartMode,
 }: ChartWorkspaceProps) {
   // Resizable height (live dashboards): owned here, persisted across sessions.
   const [chartHeight, setChartHeight] = useState<number>(() => {
@@ -228,6 +234,26 @@ export function ChartWorkspace({
 
   const { markers, zones, priceLines } = useMemo(() => buildAnnotations(enabled, ctx), [enabled, ctx]);
 
+  // The single authoritative ChartContext (Chart Status System). Every status
+  // surface — strip, future inspector, screenshot stamp, audit export — renders a
+  // projection of THIS. Interpretation lives entirely in deriveChartContext.
+  // Date.now() is snapshotted at compute time (deps change ~each poll), not read
+  // every render, so it can't churn other memos.
+  const chartContext = useMemo(
+    () => deriveChartContext({
+      mode: resolveChartMode(mode, chartMode),
+      instrument,
+      timeframe: effectiveTf,
+      feed,
+      candles,
+      requestedCount: count,
+      isLive: mode === 'live',
+      nowMs: Date.now(),
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mode, chartMode, instrument, effectiveTf, feed, candles, count]
+  );
+
   return (
     <div
       className={cn('flex flex-col min-h-0', resizable ? '' : 'h-full', className)}
@@ -369,6 +395,11 @@ export function ChartWorkspace({
           </div>
         )}
       </div>
+
+      {/* Chart Status System — a projection of the single ChartContext model. Lives
+          here (never in ChartPanel), so every chart mounted through ChartWorkspace
+          (Pair Dashboard, Market Data, Replay) self-describes automatically. */}
+      <ChartDataStatusStrip context={chartContext} />
 
       {/* Drag divider (resizable mode) — TradingView-style vertical resize. */}
       {resizable && (

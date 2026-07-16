@@ -152,6 +152,16 @@ export interface MarketCandles {
   end: string;
   count: number;
   candles: OhlcBar[];
+  // Data-provenance diagnostics (Chart Status System). Present on the live/candles
+  // path; optional so replay/fixture responses and older callers still typecheck.
+  // Consumed only via deriveChartContext — never read ad hoc by components.
+  source?: string | null;
+  requestId?: string | null;
+  cacheHit?: boolean | null;
+  fellBack?: boolean | null;
+  staleLive?: boolean | null;
+  polygonStatus?: string | null;
+  cacheAgeSeconds?: number | null;
 }
 
 /** Active risk limit set (Phase 12) — engine defaults overlaid with fixture fundedRules. */

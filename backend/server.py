@@ -1354,12 +1354,17 @@ async def market_data_candles(symbol: str = "EURUSD", timeframe: str = market_da
     series = _MARKET_DATA_ENGINE.candles(symbol, timeframe, count, end_iso, provider, start)
     # Diagnostics (Phase 24 debug): which service provider actually answered, the
     # request id, and cache state — correlates frontend logs with backend logs.
-    q = dict(_DATA_SERVICE.last_query) if provider is None else {}
+    # Attached for the live path (provider=None) AND replay, since both route through
+    # the DataService (_service_candles) so last_query is fresh + meaningful. Other
+    # explicit providers (mt5, mock_live) bypass the service, so their last_query
+    # would be stale — omit it.
+    q = dict(_DATA_SERVICE.last_query) if provider in (None, "replay") else {}
     return {
         "symbol": symbol, "timeframe": timeframe,
         "provider": provider or _MARKET_DATA_ENGINE._active,
         "requestId": q.get("requestId"), "source": q.get("source"),
         "cacheHit": q.get("cacheHit"), "fellBack": q.get("fellBack"), "staleLive": q.get("staleLive"),
+        "polygonStatus": q.get("polygonStatus"), "cacheAgeSeconds": q.get("cacheAgeSeconds"),
         "start": start, "end": end_iso or "live", "count": len(series), "candles": series,
     }
 

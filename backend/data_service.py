@@ -258,6 +258,8 @@ class PolygonAdapter(MarketDataProviderPort):
         self._last_error: str | None = None
         self._cache: dict[tuple, tuple[float, list[Bar]]] = {}  # key -> (fetched_at, bars)
         self.last_from_cache = False  # diagnostics: did the last history() hit the cache?
+        self.last_status: str | None = None  # Polygon's own status for the last fetch (e.g. "DELAYED")
+        self.last_cache_age_s = 0.0  # age of the served cache entry (0 = freshly fetched)
 
     def available(self) -> bool:
         return bool(self._key)
@@ -276,6 +278,10 @@ class PolygonAdapter(MarketDataProviderPort):
         req = urllib.request.Request(url, headers={"User-Agent": "control-tower/1.0"})
         with urllib.request.urlopen(req, timeout=self._timeout, context=_SSL_CTX) as resp:
             payload = json.loads(resp.read().decode())
+        # Polygon reports its own feed status ("OK" | "DELAYED"); the free tier is
+        # DELAYED. Surface it verbatim so the chart can say "delayed" truthfully
+        # rather than implying real-time.
+        self.last_status = payload.get("status")
         return [{"time": int(r["t"] // 1000), "open": float(r["o"]), "high": float(r["h"]),
                  "low": float(r["l"]), "close": float(r["c"]), "volume": float(r.get("v", 0))}
                 for r in payload.get("results", []) or []]
@@ -301,8 +307,10 @@ class PolygonAdapter(MarketDataProviderPort):
         hit = self._cache.get(key)
         if hit and (not live_edge or time.time() - hit[0] < live_ttl):
             self.last_from_cache = True
+            self.last_cache_age_s = time.time() - hit[0]
             return hit[1]
         self.last_from_cache = False
+        self.last_cache_age_s = 0.0
         try:
             bars = self._fetch(symbol, timeframe, start_s, end_s)
             self._last_error = None
@@ -429,10 +437,13 @@ class DataService:
                 bars = query(self.store)
                 source = self.store.provider_id
                 fell_back = True
-        cache_hit = bool(self.polygon.last_from_cache) if source == "polygon" and not stale_live else False
+        on_polygon = source == "polygon" and not stale_live
+        cache_hit = bool(self.polygon.last_from_cache) if on_polygon else False
         self.last_query = {
             "requestId": req_id, "timeframe": timeframe, "source": source,
             "fellBack": fell_back, "staleLive": stale_live, "cacheHit": cache_hit, "count": len(bars),
+            "polygonStatus": self.polygon.last_status if on_polygon else None,
+            "cacheAgeSeconds": round(self.polygon.last_cache_age_s, 1) if cache_hit else None,
             "first": bars[0]["time"] if bars else None,
             "last": bars[-1]["time"] if bars else None,
         }
