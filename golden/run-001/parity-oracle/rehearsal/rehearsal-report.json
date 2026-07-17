@@ -1,0 +1,125 @@
+{
+ "gate": "M3-P0-rehearsal",
+ "at": "2026-07-17T14:03:28.590497+00:00",
+ "expected": {
+  "trades_sha": "ca925d544601ad243ba0909045dc00384eaea0e9d41977ab7189b8a8c1e9a964",
+  "baseline_sha": "aa77176b54cc4f96acccf3d0540fe41ee3b6c252847ddd3bc65702fe180214c1",
+  "order_blocks_sha": "bb67b6557a4a88fcfb1e83e6bf1558c8b3530ba9431a2e3e35d4d480078b7159",
+  "rows": 2060,
+  "decided": 635,
+  "net_r": 292.6598432207228,
+  "baseline_net_r": 145.38471612795792,
+  "ob_rows": 2080
+ },
+ "checks": [
+  {
+   "check": "lux_commit",
+   "ok": true,
+   "detail": "d978074a2ee938fb4803e50d419788c584d6ef57"
+  },
+  {
+   "check": "engine_version",
+   "ok": true,
+   "detail": "5bb6372c092cc65ae0d30c4a40bed26ed5e074aef2459de9e199b902849305be"
+  },
+  {
+   "check": "golden_config_include_disabled",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "closed_bar_truncation",
+   "ok": true,
+   "detail": "4271083->4271059 rows; frontier window starts 2026-06-19 09:30:00+00:00"
+  },
+  {
+   "check": "runA_bootstrap",
+   "ok": true,
+   "detail": "bootstrap"
+  },
+  {
+   "check": "runB_ok",
+   "ok": true,
+   "detail": "ok"
+  },
+  {
+   "check": "no_duplicate_intents",
+   "ok": true,
+   "detail": "[]"
+  },
+  {
+   "check": "diff_deterministic",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "restart_no_extra_intents",
+   "ok": true,
+   "detail": "no_new_bar"
+  },
+  {
+   "check": "dry_run_never_submits",
+   "ok": true,
+   "detail": "0"
+  },
+  {
+   "check": "replay_fully_suppressed",
+   "ok": true,
+   "detail": "[]"
+  },
+  {
+   "check": "pipeline_deterministic",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "byte_parity_entry_trades",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "byte_parity_baseline_trades",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "byte_parity_order_blocks",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "candidate_rows_2060",
+   "ok": true,
+   "detail": "2060"
+  },
+  {
+   "check": "decided_635",
+   "ok": true,
+   "detail": "635"
+  },
+  {
+   "check": "ob_rows_2080",
+   "ok": true,
+   "detail": "2080"
+  },
+  {
+   "check": "net_r_exact",
+   "ok": true,
+   "detail": "292.6598432207228"
+  },
+  {
+   "check": "net_r_matches_reference_summary",
+   "ok": true,
+   "detail": "292.6598432207228 vs 292.6598432207228"
+  }
+ ],
+ "hashes": {
+  "entry_trades": "ca925d544601ad243ba0909045dc00384eaea0e9d41977ab7189b8a8c1e9a964",
+  "baseline_trades": "aa77176b54cc4f96acccf3d0540fe41ee3b6c252847ddd3bc65702fe180214c1",
+  "order_blocks": "bb67b6557a4a88fcfb1e83e6bf1558c8b3530ba9431a2e3e35d4d480078b7159"
+ },
+ "verdict": "PASS",
+ "frontier_intents": [],
+ "engine_version": "5bb6372c092cc65ae0d30c4a40bed26ed5e074aef2459de9e199b902849305be",
+ "lux_commit": "d978074a2ee938fb4803e50d419788c584d6ef57"
+}

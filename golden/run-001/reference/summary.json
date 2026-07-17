@@ -1,0 +1,1417 @@
+{
+  "config": {
+    "symbol": "EURUSD",
+    "candle_file": "EURUSD_1m_extended_2015_2026.csv",
+    "detection_timeframe": "15min",
+    "execution_timeframe": "1min",
+    "start_date": "2015-01-01",
+    "end_date": "2026-06-19",
+    "swing_length": 50,
+    "ob_filter": "Atr",
+    "rr_multiple": 2,
+    "entry_buffer_pips": 0,
+    "stop_buffer_pips": 1,
+    "pip_size": 0.0001,
+    "tick_size": 1e-05,
+    "verify_limit_ticks": 0,
+    "execution_modes": [
+      "allow_multi_position"
+    ],
+    "entry_models": [
+      "triggered_edge"
+    ],
+    "entry_penetration_thresholds": [],
+    "protection_modes": [
+      "baseline"
+    ],
+    "penetration_thresholds": [
+      50.0,
+      75.0,
+      90.0,
+      100.0
+    ],
+    "close_breach_buffers_pips": [
+      0.0,
+      0.5,
+      1.0,
+      2.0,
+      3.0
+    ],
+    "triggered_edge_trigger_thresholds": [
+      25
+    ],
+    "triggered_edge_entry_level_pct": 0,
+    "triggered_edge_same_candle_modes": [
+      "same_candle",
+      "next_candle"
+    ],
+    "triggered_edge_candle_delays": [
+      3
+    ],
+    "triggered_edge_cancel_on_first_failed_tag": false,
+    "triggered_edge_cancel_on_retrace": false,
+    "triggered_edge_cancel_retrace_pips": 0,
+    "triggered_edge_cancel_retrace_ob_pct": 0,
+    "triggered_edge_fft_move_away_pips": 0,
+    "triggered_edge_fft_move_away_ob_multiple": 0,
+    "triggered_edge_fft_min_ob_width_pips": 0,
+    "batch_entry_penetration": false,
+    "parallel_scenarios": true,
+    "max_workers": 8,
+    "profile_simulation_hot_path": false,
+    "trade_direction": "both",
+    "structure_filter": "both",
+    "ob_entry_depth_pct": 0,
+    "min_ob_size_pips": 0,
+    "max_ob_size_pips": 100,
+    "spread_pips": 0.2,
+    "slippage_pips": 0.2,
+    "commission_r_per_trade": 0,
+    "directional_entry_mode": "symmetric",
+    "directional_entry_config": null,
+    "long_entry_models": null,
+    "short_entry_models": null,
+    "long_triggered_edge_threshold": 25.0,
+    "short_triggered_edge_threshold": 25.0,
+    "long_triggered_edge_delays": [
+      0,
+      1
+    ],
+    "short_triggered_edge_delays": [
+      0,
+      1
+    ],
+    "long_entry_penetration_thresholds": [],
+    "short_entry_penetration_thresholds": [],
+    "session_filter_enabled": false,
+    "allowed_sessions": [],
+    "news_blackout_enabled": true,
+    "news_file": "data/news/master_economic_calendar_2020_present.csv",
+    "news_blackout_minutes_before": 3,
+    "news_blackout_minutes_after": 3,
+    "news_blackout_impacts": [
+      "high"
+    ],
+    "news_blackout_currencies": [],
+    "news_block_new_fills": true,
+    "news_pause_pending_orders": true,
+    "news_cancel_if_touched_during_blackout": true,
+    "news_flatten_active_trades": true,
+    "news_flatten_minutes_before_blackout": 5,
+    "reverse_touch_cancel_enabled": false,
+    "allowed_structure_directions": [
+      "bos_long",
+      "bos_short",
+      "choch_long",
+      "choch_short"
+    ],
+    "session_strategy_scenario": {
+      "cohorts": [
+        {
+          "direction": "Long",
+          "eligibility": {
+            "base": "allow",
+            "states": {
+              "Bull/Chop": "block"
+            }
+          },
+          "enabled": true,
+          "session": "london",
+          "state_overrides": {
+            "Bear/Chop": {
+              "mode": "custom",
+              "rr": 0.9
+            },
+            "Bear/Compress": {
+              "mode": "custom",
+              "rr": 1.75
+            },
+            "Bear/Expand": {
+              "mode": "custom",
+              "rr": 2.75
+            },
+            "Bull/Compress": {
+              "mode": "custom",
+              "rr": 1
+            },
+            "Bull/Expand": {
+              "mode": "custom",
+              "rr": 2.25
+            }
+          },
+          "structure": "BOS",
+          "target": {
+            "rr": 2
+          }
+        },
+        {
+          "direction": "Short",
+          "eligibility": {
+            "base": "allow",
+            "states": {
+              "Bear/Chop": "block",
+              "Bear/Compress": "block",
+              "Bear/Expand": "block",
+              "Bull/Expand": "block"
+            }
+          },
+          "enabled": true,
+          "session": "london",
+          "state_overrides": {
+            "Bull/Chop": {
+              "mode": "custom",
+              "rr": 0.9
+            },
+            "Bull/Compress": {
+              "mode": "custom",
+              "rr": 1.75
+            }
+          },
+          "structure": "BOS",
+          "target": {
+            "rr": 2
+          }
+        },
+        {
+          "direction": "Long",
+          "eligibility": {
+            "base": "allow",
+            "states": {
+              "Bear/Chop": "block",
+              "Bear/Expand": "block",
+              "Bull/Chop": "block",
+              "Bull/Compress": "block",
+              "Bull/Expand": "block"
+            }
+          },
+          "enabled": true,
+          "session": "london",
+          "state_overrides": {
+            "Bear/Compress": {
+              "mode": "custom",
+              "rr": 0.6
+            }
+          },
+          "structure": "CHoCH",
+          "target": {
+            "rr": 2
+          }
+        },
+        {
+          "direction": "Short",
+          "eligibility": {
+            "base": "allow",
+            "states": {
+              "Bull/Expand": "block"
+            }
+          },
+          "enabled": true,
+          "session": "london",
+          "state_overrides": {
+            "Bear/Chop": {
+              "mode": "custom",
+              "rr": 2.75
+            },
+            "Bear/Compress": {
+              "mode": "custom",
+              "rr": 0.5
+            },
+            "Bear/Expand": {
+              "mode": "custom",
+              "rr": 1.5
+            },
+            "Bull/Chop": {
+              "mode": "custom",
+              "rr": 1.75
+            },
+            "Bull/Compress": {
+              "mode": "custom",
+              "rr": 1.75
+            },
+            "Bull/Expand": {
+              "mode": "custom",
+              "rr": 2
+            }
+          },
+          "structure": "CHoCH",
+          "target": {
+            "rr": 2
+          }
+        },
+        {
+          "direction": "Long",
+          "eligibility": {
+            "base": "allow",
+            "states": {
+              "Bear/Chop": "block",
+              "Bear/Compress": "block",
+              "Bull/Chop": "block",
+              "Bull/Expand": "block"
+            }
+          },
+          "enabled": true,
+          "session": "lull",
+          "state_overrides": {
+            "Bear/Expand": {
+              "mode": "custom",
+              "rr": 0.5
+            },
+            "Bull/Compress": {
+              "mode": "custom",
+              "rr": 0.8
+            }
+          },
+          "structure": "BOS",
+          "target": {
+            "rr": 2
+          }
+        },
+        {
+          "direction": "Short",
+          "eligibility": {
+            "base": "allow",
+            "states": {
+              "Bull/Chop": "block"
+            }
+          },
+          "enabled": true,
+          "session": "lull",
+          "state_overrides": {
+            "Bear/Chop": {
+              "mode": "custom",
+              "rr": 0.5
+            },
+            "Bear/Compress": {
+              "mode": "custom",
+              "rr": 2.75
+            },
+            "Bear/Expand": {
+              "mode": "custom",
+              "rr": 3
+            },
+            "Bull/Compress": {
+              "mode": "custom",
+              "rr": 1
+            },
+            "Bull/Expand": {
+              "mode": "custom",
+              "rr": 1.5
+            }
+          },
+          "structure": "BOS",
+          "target": {
+            "rr": 2
+          }
+        },
+        {
+          "direction": "Long",
+          "eligibility": {
+            "base": "allow",
+            "states": {
+              "Bear/Chop": "block",
+              "Bear/Expand": "block",
+              "Bull/Chop": "block",
+              "Bull/Expand": "block"
+            }
+          },
+          "enabled": true,
+          "session": "lull",
+          "state_overrides": {
+            "Bear/Compress": {
+              "mode": "custom",
+              "rr": 0.9
+            },
+            "Bull/Compress": {
+              "mode": "custom",
+              "rr": 0.6
+            }
+          },
+          "structure": "CHoCH",
+          "target": {
+            "rr": 2
+          }
+        },
+        {
+          "direction": "Short",
+          "eligibility": {
+            "base": "allow",
+            "states": {
+              "Bull/Chop": "block"
+            }
+          },
+          "enabled": true,
+          "session": "lull",
+          "state_overrides": {
+            "Bear/Chop": {
+              "mode": "custom",
+              "rr": 1
+            },
+            "Bear/Compress": {
+              "mode": "custom",
+              "rr": 2.75
+            },
+            "Bear/Expand": {
+              "mode": "custom",
+              "rr": 1
+            },
+            "Bull/Compress": {
+              "mode": "custom",
+              "rr": 1
+            },
+            "Bull/Expand": {
+              "mode": "custom",
+              "rr": 4.5
+            }
+          },
+          "structure": "CHoCH",
+          "target": {
+            "rr": 2
+          }
+        },
+        {
+          "direction": "Long",
+          "eligibility": {
+            "base": "allow",
+            "states": {
+              "Bear/Chop": "block",
+              "Bear/Expand": "block",
+              "Bull/Chop": "block",
+              "Bull/Expand": "block"
+            }
+          },
+          "enabled": true,
+          "session": "newYork",
+          "state_overrides": {
+            "Bear/Compress": {
+              "mode": "custom",
+              "rr": 0.7
+            },
+            "Bull/Compress": {
+              "mode": "custom",
+              "rr": 0.5
+            }
+          },
+          "structure": "BOS",
+          "target": {
+            "rr": 2
+          }
+        },
+        {
+          "direction": "Short",
+          "eligibility": {
+            "base": "allow"
+          },
+          "enabled": true,
+          "session": "newYork",
+          "state_overrides": {
+            "Bear/Chop": {
+              "mode": "custom",
+              "rr": 1
+            },
+            "Bear/Compress": {
+              "mode": "custom",
+              "rr": 0.9
+            },
+            "Bear/Expand": {
+              "mode": "custom",
+              "rr": 0.7
+            },
+            "Bull/Chop": {
+              "mode": "custom",
+              "rr": 2.5
+            },
+            "Bull/Compress": {
+              "mode": "custom",
+              "rr": 2
+            },
+            "Bull/Expand": {
+              "mode": "custom",
+              "rr": 1.25
+            }
+          },
+          "structure": "BOS",
+          "target": {
+            "rr": 2
+          }
+        },
+        {
+          "direction": "Long",
+          "eligibility": {
+            "base": "allow",
+            "states": {
+              "Bear/Compress": "block",
+              "Bear/Expand": "block",
+              "Bull/Compress": "block",
+              "Bull/Expand": "block"
+            }
+          },
+          "enabled": true,
+          "session": "newYork",
+          "state_overrides": {
+            "Bear/Chop": {
+              "mode": "custom",
+              "rr": 2
+            },
+            "Bull/Chop": {
+              "mode": "custom",
+              "rr": 1.75
+            }
+          },
+          "structure": "CHoCH",
+          "target": {
+            "rr": 2
+          }
+        },
+        {
+          "direction": "Short",
+          "eligibility": {
+            "base": "allow",
+            "states": {
+              "Bull/Chop": "block"
+            }
+          },
+          "enabled": true,
+          "session": "newYork",
+          "state_overrides": {
+            "Bear/Chop": {
+              "mode": "custom",
+              "rr": 2.75
+            },
+            "Bear/Compress": {
+              "mode": "custom",
+              "rr": 3
+            },
+            "Bear/Expand": {
+              "mode": "custom",
+              "rr": 2
+            }
+          },
+          "structure": "CHoCH",
+          "target": {
+            "rr": 2
+          }
+        },
+        {
+          "direction": "Long",
+          "eligibility": {
+            "base": "allow",
+            "states": {
+              "Bear/Chop": "block",
+              "Bear/Compress": "block",
+              "Bear/Expand": "block"
+            }
+          },
+          "enabled": true,
+          "session": "ny_pm",
+          "state_overrides": {
+            "Bull/Chop": {
+              "mode": "custom",
+              "rr": 0.9
+            },
+            "Bull/Compress": {
+              "mode": "custom",
+              "rr": 0.5
+            },
+            "Bull/Expand": {
+              "mode": "custom",
+              "rr": 0.6
+            }
+          },
+          "structure": "BOS",
+          "target": {
+            "rr": 2
+          }
+        },
+        {
+          "direction": "Short",
+          "eligibility": {
+            "base": "allow",
+            "states": {
+              "Bear/Chop": "block",
+              "Bear/Compress": "block",
+              "Bear/Expand": "block",
+              "Bull/Chop": "block",
+              "Bull/Compress": "block"
+            }
+          },
+          "enabled": true,
+          "session": "ny_pm",
+          "state_overrides": {
+            "Bull/Expand": {
+              "mode": "custom",
+              "rr": 0.5
+            }
+          },
+          "structure": "BOS",
+          "target": {
+            "rr": 2
+          }
+        },
+        {
+          "direction": "Long",
+          "eligibility": {
+            "base": "allow",
+            "states": {
+              "Bull/Chop": "block"
+            }
+          },
+          "enabled": true,
+          "session": "ny_pm",
+          "state_overrides": {
+            "Bear/Chop": {
+              "mode": "custom",
+              "rr": 1.5
+            },
+            "Bear/Compress": {
+              "mode": "custom",
+              "rr": 0.8
+            },
+            "Bear/Expand": {
+              "mode": "custom",
+              "rr": 1.25
+            },
+            "Bull/Compress": {
+              "mode": "custom",
+              "rr": 0.5
+            },
+            "Bull/Expand": {
+              "mode": "custom",
+              "rr": 0.5
+            }
+          },
+          "structure": "CHoCH",
+          "target": {
+            "rr": 2
+          }
+        },
+        {
+          "direction": "Short",
+          "eligibility": {
+            "base": "allow",
+            "states": {
+              "Bull/Chop": "block"
+            }
+          },
+          "enabled": true,
+          "session": "ny_pm",
+          "state_overrides": {
+            "Bear/Chop": {
+              "mode": "custom",
+              "rr": 1.25
+            },
+            "Bear/Compress": {
+              "mode": "custom",
+              "rr": 1
+            }
+          },
+          "structure": "CHoCH",
+          "target": {
+            "rr": 2
+          }
+        },
+        {
+          "direction": "Long",
+          "eligibility": {
+            "base": "allow",
+            "states": {
+              "Bear/Chop": "block",
+              "Bear/Compress": "block",
+              "Bull/Chop": "block",
+              "Bull/Compress": "block"
+            }
+          },
+          "enabled": true,
+          "session": "asia",
+          "state_overrides": {
+            "Bear/Expand": {
+              "mode": "custom",
+              "rr": 1.25
+            },
+            "Bull/Expand": {
+              "mode": "custom",
+              "rr": 0.6
+            }
+          },
+          "structure": "BOS",
+          "target": {
+            "rr": 2
+          }
+        },
+        {
+          "direction": "Short",
+          "eligibility": {
+            "base": "allow",
+            "states": {
+              "Bull/Chop": "block"
+            }
+          },
+          "enabled": true,
+          "session": "asia",
+          "state_overrides": {
+            "Bear/Chop": {
+              "mode": "custom",
+              "rr": 1.75
+            },
+            "Bear/Compress": {
+              "mode": "custom",
+              "rr": 0.7
+            },
+            "Bear/Expand": {
+              "mode": "custom",
+              "rr": 0.8
+            },
+            "Bull/Compress": {
+              "mode": "custom",
+              "rr": 1.5
+            },
+            "Bull/Expand": {
+              "mode": "custom",
+              "rr": 0.9
+            }
+          },
+          "structure": "BOS",
+          "target": {
+            "rr": 2
+          }
+        },
+        {
+          "direction": "Long",
+          "eligibility": {
+            "base": "allow",
+            "states": {
+              "Bear/Expand": "block"
+            }
+          },
+          "enabled": true,
+          "session": "asia",
+          "state_overrides": {
+            "Bear/Chop": {
+              "mode": "custom",
+              "rr": 0.6
+            },
+            "Bear/Compress": {
+              "mode": "custom",
+              "rr": 0.8
+            },
+            "Bull/Chop": {
+              "mode": "custom",
+              "rr": 0.5
+            },
+            "Bull/Compress": {
+              "mode": "custom",
+              "rr": 0.7
+            },
+            "Bull/Expand": {
+              "mode": "custom",
+              "rr": 0.6
+            }
+          },
+          "structure": "CHoCH",
+          "target": {
+            "rr": 2
+          }
+        },
+        {
+          "direction": "Short",
+          "eligibility": {
+            "base": "allow",
+            "states": {
+              "Bull/Chop": "block",
+              "Bull/Compress": "block"
+            }
+          },
+          "enabled": true,
+          "session": "asia",
+          "state_overrides": {
+            "Bear/Chop": {
+              "mode": "custom",
+              "rr": 0.8
+            },
+            "Bear/Compress": {
+              "mode": "custom",
+              "rr": 0.9
+            },
+            "Bear/Expand": {
+              "mode": "custom",
+              "rr": 0.6
+            },
+            "Bull/Expand": {
+              "mode": "custom",
+              "rr": 1.25
+            }
+          },
+          "structure": "CHoCH",
+          "target": {
+            "rr": 2
+          }
+        },
+        {
+          "direction": "Long",
+          "eligibility": {
+            "base": "allow",
+            "states": {
+              "Bear/Compress": "block",
+              "Bear/Expand": "block",
+              "Bull/Chop": "block",
+              "Bull/Compress": "block"
+            }
+          },
+          "enabled": true,
+          "session": "outside",
+          "state_overrides": {
+            "Bear/Chop": {
+              "mode": "custom",
+              "rr": 1.25
+            },
+            "Bull/Expand": {
+              "mode": "custom",
+              "rr": 0.7
+            }
+          },
+          "structure": "BOS",
+          "target": {
+            "rr": 2
+          }
+        },
+        {
+          "direction": "Short",
+          "eligibility": {
+            "base": "allow",
+            "states": {
+              "Bear/Chop": "block",
+              "Bear/Expand": "block",
+              "Bull/Chop": "block",
+              "Bull/Compress": "block",
+              "Bull/Expand": "block"
+            }
+          },
+          "enabled": true,
+          "session": "outside",
+          "state_overrides": {
+            "Bear/Compress": {
+              "mode": "custom",
+              "rr": 1.5
+            }
+          },
+          "structure": "BOS",
+          "target": {
+            "rr": 2
+          }
+        },
+        {
+          "direction": "Long",
+          "eligibility": {
+            "base": "allow",
+            "states": {
+              "Bear/Chop": "block",
+              "Bull/Chop": "block"
+            }
+          },
+          "enabled": true,
+          "session": "outside",
+          "state_overrides": {
+            "Bear/Compress": {
+              "mode": "custom",
+              "rr": 0.6
+            },
+            "Bear/Expand": {
+              "mode": "custom",
+              "rr": 0.9
+            },
+            "Bull/Compress": {
+              "mode": "custom",
+              "rr": 0.5
+            },
+            "Bull/Expand": {
+              "mode": "custom",
+              "rr": 0.5
+            }
+          },
+          "structure": "CHoCH",
+          "target": {
+            "rr": 2
+          }
+        },
+        {
+          "direction": "Short",
+          "eligibility": {
+            "base": "allow",
+            "states": {
+              "Bull/Chop": "block",
+              "Bull/Compress": "block",
+              "Bull/Expand": "block"
+            }
+          },
+          "enabled": true,
+          "session": "outside",
+          "state_overrides": {
+            "Bear/Chop": {
+              "mode": "custom",
+              "rr": 1
+            },
+            "Bear/Compress": {
+              "mode": "custom",
+              "rr": 1.25
+            },
+            "Bear/Expand": {
+              "mode": "custom",
+              "rr": 1.5
+            }
+          },
+          "structure": "CHoCH",
+          "target": {
+            "rr": 2
+          }
+        }
+      ],
+      "enabled": true,
+      "meta": {
+        "custom_target_count": 0,
+        "disabled_count": 0,
+        "eligibility_disabled_bases": 0,
+        "eligibility_preset": "custom",
+        "eligibility_schema": 1,
+        "eligibility_state_blocks": 62,
+        "eligibility_state_rescues": 0,
+        "enabled_count": 24,
+        "execution_policy": {
+          "checksum": "c619def209db9843",
+          "id": "tp_4lkqqm9q79mk",
+          "name": "State Target Policy v1",
+          "revision": 1,
+          "status": "Candidate"
+        },
+        "global_run_rr": 2,
+        "neutral_base": true,
+        "preset": null,
+        "schema_version": 1,
+        "state_cells_block": 0,
+        "state_cells_custom": 78,
+        "state_cells_research": 0,
+        "state_overrides_schema": 1,
+        "target_policy": {
+          "checksum": "c619def209db9843",
+          "id": "tp_4lkqqm9q79mk",
+          "name": "State Target Policy v1",
+          "version": 2
+        }
+      }
+    },
+    "baseline_comparison": {
+      "be": null,
+      "eligible_cohort_keys": [],
+      "enabled": true,
+      "entry": {
+        "entry_key": "baseline",
+        "model": "baseline"
+      },
+      "mode": "eligible",
+      "risk_reduction": null,
+      "target": {
+        "rr": 2,
+        "type": "rr"
+      }
+    },
+    "emit_ob_retests": false,
+    "retest_reaction_window_candles": 10,
+    "retest_reaction_min_pips": 8.0,
+    "retest_failure_threshold": "close_beyond_ob",
+    "be_enabled": false,
+    "be_arm_levels": [],
+    "be_trigger_bases": [
+      "wick"
+    ],
+    "be_stop_buffer_r": 0.0,
+    "be_delay_candles": 0,
+    "be_variants": null,
+    "write_legacy_flat_outputs": false,
+    "be_multiarm_enabled": false,
+    "be_multiarm_force_serial": false,
+    "resume_existing_run_folder": null,
+    "skip_existing_scenarios": false,
+    "regime_gate_enabled": false,
+    "regime_gate_mode": "label",
+    "regime_ema_enabled": true,
+    "regime_ema_tf": "1D",
+    "regime_ema_length": 200,
+    "regime_ema_long_cond": "price_above",
+    "regime_ema_short_cond": "price_below",
+    "regime_ema_confirm": 0,
+    "regime_bbw_enabled": true,
+    "regime_bbw_tf": "1D",
+    "regime_bbw_length": 20,
+    "regime_bbw_std": 2.0,
+    "regime_bbw_thr_mode": "fixed",
+    "regime_bbw_thr_value": 2.342,
+    "regime_bbw_pctile": 50.0,
+    "regime_bbw_longvol": true,
+    "regime_adx_enabled": true,
+    "regime_adx_tf": "1D",
+    "regime_adx_length": 14,
+    "regime_adx_chop": 18.0,
+    "regime_adx_use": "state_classifier",
+    "regime_allowed_states": [
+      "Bull/Expand",
+      "Bull/Compress",
+      "Bull/Chop",
+      "Bear/Expand",
+      "Bear/Compress",
+      "Bear/Chop"
+    ],
+    "regime_direction_policy": "state_only",
+    "regime_bull_allows": "long",
+    "regime_bear_allows": "short",
+    "regime_chop_allows": "both",
+    "portfolio_policy_enabled": true,
+    "portfolio_policy_mode": "enforce",
+    "portfolio_policy_file": "configs/policy/deployed_policy.v1.json",
+    "portfolio_include_disabled_cohorts": true,
+    "risk_reduction_enabled": false,
+    "risk_reduction_trigger_r": null,
+    "risk_reduction_stop_r": null,
+    "risk_reduction_mode": "single_step"
+  },
+  "ob_count": 2080,
+  "detected_ob_count": 2080,
+  "simulation_ob_count": 2080,
+  "universe_reduction_pct": 0.0,
+  "bullish_count": 1013,
+  "bearish_count": 1067,
+  "bos_count": 946,
+  "choch_count": 1134,
+  "structure_direction_filter_skipped": {
+    "bos_long": 0,
+    "bos_short": 0,
+    "choch_long": 0,
+    "choch_short": 0
+  },
+  "execution_modes": {
+    "allow_multi_position": {
+      "total_obs": 2080,
+      "eligible_setups": 2060,
+      "filled_trades": 1098,
+      "missed_trades": 962,
+      "fill_rate": 0.5330097087378641,
+      "wins": 589,
+      "losses": 485,
+      "protection_exits": 0,
+      "open": 0,
+      "invalidated": 0,
+      "reverse_touch_cancel": 0,
+      "unfilled": 33,
+      "news_blackout_skipped": 0,
+      "news_active_trades_flattened": 24,
+      "news_flattened_r": 4.251690145480923,
+      "news_flattened_winners": 15,
+      "news_flattened_losers": 9,
+      "news_flattened_breakeven": 0,
+      "news_flatten_late_count": 1,
+      "news_paused_count": 860,
+      "news_rearmed_count": 801,
+      "news_touch_cancelled_count": 120,
+      "news_fills_blocked": 0,
+      "news_pending_paused": 860,
+      "news_pending_rearmed": 801,
+      "news_touch_cancelled": 120,
+      "session_filtered_skipped": 0,
+      "win_rate": 0.5484171322160148,
+      "be_exits": 0,
+      "be_exit_r_total": 0.0,
+      "terminal_exits": 1098,
+      "win_rate_wl_only": 0.5484171322160148,
+      "net_r": 145.38471612795792,
+      "gross_net_r": 230.7704110965011,
+      "total_cost_r": 85.38569496854322,
+      "max_drawdown_r": -19.413663671621748,
+      "expectancy_r": 0.13240866678320393,
+      "gross_expectancy_r": 0.21017341629918135,
+      "avg_loss_r": -1.0689633453558278,
+      "total_loss_r": -528.067892605779,
+      "avg_protection_exit_r": 0.0,
+      "total_protection_exit_r": 0.0,
+      "delay_exited_ob_before_arm_count": 0,
+      "delay_armed_after_ob_exit_count": 0,
+      "delay_ob_occupied_at_arm_count": 0,
+      "ghost_candidates_total": 0,
+      "ghost_wins": 0,
+      "ghost_losses": 0,
+      "ghost_breakevens": 0,
+      "ghost_protection_exits": 0,
+      "ghost_unfilled": 0,
+      "ghost_never_triggered": 0,
+      "ghost_net_r": 0.0,
+      "ghost_avg_r": null,
+      "news_blackout_enabled": true,
+      "news_file": "data/news/master_economic_calendar_2020_present.csv",
+      "news_impacts_used": [
+        "high"
+      ],
+      "news_currencies_used": [
+        "EUR",
+        "USD"
+      ],
+      "news_window_minutes_before": 3,
+      "news_window_minutes_after": 3,
+      "news_block_new_fills": true,
+      "news_pause_pending_orders": true,
+      "news_cancel_if_touched_during_blackout": true,
+      "news_flatten_active_trades": true,
+      "news_flatten_minutes_before_blackout": 5,
+      "news_events_loaded": 28148,
+      "news_events_matched": 2353,
+      "news_windows_created": 2353,
+      "protection_mode": "baseline",
+      "protection_threshold_pct": null,
+      "protection_buffer_pips": null
+    }
+  },
+  "protection_results": {
+    "allow_multi_position": {
+      "baseline": {
+        "total_obs": 2080,
+        "eligible_setups": 2060,
+        "filled_trades": 1098,
+        "missed_trades": 962,
+        "fill_rate": 0.5330097087378641,
+        "wins": 589,
+        "losses": 485,
+        "protection_exits": 0,
+        "open": 0,
+        "invalidated": 0,
+        "reverse_touch_cancel": 0,
+        "unfilled": 33,
+        "news_blackout_skipped": 0,
+        "news_active_trades_flattened": 24,
+        "news_flattened_r": 4.251690145480923,
+        "news_flattened_winners": 15,
+        "news_flattened_losers": 9,
+        "news_flattened_breakeven": 0,
+        "news_flatten_late_count": 1,
+        "news_paused_count": 860,
+        "news_rearmed_count": 801,
+        "news_touch_cancelled_count": 120,
+        "news_fills_blocked": 0,
+        "news_pending_paused": 860,
+        "news_pending_rearmed": 801,
+        "news_touch_cancelled": 120,
+        "session_filtered_skipped": 0,
+        "win_rate": 0.5484171322160148,
+        "be_exits": 0,
+        "be_exit_r_total": 0.0,
+        "terminal_exits": 1098,
+        "win_rate_wl_only": 0.5484171322160148,
+        "net_r": 145.38471612795792,
+        "gross_net_r": 230.7704110965011,
+        "total_cost_r": 85.38569496854322,
+        "max_drawdown_r": -19.413663671621748,
+        "expectancy_r": 0.13240866678320393,
+        "gross_expectancy_r": 0.21017341629918135,
+        "avg_loss_r": -1.0689633453558278,
+        "total_loss_r": -528.067892605779,
+        "avg_protection_exit_r": 0.0,
+        "total_protection_exit_r": 0.0,
+        "delay_exited_ob_before_arm_count": 0,
+        "delay_armed_after_ob_exit_count": 0,
+        "delay_ob_occupied_at_arm_count": 0,
+        "ghost_candidates_total": 0,
+        "ghost_wins": 0,
+        "ghost_losses": 0,
+        "ghost_breakevens": 0,
+        "ghost_protection_exits": 0,
+        "ghost_unfilled": 0,
+        "ghost_never_triggered": 0,
+        "ghost_net_r": 0.0,
+        "ghost_avg_r": null,
+        "news_blackout_enabled": true,
+        "news_file": "data/news/master_economic_calendar_2020_present.csv",
+        "news_impacts_used": [
+          "high"
+        ],
+        "news_currencies_used": [
+          "EUR",
+          "USD"
+        ],
+        "news_window_minutes_before": 3,
+        "news_window_minutes_after": 3,
+        "news_block_new_fills": true,
+        "news_pause_pending_orders": true,
+        "news_cancel_if_touched_during_blackout": true,
+        "news_flatten_active_trades": true,
+        "news_flatten_minutes_before_blackout": 5,
+        "news_events_loaded": 28148,
+        "news_events_matched": 2353,
+        "news_windows_created": 2353,
+        "protection_mode": "baseline",
+        "protection_threshold_pct": null,
+        "protection_buffer_pips": null
+      }
+    }
+  },
+  "entry_results": {
+    "allow_multi_position": {
+      "baseline": {
+        "total_obs": 2080,
+        "eligible_setups": 2060,
+        "filled_trades": 1098,
+        "missed_trades": 962,
+        "fill_rate": 0.5330097087378641,
+        "wins": 589,
+        "losses": 485,
+        "protection_exits": 0,
+        "open": 0,
+        "invalidated": 0,
+        "reverse_touch_cancel": 0,
+        "unfilled": 33,
+        "news_blackout_skipped": 0,
+        "news_active_trades_flattened": 24,
+        "news_flattened_r": 4.251690145480923,
+        "news_flattened_winners": 15,
+        "news_flattened_losers": 9,
+        "news_flattened_breakeven": 0,
+        "news_flatten_late_count": 1,
+        "news_paused_count": 860,
+        "news_rearmed_count": 801,
+        "news_touch_cancelled_count": 120,
+        "news_fills_blocked": 0,
+        "news_pending_paused": 860,
+        "news_pending_rearmed": 801,
+        "news_touch_cancelled": 120,
+        "session_filtered_skipped": 0,
+        "win_rate": 0.5484171322160148,
+        "be_exits": 0,
+        "be_exit_r_total": 0.0,
+        "terminal_exits": 1098,
+        "win_rate_wl_only": 0.5484171322160148,
+        "net_r": 145.38471612795792,
+        "gross_net_r": 230.7704110965011,
+        "total_cost_r": 85.38569496854322,
+        "max_drawdown_r": -19.413663671621748,
+        "expectancy_r": 0.13240866678320393,
+        "gross_expectancy_r": 0.21017341629918135,
+        "avg_loss_r": -1.0689633453558278,
+        "total_loss_r": -528.067892605779,
+        "avg_protection_exit_r": 0.0,
+        "total_protection_exit_r": 0.0,
+        "delay_exited_ob_before_arm_count": 0,
+        "delay_armed_after_ob_exit_count": 0,
+        "delay_ob_occupied_at_arm_count": 0,
+        "ghost_candidates_total": 0,
+        "ghost_wins": 0,
+        "ghost_losses": 0,
+        "ghost_breakevens": 0,
+        "ghost_protection_exits": 0,
+        "ghost_unfilled": 0,
+        "ghost_never_triggered": 0,
+        "ghost_net_r": 0.0,
+        "ghost_avg_r": null,
+        "news_blackout_enabled": true,
+        "news_file": "data/news/master_economic_calendar_2020_present.csv",
+        "news_impacts_used": [
+          "high"
+        ],
+        "news_currencies_used": [
+          "EUR",
+          "USD"
+        ],
+        "news_window_minutes_before": 3,
+        "news_window_minutes_after": 3,
+        "news_block_new_fills": true,
+        "news_pause_pending_orders": true,
+        "news_cancel_if_touched_during_blackout": true,
+        "news_flatten_active_trades": true,
+        "news_flatten_minutes_before_blackout": 5,
+        "news_events_loaded": 28148,
+        "news_events_matched": 2353,
+        "news_windows_created": 2353,
+        "protection_mode": "baseline",
+        "protection_threshold_pct": null,
+        "protection_buffer_pips": null,
+        "mode": "baseline",
+        "threshold": null
+      },
+      "entry_triggered_edge_25p0_d3": {
+        "total_obs": 2080,
+        "eligible_setups": 2060,
+        "filled_trades": 650,
+        "missed_trades": 1410,
+        "fill_rate": 0.3155339805825243,
+        "wins": 441,
+        "losses": 194,
+        "protection_exits": 0,
+        "open": 0,
+        "invalidated": 809,
+        "reverse_touch_cancel": 0,
+        "unfilled": 35,
+        "news_blackout_skipped": 0,
+        "news_active_trades_flattened": 15,
+        "news_flattened_r": 4.598416462637395,
+        "news_flattened_winners": 10,
+        "news_flattened_losers": 5,
+        "news_flattened_breakeven": 0,
+        "news_flatten_late_count": 0,
+        "news_paused_count": 891,
+        "news_rearmed_count": 890,
+        "news_touch_cancelled_count": 9,
+        "news_fills_blocked": 0,
+        "news_pending_paused": 891,
+        "news_pending_rearmed": 890,
+        "news_touch_cancelled": 9,
+        "session_filtered_skipped": 0,
+        "win_rate": 0.694488188976378,
+        "be_exits": 0,
+        "be_exit_r_total": 0.0,
+        "terminal_exits": 650,
+        "win_rate_wl_only": 0.694488188976378,
+        "net_r": 292.6598432207228,
+        "gross_net_r": 339.8365725120863,
+        "total_cost_r": 47.1767292913635,
+        "max_drawdown_r": -8.830059289369032,
+        "expectancy_r": 0.4502459126472658,
+        "gross_expectancy_r": 0.5228254961724405,
+        "avg_loss_r": -1.0577287206725583,
+        "total_loss_r": -210.4880154138391,
+        "avg_protection_exit_r": 0.0,
+        "total_protection_exit_r": 0.0,
+        "delay_exited_ob_before_arm_count": 266,
+        "delay_armed_after_ob_exit_count": 264,
+        "delay_ob_occupied_at_arm_count": 1214,
+        "ghost_candidates_total": 0,
+        "ghost_wins": 0,
+        "ghost_losses": 0,
+        "ghost_breakevens": 0,
+        "ghost_protection_exits": 0,
+        "ghost_unfilled": 0,
+        "ghost_never_triggered": 0,
+        "ghost_net_r": 0.0,
+        "ghost_avg_r": null,
+        "mode": "entry_triggered_edge_25p0_d3",
+        "entry_model": "triggered_edge",
+        "threshold": 25,
+        "entry_threshold_pct": 25,
+        "trigger_penetration_pct": 25,
+        "triggered_edge_entry_level_pct": 0,
+        "triggered_edge_delay_candles": 3,
+        "news_blackout_enabled": true,
+        "news_file": "data/news/master_economic_calendar_2020_present.csv",
+        "news_impacts_used": [
+          "high"
+        ],
+        "news_currencies_used": [
+          "EUR",
+          "USD"
+        ],
+        "news_window_minutes_before": 3,
+        "news_window_minutes_after": 3,
+        "news_block_new_fills": true,
+        "news_pause_pending_orders": true,
+        "news_cancel_if_touched_during_blackout": true,
+        "news_flatten_active_trades": true,
+        "news_flatten_minutes_before_blackout": 5,
+        "news_events_loaded": 28148,
+        "news_events_matched": 2353,
+        "news_windows_created": 2353,
+        "delta_net_r_vs_baseline": 147.27512709276488,
+        "delta_fill_rate_vs_baseline": -0.21747572815533983,
+        "delta_expectancy_vs_baseline": 0.3178372458640619,
+        "delta_drawdown_vs_baseline": 10.583604382252716
+      }
+    }
+  },
+  "directional_results": {},
+  "control_pairs": {},
+  "be_results": {
+    "allow_multi_position": {}
+  },
+  "risk_reduction": {
+    "enabled": false,
+    "trigger_r": null,
+    "stop_r": null,
+    "mode": "single_step",
+    "intrabar_policy": "provable_fill_arm_then_moved_stop_wins_wick"
+  },
+  "news_blackout_enabled": true,
+  "news_file": "data/news/master_economic_calendar_2020_present.csv",
+  "news_impacts_used": [
+    "high"
+  ],
+  "news_currencies_used": [
+    "EUR",
+    "USD"
+  ],
+  "news_window_minutes_before": 3,
+  "news_window_minutes_after": 3,
+  "news_block_new_fills": true,
+  "news_pause_pending_orders": true,
+  "news_cancel_if_touched_during_blackout": true,
+  "news_flatten_active_trades": true,
+  "news_flatten_minutes_before_blackout": 5,
+  "news_events_loaded": 28148,
+  "news_events_matched": 2353,
+  "news_windows_created": 2353,
+  "news_fills_blocked": 0,
+  "news_pending_paused": 860,
+  "news_pending_rearmed": 801,
+  "news_touch_cancelled": 120,
+  "news_active_trades_flattened": 24,
+  "news_flattened_r": 4.251690145480923,
+  "symbol": "EURUSD",
+  "date_from": "2015-01-01",
+  "date_to": "2026-06-19",
+  "date_range": "2015-01-01 \u2192 2026-06-19",
+  "rr": 2,
+  "trade_count": 1098,
+  "net_r": 145.38471612795792,
+  "news_blackout_skipped": 0,
+  "news_paused_count": 860,
+  "news_rearmed_count": 801,
+  "news_touch_cancelled_count": 120,
+  "news_flattened_winners": 15,
+  "news_flattened_losers": 9,
+  "news_flattened_breakeven": 0,
+  "news_flatten_late_count": 1,
+  "be_multiarm": {
+    "be_multiarm_used": false,
+    "be_multiarm_walks": 0,
+    "be_multiarm_derived_passes": 0,
+    "be_reused_groups": 0,
+    "be_reused_scenarios": 0,
+    "parallel_reused_jobs": 0,
+    "parallel_reused_scenarios": 0
+  },
+  "scenario_baseline": {
+    "output_kind": "scenario_baseline",
+    "enabled": true,
+    "mode": "eligible",
+    "eligible_cohort_count": 24,
+    "baseline_target_rr": 2.0,
+    "baseline_be": "none",
+    "entry": "baseline",
+    "warnings": [],
+    "outputs": [
+      {
+        "execution_mode": "allow_multi_position",
+        "output_file": "trades_allow_multi_position__scenario_baseline.csv",
+        "trade_rows": 2060
+      }
+    ]
+  },
+  "news_coverage": {
+    "run_start": "2015-01-01",
+    "run_end": "2026-06-19",
+    "news_enabled": true,
+    "news_file": "data/news/master_economic_calendar_2020_present.csv",
+    "calendar_start": "2020-01-03",
+    "calendar_end": "2026-05-20",
+    "uncovered_periods": [
+      {
+        "start": "2015-01-01",
+        "end": "2020-01-03"
+      },
+      {
+        "start": "2026-05-20",
+        "end": "2026-06-19"
+      }
+    ],
+    "fully_covered": false
+  }
+}

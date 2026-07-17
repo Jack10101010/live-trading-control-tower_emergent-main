@@ -1,0 +1,930 @@
+{
+  "schema_version": 1,
+  "policy_version": "2026-07-09.te-v1.2-surgical-disable",
+  "created_at": "2026-07-09",
+  "source_research": "outputs/research/pm_exact_deployed_substrate_rederivation/ + pm_v1_2_predeploy_confirmation/",
+  "notes": "Deployed PM v1.2. Surgical disable of two deployed-substrate losing cohorts (newYork BOS Long, london BOS Short) from the exact deployed-substrate re-derivation, pre-deploy confirmed via true enforce runs. decision_policy.regime is the only populated decision field in v1; rr/be/risk reserved. MORE_DATA_REQUIRED cohorts fail safe to LABEL.",
+  "cohorts": [
+    {
+      "instrument": "EURUSD",
+      "session": "newYork",
+      "structure": "BOS",
+      "direction": "Long",
+      "cohort_key": "EURUSD|newYork|bos_long",
+      "decision_policy": {
+        "regime": "DISABLE"
+      },
+      "recommendation": "USE_STATE_ONLY",
+      "confidence": "HIGH",
+      "sample_size": 113,
+      "net_r_label": -4.15,
+      "net_r_state": 6.92,
+      "net_r_direction": -6.63,
+      "best_policy": "STATE_ONLY",
+      "rationale": "State-only best & robust: +6.9R vs label -4.2/dir -6.6; chop-gate helps, direction filter does not.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "EURUSD",
+      "session": "newYork",
+      "structure": "BOS",
+      "direction": "Short",
+      "cohort_key": "EURUSD|newYork|bos_short",
+      "decision_policy": {
+        "regime": "LABEL"
+      },
+      "recommendation": "USE_LABEL",
+      "confidence": "HIGH",
+      "sample_size": 143,
+      "net_r_label": 16.39,
+      "net_r_state": -7.5,
+      "net_r_direction": 12.47,
+      "best_policy": "LABEL",
+      "rationale": "Label best: +16.4R vs state -7.5/dir +12.5; filtering removes net edge.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "EURUSD",
+      "session": "newYork",
+      "structure": "CHoCH",
+      "direction": "Long",
+      "cohort_key": "EURUSD|newYork|choch_long",
+      "decision_policy": {
+        "regime": "DISABLE"
+      },
+      "recommendation": "DISABLE",
+      "confidence": "HIGH",
+      "sample_size": 160,
+      "net_r_label": -28.21,
+      "net_r_state": -33.72,
+      "net_r_direction": -14.29,
+      "best_policy": "DIRECTION_AWARE",
+      "rationale": "No profitable book (best direction -14.3R / 160 trades) \u2014 do not deploy.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "EURUSD",
+      "session": "newYork",
+      "structure": "CHoCH",
+      "direction": "Short",
+      "cohort_key": "EURUSD|newYork|choch_short",
+      "decision_policy": {
+        "regime": "DIRECTION_AWARE"
+      },
+      "recommendation": "DISABLE",
+      "confidence": "HIGH",
+      "sample_size": 147,
+      "net_r_label": -17.1,
+      "net_r_state": -10.94,
+      "net_r_direction": -7.56,
+      "best_policy": "DIRECTION_AWARE",
+      "rationale": "No profitable book (best direction -7.6R / 147 trades) \u2014 do not deploy.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "EURUSD",
+      "session": "ny_pm",
+      "structure": "BOS",
+      "direction": "Long",
+      "cohort_key": "EURUSD|ny_pm|bos_long",
+      "decision_policy": {
+        "regime": "DISABLE"
+      },
+      "recommendation": "DISABLE",
+      "confidence": "HIGH",
+      "sample_size": 44,
+      "net_r_label": -13.01,
+      "net_r_state": -8.09,
+      "net_r_direction": -4.94,
+      "best_policy": "DIRECTION_AWARE",
+      "rationale": "No profitable book (best direction -4.9R / 44 trades) \u2014 do not deploy.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "EURUSD",
+      "session": "ny_pm",
+      "structure": "BOS",
+      "direction": "Short",
+      "cohort_key": "EURUSD|ny_pm|bos_short",
+      "decision_policy": {
+        "regime": "DISABLE"
+      },
+      "recommendation": "DISABLE",
+      "confidence": "MEDIUM",
+      "sample_size": 63,
+      "net_r_label": -9.61,
+      "net_r_state": -3.53,
+      "net_r_direction": -2.41,
+      "best_policy": "DIRECTION_AWARE",
+      "rationale": "No profitable book (best direction -2.4R / 63 trades) \u2014 do not deploy.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "EURUSD",
+      "session": "ny_pm",
+      "structure": "CHoCH",
+      "direction": "Long",
+      "cohort_key": "EURUSD|ny_pm|choch_long",
+      "decision_policy": {
+        "regime": "LABEL"
+      },
+      "recommendation": "MORE_DATA_REQUIRED",
+      "confidence": "MORE_DATA_REQUIRED",
+      "sample_size": 60,
+      "net_r_label": 3.65,
+      "net_r_state": -2.68,
+      "net_r_direction": 5.18,
+      "best_policy": "DIRECTION_AWARE",
+      "rationale": "Direction-aware best (+5.2R) but fragile: years=11, top-yr share 1.84, beats label 5/9. Needs more data.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "EURUSD",
+      "session": "ny_pm",
+      "structure": "CHoCH",
+      "direction": "Short",
+      "cohort_key": "EURUSD|ny_pm|choch_short",
+      "decision_policy": {
+        "regime": "DIRECTION_AWARE"
+      },
+      "recommendation": "USE_DIRECTION_AWARE",
+      "confidence": "HIGH",
+      "sample_size": 66,
+      "net_r_label": 12.42,
+      "net_r_state": 7.56,
+      "net_r_direction": 15.25,
+      "best_policy": "DIRECTION_AWARE",
+      "rationale": "Direction-aware best & robust: +15.2R vs label +12.4/state +7.6; beats label 6/9 yrs, top-yr 0.31, recent 0.11.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "EURUSD",
+      "session": "london",
+      "structure": "BOS",
+      "direction": "Long",
+      "cohort_key": "EURUSD|london|bos_long",
+      "decision_policy": {
+        "regime": "LABEL"
+      },
+      "recommendation": "MORE_DATA_REQUIRED",
+      "confidence": "MORE_DATA_REQUIRED",
+      "sample_size": 89,
+      "net_r_label": -0.71,
+      "net_r_state": 5.46,
+      "net_r_direction": -3.46,
+      "best_policy": "STATE_ONLY",
+      "rationale": "State best (+5.5R) but fragile (years=12,top-yr 1.73).",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "EURUSD",
+      "session": "london",
+      "structure": "BOS",
+      "direction": "Short",
+      "cohort_key": "EURUSD|london|bos_short",
+      "decision_policy": {
+        "regime": "DISABLE"
+      },
+      "recommendation": "USE_LABEL",
+      "confidence": "HIGH",
+      "sample_size": 93,
+      "net_r_label": 14.22,
+      "net_r_state": 7.93,
+      "net_r_direction": -0.12,
+      "best_policy": "LABEL",
+      "rationale": "Label best: +14.2R vs state +7.9/dir -0.1; filtering removes net edge.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "EURUSD",
+      "session": "london",
+      "structure": "CHoCH",
+      "direction": "Long",
+      "cohort_key": "EURUSD|london|choch_long",
+      "decision_policy": {
+        "regime": "DISABLE"
+      },
+      "recommendation": "DISABLE",
+      "confidence": "HIGH",
+      "sample_size": 98,
+      "net_r_label": -15.53,
+      "net_r_state": -5.07,
+      "net_r_direction": -11.25,
+      "best_policy": "STATE_ONLY",
+      "rationale": "No profitable book (best state -5.1R / 98 trades) \u2014 do not deploy.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "EURUSD",
+      "session": "london",
+      "structure": "CHoCH",
+      "direction": "Short",
+      "cohort_key": "EURUSD|london|choch_short",
+      "decision_policy": {
+        "regime": "LABEL"
+      },
+      "recommendation": "USE_LABEL",
+      "confidence": "HIGH",
+      "sample_size": 99,
+      "net_r_label": 11.47,
+      "net_r_state": 8.18,
+      "net_r_direction": 9.32,
+      "best_policy": "LABEL",
+      "rationale": "Label best: +11.5R vs state +8.2/dir +9.3; filtering removes net edge.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "EURUSD",
+      "session": "asia",
+      "structure": "BOS",
+      "direction": "Long",
+      "cohort_key": "EURUSD|asia|bos_long",
+      "decision_policy": {
+        "regime": "DISABLE"
+      },
+      "recommendation": "DISABLE",
+      "confidence": "HIGH",
+      "sample_size": 48,
+      "net_r_label": -17.41,
+      "net_r_state": -10.39,
+      "net_r_direction": -12.28,
+      "best_policy": "STATE_ONLY",
+      "rationale": "No profitable book (best state -10.4R / 48 trades) \u2014 do not deploy.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "EURUSD",
+      "session": "asia",
+      "structure": "BOS",
+      "direction": "Short",
+      "cohort_key": "EURUSD|asia|bos_short",
+      "decision_policy": {
+        "regime": "LABEL"
+      },
+      "recommendation": "USE_LABEL",
+      "confidence": "MEDIUM",
+      "sample_size": 50,
+      "net_r_label": 26.44,
+      "net_r_state": 19.17,
+      "net_r_direction": 20.99,
+      "best_policy": "LABEL",
+      "rationale": "Label best: +26.4R vs state +19.2/dir +21.0; filtering removes net edge.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "EURUSD",
+      "session": "asia",
+      "structure": "CHoCH",
+      "direction": "Long",
+      "cohort_key": "EURUSD|asia|choch_long",
+      "decision_policy": {
+        "regime": "LABEL"
+      },
+      "recommendation": "MORE_DATA_REQUIRED",
+      "confidence": "MORE_DATA_REQUIRED",
+      "sample_size": 65,
+      "net_r_label": -5.57,
+      "net_r_state": 1.92,
+      "net_r_direction": -6.33,
+      "best_policy": "STATE_ONLY",
+      "rationale": "Marginal edge only (best state +1.9R over 65 trades, <3.0R) \u2014 not worth committing yet.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "EURUSD",
+      "session": "asia",
+      "structure": "CHoCH",
+      "direction": "Short",
+      "cohort_key": "EURUSD|asia|choch_short",
+      "decision_policy": {
+        "regime": "DISABLE"
+      },
+      "recommendation": "DISABLE",
+      "confidence": "MEDIUM",
+      "sample_size": 63,
+      "net_r_label": -2.01,
+      "net_r_state": -2.53,
+      "net_r_direction": -2.61,
+      "best_policy": "LABEL",
+      "rationale": "No profitable book (best label -2.0R / 63 trades) \u2014 do not deploy.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "EURUSD",
+      "session": "outside",
+      "structure": "BOS",
+      "direction": "Long",
+      "cohort_key": "EURUSD|outside|bos_long",
+      "decision_policy": {
+        "regime": "DIRECTION_AWARE"
+      },
+      "recommendation": "USE_DIRECTION_AWARE",
+      "confidence": "HIGH",
+      "sample_size": 65,
+      "net_r_label": 2.03,
+      "net_r_state": -7.56,
+      "net_r_direction": 7.85,
+      "best_policy": "DIRECTION_AWARE",
+      "rationale": "Direction-aware best & robust: +7.8R vs label +2.0/state -7.6; beats label 8/10 yrs, top-yr 0.83, recent -0.39.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "EURUSD",
+      "session": "outside",
+      "structure": "BOS",
+      "direction": "Short",
+      "cohort_key": "EURUSD|outside|bos_short",
+      "decision_policy": {
+        "regime": "DISABLE"
+      },
+      "recommendation": "DISABLE",
+      "confidence": "HIGH",
+      "sample_size": 75,
+      "net_r_label": -16.47,
+      "net_r_state": -9.93,
+      "net_r_direction": -8.18,
+      "best_policy": "DIRECTION_AWARE",
+      "rationale": "No profitable book (best direction -8.2R / 75 trades) \u2014 do not deploy.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "EURUSD",
+      "session": "outside",
+      "structure": "CHoCH",
+      "direction": "Long",
+      "cohort_key": "EURUSD|outside|choch_long",
+      "decision_policy": {
+        "regime": "STATE_ONLY"
+      },
+      "recommendation": "USE_STATE_ONLY",
+      "confidence": "HIGH",
+      "sample_size": 81,
+      "net_r_label": 6.52,
+      "net_r_state": 12.0,
+      "net_r_direction": -5.44,
+      "best_policy": "STATE_ONLY",
+      "rationale": "State-only best & robust: +12.0R vs label +6.5/dir -5.4; chop-gate helps, direction filter does not.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "EURUSD",
+      "session": "outside",
+      "structure": "CHoCH",
+      "direction": "Short",
+      "cohort_key": "EURUSD|outside|choch_short",
+      "decision_policy": {
+        "regime": "DIRECTION_AWARE"
+      },
+      "recommendation": "USE_DIRECTION_AWARE",
+      "confidence": "HIGH",
+      "sample_size": 87,
+      "net_r_label": -4.13,
+      "net_r_state": -3.78,
+      "net_r_direction": 9.88,
+      "best_policy": "DIRECTION_AWARE",
+      "rationale": "Direction-aware best & robust: +9.9R vs label -4.1/state -3.8; beats label 8/11 yrs, top-yr 0.57, recent 0.6.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "EURUSD",
+      "session": "lull",
+      "structure": "BOS",
+      "direction": "Long",
+      "cohort_key": "EURUSD|lull|bos_long",
+      "decision_policy": {
+        "regime": "DISABLE"
+      },
+      "recommendation": "DISABLE",
+      "confidence": "HIGH",
+      "sample_size": 52,
+      "net_r_label": -31.17,
+      "net_r_state": -24.24,
+      "net_r_direction": -11.24,
+      "best_policy": "DIRECTION_AWARE",
+      "rationale": "No profitable book (best direction -11.2R / 52 trades) \u2014 do not deploy.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "EURUSD",
+      "session": "lull",
+      "structure": "BOS",
+      "direction": "Short",
+      "cohort_key": "EURUSD|lull|bos_short",
+      "decision_policy": {
+        "regime": "LABEL"
+      },
+      "recommendation": "USE_LABEL",
+      "confidence": "MEDIUM",
+      "sample_size": 40,
+      "net_r_label": 12.4,
+      "net_r_state": 9.26,
+      "net_r_direction": 6.57,
+      "best_policy": "LABEL",
+      "rationale": "Label best: +12.4R vs state +9.3/dir +6.6; filtering removes net edge.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "EURUSD",
+      "session": "lull",
+      "structure": "CHoCH",
+      "direction": "Long",
+      "cohort_key": "EURUSD|lull|choch_long",
+      "decision_policy": {
+        "regime": "DISABLE"
+      },
+      "recommendation": "DISABLE",
+      "confidence": "MEDIUM",
+      "sample_size": 55,
+      "net_r_label": -4.35,
+      "net_r_state": -2.62,
+      "net_r_direction": -7.17,
+      "best_policy": "STATE_ONLY",
+      "rationale": "No profitable book (best state -2.6R / 55 trades) \u2014 do not deploy.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "EURUSD",
+      "session": "lull",
+      "structure": "CHoCH",
+      "direction": "Short",
+      "cohort_key": "EURUSD|lull|choch_short",
+      "decision_policy": {
+        "regime": "DISABLE"
+      },
+      "recommendation": "DISABLE",
+      "confidence": "MEDIUM",
+      "sample_size": 51,
+      "net_r_label": -7.53,
+      "net_r_state": -0.34,
+      "net_r_direction": -7.36,
+      "best_policy": "STATE_ONLY",
+      "rationale": "No profitable book (best state -0.3R / 51 trades) \u2014 do not deploy.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "newYork",
+      "structure": "BOS",
+      "direction": "Long",
+      "cohort_key": "GBPUSD|newYork|bos_long",
+      "decision_policy": {
+        "regime": "DIRECTION_AWARE"
+      },
+      "recommendation": "USE_DIRECTION_AWARE",
+      "confidence": "MEDIUM",
+      "sample_size": 56,
+      "net_r_label": 0.05,
+      "net_r_state": 0.24,
+      "net_r_direction": 5.24,
+      "best_policy": "DIRECTION_AWARE",
+      "rationale": "Direction-aware best & robust: +5.2R vs label +0.1/state +0.2; beats label 5/6 yrs, top-yr 0.74, recent 0.89.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "newYork",
+      "structure": "BOS",
+      "direction": "Short",
+      "cohort_key": "GBPUSD|newYork|bos_short",
+      "decision_policy": {
+        "regime": "LABEL"
+      },
+      "recommendation": "MORE_DATA_REQUIRED",
+      "confidence": "MORE_DATA_REQUIRED",
+      "sample_size": 45,
+      "net_r_label": -1.67,
+      "net_r_state": 1.74,
+      "net_r_direction": -1.49,
+      "best_policy": "STATE_ONLY",
+      "rationale": "Marginal edge only (best state +1.7R over 45 trades, <3.0R) \u2014 not worth committing yet.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "newYork",
+      "structure": "CHoCH",
+      "direction": "Long",
+      "cohort_key": "GBPUSD|newYork|choch_long",
+      "decision_policy": {
+        "regime": "DIRECTION_AWARE"
+      },
+      "recommendation": "USE_DIRECTION_AWARE",
+      "confidence": "HIGH",
+      "sample_size": 64,
+      "net_r_label": 0.41,
+      "net_r_state": -3.21,
+      "net_r_direction": 8.63,
+      "best_policy": "DIRECTION_AWARE",
+      "rationale": "Direction-aware best & robust: +8.6R vs label +0.4/state -3.2; beats label 7/7 yrs, top-yr 0.77, recent 0.08.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "newYork",
+      "structure": "CHoCH",
+      "direction": "Short",
+      "cohort_key": "GBPUSD|newYork|choch_short",
+      "decision_policy": {
+        "regime": "STATE_ONLY"
+      },
+      "recommendation": "USE_STATE_ONLY",
+      "confidence": "HIGH",
+      "sample_size": 97,
+      "net_r_label": 0.69,
+      "net_r_state": 5.37,
+      "net_r_direction": 1.94,
+      "best_policy": "STATE_ONLY",
+      "rationale": "State-only best & robust: +5.4R vs label +0.7/dir +1.9; chop-gate helps, direction filter does not.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "ny_pm",
+      "structure": "BOS",
+      "direction": "Long",
+      "cohort_key": "GBPUSD|ny_pm|bos_long",
+      "decision_policy": {
+        "regime": "LABEL"
+      },
+      "recommendation": "MORE_DATA_REQUIRED",
+      "confidence": "MORE_DATA_REQUIRED",
+      "sample_size": 24,
+      "net_r_label": -3.52,
+      "net_r_state": -10.11,
+      "net_r_direction": 0.85,
+      "best_policy": "DIRECTION_AWARE",
+      "rationale": "n=24<25: insufficient sample (best direction +0.8R).",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "ny_pm",
+      "structure": "BOS",
+      "direction": "Short",
+      "cohort_key": "GBPUSD|ny_pm|bos_short",
+      "decision_policy": {
+        "regime": "LABEL"
+      },
+      "recommendation": "USE_LABEL",
+      "confidence": "LOW",
+      "sample_size": 31,
+      "net_r_label": 4.45,
+      "net_r_state": 3.79,
+      "net_r_direction": 3.0,
+      "best_policy": "LABEL",
+      "rationale": "Label best: +4.5R vs state +3.8/dir +3.0; filtering removes net edge.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "ny_pm",
+      "structure": "CHoCH",
+      "direction": "Long",
+      "cohort_key": "GBPUSD|ny_pm|choch_long",
+      "decision_policy": {
+        "regime": "DISABLE"
+      },
+      "recommendation": "DISABLE",
+      "confidence": "HIGH",
+      "sample_size": 35,
+      "net_r_label": -11.84,
+      "net_r_state": -12.26,
+      "net_r_direction": -8.26,
+      "best_policy": "DIRECTION_AWARE",
+      "rationale": "No profitable book (best direction -8.3R / 35 trades) \u2014 do not deploy.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "ny_pm",
+      "structure": "CHoCH",
+      "direction": "Short",
+      "cohort_key": "GBPUSD|ny_pm|choch_short",
+      "decision_policy": {
+        "regime": "DIRECTION_AWARE"
+      },
+      "recommendation": "USE_DIRECTION_AWARE",
+      "confidence": "LOW",
+      "sample_size": 38,
+      "net_r_label": 6.75,
+      "net_r_state": 3.43,
+      "net_r_direction": 13.42,
+      "best_policy": "DIRECTION_AWARE",
+      "rationale": "Direction-aware best & robust: +13.4R vs label +6.8/state +3.4; beats label 3/4 yrs, top-yr 0.33, recent 0.45.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "london",
+      "structure": "BOS",
+      "direction": "Long",
+      "cohort_key": "GBPUSD|london|bos_long",
+      "decision_policy": {
+        "regime": "DISABLE"
+      },
+      "recommendation": "DISABLE",
+      "confidence": "HIGH",
+      "sample_size": 50,
+      "net_r_label": -15.43,
+      "net_r_state": -11.68,
+      "net_r_direction": -7.25,
+      "best_policy": "DIRECTION_AWARE",
+      "rationale": "No profitable book (best direction -7.2R / 50 trades) \u2014 do not deploy.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "london",
+      "structure": "BOS",
+      "direction": "Short",
+      "cohort_key": "GBPUSD|london|bos_short",
+      "decision_policy": {
+        "regime": "STATE_ONLY"
+      },
+      "recommendation": "USE_STATE_ONLY",
+      "confidence": "MEDIUM",
+      "sample_size": 52,
+      "net_r_label": -1.5,
+      "net_r_state": 3.97,
+      "net_r_direction": -1.44,
+      "best_policy": "STATE_ONLY",
+      "rationale": "State-only best & robust: +4.0R vs label -1.5/dir -1.4; chop-gate helps, direction filter does not.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "london",
+      "structure": "CHoCH",
+      "direction": "Long",
+      "cohort_key": "GBPUSD|london|choch_long",
+      "decision_policy": {
+        "regime": "LABEL"
+      },
+      "recommendation": "MORE_DATA_REQUIRED",
+      "confidence": "MORE_DATA_REQUIRED",
+      "sample_size": 67,
+      "net_r_label": 4.88,
+      "net_r_state": -1.79,
+      "net_r_direction": 6.71,
+      "best_policy": "DIRECTION_AWARE",
+      "rationale": "Direction-aware best (+6.7R) but fragile: years=7, top-yr share 1.65, beats label 4/7. Needs more data.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "london",
+      "structure": "CHoCH",
+      "direction": "Short",
+      "cohort_key": "GBPUSD|london|choch_short",
+      "decision_policy": {
+        "regime": "DISABLE"
+      },
+      "recommendation": "DISABLE",
+      "confidence": "MEDIUM",
+      "sample_size": 51,
+      "net_r_label": -7.03,
+      "net_r_state": -0.63,
+      "net_r_direction": -4.01,
+      "best_policy": "STATE_ONLY",
+      "rationale": "No profitable book (best state -0.6R / 51 trades) \u2014 do not deploy.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "asia",
+      "structure": "BOS",
+      "direction": "Long",
+      "cohort_key": "GBPUSD|asia|bos_long",
+      "decision_policy": {
+        "regime": "LABEL"
+      },
+      "recommendation": "MORE_DATA_REQUIRED",
+      "confidence": "MORE_DATA_REQUIRED",
+      "sample_size": 35,
+      "net_r_label": -7.21,
+      "net_r_state": -9.94,
+      "net_r_direction": 0.93,
+      "best_policy": "DIRECTION_AWARE",
+      "rationale": "Marginal edge only (best direction +0.9R over 35 trades, <3.0R) \u2014 not worth committing yet.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "asia",
+      "structure": "BOS",
+      "direction": "Short",
+      "cohort_key": "GBPUSD|asia|bos_short",
+      "decision_policy": {
+        "regime": "LABEL"
+      },
+      "recommendation": "MORE_DATA_REQUIRED",
+      "confidence": "MORE_DATA_REQUIRED",
+      "sample_size": 23,
+      "net_r_label": -4.93,
+      "net_r_state": -0.01,
+      "net_r_direction": -4.36,
+      "best_policy": "STATE_ONLY",
+      "rationale": "n=23<25: insufficient sample (best state -0.0R).",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "asia",
+      "structure": "CHoCH",
+      "direction": "Long",
+      "cohort_key": "GBPUSD|asia|choch_long",
+      "decision_policy": {
+        "regime": "DISABLE"
+      },
+      "recommendation": "DISABLE",
+      "confidence": "MEDIUM",
+      "sample_size": 27,
+      "net_r_label": -1.54,
+      "net_r_state": -2.91,
+      "net_r_direction": -0.14,
+      "best_policy": "DIRECTION_AWARE",
+      "rationale": "No profitable book (best direction -0.1R / 27 trades) \u2014 do not deploy.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "asia",
+      "structure": "CHoCH",
+      "direction": "Short",
+      "cohort_key": "GBPUSD|asia|choch_short",
+      "decision_policy": {
+        "regime": "DISABLE"
+      },
+      "recommendation": "DISABLE",
+      "confidence": "MEDIUM",
+      "sample_size": 30,
+      "net_r_label": -3.51,
+      "net_r_state": -8.08,
+      "net_r_direction": 0.23,
+      "best_policy": "DIRECTION_AWARE",
+      "rationale": "No profitable book (best direction +0.2R / 30 trades) \u2014 do not deploy.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "outside",
+      "structure": "BOS",
+      "direction": "Long",
+      "cohort_key": "GBPUSD|outside|bos_long",
+      "decision_policy": {
+        "regime": "DISABLE"
+      },
+      "recommendation": "DISABLE",
+      "confidence": "MEDIUM",
+      "sample_size": 27,
+      "net_r_label": -3.3,
+      "net_r_state": -2.19,
+      "net_r_direction": -8.1,
+      "best_policy": "STATE_ONLY",
+      "rationale": "No profitable book (best state -2.2R / 27 trades) \u2014 do not deploy.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "outside",
+      "structure": "BOS",
+      "direction": "Short",
+      "cohort_key": "GBPUSD|outside|bos_short",
+      "decision_policy": {
+        "regime": "STATE_ONLY"
+      },
+      "recommendation": "USE_STATE_ONLY",
+      "confidence": "MEDIUM",
+      "sample_size": 46,
+      "net_r_label": 6.24,
+      "net_r_state": 6.96,
+      "net_r_direction": 4.98,
+      "best_policy": "STATE_ONLY",
+      "rationale": "State-only best & robust: +7.0R vs label +6.2/dir +5.0; chop-gate helps, direction filter does not.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "outside",
+      "structure": "CHoCH",
+      "direction": "Long",
+      "cohort_key": "GBPUSD|outside|choch_long",
+      "decision_policy": {
+        "regime": "LABEL"
+      },
+      "recommendation": "MORE_DATA_REQUIRED",
+      "confidence": "MORE_DATA_REQUIRED",
+      "sample_size": 46,
+      "net_r_label": -1.69,
+      "net_r_state": -0.02,
+      "net_r_direction": 1.99,
+      "best_policy": "DIRECTION_AWARE",
+      "rationale": "Marginal edge only (best direction +2.0R over 46 trades, <3.0R) \u2014 not worth committing yet.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "outside",
+      "structure": "CHoCH",
+      "direction": "Short",
+      "cohort_key": "GBPUSD|outside|choch_short",
+      "decision_policy": {
+        "regime": "LABEL"
+      },
+      "recommendation": "MORE_DATA_REQUIRED",
+      "confidence": "MORE_DATA_REQUIRED",
+      "sample_size": 37,
+      "net_r_label": -0.53,
+      "net_r_state": 1.56,
+      "net_r_direction": -1.42,
+      "best_policy": "STATE_ONLY",
+      "rationale": "Marginal edge only (best state +1.6R over 37 trades, <3.0R) \u2014 not worth committing yet.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "lull",
+      "structure": "BOS",
+      "direction": "Long",
+      "cohort_key": "GBPUSD|lull|bos_long",
+      "decision_policy": {
+        "regime": "STATE_ONLY"
+      },
+      "recommendation": "USE_STATE_ONLY",
+      "confidence": "LOW",
+      "sample_size": 28,
+      "net_r_label": 5.5,
+      "net_r_state": 8.65,
+      "net_r_direction": 2.79,
+      "best_policy": "STATE_ONLY",
+      "rationale": "State-only best & robust: +8.7R vs label +5.5/dir +2.8; chop-gate helps, direction filter does not.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "lull",
+      "structure": "BOS",
+      "direction": "Short",
+      "cohort_key": "GBPUSD|lull|bos_short",
+      "decision_policy": {
+        "regime": "LABEL"
+      },
+      "recommendation": "MORE_DATA_REQUIRED",
+      "confidence": "MORE_DATA_REQUIRED",
+      "sample_size": 23,
+      "net_r_label": -5.02,
+      "net_r_state": -6.65,
+      "net_r_direction": -4.04,
+      "best_policy": "DIRECTION_AWARE",
+      "rationale": "n=23<25: insufficient sample (best direction -4.0R).",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "lull",
+      "structure": "CHoCH",
+      "direction": "Long",
+      "cohort_key": "GBPUSD|lull|choch_long",
+      "decision_policy": {
+        "regime": "DISABLE"
+      },
+      "recommendation": "DISABLE",
+      "confidence": "MEDIUM",
+      "sample_size": 34,
+      "net_r_label": -6.94,
+      "net_r_state": -6.34,
+      "net_r_direction": -2.24,
+      "best_policy": "DIRECTION_AWARE",
+      "rationale": "No profitable book (best direction -2.2R / 34 trades) \u2014 do not deploy.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    },
+    {
+      "instrument": "GBPUSD",
+      "session": "lull",
+      "structure": "CHoCH",
+      "direction": "Short",
+      "cohort_key": "GBPUSD|lull|choch_short",
+      "decision_policy": {
+        "regime": "DISABLE"
+      },
+      "recommendation": "DISABLE",
+      "confidence": "MEDIUM",
+      "sample_size": 32,
+      "net_r_label": -7.19,
+      "net_r_state": -0.47,
+      "net_r_direction": -11.23,
+      "best_policy": "STATE_ONLY",
+      "rationale": "No profitable book (best state -0.5R / 32 trades) \u2014 do not deploy.",
+      "source_research": "portfolio_manager_policy_table.csv"
+    }
+  ],
+  "source_commit": "4044c53",
+  "derived_from": {
+    "policy_version": "2026-07-07.te-v1.1",
+    "policy_sha256": "82f1172bf3614c6dcfb83d94a1f6188c8d64512d378861dcdfbf120ce72b1883",
+    "change": "EURUSD|newYork|bos_long STATE_ONLY->DISABLE; EURUSD|london|bos_short LABEL->DISABLE",
+    "research": "pm_exact_deployed_substrate_rederivation + pm_v1_2_predeploy_confirmation"
+  },
+  "rationale": "Surgical disable of two deployed-substrate losing cohorts: newYork BOS Long and london BOS Short.",
+  "policy_sha256": "86ff709c6346dc5e0e695de5c550577d15877ebda0b4025e70da327bfb5c00a9"
+}

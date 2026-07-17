@@ -1,0 +1,887 @@
+{
+  "allowed_sessions": [],
+  "allowed_structure_directions": [
+    "bos_long",
+    "bos_short",
+    "choch_long",
+    "choch_short"
+  ],
+  "baseline_comparison": {
+    "be": null,
+    "eligible_cohort_keys": [],
+    "enabled": true,
+    "entry": {
+      "entry_key": "baseline",
+      "model": "baseline"
+    },
+    "mode": "eligible",
+    "risk_reduction": null,
+    "target": {
+      "rr": 2,
+      "type": "rr"
+    }
+  },
+  "batch_entry_penetration": false,
+  "be_enabled": false,
+  "candle_file": "EURUSD_1m_extended_2015_2026.csv",
+  "commission_r_per_trade": 0,
+  "detection_timeframe": "15min",
+  "directional_entry_mode": "symmetric",
+  "end_date": "2026-06-19",
+  "entry_buffer_pips": 0,
+  "entry_models": [
+    "triggered_edge"
+  ],
+  "entry_penetration_thresholds": [],
+  "execution_modes": [
+    "allow_multi_position"
+  ],
+  "execution_timeframe": "1min",
+  "max_ob_size_pips": 100,
+  "min_ob_size_pips": 0,
+  "news_blackout_currencies": [],
+  "news_blackout_enabled": true,
+  "news_blackout_impacts": [
+    "high"
+  ],
+  "news_blackout_minutes_after": 3,
+  "news_blackout_minutes_before": 3,
+  "news_block_new_fills": true,
+  "news_cancel_if_touched_during_blackout": true,
+  "news_file": "data/news/master_economic_calendar_2020_present.csv",
+  "news_flatten_active_trades": true,
+  "news_flatten_minutes_before_blackout": 5,
+  "news_pause_pending_orders": true,
+  "ob_entry_depth_pct": 0,
+  "ob_filter": "Atr",
+  "parallel_scenarios": true,
+  "portfolio_include_disabled_cohorts": true,
+  "portfolio_policy_enabled": true,
+  "portfolio_policy_file": "configs/policy/deployed_policy.v1.json",
+  "portfolio_policy_mode": "enforce",
+  "protection_modes": [
+    "baseline"
+  ],
+  "reverse_touch_cancel_enabled": false,
+  "rr_multiple": 2,
+  "session_filter_enabled": false,
+  "session_strategy_scenario": {
+    "cohorts": [
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bull/Chop": "block"
+          }
+        },
+        "enabled": true,
+        "session": "london",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 0.9
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 1.75
+          },
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 2.75
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 1
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 2.25
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Chop": "block",
+            "Bear/Compress": "block",
+            "Bear/Expand": "block",
+            "Bull/Expand": "block"
+          }
+        },
+        "enabled": true,
+        "session": "london",
+        "state_overrides": {
+          "Bull/Chop": {
+            "mode": "custom",
+            "rr": 0.9
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 1.75
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Chop": "block",
+            "Bear/Expand": "block",
+            "Bull/Chop": "block",
+            "Bull/Compress": "block",
+            "Bull/Expand": "block"
+          }
+        },
+        "enabled": true,
+        "session": "london",
+        "state_overrides": {
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 0.6
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bull/Expand": "block"
+          }
+        },
+        "enabled": true,
+        "session": "london",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 2.75
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 0.5
+          },
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 1.5
+          },
+          "Bull/Chop": {
+            "mode": "custom",
+            "rr": 1.75
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 1.75
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 2
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Chop": "block",
+            "Bear/Compress": "block",
+            "Bull/Chop": "block",
+            "Bull/Expand": "block"
+          }
+        },
+        "enabled": true,
+        "session": "lull",
+        "state_overrides": {
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 0.5
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 0.8
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bull/Chop": "block"
+          }
+        },
+        "enabled": true,
+        "session": "lull",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 0.5
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 2.75
+          },
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 3
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 1
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 1.5
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Chop": "block",
+            "Bear/Expand": "block",
+            "Bull/Chop": "block",
+            "Bull/Expand": "block"
+          }
+        },
+        "enabled": true,
+        "session": "lull",
+        "state_overrides": {
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 0.9
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 0.6
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bull/Chop": "block"
+          }
+        },
+        "enabled": true,
+        "session": "lull",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 1
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 2.75
+          },
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 1
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 1
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 4.5
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Chop": "block",
+            "Bear/Expand": "block",
+            "Bull/Chop": "block",
+            "Bull/Expand": "block"
+          }
+        },
+        "enabled": true,
+        "session": "newYork",
+        "state_overrides": {
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 0.7
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 0.5
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow"
+        },
+        "enabled": true,
+        "session": "newYork",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 1
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 0.9
+          },
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 0.7
+          },
+          "Bull/Chop": {
+            "mode": "custom",
+            "rr": 2.5
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 2
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 1.25
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Compress": "block",
+            "Bear/Expand": "block",
+            "Bull/Compress": "block",
+            "Bull/Expand": "block"
+          }
+        },
+        "enabled": true,
+        "session": "newYork",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 2
+          },
+          "Bull/Chop": {
+            "mode": "custom",
+            "rr": 1.75
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bull/Chop": "block"
+          }
+        },
+        "enabled": true,
+        "session": "newYork",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 2.75
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 3
+          },
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 2
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Chop": "block",
+            "Bear/Compress": "block",
+            "Bear/Expand": "block"
+          }
+        },
+        "enabled": true,
+        "session": "ny_pm",
+        "state_overrides": {
+          "Bull/Chop": {
+            "mode": "custom",
+            "rr": 0.9
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 0.5
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 0.6
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Chop": "block",
+            "Bear/Compress": "block",
+            "Bear/Expand": "block",
+            "Bull/Chop": "block",
+            "Bull/Compress": "block"
+          }
+        },
+        "enabled": true,
+        "session": "ny_pm",
+        "state_overrides": {
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 0.5
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bull/Chop": "block"
+          }
+        },
+        "enabled": true,
+        "session": "ny_pm",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 1.5
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 0.8
+          },
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 1.25
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 0.5
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 0.5
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bull/Chop": "block"
+          }
+        },
+        "enabled": true,
+        "session": "ny_pm",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 1.25
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 1
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Chop": "block",
+            "Bear/Compress": "block",
+            "Bull/Chop": "block",
+            "Bull/Compress": "block"
+          }
+        },
+        "enabled": true,
+        "session": "asia",
+        "state_overrides": {
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 1.25
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 0.6
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bull/Chop": "block"
+          }
+        },
+        "enabled": true,
+        "session": "asia",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 1.75
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 0.7
+          },
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 0.8
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 1.5
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 0.9
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Expand": "block"
+          }
+        },
+        "enabled": true,
+        "session": "asia",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 0.6
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 0.8
+          },
+          "Bull/Chop": {
+            "mode": "custom",
+            "rr": 0.5
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 0.7
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 0.6
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bull/Chop": "block",
+            "Bull/Compress": "block"
+          }
+        },
+        "enabled": true,
+        "session": "asia",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 0.8
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 0.9
+          },
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 0.6
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 1.25
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Compress": "block",
+            "Bear/Expand": "block",
+            "Bull/Chop": "block",
+            "Bull/Compress": "block"
+          }
+        },
+        "enabled": true,
+        "session": "outside",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 1.25
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 0.7
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Chop": "block",
+            "Bear/Expand": "block",
+            "Bull/Chop": "block",
+            "Bull/Compress": "block",
+            "Bull/Expand": "block"
+          }
+        },
+        "enabled": true,
+        "session": "outside",
+        "state_overrides": {
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 1.5
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Chop": "block",
+            "Bull/Chop": "block"
+          }
+        },
+        "enabled": true,
+        "session": "outside",
+        "state_overrides": {
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 0.6
+          },
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 0.9
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 0.5
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 0.5
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bull/Chop": "block",
+            "Bull/Compress": "block",
+            "Bull/Expand": "block"
+          }
+        },
+        "enabled": true,
+        "session": "outside",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 1
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 1.25
+          },
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 1.5
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      }
+    ],
+    "enabled": true,
+    "meta": {
+      "custom_target_count": 0,
+      "disabled_count": 0,
+      "eligibility_disabled_bases": 0,
+      "eligibility_preset": "custom",
+      "eligibility_schema": 1,
+      "eligibility_state_blocks": 62,
+      "eligibility_state_rescues": 0,
+      "enabled_count": 24,
+      "execution_policy": {
+        "checksum": "c619def209db9843",
+        "id": "tp_4lkqqm9q79mk",
+        "name": "State Target Policy v1",
+        "revision": 1,
+        "status": "Candidate"
+      },
+      "global_run_rr": 2,
+      "neutral_base": true,
+      "preset": null,
+      "schema_version": 1,
+      "state_cells_block": 0,
+      "state_cells_custom": 78,
+      "state_cells_research": 0,
+      "state_overrides_schema": 1,
+      "target_policy": {
+        "checksum": "c619def209db9843",
+        "id": "tp_4lkqqm9q79mk",
+        "name": "State Target Policy v1",
+        "version": 2
+      }
+    }
+  },
+  "slippage_pips": 0.2,
+  "spread_pips": 0.2,
+  "start_date": "2015-01-01",
+  "stop_buffer_pips": 1,
+  "structure_filter": "both",
+  "swing_length": 50,
+  "symbol": "EURUSD",
+  "trade_direction": "both",
+  "triggered_edge_cancel_on_first_failed_tag": false,
+  "triggered_edge_cancel_on_retrace": false,
+  "triggered_edge_cancel_retrace_ob_pct": 0,
+  "triggered_edge_cancel_retrace_pips": 0,
+  "triggered_edge_candle_delays": [
+    3
+  ],
+  "triggered_edge_entry_level_pct": 0,
+  "triggered_edge_fft_min_ob_width_pips": 0,
+  "triggered_edge_fft_move_away_ob_multiple": 0,
+  "triggered_edge_fft_move_away_pips": 0,
+  "triggered_edge_same_candle_modes": [
+    "same_candle",
+    "next_candle"
+  ],
+  "triggered_edge_trigger_thresholds": [
+    25
+  ],
+  "verify_limit_ticks": 0
+}

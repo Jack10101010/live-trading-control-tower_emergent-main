@@ -1,0 +1,1019 @@
+diff --git a/Research Documents/README.md b/Research Documents/README.md
+index c5b7553..90bce7a 100644
+--- a/Research Documents/README.md	
++++ b/Research Documents/README.md	
+@@ -22,7 +22,15 @@ notes under `outputs/research/`.
+ 
+ 1. `MARKET_STATE_PORTFOLIO_MANAGER_ARCHITECTURE.pdf` — **present** ✅
+ 2. `Dynamic_Risk_Management_Findings.pdf` — **present** ✅ (4 pages)
+-3. `README.md` — this file
++3. `PORTFOLIO_MANAGER_EXPLAINED.pdf` — **present** ✅ — **the primary, user-facing orientation guide to the
++   Portfolio Manager** (18 pages, dark-premium design): what it is, why it exists, the four actions, cohorts,
++   PM v1 → v1.1, the rejected research, the frozen recommended stack, and what remains deferred. **Start here
++   if you need to re-understand the PM from zero.** Built by `generate_pm_explained_pdf.py`.
++4. `PORTFOLIO_MANAGER_EXPLAINED.md` — the editable Markdown **source** of the prose behind the PDF above.
++   Edit this, then regenerate the PDF.
++5. `generate_pm_explained_pdf.py` — reproducible generator for the PDF (ReportLab). Run:
++   `python3 "Research Documents/generate_pm_explained_pdf.py"`.
++6. `README.md` — this file
+ 
+ ---
+ 
+diff --git a/data/candles/EURUSD_manifest.json b/data/candles/EURUSD_manifest.json
+index c21abbd..90aa852 100644
+--- a/data/candles/EURUSD_manifest.json
++++ b/data/candles/EURUSD_manifest.json
+@@ -5,22 +5,22 @@
+   "interval": "1min",
+   "master_file": "EURUSD_1m.csv",
+   "first_candle": "2020-01-01T22:00:00+00:00",
+-  "last_candle": "2026-06-16T08:34:00+00:00",
+-  "row_count": 2401580,
++  "last_candle": "2026-06-19T09:53:00+00:00",
++  "row_count": 2405965,
+   "duplicates_removed": 0,
+-  "gaps_found": 9715,
+-  "unexpected_gap_count": 9378,
+-  "generated_at_utc": "2026-06-16T08:35:20.646205+00:00",
++  "gaps_found": 9727,
++  "unexpected_gap_count": 9390,
++  "generated_at_utc": "2026-06-19T09:54:36.384029+00:00",
+   "partial_trailing_bar_dropped": false,
+-  "sha256": "859eb09ea0b964f3ef38adef47c82b1a51cbac30ed5cc68fe48146cebc7ba313",
++  "sha256": "d4a6fc37fa7e1ba2a3636f565c6d34db0eaee9a0296d5d0205c4a8d2d038d902",
+   "derived_files": {
+     "EURUSD_5min_FULL_FROM_1m.csv": {
+-      "rows": 482853,
+-      "last_candle": "2026-06-16T08:30:00+00:00"
++      "rows": 483732,
++      "last_candle": "2026-06-19T09:45:00+00:00"
+     },
+     "EURUSD_15min_FULL_FROM_1m.csv": {
+-      "rows": 160993,
+-      "last_candle": "2026-06-16T08:15:00+00:00"
++      "rows": 161286,
++      "last_candle": "2026-06-19T09:30:00+00:00"
+     }
+   },
+   "legacy_derived_files_present": [
+@@ -29,6 +29,10 @@
+     "EURUSD_15min_OOS_2022_2024.csv",
+     "EURUSD_5m_FROM_1m.csv",
+     "EURUSD_5m_OOS_2022_2024.csv",
+-    "EURUSD_5min_FROM_1m.csv"
++    "EURUSD_5min_FROM_1m.csv",
++    "GBPUSD_15min_FROM_1m.csv",
++    "GBPUSD_15min_FULL_FROM_1m.csv",
++    "GBPUSD_1m.csv",
++    "GBPUSD_5min_FULL_FROM_1m.csv"
+   ]
+ }
+\ No newline at end of file
+diff --git a/data/candles/GBPUSD_manifest.json b/data/candles/GBPUSD_manifest.json
+index 0039755..44417fc 100644
+--- a/data/candles/GBPUSD_manifest.json
++++ b/data/candles/GBPUSD_manifest.json
+@@ -5,22 +5,22 @@
+   "interval": "1min",
+   "master_file": "GBPUSD_1m.csv",
+   "first_candle": "2020-01-01T22:02:00+00:00",
+-  "last_candle": "2026-06-16T13:20:00+00:00",
+-  "row_count": 2402472,
++  "last_candle": "2026-06-19T09:54:00+00:00",
++  "row_count": 2406572,
+   "duplicates_removed": 0,
+-  "gaps_found": 8318,
+-  "unexpected_gap_count": 7981,
+-  "generated_at_utc": "2026-06-16T13:22:56.118235+00:00",
++  "gaps_found": 8326,
++  "unexpected_gap_count": 7989,
++  "generated_at_utc": "2026-06-19T09:56:22.015661+00:00",
+   "partial_trailing_bar_dropped": false,
+-  "sha256": "0ae2a204f9a4b35408b7d9d33384a51783c920f8cb7e2de55e1409a9981df64c",
++  "sha256": "c980ecab870e4aa7f35c527eef32acc6c7e00a2d1bfd14f840416bf417203691",
+   "derived_files": {
+     "GBPUSD_5min_FULL_FROM_1m.csv": {
+-      "rows": 482774,
+-      "last_candle": "2026-06-16T13:15:00+00:00"
++      "rows": 483596,
++      "last_candle": "2026-06-19T09:50:00+00:00"
+     },
+     "GBPUSD_15min_FULL_FROM_1m.csv": {
+-      "rows": 160992,
+-      "last_candle": "2026-06-16T13:00:00+00:00"
++      "rows": 161266,
++      "last_candle": "2026-06-19T09:30:00+00:00"
+     }
+   },
+   "legacy_derived_files_present": [
+@@ -32,6 +32,7 @@
+     "EURUSD_5m_FROM_1m.csv",
+     "EURUSD_5m_OOS_2022_2024.csv",
+     "EURUSD_5min_FROM_1m.csv",
+-    "EURUSD_5min_FULL_FROM_1m.csv"
++    "EURUSD_5min_FULL_FROM_1m.csv",
++    "GBPUSD_15min_FROM_1m.csv"
+   ]
+ }
+\ No newline at end of file
+diff --git a/lux_style_swing_ob_backtester_v1.pine b/lux_style_swing_ob_backtester_v1.pine
+index 8a9cd5b..65163c8 100644
+--- a/lux_style_swing_ob_backtester_v1.pine
++++ b/lux_style_swing_ob_backtester_v1.pine
+@@ -1,5 +1,5 @@
+ //@version=5
+-strategy("Lux-Style Swing OB Backtester V1", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500, default_qty_type=strategy.fixed, default_qty_value=1, initial_capital=100000, calc_on_every_tick=false, pyramiding=100, use_bar_magnifier=true)
++strategy("Lux-Style Swing OB Backtester V1", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500, default_qty_type=strategy.fixed, default_qty_value=1, initial_capital=100000, calc_on_every_tick=false, pyramiding=100, use_bar_magnifier=true, process_orders_on_close=true)
+ 
+ swingsLengthInput    = input.int(50, "Swing Length", minval=10, group="STRUCTURE")
+ showSwingPointLabelsInput = input.bool(false, "Show Swing Point Labels", group="STRUCTURE")
+@@ -24,6 +24,10 @@ rTargetInput         = input.float(3.3, "R Target", minval=0.25, step=0.25, grou
+ tradeDirectionInput  = input.string("Both", "Trade Direction", options=["Long Only","Short Only","Both"], group="ENTRY EXECUTION")
+ oneTradePerOBInput   = input.bool(true, "One Trade Per OB", group="ENTRY EXECUTION", tooltip="On: each OB can only produce one filled trade.\nOff: an OB can be reused if it remains valid.")
+ entryModeInput       = input.string("Every Valid Setup", "Entry Mode", options=["One Active Trade","Every Valid Setup"], group="ENTRY EXECUTION", tooltip="One Active Trade: wait until no open or pending trades exist.\nEvery Valid Setup: allow multiple valid pending/open trades.")
++entryModelInput      = input.string("Baseline", "Entry Model", options=["Baseline","Triggered Edge 25% C40"], group="Trade Execution", tooltip="Baseline: submit the OB-edge limit immediately when the OB is valid.\nTriggered Edge 25% C40: arm when price penetrates 25% into the OB, wait the arm delay in EXECUTION candles, then submit the same OB-edge limit (matches the Python backtester triggered_edge model).")
++teThresholdPctInput  = input.float(25, "TE Trigger Threshold %", minval=1, maxval=99, step=5, group="Trade Execution", tooltip="Penetration % into the OB that arms Triggered Edge (e.g. 10/25/50/75).")
++teDelayCandlesInput  = input.int(40, "TE Arm Delay (execution candles)", minval=0, step=10, group="Trade Execution", tooltip="Arm delay counted in EXECUTION candles, matching Python (C10/C20/C40/C80). On a 15m chart it is approximated by elapsed minutes = delay x exec-minutes; ready snaps to the next chart bar at/after that, and weekend/liquidity gaps shorten effective candles vs wall-clock.")
++teExecMinutesInput   = input.int(1, "TE Execution Candle Minutes", minval=1, group="Trade Execution", tooltip="Minutes per execution candle (Python execution timeframe; 1 for 1m).")
+ 
+ reverseProtectionInput = input.string("Block Opposite Direction", "Position Conflict Protection", options=["Block Opposite Direction","Allow Auto-Reversal"], group="POSITION CONFLICT", tooltip="Block Opposite Direction: prevent entries that would reverse an existing net position.\nAllow Auto-Reversal: let TradingView reverse net positions.")
+ reverseCancelHandlingInput = input.string("Kill If Touched While Inactive", "If Cancelled By Position Conflict", options=["Kill OB","Allow Resubmit","Kill If Touched While Inactive"], group="POSITION CONFLICT", tooltip="Kill OB: retire an OB after conflict cancellation.\nAllow Resubmit: let it try again later.\nKill If Touched: pause until flat, but retire if entry is touched while inactive.")
+@@ -183,6 +187,12 @@ type orderBlock
+     int    exitTime = na
+     label  stateLabel = na
+     box    displayBox   = na
++    // Triggered Edge 25% C40 entry-model state (unused in Baseline mode).
++    bool   triggeredEdgeArmed       = false
++    int    triggeredEdgeTriggerBar  = na
++    float  triggeredEdgeTriggerPrice = na
++    int    triggeredEdgeTriggerTime = na
++    bool   triggeredEdgeDelayReady  = false
+ 
+ debugTablePosition(string positionText) =>
+     positionText == "Top Left" ? position.top_left : positionText == "Top Center" ? position.top_center : positionText == "Top Right" ? position.top_right : positionText == "Middle Left" ? position.middle_left : positionText == "Middle Center" ? position.middle_center : positionText == "Middle Right" ? position.middle_right : positionText == "Bottom Left" ? position.bottom_left : positionText == "Bottom Center" ? position.bottom_center : position.bottom_right
+@@ -1324,6 +1334,11 @@ processEntries() =>
+         stopBufferVal  = stopBufferInput    * pipSize
+         minOBSizeVal   = minOBSizePipsInput * pipSize
+         maxOBSizeVal   = maxOBSizePipsInput * pipSize
++        // Triggered Edge model params (Baseline ignores these). Delay is counted in
++        // EXECUTION candles via ELAPSED TIME (matches Python), NOT 15m chart bar_index.
++        teEnabled         = entryModelInput == "Triggered Edge 25% C40"
++        teTriggerFraction = teThresholdPctInput / 100.0
++        teDelayMs         = teDelayCandlesInput * teExecMinutesInput * 60 * 1000
+         submittedThisBar = false
+         count = swingOrderBlocks.size()
+         if count > 0
+@@ -1371,6 +1386,21 @@ processEntries() =>
+                 if ob.bias == BULLISH and (tradeDirectionInput == "Both" or tradeDirectionInput == "Long Only")
+                     entryPrice  = ob.barHigh + entryBufferVal
+                     stopPrice   = ob.barLow  - stopBufferVal
++                    // Triggered Edge: arm on N% penetration, then wait the delay in EXECUTION
++                    // candles (elapsed minutes; matches Python) before submitting the OB-edge limit.
++                    if teEnabled
++                        obHeight    = ob.barHigh - ob.barLow
++                        teTrigger   = ob.barHigh - obHeight * teTriggerFraction
++                        if not ob.triggeredEdgeArmed and obHeight > 0 and low <= teTrigger
++                            ob.triggeredEdgeArmed      := true
++                            ob.triggeredEdgeTriggerBar := bar_index
++                            ob.triggeredEdgeTriggerPrice := teTrigger
++                            ob.triggeredEdgeTriggerTime := time
++                        if ob.triggeredEdgeArmed and not na(ob.triggeredEdgeTriggerTime) and (time - ob.triggeredEdgeTriggerTime) >= teDelayMs
++                            ob.triggeredEdgeDelayReady := true
++                        if not ob.triggeredEdgeDelayReady
++                            swingOrderBlocks.set(i, ob)
++                            continue
+                     riskPerUnit = entryPrice  - stopPrice
+                     if riskPerUnit > 0
+                         qty = calcQty(entryPrice, stopPrice)
+@@ -1454,6 +1484,21 @@ processEntries() =>
+                 else if ob.bias == BEARISH and (tradeDirectionInput == "Both" or tradeDirectionInput == "Short Only")
+                     entryPrice  = ob.barLow  - entryBufferVal
+                     stopPrice   = ob.barHigh + stopBufferVal
++                    // Triggered Edge: arm on N% penetration, then wait the delay in EXECUTION
++                    // candles (elapsed minutes; matches Python) before submitting the OB-edge limit.
++                    if teEnabled
++                        obHeight    = ob.barHigh - ob.barLow
++                        teTrigger   = ob.barLow + obHeight * teTriggerFraction
++                        if not ob.triggeredEdgeArmed and obHeight > 0 and high >= teTrigger
++                            ob.triggeredEdgeArmed      := true
++                            ob.triggeredEdgeTriggerBar := bar_index
++                            ob.triggeredEdgeTriggerPrice := teTrigger
++                            ob.triggeredEdgeTriggerTime := time
++                        if ob.triggeredEdgeArmed and not na(ob.triggeredEdgeTriggerTime) and (time - ob.triggeredEdgeTriggerTime) >= teDelayMs
++                            ob.triggeredEdgeDelayReady := true
++                        if not ob.triggeredEdgeDelayReady
++                            swingOrderBlocks.set(i, ob)
++                            continue
+                     riskPerUnit = stopPrice   - entryPrice
+                     if riskPerUnit > 0
+                         qty = calcQty(entryPrice, stopPrice)
+diff --git a/scripts/run_backtest.py b/scripts/run_backtest.py
+index 163cf52..284c6d9 100644
+--- a/scripts/run_backtest.py
++++ b/scripts/run_backtest.py
+@@ -20,7 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ if str(PROJECT_ROOT) not in sys.path:
+     sys.path.insert(0, str(PROJECT_ROOT))
+ 
+-from src.config import BacktestConfig, CANDLES_DIR, EURUSD_M15_BASELINE, NEWS_DIR, OUTPUTS_DIR
++from src.config import BacktestConfig, CANDLES_DIR, EURUSD_M15_BASELINE, NEWS_DIR, OUTPUTS_DIR, RISK_REDUCTION_INTRABAR_POLICY
+ from src.data_loader import load_candles
+ # RESUME PHASE 1B: per-scenario completion markers. save_scenario_csv writes the
+ # run-folder CSV and, only after a successful write, its .done marker. No skip/resume
+@@ -51,6 +51,7 @@ from src.run_outputs import (
+     engine_version,
+     save_config,
+     save_summary,
++    news_coverage_stamp,
+ )
+ 
+ # simulate_entry_penetration_batch has a FIXED signature (no **kwargs) and does not
+@@ -77,7 +78,7 @@ VALID_TRIGGERED_EDGE_SAME_CANDLE_MODES = {"same_candle", "next_candle"}
+ VALID_TRIGGERED_EDGE_CANDLE_DELAYS = set(range(0, 51))
+ VALID_DIRECTIONAL_ENTRY_MODES = {"symmetric", "asymmetric"}
+ VALID_DIRECTIONAL_ENTRY_MODELS = {"baseline", "entry_penetration", "triggered_edge"}
+-NULLABLE_OVERRIDE_FIELDS = {"news_file", "directional_entry_config", "long_entry_models", "short_entry_models", "allowed_structure_directions", "be_variants", "resume_existing_run_folder", "session_strategy_scenario", "baseline_comparison", "portfolio_policy_file"}
++NULLABLE_OVERRIDE_FIELDS = {"news_file", "directional_entry_config", "long_entry_models", "short_entry_models", "allowed_structure_directions", "be_variants", "resume_existing_run_folder", "session_strategy_scenario", "baseline_comparison", "portfolio_policy_file", "risk_reduction_trigger_r", "risk_reduction_stop_r"}
+ VALID_STRUCTURE_DIRECTION_KEYS = {"bos_long", "bos_short", "choch_long", "choch_short"}
+ 
+ 
+@@ -1447,9 +1448,25 @@ def session_scenario_provenance(config):
+         else:
+             enabled_targets[key] = (c.get("target") or {}).get("rr")
+     meta = scen.get("meta") or {}
++    tp = meta.get("target_policy") if isinstance(meta.get("target_policy"), dict) else {}
++    ep = meta.get("execution_policy") if isinstance(meta.get("execution_policy"), dict) else {}
+     out = {
+         "session_scenario_enabled": True,
+         "session_scenario_preset": meta.get("preset"),
++        # LEGACY target-policy provenance (preserved so old readers keep working).
++        **({"target_policy_id": tp.get("id"),
++            "target_policy_name": tp.get("name"),
++            "target_policy_version": tp.get("version"),
++            "target_policy_checksum": tp.get("checksum")} if tp else {}),
++        # Execution Policy provenance — id + revision + EXECUTABLE-BODY checksum + status,
++        # so a run records exactly which saved policy revision produced it and is
++        # reproducible/verifiable. `execution_policy_checksum` is the body checksum (stable
++        # across metadata-only edits). Absent for legacy runs (keys simply omitted).
++        **({"execution_policy_id": ep.get("id") or tp.get("id"),
++            "execution_policy_name": ep.get("name") or tp.get("name"),
++            "execution_policy_revision": ep.get("revision", 1),
++            "execution_policy_checksum": ep.get("checksum") or tp.get("checksum"),
++            "execution_policy_status": ep.get("status")} if (ep or tp) else {}),
+         "session_scenario_enabled_count": len(enabled_targets),
+         "session_scenario_disabled_count": len(disabled),
+         "session_scenario_custom_target_count": meta.get("custom_target_count"),
+@@ -2234,6 +2251,11 @@ def simulation_kwargs(config, execution_mode, simulation_news_events, stop_buffe
+         "triggered_edge_fft_min_ob_width_pips": getattr(config, "triggered_edge_fft_min_ob_width_pips", 0.0),
+         "inputs_prepared": True,
+         "profile_simulation_hot_path": getattr(config, "profile_simulation_hot_path", False),
++        # ── Standalone run-level risk reduction (single_step v1) ────────────────
++        "risk_reduction_enabled": getattr(config, "risk_reduction_enabled", False),
++        "risk_reduction_trigger_r": getattr(config, "risk_reduction_trigger_r", None),
++        "risk_reduction_stop_r": getattr(config, "risk_reduction_stop_r", None),
++        "risk_reduction_mode": getattr(config, "risk_reduction_mode", "single_step"),
+     }
+ 
+ 
+@@ -2265,6 +2287,29 @@ def build_regime_runtime_config(config):
+     }
+ 
+ 
++def validate_risk_reduction_config(config):
++    """Fail fast on an inconsistent standalone risk-reduction config (single_step v1).
++
++    Enabled requires: numeric trigger_r > 0, numeric stop_r with stop_r < trigger_r
++    (a stop at/above the trigger would exit instantly on arm), and mode
++    "single_step" (multi-step is schema-reserved, not executed). Disabled configs
++    are not inspected → byte-identical legacy behaviour."""
++    if not getattr(config, "risk_reduction_enabled", False):
++        return config
++    trigger_r = getattr(config, "risk_reduction_trigger_r", None)
++    stop_r = getattr(config, "risk_reduction_stop_r", None)
++    mode = str(getattr(config, "risk_reduction_mode", "single_step") or "single_step")
++    if mode != "single_step":
++        raise ValueError(f"risk_reduction_mode={mode!r} not supported (only 'single_step' executes in v1)")
++    if not isinstance(trigger_r, (int, float)) or isinstance(trigger_r, bool) or float(trigger_r) <= 0:
++        raise ValueError("risk_reduction_enabled requires risk_reduction_trigger_r > 0 (positive R)")
++    if not isinstance(stop_r, (int, float)) or isinstance(stop_r, bool):
++        raise ValueError("risk_reduction_enabled requires numeric risk_reduction_stop_r (signed R vs entry)")
++    if float(stop_r) >= float(trigger_r):
++        raise ValueError("risk_reduction_stop_r must be below risk_reduction_trigger_r")
++    return config
++
++
+ def validate_regime_config(config):
+     """Validate the regime config early. Unknown mode raises; FILTER mode requires a
+     non-empty regime_allowed_states set (an empty set would silently block every
+@@ -3192,6 +3237,7 @@ def main():
+     config = validate_directional_entry_config(config)
+     config = validate_regime_config(config)  # fail closed on unsupported filter mode
+     config = validate_portfolio_policy_config(config)  # fail fast on bad policy file/mode
++    config = validate_risk_reduction_config(config)  # fail fast on bad standalone RR rule
+     config = validate_directional_execution_modes(config)
+     dir_scenarios = (
+         build_directional_scenarios(config)
+@@ -3472,6 +3518,16 @@ def main():
+         "directional_results": {},
+         "control_pairs": {},
+         "be_results": {},
++        # ── Standalone risk-reduction provenance (spec §11). Always stamped so the
++        # ladder can pair test cells with their exact control run. The intrabar
++        # ordering assumption is declared explicitly — never inferred downstream.
++        "risk_reduction": {
++            "enabled": bool(getattr(config, "risk_reduction_enabled", False)),
++            "trigger_r": getattr(config, "risk_reduction_trigger_r", None),
++            "stop_r": getattr(config, "risk_reduction_stop_r", None),
++            "mode": getattr(config, "risk_reduction_mode", "single_step"),
++            "intrabar_policy": RISK_REDUCTION_INTRABAR_POLICY,
++        },
+     }
+     add_news_confirmation(run_summary, config, calendar_events, news_events_loaded)
+ 
+@@ -4435,6 +4491,10 @@ def main():
+         except Exception as _fb_err:  # noqa: BLE001 - non-fatal by design
+             print(f"[fair_baseline] skipped (non-fatal): {_fb_err}")
+ 
++    # News-calendar coverage provenance (audit P1-4 / gate H): stamp run vs calendar
++    # windows + uncovered periods so era comparisons can warn when they straddle the
++    # coverage boundary. Additive key; never fatal.
++    run_summary["news_coverage"] = news_coverage_stamp(config, news_events)
+     save_summary(run_summary, run_output_dir)
+     progress["completed_passes"] = progress.get("total_passes", 0)
+     progress["elapsed_seconds"] = round(monotonic() - run_started_monotonic, 1)
+diff --git a/sidecar/server.py b/sidecar/server.py
+index 159d328..4d9a934 100644
+--- a/sidecar/server.py
++++ b/sidecar/server.py
+@@ -52,7 +52,10 @@ app.add_middleware(
+         "http://127.0.0.1:5173",
+     ],
+     allow_credentials=False,
+-    allow_methods=["GET", "POST"],
++    # PUT + DELETE are required by the Execution Policy library endpoints
++    # (/target-policies/{id}); without them the browser CORS preflight fails and every
++    # save/rename/duplicate/delete surfaces as "Failed to fetch".
++    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+     allow_headers=["*"],
+ )
+ 
+@@ -1840,3 +1843,212 @@ def refresh_dataset(symbol: str) -> dict[str, Any]:
+         return status
+     finally:
+         REFRESH_LOCK.release()
++
++
++# ── Target Policy library (repo file-backed) ────────────────────────────────────
++# Saveable/versioned Trade-Policy presets live as JSON files under
++# configs/target_policies/. Built-in policies (ids prefixed "builtin_") ship in the
++# repo and are READ-ONLY: PUT/DELETE against them is refused. This is a local-only
++# convenience store; it never runs anything and touches only that one directory.
++TARGET_POLICIES_DIR = BACKTESTER_ROOT / "configs" / "target_policies"
++# A policy id is a safe slug — this guards the path component (no traversal, no dots).
++_POLICY_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,80}$")
++MAX_POLICY_BYTES = 256 * 1024
++
++
++def _policy_path(policy_id: str) -> Path:
++    if not _POLICY_ID_RE.match(policy_id or ""):
++        raise HTTPException(status_code=400, detail="invalid policy id")
++    target = (TARGET_POLICIES_DIR / f"{policy_id}.json").resolve()
++    # Defense in depth: ensure the resolved path stays inside the policies dir.
++    if TARGET_POLICIES_DIR.resolve() not in target.parents:
++        raise HTTPException(status_code=400, detail="invalid policy path")
++    return target
++
++
++def _is_builtin_policy_id(policy_id: str) -> bool:
++    return str(policy_id or "").startswith("builtin_")
++
++
++def _policy_etag(path: Path) -> str | None:
++    """Content etag (sha256 of the exact file bytes) for optimistic-concurrency /
++    stale-write detection. None when the file does not exist."""
++    if not path.is_file():
++        return None
++    try:
++        import hashlib
++        return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
++    except OSError:
++        return None
++
++
++def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
++    """Write via a temp file + os.replace so a reader never sees a partial file."""
++    path.parent.mkdir(parents=True, exist_ok=True)
++    tmp = path.with_suffix(path.suffix + f".tmp-{uuid.uuid4().hex[:8]}")
++    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
++    os.replace(tmp, path)
++
++
++class TargetPolicyRequest(BaseModel):
++    policy: dict[str, Any] = Field(default_factory=dict)
++    # Optimistic concurrency: the etag the client last read. When present and it no
++    # longer matches the on-disk file, the write is refused (409) — someone/something
++    # changed the file after the client loaded it. Absent/None ⇒ create-or-blind-write.
++    expected_etag: str | None = None
++
++
++@app.get("/target-policies")
++def list_target_policies() -> dict[str, Any]:
++    """List every saved Execution Policy (built-in + user). Read-only; always 200.
++    Each item carries its `etag` so the client can detect stale writes later."""
++    policies: list[dict[str, Any]] = []
++    if TARGET_POLICIES_DIR.is_dir():
++        for f in sorted(TARGET_POLICIES_DIR.glob("*.json")):
++            doc = read_json_file(f)
++            if isinstance(doc, dict) and doc.get("id"):
++                doc["readOnly"] = bool(doc.get("readOnly")) or _is_builtin_policy_id(doc.get("id"))
++                doc["etag"] = _policy_etag(f)
++                policies.append(doc)
++    return {"policies": policies}
++
++
++@app.get("/target-policies/{policy_id}")
++def get_target_policy(policy_id: str) -> dict[str, Any]:
++    target = _policy_path(policy_id)
++    doc = read_json_file(target)
++    if doc is None:
++        raise HTTPException(status_code=404, detail="policy not found")
++    doc["readOnly"] = bool(doc.get("readOnly")) or _is_builtin_policy_id(policy_id)
++    return {"policy": doc, "etag": _policy_etag(target)}
++
++
++@app.put("/target-policies/{policy_id}")
++def put_target_policy(policy_id: str, req: TargetPolicyRequest) -> dict[str, Any]:
++    """Create/overwrite a user policy file (atomic). Built-in ids refused (immutable).
++    Enforces optimistic concurrency via expected_etag → 409 on a stale write."""
++    if _is_builtin_policy_id(policy_id):
++        raise HTTPException(status_code=403, detail="built-in policies are read-only")
++    target = _policy_path(policy_id)
++    policy = req.policy if isinstance(req.policy, dict) else {}
++    if policy.get("id") != policy_id:
++        raise HTTPException(status_code=400, detail="policy.id must match the URL id")
++    if not isinstance(policy.get("body"), dict) or not str(policy.get("name") or "").strip():
++        raise HTTPException(status_code=400, detail="policy requires a name and a body")
++    if policy.get("schema_version") not in (1, 2):
++        raise HTTPException(status_code=400, detail="unsupported schema_version")
++    # Stale-write detection: if the client passed an etag, it must still match on disk.
++    current_etag = _policy_etag(target)
++    if req.expected_etag is not None and current_etag is not None and req.expected_etag != current_etag:
++        raise HTTPException(status_code=409, detail={
++            "error": "stale_write",
++            "message": "This policy changed on disk after you loaded it. Reload before saving.",
++            "current_etag": current_etag,
++        })
++    blob = json.dumps(policy, indent=2) + "\n"
++    if len(blob.encode("utf-8")) > MAX_POLICY_BYTES:
++        raise HTTPException(status_code=413, detail="policy too large")
++    _atomic_write_json(target, policy)
++    return {"ok": True, "id": policy_id, "etag": _policy_etag(target)}
++
++
++@app.delete("/target-policies/{policy_id}")
++def delete_target_policy(policy_id: str) -> dict[str, Any]:
++    if _is_builtin_policy_id(policy_id):
++        raise HTTPException(status_code=403, detail="built-in policies cannot be deleted")
++    target = _policy_path(policy_id)
++    if not target.is_file():
++        raise HTTPException(status_code=404, detail="policy not found")
++    try:
++        target.unlink()
++    except OSError as exc:
++        raise HTTPException(status_code=500, detail=f"could not delete: {exc}")
++    return {"ok": True, "id": policy_id}
++
++
++# ── Risk Reduction ladder outputs (Trade Management → Risk Reduction) ──────────
++# Read-only views over outputs/risk_reduction_ladder/<ladder>/ produced by
++# scripts/risk_reduction_ladder.py (ladder_matrix.json + changed_trades/*.csv +
++# ladder_state.json). The sidecar never launches the sweep — runs are started
++# explicitly via the runner CLI (or /runs one config at a time).
++RISK_REDUCTION_LADDER_DIR = BACKTESTER_ROOT / "outputs" / "risk_reduction_ladder"
++_LADDER_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
++
++
++def _ladder_dir(name: str) -> Path:
++    if not _LADDER_NAME_RE.match(name or ""):
++        raise HTTPException(status_code=400, detail="invalid ladder name")
++    target = (RISK_REDUCTION_LADDER_DIR / name).resolve()
++    if RISK_REDUCTION_LADDER_DIR.resolve() not in target.parents:
++        raise HTTPException(status_code=400, detail="invalid ladder path")
++    if not target.is_dir():
++        raise HTTPException(status_code=404, detail="ladder not found")
++    return target
++
++
++@app.get("/risk-reduction/ladders")
++def list_risk_reduction_ladders() -> dict[str, Any]:
++    """Every ladder output dir with progress + matrix availability."""
++    ladders: list[dict[str, Any]] = []
++    if RISK_REDUCTION_LADDER_DIR.is_dir():
++        for folder in sorted(RISK_REDUCTION_LADDER_DIR.iterdir()):
++            if not folder.is_dir():
++                continue
++            state = read_json_file(folder / "ladder_state.json") or {}
++            runs = state.get("runs") or {}
++            completed = sum(1 for v in runs.values() if v.get("status") == "completed")
++            ladders.append({
++                "name": folder.name,
++                "has_matrix": (folder / "ladder_matrix.json").is_file(),
++                "runs_total": len(runs),
++                "runs_completed": completed,
++                "modified_at": datetime.fromtimestamp(folder.stat().st_mtime, tz=timezone.utc).isoformat(),
++            })
++    return {"ladders": ladders}
++
++
++@app.get("/risk-reduction/ladders/{name}")
++def get_risk_reduction_ladder(name: str) -> dict[str, Any]:
++    folder = _ladder_dir(name)
++    matrix = read_json_file(folder / "ladder_matrix.json")
++    if matrix is None:
++        raise HTTPException(status_code=404, detail="ladder_matrix.json not found (aggregate the ladder first)")
++    return {"name": name, "matrix": matrix, "state": read_json_file(folder / "ladder_state.json")}
++
++
++class LadderFilterRequest(BaseModel):
++    sessions: list[str] | None = None
++    directions: list[str] | None = None
++    structures: list[str] | None = None
++    states: list[str] | None = None
++    date_from: str | None = None
++    date_to: str | None = None
++
++
++@app.post("/risk-reduction/ladders/{name}/recompute")
++def recompute_risk_reduction_ladder(name: str, req: LadderFilterRequest) -> dict[str, Any]:
++    """Re-aggregate the ladder over a filtered trade population (spec §8).
++    Read-only over stored run CSVs; identical predicate on control and cells."""
++    folder = _ladder_dir(name)
++    if str(BACKTESTER_ROOT) not in sys.path:
++        sys.path.insert(0, str(BACKTESTER_ROOT))
++    from scripts.risk_reduction_ladder import recompute_matrix
++    filters = {k: v for k, v in req.dict().items() if v}
++    try:
++        return {"name": name, "matrix": recompute_matrix(folder, filters)}
++    except Exception as exc:
++        raise HTTPException(status_code=500, detail=f"recompute failed: {exc}")
++
++
++@app.get("/risk-reduction/ladders/{name}/changed/{cell_key}")
++def get_risk_reduction_changed_trades(name: str, cell_key: str) -> dict[str, Any]:
++    """Changed-trade table for one cell (drill-down)."""
++    folder = _ladder_dir(name)
++    if not _LADDER_NAME_RE.match(cell_key or ""):
++        raise HTTPException(status_code=400, detail="invalid cell key")
++    target = folder / "changed_trades" / f"{cell_key}.csv"
++    if not target.is_file():
++        raise HTTPException(status_code=404, detail="changed-trades file not found")
++    with target.open("r", encoding="utf-8", newline="") as handle:
++        rows = list(csv.DictReader(handle))
++    return {"name": name, "cell_key": cell_key, "rows": rows}
+diff --git a/src/config.py b/src/config.py
+index d747c55..2acb844 100644
+--- a/src/config.py
++++ b/src/config.py
+@@ -227,6 +227,45 @@ class BacktestConfig:
+     # default → byte-identical to normal PM v1.2. Folds into run identity when ON.
+     portfolio_include_disabled_cohorts: bool = False
+ 
++    # ── Standalone Risk Reduction (run-level, single-step v1) ──────────────────
++    # A protective-stop replacement rule, SEPARATE from target policy: once price
++    # first reaches entry + trigger_r × initial risk (long; mirrored short), the
++    # original -1R stop is replaced by a stop at entry + stop_r × initial risk.
++    # stop_r is SIGNED R relative to entry: -0.4 = stop at -0.4R, 0.0 = break-even.
++    # Reuses the exact native BE arm/stop/exit loop (no second stop mechanism, no
++    # MFE approximation). Per-cohort scenario rules (session_strategy_scenario
++    # cohort risk_reduction/be) still override this run-level default at fill.
++    # OFF by default → byte-identical output.
++    # Intrabar policy (stamped in the manifest): arm-first, then moved-stop wins
++    # exits, wick basis — identical to the established BE same-bar policy.
++    # SCHEMA NOTE (future multi-step): v2 will add `risk_reduction_steps`, an
++    # ordered list of {trigger_r, stop_r} applied progressively (e.g. +1R→-0.5R,
++    # +1.5R→0R, +2R→+0.5R). `risk_reduction_mode` distinguishes "single_step"
++    # (this version) from "multi_step" then. Only single_step is executed now;
++    # any other mode fails fast.
++    risk_reduction_enabled: bool = False
++    risk_reduction_trigger_r: float | None = None
++    risk_reduction_stop_r: float | None = None
++    risk_reduction_mode: str = "single_step"
++
++
++# Declared same-bar execution assumption for risk-reduction runs. Single source of
++# truth — stamped into summary.json / manifests and echoed by the ladder runner.
++#
++# RULE B (Research-Integrity Audit P1-3, adopted 2026-07-13): a favorable BE /
++# move-stop trigger touched on the trade's own FILL candle arms ONLY when the
++# canonical fill-candle bookability rule (gap-fill / close-confirm —
++# _fill_candle_bookable_extreme, shared with native TP booking and bookable_mfe_r)
++# proves the touch happened after entry. Unprovable fill-candle wicks do NOT arm;
++# later candles arm normally; after a valid arm the legacy arm-first /
++# moved-stop-wins-wick same-bar precedence is retained. Every new BE /
++# risk-reduction run stamps the CURRENT policy value below; old runs carry the
++# LEGACY value and remain readable — never mix the two in one ranking table.
++RISK_REDUCTION_INTRABAR_POLICY = "provable_fill_arm_then_moved_stop_wins_wick"
++# Legacy Rule A stamp (optimistic raw-wick fill-candle arming) — kept for reading /
++# labelling old runs and ladders. Do not stamp on new runs.
++RISK_REDUCTION_INTRABAR_POLICY_LEGACY = "arm_first_then_moved_stop_wins_wick"
++
+ 
+ EURUSD_M15_BASELINE = BacktestConfig(
+     symbol="EURUSD",
+diff --git a/src/execution.py b/src/execution.py
+index 2745943..5cec72e 100644
+--- a/src/execution.py
++++ b/src/execution.py
+@@ -190,6 +190,18 @@ TRADE_COLUMNS = [
+     "mae_r",
+     "r_if_no_target",
+     "r_if_no_target_model",
++    # bookable_mfe_r (native-faithful reach evidence) — the max favorable R that NATIVE
++    # execution could BOOK as a take-profit touch, walking fill..first-stop. The fill
++    # candle contributes only its provably-post-fill extreme (same gap-fill / close-
++    # confirm rule as _fill_candle_exit_outcome, via the shared _fill_candle_bookable_
++    # extreme helper); post-fill candles contribute their true favorable extreme; the
++    # stop candle is excluded (stop wins same-candle ambiguity); post-stop / post-exit
++    # continuation is excluded. Unlike raw mfe_r (which can include an unprovable pre-
++    # fill extreme), this is the field target-suitability must use so a native LOSS is
++    # never rescored as a win off an unbookable fill-candle excursion. bookable_mfe_model
++    # records provenance ("native_fill_rules"). Blank for unfilled/cancelled rows.
++    "bookable_mfe_r",
++    "bookable_mfe_model",
+     # mae_r_to_original_exit (Phase 11A.2) — adverse excursion in R over the trade's
+     # REAL life [fill_candle_index, exit_candle_index], NOT stop-anchored. Answers
+     # "how close did this trade come to the stop before its actual exit?". For a clean
+@@ -857,6 +869,9 @@ def _base_trade_row(ob, plan, analytics_config=None):
+         "mae_r": "",
+         "r_if_no_target": "",
+         "r_if_no_target_model": "",
++        # Bookable MFE (native-faithful reach evidence) — populated post-sim, filled only.
++        "bookable_mfe_r": "",
++        "bookable_mfe_model": "",
+         # To-original-exit adverse excursion (Phase 11A.2) — populated post-sim, filled only.
+         "mae_r_to_original_exit": "",
+         # Post-stop continuation (V5 Phase 2) — populated post-sim, LOSS rows only.
+@@ -1941,6 +1956,25 @@ def _exit_outcome(ob, plan, candle):
+     return None, 0.0
+ 
+ 
++def _fill_candle_bookable_extreme(direction, entry, o, high, low, close):
++    """CANONICAL fill-candle bookability rule — single source of truth shared by
++    native take-profit booking (`_fill_candle_exit_outcome`) and the bookable-MFE
++    post-pass, so the two can never drift.
++
++    Returns the favorable PRICE extreme on the fill candle that native execution can
++    PROVE is post-fill and may therefore book as a take-profit touch:
++      * gap-fill — the candle opened at/through the limit (long: open<=entry,
++        short: open>=entry): the whole candle is post-fill, so the true favorable
++        extreme (high for longs, low for shorts) is bookable;
++      * otherwise only the CLOSE is provably post-fill, so the close is returned.
++    A same-candle TP is bookable iff this extreme reaches the target price
++    (long: extreme>=tp, short: extreme<=tp) — identical to the branch below.
++    """
++    if direction == "bullish":
++        return high if (o <= entry) else close
++    return low if (o >= entry) else close
++
++
+ def _fill_candle_exit_outcome(ob, plan, candle):
+     """Exit evaluation for the SAME candle a limit order fills on, respecting
+     fill ordering (parity fix for the OB24 / S108 same-candle bug).
+@@ -1963,14 +1997,16 @@ def _fill_candle_exit_outcome(ob, plan, candle):
+     are unaffected.
+     """
+     o = float(candle["open"])
++    # Provably-post-fill favorable extreme (shared canonical rule).
++    ext = _fill_candle_bookable_extreme(
++        ob["direction"], plan["entry"], o, candle["high"], candle["low"], candle["close"]
++    )
+     if ob["direction"] == "bullish":
+         hit_stop = candle["low"] <= plan["stop"]
+-        gap_fill = o <= plan["entry"]
+-        hit_tp = (candle["high"] >= plan["tp"]) if gap_fill else (candle["close"] >= plan["tp"])
++        hit_tp = ext >= plan["tp"]
+     else:
+         hit_stop = candle["high"] >= plan["stop"]
+-        gap_fill = o >= plan["entry"]
+-        hit_tp = (candle["low"] <= plan["tp"]) if gap_fill else (candle["close"] <= plan["tp"])
++        hit_tp = ext <= plan["tp"]
+ 
+     # Conservative same-candle ambiguity: stop wins (unchanged).
+     if hit_stop:
+@@ -2101,6 +2137,7 @@ def enrich_trades_with_stop_anchored_excursions(
+     highs = execution_candles["high"].to_numpy(dtype=float)
+     lows = execution_candles["low"].to_numpy(dtype=float)
+     closes = execution_candles["close"].to_numpy(dtype=float)
++    opens = execution_candles["open"].to_numpy(dtype=float)
+     n = len(highs)
+     final_close = float(closes[-1])
+ 
+@@ -2153,19 +2190,62 @@ def enrich_trades_with_stop_anchored_excursions(
+         row["r_if_no_target"] = round(float(r_if_no_target), 6)
+         row["r_if_no_target_model"] = "stop_anchored"
+ 
++        # ── Bookable MFE (native-faithful reach evidence) ────────────────────────
++        # Max favorable R that NATIVE execution could BOOK as a take-profit touch,
++        # walking fill..first-stop. The fill candle contributes ONLY its provably-post-
++        # fill extreme (shared _fill_candle_bookable_extreme rule — gap-fill gives the
++        # true extreme, otherwise only the close); post-fill candles contribute their
++        # true favorable extreme; the stop candle is EXCLUDED (stop wins same-candle
++        # ambiguity, matching _exit_outcome); post-stop / post-exit continuation is
++        # excluded. Unlike raw mfe_r, this never counts an unprovable pre-fill extreme,
++        # so target-suitability using it can never rescore a native LOSS as a win off an
++        # unbookable fill-candle excursion. k_stop == 0 (stop on the fill candle) ⇒ 0.
++        k_stop = int(stop_hits[0]) if stop_hits.size else None
++        if k_stop == 0:
++            bookable = 0.0  # stopped on the fill candle: stop wins, nothing bookable
++        else:
++            upper = k_stop if k_stop is not None else (n - fi)  # exclusive (stop excluded)
++            ext0 = _fill_candle_bookable_extreme(
++                row.get("direction"), entry, opens[fi], seg_high[0], seg_low[0], closes[fi]
++            )
++            bookable = (ext0 - entry) / risk if is_long else (entry - ext0) / risk
++            bookable = max(0.0, float(bookable))
++            if upper > 1:
++                pf = (seg_high[1:upper] - entry) / risk if is_long else (entry - seg_low[1:upper]) / risk
++                if pf.size:
++                    bookable = max(bookable, float(pf.max()))
++        row["bookable_mfe_r"] = round(max(0.0, float(bookable)), 6)
++        row["bookable_mfe_model"] = "native_fill_rules"
++
+         # ── Multi-RR target outcomes (2B.0b) — base path / original stop ──────────
+         # For each target rr: target wins only if its first touch is strictly before
+         # the first stop touch (same-candle ambiguity → stop wins). Win → +rr; else
+         # the stop-anchored r_if_no_target (−1 on a stop touch, else mark-to-final).
++        # FILL-CANDLE BOOKABILITY (Research-Integrity Audit P3-10): the fill candle
++        # (relative index 0) may count a target touch ONLY via its provably-post-fill
++        # extreme — the shared _fill_candle_bookable_extreme rule (gap-fill → true
++        # extreme, else close) — exactly like native TP booking and bookable_mfe_r.
++        # The raw wick would otherwise book same-candle target touches that native
++        # execution rejects. Fixed BEFORE this export axis is first enabled.
+         if _target_cols:
+             stop_index = int(stop_hits[0]) if stop_hits.size else None
+             r_no_tgt = float(r_if_no_target)
++            ext0_tgt = _fill_candle_bookable_extreme(
++                row.get("direction"), entry, opens[fi], seg_high[0], seg_low[0], closes[fi]
++            )
+             for rr, col in _target_cols:
++                tgt_price = (entry + rr * risk) if is_long else (entry - rr * risk)
+                 if is_long:
+-                    tgt_hits = np.flatnonzero(seg_high >= (entry + rr * risk))
++                    tgt_hits = np.flatnonzero(seg_high >= tgt_price)
+                 else:
+-                    tgt_hits = np.flatnonzero(seg_low <= (entry - rr * risk))
+-                if tgt_hits.size and (stop_index is None or int(tgt_hits[0]) < stop_index):
++                    tgt_hits = np.flatnonzero(seg_low <= tgt_price)
++                first_hit = int(tgt_hits[0]) if tgt_hits.size else None
++                if first_hit == 0:
++                    fill_bookable = (ext0_tgt >= tgt_price) if is_long else (ext0_tgt <= tgt_price)
++                    if not fill_bookable:
++                        later = tgt_hits[tgt_hits > 0]
++                        first_hit = int(later[0]) if later.size else None
++                if first_hit is not None and (stop_index is None or first_hit < stop_index):
+                     row[col] = round(float(rr), 6)
+                 else:
+                     row[col] = round(r_no_tgt, 6)
+@@ -2254,6 +2334,28 @@ def _be_stop_hit(candle, ob_dir, stop_price):
+     )
+ 
+ 
++def _be_arm_hit_on_fill_candle(candle, ob_dir, entry, arm_price, trigger_basis):
++    """RULE B — provable-only fill-candle arming (config.RISK_REDUCTION_INTRABAR_POLICY
++    = "provable_fill_arm_then_moved_stop_wins_wick").
++
++    On the trade's own FILL candle a wick-basis favorable trigger may arm ONLY off
++    the provably-post-fill favorable extreme returned by the CANONICAL
++    `_fill_candle_bookable_extreme` rule (gap-fill → the true extreme is post-fill;
++    otherwise only the close is provable) — exactly the rule native TP booking and
++    bookable_mfe_r already use, so an unprovable pre-fill wick can never arm a
++    BE/move-stop that native execution would refuse to book a target on.
++    Close-basis triggers are unchanged: a close is post-fill by construction.
++    Symmetric for long (bullish) and short (bearish). Later candles never route
++    here — they keep using `_be_arm_hit` (raw wick/close, unambiguous post-fill)."""
++    if trigger_basis == "close":
++        return _be_arm_hit(candle, ob_dir, arm_price, trigger_basis)
++    ext = _fill_candle_bookable_extreme(
++        ob_dir, entry,
++        float(candle["open"]), float(candle["high"]), float(candle["low"]), float(candle["close"]),
++    )
++    return ext >= arm_price if ob_dir == "bullish" else ext <= arm_price
++
++
+ @dataclass
+ class BeArmState:
+     """PROTECTION-MATRIX Phase 3A — per-(trade, arm) break-even state for the
+@@ -2358,6 +2460,16 @@ def simulate_trades(
+     be_stop_buffer_r=0.0,
+     be_delay_candles=0,
+     be_scenario_key="",
++    # ── Standalone run-level Risk Reduction (single_step v1) ──────────────────
++    # Applies the move-stop rule to EVERY filled trade as the global default:
++    # arm at risk_reduction_trigger_r, replace the original stop with a stop at
++    # risk_reduction_stop_r (SIGNED R vs entry; -0.4 ⇒ -0.4R, 0.0 ⇒ break-even).
++    # Reuses the exact BE arm/stop/exit loop. Per-cohort scenario be/risk_reduction
++    # rules still override at fill. Disabled (default) ⇒ byte-identical output.
++    risk_reduction_enabled=False,
++    risk_reduction_trigger_r=None,
++    risk_reduction_stop_r=None,
++    risk_reduction_mode="single_step",
+     # ── Session Strategy Scenario (Phase 2A — disable only) ───────────────────
+     # None (default) ⇒ no cohort gating, byte-identical to pre-feature behaviour.
+     session_strategy_scenario=None,
+@@ -2438,6 +2550,24 @@ def simulate_trades(
+         "be_trigger_basis": be_trigger_basis if be_arm_level_r is not None else "",
+     }
+     _be_enabled = be_arm_level_r is not None
++    # ── Standalone run-level Risk Reduction (single_step v1) ──────────────────
++    # Active only when enabled AND both levels present. Any mode other than
++    # "single_step" fails fast (multi-step is schema-reserved, not executed).
++    _rr_global_move_stop = (
++        bool(risk_reduction_enabled)
++        and risk_reduction_trigger_r is not None
++        and risk_reduction_stop_r is not None
++    )
++    if _rr_global_move_stop:
++        _rr_mode = str(risk_reduction_mode or "single_step")
++        if _rr_mode != "single_step":
++            raise ValueError(
++                f"risk_reduction_mode={_rr_mode!r} not supported (only 'single_step' executes in v1)"
++            )
++        _rr_g_trigger_r = float(risk_reduction_trigger_r)
++        _rr_g_stop_r = float(risk_reduction_stop_r)
++        if _rr_g_trigger_r <= 0:
++            raise ValueError("risk_reduction_trigger_r must be positive R")
+     profile = _new_hot_path_profile(profile_simulation_hot_path)
+ 
+     _ghost_config = {
+@@ -2832,6 +2962,27 @@ def simulate_trades(
+                 # byte-identical. Move-stop sets it to the locked stop_r.
+                 _eff_be_stop_level_r = None
+                 _rr_move_stop_active = False
++                # ── Standalone run-level RISK REDUCTION default (single_step v1) ──
++                # Applied BEFORE cohort resolution so per-cohort be/risk_reduction
++                # rules keep precedence (cohort RR > cohort BE > global RR > global
++                # BE). Reuses the exact BE arm/stop/exit loop below — the moved stop
++                # only exists after the trigger is genuinely reached; until then the
++                # original -1R stop (plan["stop"]) governs. Same-bar policy:
++                # arm-first, then moved-stop wins exits (wick basis).
++                if _rr_global_move_stop:
++                    _eff_be_arm_r = _rr_g_trigger_r
++                    _eff_be_stop_level_r = _rr_g_stop_r
++                    _rr_move_stop_active = True
++                    row["be_arm_level_r"] = _eff_be_arm_r
++                    row["be_trigger_basis"] = _eff_be_trigger
++                    row["risk_reduction_applied"] = True
++                    row["risk_reduction_kind"] = "move_stop"
++                    row["risk_reduction_trigger_r"] = _rr_g_trigger_r
++                    row["risk_reduction_stop_r"] = _rr_g_stop_r
++                    row["risk_reduction_source"] = "global"
++                    row["stop_moved_to_r"] = _rr_g_stop_r
++                    if not _be_enabled:
++                        _be_applied_any = True
+                 _c_rule = None  # resolved below; None when no scenario / cohort not actionable
+                 if _cohort_index is not None:
+                     _c_struct = "CHoCH" if "choch" in str(ob.get("structure_tag", "")).lower() else "BOS"
+@@ -2910,6 +3061,19 @@ def simulate_trades(
+                                 _eff_be_trigger = _c_rule["be_trigger"]
+                             row["be_arm_level_r"] = _eff_be_arm_r
+                             row["be_trigger_basis"] = _eff_be_trigger
++                            # Cohort BE fully replaces any run-level risk-reduction
++                            # default (no arm/stop hybrid): reset the stop level to
++                            # the legacy BE buffer path and clear the global stamps.
++                            # (A cohort rr_move_stop below re-applies its own rule.)
++                            if _rr_move_stop_active:
++                                _eff_be_stop_level_r = None
++                                _rr_move_stop_active = False
++                                row["risk_reduction_applied"] = False
++                                row["risk_reduction_kind"] = ""
++                                row["risk_reduction_trigger_r"] = ""
++                                row["risk_reduction_stop_r"] = ""
++                                row["risk_reduction_source"] = ""
++                                row["stop_moved_to_r"] = ""
+                             if not _be_enabled:
+                                 _be_applied_any = True
+                         # Per-cohort RISK REDUCTION (v1 = move_stop). GENERALIZED BE that
+@@ -3000,9 +3164,13 @@ def simulate_trades(
+                     continue
+ 
+                 # ── Fill-candle BE check (same candle as fill) ────────────────
++                # RULE B: wick-basis arms on the fill candle require the canonical
++                # gap-fill / close-confirm proof (_be_arm_hit_on_fill_candle).
+                 if _be_arm_price is not None:
+                     ob_dir = ob["direction"]
+-                    fill_candle_armed = _be_arm_hit(candle, ob_dir, _be_arm_price, _eff_be_trigger)
++                    fill_candle_armed = _be_arm_hit_on_fill_candle(
++                        candle, ob_dir, float(plan["entry"]), _be_arm_price, _eff_be_trigger
++                    )
+                     # BE stop is only active delay_candles after arm. On fill candle, arm + stop
+                     # on same candle requires delay=0.
+                     if fill_candle_armed:
+@@ -3317,7 +3485,14 @@ def simulate_trades_be_multiarm(
+             triggered = False; exit_idx = None
+             for k in range(fi, xi + 1):
+                 c = crecs[k]
+-                if not armed and _be_arm_hit(c, ob_dir, arm_price, be_trigger_basis):
++                # RULE B: the fill candle (k == fi) arms only via the canonical
++                # provable extreme; later candles keep the raw wick/close check.
++                _hit = (
++                    _be_arm_hit_on_fill_candle(c, ob_dir, entry, arm_price, be_trigger_basis)
++                    if k == fi
++                    else _be_arm_hit(c, ob_dir, arm_price, be_trigger_basis)
++                )
++                if not armed and _hit:
+                     armed = True; arm_idx = k; arm_time = c["time"]
+                     stop_active_from = k + int(be_delay_candles)
+                 if armed and k >= stop_active_from and _be_stop_hit(c, ob_dir, be_stop_price):
+@@ -3453,6 +3628,9 @@ def simulate_trades_be_multiarm_inloop_active_wick(
+ 
+         # Phase 3B boundary check: any filled trade that ARMS on its own fill
+         # candle is a fill-candle (fork #2) case — defer this arm to legacy.
++        # NOTE (Rule B): detection deliberately stays on the RAW wick — it may
++        # over-trigger the fallback for wicks Rule B would refuse to arm, which is
++        # harmless (simulate_trades is authoritative and applies the provable rule).
+         needs_legacy_fallback = False
+         for row, fi in _filled_rows(base_records):
+             ob = obs_by_id.get(row["ob_id"])
+@@ -3925,6 +4103,11 @@ def summarize_trades(order_blocks, trades):
+     news_paused_count = int((trades["paused_at"] != "").sum()) if not trades.empty and "paused_at" in trades else 0
+     news_rearmed_count = int((trades["rearmed_at"] != "").sum()) if not trades.empty and "rearmed_at" in trades else 0
+     session_filtered_skipped = int((trades["outcome"] == "SESSION_FILTERED").sum()) if not trades.empty else 0
++    # BE exits were previously absent from the summary entirely (audit P2-8): the
++    # legacy `resolved`/`win_rate` keys are kept byte-identical for existing
++    # consumers, and the ADDITIVE keys below expose BE/NF-aware accounting.
++    be_exits = int((trades["outcome"] == "BE_EXIT").sum()) if not trades.empty else 0
++    be_exit_r_series = trades.loc[trades["outcome"] == "BE_EXIT", "pnl_r"] if not trades.empty else pd.Series(dtype=float)
+     resolved = wins + losses + protection_exits
+     net_r = trades["pnl_r"].sum() if not trades.empty else 0.0
+     gross_r = trades["gross_r"].sum() if not trades.empty and "gross_r" in trades else net_r
+@@ -3980,6 +4163,14 @@ def summarize_trades(order_blocks, trades):
+         "news_touch_cancelled": news_touch_cancelled_count,
+         "session_filtered_skipped": session_filtered_skipped,
+         "win_rate": wins / resolved if resolved else 0.0,
++        # ── ADDITIVE BE/NF-aware accounting (audit P2-8) ─────────────────────
++        # Legacy win_rate/resolved above exclude BE_EXIT and NEWS_FLATTEN and are
++        # preserved unchanged. These keys reconcile with the frontend's canonical
++        # classifier: decided-with-terminal-exit = W + L + protection + BE + NF.
++        "be_exits": be_exits,
++        "be_exit_r_total": float(be_exit_r_series.sum()) if not be_exit_r_series.empty else 0.0,
++        "terminal_exits": resolved + be_exits + news_active_trades_flattened,
++        "win_rate_wl_only": wins / (wins + losses) if (wins + losses) else 0.0,
+         "net_r": net_r,
+         "gross_net_r": gross_r,
+         "total_cost_r": total_cost_r,
+diff --git a/src/run_outputs.py b/src/run_outputs.py
+index 94245da..120ca43 100644
+--- a/src/run_outputs.py
++++ b/src/run_outputs.py
+@@ -232,6 +232,51 @@ def save_config(config, output_dir):
+         json.dump(config_dict, file, indent=2)
+ 
+ 
++def news_coverage_stamp(config, news_events):
++    """News-calendar coverage provenance (Research-Integrity Audit P1-4 / gate H).
++
++    Records run window vs calendar window and any UNCOVERED periods — trades in an
++    uncovered period ran with NO news blackout/flatten protection even when news
++    handling was enabled (e.g. the 2020+ master calendar vs a 2015 run start).
++    Pure dict builder; callers merge it into the summary as `news_coverage`.
++    `news_events` may be a list of event dicts (each with a 'time'/'window_start')
++    or None. Never raises — a stamp must not fail a run.
++    """
++    try:
++        start = str(getattr(config, "start_date", "") or "")
++        end = str(getattr(config, "end_date", "") or "")
++        enabled = bool(getattr(config, "news_blackout_enabled", False)
++                       or getattr(config, "news_flatten_active_trades", False))
++        times = []
++        for e in (news_events or []):
++            t = e.get("time") if isinstance(e, dict) else None
++            if t is None and isinstance(e, dict):
++                t = e.get("window_start")
++            if t is not None:
++                times.append(str(t)[:10])
++        cal_start = min(times) if times else None
++        cal_end = max(times) if times else None
++        uncovered = []
++        if enabled and start and end:
++            if cal_start is None:
++                uncovered.append({"start": start, "end": end})
++            else:
++                if cal_start > start:
++                    uncovered.append({"start": start, "end": min(cal_start, end)})
++                if cal_end < end:
++                    uncovered.append({"start": max(cal_end, start), "end": end})
++        return {
++            "run_start": start, "run_end": end,
++            "news_enabled": enabled,
++            "news_file": str(getattr(config, "news_file", "") or ""),
++            "calendar_start": cal_start, "calendar_end": cal_end,
++            "uncovered_periods": uncovered,
++            "fully_covered": (not enabled) or not uncovered,
++        }
++    except Exception:  # pragma: no cover — provenance must never break a run
++        return {"error": "news_coverage_stamp_failed"}
++
++
+ def save_summary(summary_dict, output_dir):
+     with (output_dir / "summary.json").open("w", encoding="utf-8") as file:
+         json.dump(summary_dict, file, indent=2)

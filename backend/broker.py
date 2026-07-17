@@ -441,27 +441,64 @@ class MockBroker(Broker):
 # placeholders. Never connects.
 # ---------------------------------------------------------------------------
 
+def _load_live_gateway():
+    """Import the live-slice MT5 gateway (repo-root `live/` package). Returns a
+    connected-capable gateway or None. All broker-specific logic stays in the
+    gateway + this adapter; import is guarded so CT runs unchanged off-VPS."""
+    try:
+        import os
+        import sys
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        from live.config import LiveConfig
+        from live.mt5_gateway import MT5Gateway
+        gateway = MT5Gateway(LiveConfig())
+        return gateway if gateway.available else None
+    except Exception:  # pragma: no cover - any import/env failure ⇒ skeleton mode
+        return None
+
+
 class MT5Adapter(Broker):
+    """Real MT5 connectivity via the live-slice gateway when the MetaTrader5
+    package is present (Windows VPS); graceful skeleton behaviour everywhere
+    else. CT-side execution commands remain unsupported in M3 Phase 1 — the VPS
+    executor owns order operations; CT observes positions/orders/health."""
+
     kind = "mt5"
-    broker_id = "brk_mt5_skeleton"
+    broker_id = "brk_mt5_live"
 
     def __init__(self):
-        # MT5 typically exposes broker-suffixed symbols; placeholders only.
         self._symbols = SymbolTranslator({"EURUSD": "EURUSD.r", "GBPUSD": "GBPUSD.r", "XAUUSD": "XAUUSD.a"})
+        self._gateway = _load_live_gateway()
+
+    def _state(self) -> tuple[str, str]:
+        if self._gateway is None:
+            return ConnectionState.DISCONNECTED, "MetaTrader5 package unavailable on this host"
+        if self._gateway.connected:
+            return ConnectionState.CONNECTED, "MT5 terminal connected"
+        return ConnectionState.DISCONNECTED, "gateway available; not connected"
 
     def connect(self) -> BrokerConnection:
-        # Skeleton never connects to a terminal.
-        return BrokerConnection(state=ConnectionState.DISCONNECTED, detail="MT5 adapter skeleton — not implemented")
+        if self._gateway is None:
+            return BrokerConnection(state=ConnectionState.DISCONNECTED,
+                                    detail="MetaTrader5 package unavailable on this host")
+        ok, detail = self._gateway.connect()
+        return BrokerConnection(state=ConnectionState.CONNECTED if ok else ConnectionState.DISCONNECTED,
+                                detail=detail)
 
     def disconnect(self) -> BrokerConnection:
-        return BrokerConnection(state=ConnectionState.DISCONNECTED, detail="MT5 adapter skeleton")
+        if self._gateway is not None:
+            self._gateway.disconnect()
+        return BrokerConnection(state=ConnectionState.DISCONNECTED, detail="disconnected")
 
     def connection(self) -> BrokerConnection:
-        return BrokerConnection(state=ConnectionState.DISCONNECTED, detail="MT5 adapter skeleton — no terminal")
+        state, detail = self._state()
+        return BrokerConnection(state=state, detail=detail)
 
     def health(self) -> BrokerHealth:
-        return BrokerHealth(brokerId=self.broker_id, kind=self.kind, connection=ConnectionState.DISCONNECTED,
-                            detail="Skeleton — no MT5 communication")
+        state, detail = self._state()
+        return BrokerHealth(brokerId=self.broker_id, kind=self.kind, connection=state, detail=detail)
 
     def capabilities(self) -> BrokerCapability:
         # Realistic MT5 placeholders (netting/hedging depend on account type; replay is N/A live).
@@ -476,17 +513,43 @@ class MT5Adapter(Broker):
     def to_canonical(self, broker_symbol: str) -> str:
         return self._symbols.to_canonical(broker_symbol)
 
+    def _snapshot(self) -> dict | None:
+        if self._gateway is None or not self._gateway.connected:
+            return None
+        ok, snap = self._gateway.snapshot()
+        return snap if ok else None
+
     def accounts(self, ctx: BrokerContext) -> list:
-        return []
+        snap = self._snapshot()
+        if not snap or not snap.get("account"):
+            return []
+        a = snap["account"]
+        return [{"accountId": f"mt5_{a['login']}", "broker": self.broker_id,
+                 "balance": a["balance"], "equity": a["equity"], "currency": a["currency"]}]
 
     def positions(self, ctx: BrokerContext) -> list:
-        return []
+        snap = self._snapshot()
+        if not snap:
+            return []
+        return [{"positionId": str(p["ticket"]), "symbol": self.to_canonical(p["symbol"]),
+                 "volume": p["volume"], "side": "long" if p["type"] == 0 else "short",
+                 "entryPrice": p["price_open"], "stop": p["sl"], "target": p["tp"],
+                 "unrealizedPnl": p["profit"], "comment": p["comment"], "magic": p["magic"]}
+                for p in snap["positions"]]
 
     def orders(self, ctx: BrokerContext) -> list:
-        return []
+        snap = self._snapshot()
+        if not snap:
+            return []
+        return [{"orderId": str(o["ticket"]), "symbol": self.to_canonical(o["symbol"]),
+                 "type": o["type"], "volume": o["volume"], "price": o["price_open"],
+                 "stop": o["sl"], "target": o["tp"], "comment": o["comment"]}
+                for o in snap["orders"]]
 
+    # CT-side execution commands are deliberately unsupported in M3 Phase 1:
+    # the VPS executor is the only order writer (single-writer safety).
     def submit_command(self, name: str, ctx: BrokerContext) -> tuple[dict | None, dict | None]:
-        return None, None  # Unsupported — skeleton performs no execution.
+        return None, None
 
     def cancel_order(self, order_id: str, ctx: BrokerContext) -> tuple[dict | None, dict | None]:
         return None, None
@@ -498,8 +561,13 @@ class MT5Adapter(Broker):
         return []
 
     def sync(self, ctx: BrokerContext) -> dict:
-        return {"ok": False, "brokerId": self.broker_id, "connection": ConnectionState.DISCONNECTED,
-                "error": asdict(NOT_IMPLEMENTED)}
+        state, detail = self._state()
+        if state != ConnectionState.CONNECTED:
+            return {"ok": False, "brokerId": self.broker_id, "connection": state,
+                    "error": {"code": "NOT_CONNECTED", "detail": detail}}
+        return {"ok": True, "brokerId": self.broker_id, "connection": state,
+                "positions": self.positions(ctx), "orders": self.orders(ctx),
+                "accounts": self.accounts(ctx)}
 
 
 # ---------------------------------------------------------------------------

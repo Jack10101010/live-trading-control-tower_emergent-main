@@ -1,0 +1,21 @@
+ARCHIVE ENVIRONMENT NOTE (created 2026-07-16 during Milestone 1 archival)
+This archive copies the reference run EXACTLY AS FOUND from:
+  Lux-OB-Backtester/outputs/runs/d6cdae589b1e4c37a67763253c466067_20260714_101708_EURUSD_15min_RR2.0_SB1
+Original execution environment (from the run's own artifacts):
+  executed_at: 2026-07-14T09:17:08Z -> 09:23:49Z (manifest.json created_at/completed_at; total ~6m41s)
+  machine: /Users/jack/Documents/Dev Projects/Lux-OB-Backtester (stdout.log line 1 - original absolute path)
+  engine_version (manifest): c5e29837f044d5483b42d22d5b17a9a5d40cecea3ff43d98468928e16a038bc0
+  detection_config_hash:     36dcf74c9be8b1367a013a1aff954377f35ce28ffbaa08991f4eff6aaf75d35d
+  execution_config_hash:     90b1da8f6c27d57ab88aebb41d82d750e61d0bd9ac01adafa40987785cfdcacf
+  config_hash (manifest):    e9a5ede4d82c51041641e716b7e3bab4443a7e098da4674ea97a6f259dfd68e8
+  command: scripts/run_backtest.py with generated_configs/d6cdae589b1e4c37a67763253c466067.json
+           (config_path recorded in manifest.json; generated config archived alongside)
+Archival environment:
+  python at archive time: Python 3.10.12
+  Lux repo HEAD at archive time: 6be5bbb759ea8c3443ca813c9568c9aa027e35da
+  Lux dirty files at archive time (NOT part of src/ engine): "Research Documents/README.md",
+    data/candles/EURUSD_manifest.json, data/candles/GBPUSD_manifest.json,
+    lux_style_swing_ob_backtester_v1.pine, scripts/run_backtest.py (driver script modified vs HEAD)
+  CAVEAT: the exact Python package versions of the ORIGINAL 2026-07-14 run were not snapshotted
+  by the runner. requirements.txt (unpinned) archived; engine_version hash above is the
+  authoritative engine identity for parity work.

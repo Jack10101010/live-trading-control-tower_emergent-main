@@ -95,3 +95,14 @@ backend/events.db
 
 # Runtime state overlay (mutable, layered over the fixture, Phase 4 Step 3)
 backend/runtime.db
+
+# ── M3 live-slice additions ──────────────────────────────────────────────────
+# Golden archive candle mirror: 261MB (> GitHub's 100MB hard limit). It is a
+# byte-identical, hash-verified copy of the Lux dataset
+# (sha256 314a0efa… — recorded in golden/run-001/ARCHIVE-MANIFEST.json);
+# restore it from Lux data/candles/EURUSD_1m_extended_2015_2026.csv.
+golden/run-001/reference/candles.csv
+
+# Live-slice runtime state (ledger, ops logs, bar segments, reports)
+live_state/
+rehearsal_out/

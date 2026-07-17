@@ -1,0 +1,12 @@
+ENGINE IDENTITY PROOF (2026-07-16)
+engine_version algorithm: src/run_outputs.py::engine_version() — sha256 over the
+ordered byte-contents of: src/execution.py · scripts/run_backtest.py · src/resume_support.py
+(rel-path + NUL separators; git-independent).
+Reproduction from the CURRENT working tree:
+  computed : c5e29837f044d5483b42d22d5b17a9a5d40cecea3ff43d98468928e16a038bc0
+  manifest : c5e29837f044d5483b42d22d5b17a9a5d40cecea3ff43d98468928e16a038bc0
+  → MATCH. The current uncommitted tree IS the as-run engine, byte-verified.
+Base commit: 6be5bbb759ea8c3443ca813c9568c9aa027e35da (Lux HEAD)
+Tracked-modified at snapshot: 9 files (see dirty-files.sha256; full diff in dirty-tree.diff).
+Note: src/config.py and src/run_outputs.py are dirty but OUTSIDE the engine_version
+hash set; they are snapshotted here because config.py defines the config surface.

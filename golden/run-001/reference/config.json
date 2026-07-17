@@ -1,0 +1,977 @@
+{
+  "symbol": "EURUSD",
+  "candle_file": "EURUSD_1m_extended_2015_2026.csv",
+  "detection_timeframe": "15min",
+  "execution_timeframe": "1min",
+  "start_date": "2015-01-01",
+  "end_date": "2026-06-19",
+  "swing_length": 50,
+  "ob_filter": "Atr",
+  "rr_multiple": 2,
+  "entry_buffer_pips": 0,
+  "stop_buffer_pips": 1,
+  "pip_size": 0.0001,
+  "tick_size": 1e-05,
+  "verify_limit_ticks": 0,
+  "execution_modes": [
+    "allow_multi_position"
+  ],
+  "entry_models": [
+    "triggered_edge"
+  ],
+  "entry_penetration_thresholds": [],
+  "protection_modes": [
+    "baseline"
+  ],
+  "penetration_thresholds": [
+    50.0,
+    75.0,
+    90.0,
+    100.0
+  ],
+  "close_breach_buffers_pips": [
+    0.0,
+    0.5,
+    1.0,
+    2.0,
+    3.0
+  ],
+  "triggered_edge_trigger_thresholds": [
+    25
+  ],
+  "triggered_edge_entry_level_pct": 0,
+  "triggered_edge_same_candle_modes": [
+    "same_candle",
+    "next_candle"
+  ],
+  "triggered_edge_candle_delays": [
+    3
+  ],
+  "triggered_edge_cancel_on_first_failed_tag": false,
+  "triggered_edge_cancel_on_retrace": false,
+  "triggered_edge_cancel_retrace_pips": 0,
+  "triggered_edge_cancel_retrace_ob_pct": 0,
+  "triggered_edge_fft_move_away_pips": 0,
+  "triggered_edge_fft_move_away_ob_multiple": 0,
+  "triggered_edge_fft_min_ob_width_pips": 0,
+  "batch_entry_penetration": false,
+  "parallel_scenarios": true,
+  "max_workers": 8,
+  "profile_simulation_hot_path": false,
+  "trade_direction": "both",
+  "structure_filter": "both",
+  "ob_entry_depth_pct": 0,
+  "min_ob_size_pips": 0,
+  "max_ob_size_pips": 100,
+  "spread_pips": 0.2,
+  "slippage_pips": 0.2,
+  "commission_r_per_trade": 0,
+  "directional_entry_mode": "symmetric",
+  "directional_entry_config": null,
+  "long_entry_models": null,
+  "short_entry_models": null,
+  "long_triggered_edge_threshold": 25.0,
+  "short_triggered_edge_threshold": 25.0,
+  "long_triggered_edge_delays": [
+    0,
+    1
+  ],
+  "short_triggered_edge_delays": [
+    0,
+    1
+  ],
+  "long_entry_penetration_thresholds": [],
+  "short_entry_penetration_thresholds": [],
+  "session_filter_enabled": false,
+  "allowed_sessions": [],
+  "news_blackout_enabled": true,
+  "news_file": "data/news/master_economic_calendar_2020_present.csv",
+  "news_blackout_minutes_before": 3,
+  "news_blackout_minutes_after": 3,
+  "news_blackout_impacts": [
+    "high"
+  ],
+  "news_blackout_currencies": [],
+  "news_block_new_fills": true,
+  "news_pause_pending_orders": true,
+  "news_cancel_if_touched_during_blackout": true,
+  "news_flatten_active_trades": true,
+  "news_flatten_minutes_before_blackout": 5,
+  "reverse_touch_cancel_enabled": false,
+  "allowed_structure_directions": [
+    "bos_long",
+    "bos_short",
+    "choch_long",
+    "choch_short"
+  ],
+  "session_strategy_scenario": {
+    "cohorts": [
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bull/Chop": "block"
+          }
+        },
+        "enabled": true,
+        "session": "london",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 0.9
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 1.75
+          },
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 2.75
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 1
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 2.25
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Chop": "block",
+            "Bear/Compress": "block",
+            "Bear/Expand": "block",
+            "Bull/Expand": "block"
+          }
+        },
+        "enabled": true,
+        "session": "london",
+        "state_overrides": {
+          "Bull/Chop": {
+            "mode": "custom",
+            "rr": 0.9
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 1.75
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Chop": "block",
+            "Bear/Expand": "block",
+            "Bull/Chop": "block",
+            "Bull/Compress": "block",
+            "Bull/Expand": "block"
+          }
+        },
+        "enabled": true,
+        "session": "london",
+        "state_overrides": {
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 0.6
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bull/Expand": "block"
+          }
+        },
+        "enabled": true,
+        "session": "london",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 2.75
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 0.5
+          },
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 1.5
+          },
+          "Bull/Chop": {
+            "mode": "custom",
+            "rr": 1.75
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 1.75
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 2
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Chop": "block",
+            "Bear/Compress": "block",
+            "Bull/Chop": "block",
+            "Bull/Expand": "block"
+          }
+        },
+        "enabled": true,
+        "session": "lull",
+        "state_overrides": {
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 0.5
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 0.8
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bull/Chop": "block"
+          }
+        },
+        "enabled": true,
+        "session": "lull",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 0.5
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 2.75
+          },
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 3
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 1
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 1.5
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Chop": "block",
+            "Bear/Expand": "block",
+            "Bull/Chop": "block",
+            "Bull/Expand": "block"
+          }
+        },
+        "enabled": true,
+        "session": "lull",
+        "state_overrides": {
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 0.9
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 0.6
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bull/Chop": "block"
+          }
+        },
+        "enabled": true,
+        "session": "lull",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 1
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 2.75
+          },
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 1
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 1
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 4.5
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Chop": "block",
+            "Bear/Expand": "block",
+            "Bull/Chop": "block",
+            "Bull/Expand": "block"
+          }
+        },
+        "enabled": true,
+        "session": "newYork",
+        "state_overrides": {
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 0.7
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 0.5
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow"
+        },
+        "enabled": true,
+        "session": "newYork",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 1
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 0.9
+          },
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 0.7
+          },
+          "Bull/Chop": {
+            "mode": "custom",
+            "rr": 2.5
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 2
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 1.25
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Compress": "block",
+            "Bear/Expand": "block",
+            "Bull/Compress": "block",
+            "Bull/Expand": "block"
+          }
+        },
+        "enabled": true,
+        "session": "newYork",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 2
+          },
+          "Bull/Chop": {
+            "mode": "custom",
+            "rr": 1.75
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bull/Chop": "block"
+          }
+        },
+        "enabled": true,
+        "session": "newYork",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 2.75
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 3
+          },
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 2
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Chop": "block",
+            "Bear/Compress": "block",
+            "Bear/Expand": "block"
+          }
+        },
+        "enabled": true,
+        "session": "ny_pm",
+        "state_overrides": {
+          "Bull/Chop": {
+            "mode": "custom",
+            "rr": 0.9
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 0.5
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 0.6
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Chop": "block",
+            "Bear/Compress": "block",
+            "Bear/Expand": "block",
+            "Bull/Chop": "block",
+            "Bull/Compress": "block"
+          }
+        },
+        "enabled": true,
+        "session": "ny_pm",
+        "state_overrides": {
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 0.5
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bull/Chop": "block"
+          }
+        },
+        "enabled": true,
+        "session": "ny_pm",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 1.5
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 0.8
+          },
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 1.25
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 0.5
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 0.5
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bull/Chop": "block"
+          }
+        },
+        "enabled": true,
+        "session": "ny_pm",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 1.25
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 1
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Chop": "block",
+            "Bear/Compress": "block",
+            "Bull/Chop": "block",
+            "Bull/Compress": "block"
+          }
+        },
+        "enabled": true,
+        "session": "asia",
+        "state_overrides": {
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 1.25
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 0.6
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bull/Chop": "block"
+          }
+        },
+        "enabled": true,
+        "session": "asia",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 1.75
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 0.7
+          },
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 0.8
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 1.5
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 0.9
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Expand": "block"
+          }
+        },
+        "enabled": true,
+        "session": "asia",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 0.6
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 0.8
+          },
+          "Bull/Chop": {
+            "mode": "custom",
+            "rr": 0.5
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 0.7
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 0.6
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bull/Chop": "block",
+            "Bull/Compress": "block"
+          }
+        },
+        "enabled": true,
+        "session": "asia",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 0.8
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 0.9
+          },
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 0.6
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 1.25
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Compress": "block",
+            "Bear/Expand": "block",
+            "Bull/Chop": "block",
+            "Bull/Compress": "block"
+          }
+        },
+        "enabled": true,
+        "session": "outside",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 1.25
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 0.7
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Chop": "block",
+            "Bear/Expand": "block",
+            "Bull/Chop": "block",
+            "Bull/Compress": "block",
+            "Bull/Expand": "block"
+          }
+        },
+        "enabled": true,
+        "session": "outside",
+        "state_overrides": {
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 1.5
+          }
+        },
+        "structure": "BOS",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Long",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bear/Chop": "block",
+            "Bull/Chop": "block"
+          }
+        },
+        "enabled": true,
+        "session": "outside",
+        "state_overrides": {
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 0.6
+          },
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 0.9
+          },
+          "Bull/Compress": {
+            "mode": "custom",
+            "rr": 0.5
+          },
+          "Bull/Expand": {
+            "mode": "custom",
+            "rr": 0.5
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      },
+      {
+        "direction": "Short",
+        "eligibility": {
+          "base": "allow",
+          "states": {
+            "Bull/Chop": "block",
+            "Bull/Compress": "block",
+            "Bull/Expand": "block"
+          }
+        },
+        "enabled": true,
+        "session": "outside",
+        "state_overrides": {
+          "Bear/Chop": {
+            "mode": "custom",
+            "rr": 1
+          },
+          "Bear/Compress": {
+            "mode": "custom",
+            "rr": 1.25
+          },
+          "Bear/Expand": {
+            "mode": "custom",
+            "rr": 1.5
+          }
+        },
+        "structure": "CHoCH",
+        "target": {
+          "rr": 2
+        }
+      }
+    ],
+    "enabled": true,
+    "meta": {
+      "custom_target_count": 0,
+      "disabled_count": 0,
+      "eligibility_disabled_bases": 0,
+      "eligibility_preset": "custom",
+      "eligibility_schema": 1,
+      "eligibility_state_blocks": 62,
+      "eligibility_state_rescues": 0,
+      "enabled_count": 24,
+      "execution_policy": {
+        "checksum": "c619def209db9843",
+        "id": "tp_4lkqqm9q79mk",
+        "name": "State Target Policy v1",
+        "revision": 1,
+        "status": "Candidate"
+      },
+      "global_run_rr": 2,
+      "neutral_base": true,
+      "preset": null,
+      "schema_version": 1,
+      "state_cells_block": 0,
+      "state_cells_custom": 78,
+      "state_cells_research": 0,
+      "state_overrides_schema": 1,
+      "target_policy": {
+        "checksum": "c619def209db9843",
+        "id": "tp_4lkqqm9q79mk",
+        "name": "State Target Policy v1",
+        "version": 2
+      }
+    }
+  },
+  "baseline_comparison": {
+    "be": null,
+    "eligible_cohort_keys": [],
+    "enabled": true,
+    "entry": {
+      "entry_key": "baseline",
+      "model": "baseline"
+    },
+    "mode": "eligible",
+    "risk_reduction": null,
+    "target": {
+      "rr": 2,
+      "type": "rr"
+    }
+  },
+  "emit_ob_retests": false,
+  "retest_reaction_window_candles": 10,
+  "retest_reaction_min_pips": 8.0,
+  "retest_failure_threshold": "close_beyond_ob",
+  "be_enabled": false,
+  "be_arm_levels": [],
+  "be_trigger_bases": [
+    "wick"
+  ],
+  "be_stop_buffer_r": 0.0,
+  "be_delay_candles": 0,
+  "be_variants": null,
+  "write_legacy_flat_outputs": false,
+  "be_multiarm_enabled": false,
+  "be_multiarm_force_serial": false,
+  "resume_existing_run_folder": null,
+  "skip_existing_scenarios": false,
+  "regime_gate_enabled": false,
+  "regime_gate_mode": "label",
+  "regime_ema_enabled": true,
+  "regime_ema_tf": "1D",
+  "regime_ema_length": 200,
+  "regime_ema_long_cond": "price_above",
+  "regime_ema_short_cond": "price_below",
+  "regime_ema_confirm": 0,
+  "regime_bbw_enabled": true,
+  "regime_bbw_tf": "1D",
+  "regime_bbw_length": 20,
+  "regime_bbw_std": 2.0,
+  "regime_bbw_thr_mode": "fixed",
+  "regime_bbw_thr_value": 2.342,
+  "regime_bbw_pctile": 50.0,
+  "regime_bbw_longvol": true,
+  "regime_adx_enabled": true,
+  "regime_adx_tf": "1D",
+  "regime_adx_length": 14,
+  "regime_adx_chop": 18.0,
+  "regime_adx_use": "state_classifier",
+  "regime_allowed_states": [
+    "Bull/Expand",
+    "Bull/Compress",
+    "Bull/Chop",
+    "Bear/Expand",
+    "Bear/Compress",
+    "Bear/Chop"
+  ],
+  "regime_direction_policy": "state_only",
+  "regime_bull_allows": "long",
+  "regime_bear_allows": "short",
+  "regime_chop_allows": "both",
+  "portfolio_policy_enabled": true,
+  "portfolio_policy_mode": "enforce",
+  "portfolio_policy_file": "configs/policy/deployed_policy.v1.json",
+  "portfolio_include_disabled_cohorts": true,
+  "risk_reduction_enabled": false,
+  "risk_reduction_trigger_r": null,
+  "risk_reduction_stop_r": null,
+  "risk_reduction_mode": "single_step",
+  "detection_tf": "15min",
+  "execution_tf": "1min",
+  "date_from": "2015-01-01",
+  "date_to": "2026-06-19",
+  "date_range": "2015-01-01 \u2192 2026-06-19"
+}

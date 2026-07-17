@@ -70,7 +70,14 @@ export function AnalyticsView() {
   }, [cells]);
 
   return (
-    <div className="grid grid-cols-12 gap-4 p-4 h-full min-h-0 overflow-auto">
+    // Scroll fix: `absolute inset-0` gives the scroll region a DEFINITE height
+    // (immune to percentage-height resolution quirks up the flex chain that
+    // clipped the bottom panels), `overflow-y-auto` guarantees the scrollbar,
+    // and `pb-8` keeps the last row (By Session / By Market State) clear of
+    // the viewport edge at full scroll.
+    <div className="relative h-full min-h-0">
+      <div className="absolute inset-0 overflow-y-auto">
+        <div className="grid grid-cols-12 gap-4 p-4 pb-8">
       <Panel title="Performance Overview" className="col-span-12">
         <div className="grid grid-cols-7 gap-6">
           <MetricStat label="Net R" value={<RValue value={metrics.netR} />} emphasise />
@@ -148,6 +155,8 @@ export function AnalyticsView() {
           ))}
         </div>
       </Panel>
+        </div>
+      </div>
     </div>
   );
 }

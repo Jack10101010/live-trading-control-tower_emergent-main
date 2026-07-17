@@ -1,0 +1,235 @@
+Run output folder: /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/outputs/runs/d6cdae589b1e4c37a67763253c466067_20260714_101708_EURUSD_15min_RR2.0_SB1
+Run name: EURUSD · Portfolio Manager — 01 Jan 2015 → 19 Jun 2026 · Full history · RR2 · 25% C3 · PM v1.2 · All cohorts · MS off · Session scenario
+Active config:
+  symbol: EURUSD
+  candle_file: EURUSD_1m_extended_2015_2026.csv
+  detection_timeframe: 15min
+  execution_timeframe: 1min
+  start_date: 2015-01-01
+  end_date: 2026-06-19
+  swing_length: 50
+  ob_filter: Atr
+  rr_multiple: 2
+  entry_buffer_pips: 0
+  stop_buffer_pips: 1
+  pip_size: 0.0001
+  tick_size: 1e-05
+  verify_limit_ticks: 0
+  execution_modes: ['allow_multi_position']
+  entry_models: ['triggered_edge']
+  entry_penetration_thresholds: []
+  protection_modes: ['baseline']
+  penetration_thresholds: [50.0, 75.0, 90.0, 100.0]
+  close_breach_buffers_pips: [0.0, 0.5, 1.0, 2.0, 3.0]
+  triggered_edge_trigger_thresholds: [25]
+  triggered_edge_entry_level_pct: 0
+  triggered_edge_same_candle_modes: ['same_candle', 'next_candle']
+  triggered_edge_candle_delays: [3]
+  triggered_edge_cancel_on_first_failed_tag: False
+  triggered_edge_cancel_on_retrace: False
+  triggered_edge_cancel_retrace_pips: 0
+  triggered_edge_cancel_retrace_ob_pct: 0
+  triggered_edge_fft_move_away_pips: 0
+  triggered_edge_fft_move_away_ob_multiple: 0
+  triggered_edge_fft_min_ob_width_pips: 0
+  batch_entry_penetration: False
+  parallel_scenarios: True
+  max_workers: 8
+  profile_simulation_hot_path: False
+  trade_direction: both
+  structure_filter: both
+  ob_entry_depth_pct: 0
+  min_ob_size_pips: 0
+  max_ob_size_pips: 100
+  spread_pips: 0.2
+  slippage_pips: 0.2
+  commission_r_per_trade: 0
+  directional_entry_mode: symmetric
+  directional_entry_config: None
+  long_entry_models: None
+  short_entry_models: None
+  long_triggered_edge_threshold: 25.0
+  short_triggered_edge_threshold: 25.0
+  long_triggered_edge_delays: [0, 1]
+  short_triggered_edge_delays: [0, 1]
+  long_entry_penetration_thresholds: []
+  short_entry_penetration_thresholds: []
+  session_filter_enabled: False
+  allowed_sessions: []
+  news_blackout_enabled: True
+  news_file: data/news/master_economic_calendar_2020_present.csv
+  news_blackout_minutes_before: 3
+  news_blackout_minutes_after: 3
+  news_blackout_impacts: ['high']
+  news_blackout_currencies: []
+  news_block_new_fills: True
+  news_pause_pending_orders: True
+  news_cancel_if_touched_during_blackout: True
+  news_flatten_active_trades: True
+  news_flatten_minutes_before_blackout: 5
+  reverse_touch_cancel_enabled: False
+  allowed_structure_directions: ['bos_long', 'bos_short', 'choch_long', 'choch_short']
+  target_set: []
+  session_strategy_scenario: {'cohorts': [{'direction': 'Long', 'eligibility': {'base': 'allow', 'states': {'Bull/Chop': 'block'}}, 'enabled': True, 'session': 'london', 'state_overrides': {'Bear/Chop': {'mode': 'custom', 'rr': 0.9}, 'Bear/Compress': {'mode': 'custom', 'rr': 1.75}, 'Bear/Expand': {'mode': 'custom', 'rr': 2.75}, 'Bull/Compress': {'mode': 'custom', 'rr': 1}, 'Bull/Expand': {'mode': 'custom', 'rr': 2.25}}, 'structure': 'BOS', 'target': {'rr': 2}}, {'direction': 'Short', 'eligibility': {'base': 'allow', 'states': {'Bear/Chop': 'block', 'Bear/Compress': 'block', 'Bear/Expand': 'block', 'Bull/Expand': 'block'}}, 'enabled': True, 'session': 'london', 'state_overrides': {'Bull/Chop': {'mode': 'custom', 'rr': 0.9}, 'Bull/Compress': {'mode': 'custom', 'rr': 1.75}}, 'structure': 'BOS', 'target': {'rr': 2}}, {'direction': 'Long', 'eligibility': {'base': 'allow', 'states': {'Bear/Chop': 'block', 'Bear/Expand': 'block', 'Bull/Chop': 'block', 'Bull/Compress': 'block', 'Bull/Expand': 'block'}}, 'enabled': True, 'session': 'london', 'state_overrides': {'Bear/Compress': {'mode': 'custom', 'rr': 0.6}}, 'structure': 'CHoCH', 'target': {'rr': 2}}, {'direction': 'Short', 'eligibility': {'base': 'allow', 'states': {'Bull/Expand': 'block'}}, 'enabled': True, 'session': 'london', 'state_overrides': {'Bear/Chop': {'mode': 'custom', 'rr': 2.75}, 'Bear/Compress': {'mode': 'custom', 'rr': 0.5}, 'Bear/Expand': {'mode': 'custom', 'rr': 1.5}, 'Bull/Chop': {'mode': 'custom', 'rr': 1.75}, 'Bull/Compress': {'mode': 'custom', 'rr': 1.75}, 'Bull/Expand': {'mode': 'custom', 'rr': 2}}, 'structure': 'CHoCH', 'target': {'rr': 2}}, {'direction': 'Long', 'eligibility': {'base': 'allow', 'states': {'Bear/Chop': 'block', 'Bear/Compress': 'block', 'Bull/Chop': 'block', 'Bull/Expand': 'block'}}, 'enabled': True, 'session': 'lull', 'state_overrides': {'Bear/Expand': {'mode': 'custom', 'rr': 0.5}, 'Bull/Compress': {'mode': 'custom', 'rr': 0.8}}, 'structure': 'BOS', 'target': {'rr': 2}}, {'direction': 'Short', 'eligibility': {'base': 'allow', 'states': {'Bull/Chop': 'block'}}, 'enabled': True, 'session': 'lull', 'state_overrides': {'Bear/Chop': {'mode': 'custom', 'rr': 0.5}, 'Bear/Compress': {'mode': 'custom', 'rr': 2.75}, 'Bear/Expand': {'mode': 'custom', 'rr': 3}, 'Bull/Compress': {'mode': 'custom', 'rr': 1}, 'Bull/Expand': {'mode': 'custom', 'rr': 1.5}}, 'structure': 'BOS', 'target': {'rr': 2}}, {'direction': 'Long', 'eligibility': {'base': 'allow', 'states': {'Bear/Chop': 'block', 'Bear/Expand': 'block', 'Bull/Chop': 'block', 'Bull/Expand': 'block'}}, 'enabled': True, 'session': 'lull', 'state_overrides': {'Bear/Compress': {'mode': 'custom', 'rr': 0.9}, 'Bull/Compress': {'mode': 'custom', 'rr': 0.6}}, 'structure': 'CHoCH', 'target': {'rr': 2}}, {'direction': 'Short', 'eligibility': {'base': 'allow', 'states': {'Bull/Chop': 'block'}}, 'enabled': True, 'session': 'lull', 'state_overrides': {'Bear/Chop': {'mode': 'custom', 'rr': 1}, 'Bear/Compress': {'mode': 'custom', 'rr': 2.75}, 'Bear/Expand': {'mode': 'custom', 'rr': 1}, 'Bull/Compress': {'mode': 'custom', 'rr': 1}, 'Bull/Expand': {'mode': 'custom', 'rr': 4.5}}, 'structure': 'CHoCH', 'target': {'rr': 2}}, {'direction': 'Long', 'eligibility': {'base': 'allow', 'states': {'Bear/Chop': 'block', 'Bear/Expand': 'block', 'Bull/Chop': 'block', 'Bull/Expand': 'block'}}, 'enabled': True, 'session': 'newYork', 'state_overrides': {'Bear/Compress': {'mode': 'custom', 'rr': 0.7}, 'Bull/Compress': {'mode': 'custom', 'rr': 0.5}}, 'structure': 'BOS', 'target': {'rr': 2}}, {'direction': 'Short', 'eligibility': {'base': 'allow'}, 'enabled': True, 'session': 'newYork', 'state_overrides': {'Bear/Chop': {'mode': 'custom', 'rr': 1}, 'Bear/Compress': {'mode': 'custom', 'rr': 0.9}, 'Bear/Expand': {'mode': 'custom', 'rr': 0.7}, 'Bull/Chop': {'mode': 'custom', 'rr': 2.5}, 'Bull/Compress': {'mode': 'custom', 'rr': 2}, 'Bull/Expand': {'mode': 'custom', 'rr': 1.25}}, 'structure': 'BOS', 'target': {'rr': 2}}, {'direction': 'Long', 'eligibility': {'base': 'allow', 'states': {'Bear/Compress': 'block', 'Bear/Expand': 'block', 'Bull/Compress': 'block', 'Bull/Expand': 'block'}}, 'enabled': True, 'session': 'newYork', 'state_overrides': {'Bear/Chop': {'mode': 'custom', 'rr': 2}, 'Bull/Chop': {'mode': 'custom', 'rr': 1.75}}, 'structure': 'CHoCH', 'target': {'rr': 2}}, {'direction': 'Short', 'eligibility': {'base': 'allow', 'states': {'Bull/Chop': 'block'}}, 'enabled': True, 'session': 'newYork', 'state_overrides': {'Bear/Chop': {'mode': 'custom', 'rr': 2.75}, 'Bear/Compress': {'mode': 'custom', 'rr': 3}, 'Bear/Expand': {'mode': 'custom', 'rr': 2}}, 'structure': 'CHoCH', 'target': {'rr': 2}}, {'direction': 'Long', 'eligibility': {'base': 'allow', 'states': {'Bear/Chop': 'block', 'Bear/Compress': 'block', 'Bear/Expand': 'block'}}, 'enabled': True, 'session': 'ny_pm', 'state_overrides': {'Bull/Chop': {'mode': 'custom', 'rr': 0.9}, 'Bull/Compress': {'mode': 'custom', 'rr': 0.5}, 'Bull/Expand': {'mode': 'custom', 'rr': 0.6}}, 'structure': 'BOS', 'target': {'rr': 2}}, {'direction': 'Short', 'eligibility': {'base': 'allow', 'states': {'Bear/Chop': 'block', 'Bear/Compress': 'block', 'Bear/Expand': 'block', 'Bull/Chop': 'block', 'Bull/Compress': 'block'}}, 'enabled': True, 'session': 'ny_pm', 'state_overrides': {'Bull/Expand': {'mode': 'custom', 'rr': 0.5}}, 'structure': 'BOS', 'target': {'rr': 2}}, {'direction': 'Long', 'eligibility': {'base': 'allow', 'states': {'Bull/Chop': 'block'}}, 'enabled': True, 'session': 'ny_pm', 'state_overrides': {'Bear/Chop': {'mode': 'custom', 'rr': 1.5}, 'Bear/Compress': {'mode': 'custom', 'rr': 0.8}, 'Bear/Expand': {'mode': 'custom', 'rr': 1.25}, 'Bull/Compress': {'mode': 'custom', 'rr': 0.5}, 'Bull/Expand': {'mode': 'custom', 'rr': 0.5}}, 'structure': 'CHoCH', 'target': {'rr': 2}}, {'direction': 'Short', 'eligibility': {'base': 'allow', 'states': {'Bull/Chop': 'block'}}, 'enabled': True, 'session': 'ny_pm', 'state_overrides': {'Bear/Chop': {'mode': 'custom', 'rr': 1.25}, 'Bear/Compress': {'mode': 'custom', 'rr': 1}}, 'structure': 'CHoCH', 'target': {'rr': 2}}, {'direction': 'Long', 'eligibility': {'base': 'allow', 'states': {'Bear/Chop': 'block', 'Bear/Compress': 'block', 'Bull/Chop': 'block', 'Bull/Compress': 'block'}}, 'enabled': True, 'session': 'asia', 'state_overrides': {'Bear/Expand': {'mode': 'custom', 'rr': 1.25}, 'Bull/Expand': {'mode': 'custom', 'rr': 0.6}}, 'structure': 'BOS', 'target': {'rr': 2}}, {'direction': 'Short', 'eligibility': {'base': 'allow', 'states': {'Bull/Chop': 'block'}}, 'enabled': True, 'session': 'asia', 'state_overrides': {'Bear/Chop': {'mode': 'custom', 'rr': 1.75}, 'Bear/Compress': {'mode': 'custom', 'rr': 0.7}, 'Bear/Expand': {'mode': 'custom', 'rr': 0.8}, 'Bull/Compress': {'mode': 'custom', 'rr': 1.5}, 'Bull/Expand': {'mode': 'custom', 'rr': 0.9}}, 'structure': 'BOS', 'target': {'rr': 2}}, {'direction': 'Long', 'eligibility': {'base': 'allow', 'states': {'Bear/Expand': 'block'}}, 'enabled': True, 'session': 'asia', 'state_overrides': {'Bear/Chop': {'mode': 'custom', 'rr': 0.6}, 'Bear/Compress': {'mode': 'custom', 'rr': 0.8}, 'Bull/Chop': {'mode': 'custom', 'rr': 0.5}, 'Bull/Compress': {'mode': 'custom', 'rr': 0.7}, 'Bull/Expand': {'mode': 'custom', 'rr': 0.6}}, 'structure': 'CHoCH', 'target': {'rr': 2}}, {'direction': 'Short', 'eligibility': {'base': 'allow', 'states': {'Bull/Chop': 'block', 'Bull/Compress': 'block'}}, 'enabled': True, 'session': 'asia', 'state_overrides': {'Bear/Chop': {'mode': 'custom', 'rr': 0.8}, 'Bear/Compress': {'mode': 'custom', 'rr': 0.9}, 'Bear/Expand': {'mode': 'custom', 'rr': 0.6}, 'Bull/Expand': {'mode': 'custom', 'rr': 1.25}}, 'structure': 'CHoCH', 'target': {'rr': 2}}, {'direction': 'Long', 'eligibility': {'base': 'allow', 'states': {'Bear/Compress': 'block', 'Bear/Expand': 'block', 'Bull/Chop': 'block', 'Bull/Compress': 'block'}}, 'enabled': True, 'session': 'outside', 'state_overrides': {'Bear/Chop': {'mode': 'custom', 'rr': 1.25}, 'Bull/Expand': {'mode': 'custom', 'rr': 0.7}}, 'structure': 'BOS', 'target': {'rr': 2}}, {'direction': 'Short', 'eligibility': {'base': 'allow', 'states': {'Bear/Chop': 'block', 'Bear/Expand': 'block', 'Bull/Chop': 'block', 'Bull/Compress': 'block', 'Bull/Expand': 'block'}}, 'enabled': True, 'session': 'outside', 'state_overrides': {'Bear/Compress': {'mode': 'custom', 'rr': 1.5}}, 'structure': 'BOS', 'target': {'rr': 2}}, {'direction': 'Long', 'eligibility': {'base': 'allow', 'states': {'Bear/Chop': 'block', 'Bull/Chop': 'block'}}, 'enabled': True, 'session': 'outside', 'state_overrides': {'Bear/Compress': {'mode': 'custom', 'rr': 0.6}, 'Bear/Expand': {'mode': 'custom', 'rr': 0.9}, 'Bull/Compress': {'mode': 'custom', 'rr': 0.5}, 'Bull/Expand': {'mode': 'custom', 'rr': 0.5}}, 'structure': 'CHoCH', 'target': {'rr': 2}}, {'direction': 'Short', 'eligibility': {'base': 'allow', 'states': {'Bull/Chop': 'block', 'Bull/Compress': 'block', 'Bull/Expand': 'block'}}, 'enabled': True, 'session': 'outside', 'state_overrides': {'Bear/Chop': {'mode': 'custom', 'rr': 1}, 'Bear/Compress': {'mode': 'custom', 'rr': 1.25}, 'Bear/Expand': {'mode': 'custom', 'rr': 1.5}}, 'structure': 'CHoCH', 'target': {'rr': 2}}], 'enabled': True, 'meta': {'custom_target_count': 0, 'disabled_count': 0, 'eligibility_disabled_bases': 0, 'eligibility_preset': 'custom', 'eligibility_schema': 1, 'eligibility_state_blocks': 62, 'eligibility_state_rescues': 0, 'enabled_count': 24, 'execution_policy': {'checksum': 'c619def209db9843', 'id': 'tp_4lkqqm9q79mk', 'name': 'State Target Policy v1', 'revision': 1, 'status': 'Candidate'}, 'global_run_rr': 2, 'neutral_base': True, 'preset': None, 'schema_version': 1, 'state_cells_block': 0, 'state_cells_custom': 78, 'state_cells_research': 0, 'state_overrides_schema': 1, 'target_policy': {'checksum': 'c619def209db9843', 'id': 'tp_4lkqqm9q79mk', 'name': 'State Target Policy v1', 'version': 2}}}
+  baseline_comparison: {'be': None, 'eligible_cohort_keys': [], 'enabled': True, 'entry': {'entry_key': 'baseline', 'model': 'baseline'}, 'mode': 'eligible', 'risk_reduction': None, 'target': {'rr': 2, 'type': 'rr'}}
+  emit_ob_retests: False
+  retest_reaction_window_candles: 10
+  retest_reaction_min_pips: 8.0
+  retest_failure_threshold: close_beyond_ob
+  be_enabled: False
+  be_arm_levels: []
+  be_trigger_bases: ['wick']
+  be_stop_buffer_r: 0.0
+  be_delay_candles: 0
+  be_variants: None
+  write_legacy_flat_outputs: False
+  be_multiarm_enabled: False
+  be_multiarm_force_serial: False
+  resume_existing_run_folder: None
+  skip_existing_scenarios: False
+  regime_gate_enabled: False
+  regime_gate_mode: label
+  regime_ema_enabled: True
+  regime_ema_tf: 1D
+  regime_ema_length: 200
+  regime_ema_long_cond: price_above
+  regime_ema_short_cond: price_below
+  regime_ema_confirm: 0
+  regime_bbw_enabled: True
+  regime_bbw_tf: 1D
+  regime_bbw_length: 20
+  regime_bbw_std: 2.0
+  regime_bbw_thr_mode: fixed
+  regime_bbw_thr_value: 2.342
+  regime_bbw_pctile: 50.0
+  regime_bbw_longvol: True
+  regime_adx_enabled: True
+  regime_adx_tf: 1D
+  regime_adx_length: 14
+  regime_adx_chop: 18.0
+  regime_adx_use: state_classifier
+  regime_allowed_states: ['Bull/Expand', 'Bull/Compress', 'Bull/Chop', 'Bear/Expand', 'Bear/Compress', 'Bear/Chop']
+  regime_direction_policy: state_only
+  regime_bull_allows: long
+  regime_bear_allows: short
+  regime_chop_allows: both
+  portfolio_policy_enabled: True
+  portfolio_policy_mode: enforce
+  portfolio_policy_file: configs/policy/deployed_policy.v1.json
+  portfolio_include_disabled_cohorts: True
+  risk_reduction_enabled: False
+  risk_reduction_trigger_r: None
+  risk_reduction_stop_r: None
+  risk_reduction_mode: single_step
+Config source: /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/generated_configs/d6cdae589b1e4c37a67763253c466067.json
+Scenario plan: 2 simulate_trades passes
+  Parallel scenario mode: enabled (max_workers=8; baselines run first)
+  Baseline: 1
+  Protection: 0
+  Entry: 1
+  [1/2] baseline allow_multi_position baseline -> trades_allow_multi_position.csv
+  [2/2] entry allow_multi_position entry_triggered_edge_25p0_d3 threshold=25 -> trades_allow_multi_position__entry_triggered_edge_25p0_d3.csv
+News blackout enabled: True
+News file: data/news/master_economic_calendar_2020_present.csv
+News impacts used: ['high']
+News currencies used: ['EUR', 'USD']
+News blackout window: 3m before / 3m after
+News events loaded in date range: 28148
+News events matched after filters: 2353
+News blackout windows created: 2353
+News flatten active trades: True
+News flatten buffer before blackout: 5m
+Loaded news blackout events: 2353
+News events output path: /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/outputs/runs/d6cdae589b1e4c37a67763253c466067_20260714_101708_EURUSD_15min_RR2.0_SB1/news_events.csv
+START DATA LOAD
+DATA LOAD completed in 4.0s
+START SESSION CACHE
+SESSION CACHE completed in 12.0s
+START NEWS CACHE
+NEWS CACHE inputs: candles=4271083 events/windows=2353
+NEWS CACHE blackout lookup build: 10712 candles in 0.0s
+NEWS CACHE flatten lookup build: 18354 candles in 0.0s
+DONE NEWS CACHE in 8.2s
+Date window: 2015-01-01 through 2026-06-19
+Filtered 1m rows: 4271083
+Filtered 1m first candle time: 2015-01-01 22:00:00+00:00
+Filtered 1m last candle time: 2026-06-19 09:53:00+00:00
+START CANDLE EXPORT
+Candles output path: /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/outputs/runs/d6cdae589b1e4c37a67763253c466067_20260714_101708_EURUSD_15min_RR2.0_SB1/candles.csv
+DONE CANDLE EXPORT in 12.5s
+START DETECTION TIMEFRAME RESAMPLE
+DONE DETECTION TIMEFRAME RESAMPLE in 1.1s
+Filtered 15min rows: 285790
+Filtered 15min first candle time: 2015-01-01 22:00:00+00:00
+Filtered 15min last candle time: 2026-06-19 09:45:00+00:00
+15min output path: /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/data/candles/EURUSD_15min_FROM_1m.csv
+Columns: ['time', 'open', 'high', 'low', 'close', 'volume']
+START OB DETECTION
+OB DETECTION completed in 42.4s
+Structure filter: Both
+OB count before structure filter: 2080
+OB count after structure filter: 2080
+OB count: 2080
+Bullish OB count: 1013
+Bearish OB count: 1067
+BOS count: 946
+CHoCH count: 1134
+First OB detection time: 2015-01-06 22:00:00+00:00
+Last OB detection time: 2026-06-18 09:00:00+00:00
+OB output path: /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/outputs/runs/d6cdae589b1e4c37a67763253c466067_20260714_101708_EURUSD_15min_RR2.0_SB1/order_blocks.csv
+Structure direction filter skipped: {"bos_long": 0, "bos_short": 0, "choch_long": 0, "choch_short": 0}
+[1/2] START baseline allow_multi_position baseline -> trades_allow_multi_position.csv
+Execution mode: allow_multi_position
+Protection mode: baseline
+Filled trades: 1098
+Wins: 589
+Losses: 485
+Protection exits: 0
+Open: 0
+Invalidated: 0
+Reverse touch cancelled: 0
+Unfilled: 33
+Session filtered skipped: 0
+News blackout skipped: 0
+News paused: 860
+News rearmed: 801
+News touch cancelled: 120
+News fills blocked: 0
+News pending paused: 860
+News pending rearmed: 801
+News active trades flattened: 24
+News flattened R: 4.25
+Win rate: 54.84%
+Net R: 145.38
+Max DD R: -19.41
+Expectancy R: 0.132
+Trades output path: /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/outputs/runs/d6cdae589b1e4c37a67763253c466067_20260714_101708_EURUSD_15min_RR2.0_SB1/trades_allow_multi_position.csv
+[1/2] DONE baseline in 72.0s
+Parallel scenario mode: allow_multi_position dispatching 1 jobs with max_workers=8
+DONE parallel entry allow_multi_position entry_triggered_edge_25p0_d3 in 146.8s
+Execution mode: allow_multi_position
+Filled trades: 650
+Wins: 441
+Losses: 194
+Protection exits: 0
+Open: 0
+Invalidated: 809
+Reverse touch cancelled: 0
+Unfilled: 35
+Session filtered skipped: 0
+News blackout skipped: 0
+News paused: 891
+News rearmed: 890
+News touch cancelled: 9
+News fills blocked: 0
+News pending paused: 891
+News pending rearmed: 890
+News active trades flattened: 15
+News flattened R: 4.60
+Win rate: 69.45%
+Net R: 292.66
+Max DD R: -8.83
+Expectancy R: 0.450
+Trades output path: /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/outputs/runs/d6cdae589b1e4c37a67763253c466067_20260714_101708_EURUSD_15min_RR2.0_SB1/trades_allow_multi_position__entry_triggered_edge_25p0_d3.csv
+Fair Baseline: emitted trades_allow_multi_position__scenario_baseline.csv (mode=eligible, eligible_cohorts=24, target_rr=2.0, be=none)
+Run output folder: /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/outputs/runs/d6cdae589b1e4c37a67763253c466067_20260714_101708_EURUSD_15min_RR2.0_SB1

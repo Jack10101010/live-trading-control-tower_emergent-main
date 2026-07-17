@@ -1,0 +1,3 @@
+execution_mode,kind,label,output_file,seconds,status,error,filled_trades,wins,losses,net_r,max_drawdown_r,expectancy_r
+allow_multi_position,baseline,baseline,trades_allow_multi_position.csv,71.979,completed,,1098,589,485,145.38471612795792,-19.413663671621748,0.13240866678320393
+allow_multi_position,entry,entry_triggered_edge_25p0_d3,trades_allow_multi_position__entry_triggered_edge_25p0_d3.csv,146.835,completed,,650,441,194,292.6598432207228,-8.830059289369032,0.4502459126472658

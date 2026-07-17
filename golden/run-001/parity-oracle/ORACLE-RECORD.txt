@@ -1,0 +1,44 @@
+M2 FOUNDATION TASK 3 — PARITY ORACLE RECORD
+Recorded: 2026-07-17
+
+RESULT: PASS — byte-identical reproduction of Golden Run #1.
+
+Oracle run
+  run-id        : parityoracle003
+  run dir       : Lux-OB-Backtester/outputs/runs/parityoracle003_20260717_095919_EURUSD_15min_RR2.0_SB1
+  executor      : operator machine (Mac) — same environment that produced the July 14 reference;
+                  environment caveat therefore ELIMINATED for this comparison (see BOUNDARY-ANALYSIS.md).
+                  Sandbox execution proven impossible (45 s process cap; aborted attempts marked ABORTED.txt).
+  engine        : pinned tag golden-run-001 (commit ebd58c7245a31fc9ada679d54b701ba180dfe0b5)
+                  engine_version c5e29837f044d5483b42d22d5b17a9a5d40cecea3ff43d98468928e16a038bc0
+                  (re-verified from working tree immediately before the run)
+  config        : generated_configs/d6cdae589b1e4c37a67763253c466067.json
+                  sha256 7b877cabcb075afe345df5ef10d9e1dfa3b4e2c4a19f32e5a12643af4270526c (byte-identical to archived original)
+  run-dir copy  : config.json sha256 d1dc4518f9ca6a88efe44c5630b87fcb4efbc2ca41c505fee02ec82b63053418 == reference/config.json
+  dataset       : data/candles/EURUSD_1m_extended_2015_2026.csv
+                  sha256 314a0efa450e54df256b99796d042f72a51a2998709f91de56e1a1577ef5f681 (== reference candles.csv)
+  passes        : 2/2 completed, 0 failed (baseline + entry_triggered_edge_25p0_d3)
+
+Parity (harness: golden/tools/parity_harness.py; report: parity-report.json; verdict PASS, exit 0)
+  trades_allow_multi_position__entry_triggered_edge_25p0_d3.csv
+      BYTE-IDENTICAL, 2,060/2,060 rows
+      sha256 ca925d544601ad243ba0909045dc00384eaea0e9d41977ab7189b8a8c1e9a964  (== reference)
+  order_blocks.csv
+      BYTE-IDENTICAL, 2,080/2,080 rows
+      sha256 bb67b6557a4a88fcfb1e83e6bf1558c8b3530ba9431a2e3e35d4d480078b7159  (== reference)
+  summary.json
+      BYTE-IDENTICAL (no volatile keys present; ignore-list unused)
+      sha256 f67609bc3c2da5592576c8cd5cd3a273b5aa8ae109d1a11749ed2fc0a7af0b52  (== reference)
+  trades_allow_multi_position.csv  (baseline pass — bonus check beyond the gate)
+      BYTE-IDENTICAL
+      sha256 aa77176b54cc4f96acccf3d0540fe41ee3b6c252847ddd3bc65702fe180214c1  (== reference)
+
+Headline reproduction (from oracle summary.json)
+  strategy pass  entry_triggered_edge_25p0_d3 net_r = 292.6598432207228   (Golden strategy pass)
+  baseline pass  net_r = 145.38471612795792                                (Golden baseline pass)
+
+Standing oracle for extraction slices
+  The Golden reference itself is the oracle; any candidate run on the operator machine with the
+  pinned config must reproduce these byte hashes. Gate procedure per slice:
+    python3 golden/tools/parity_harness.py <reference> <candidate-run-dir> --report <out.json>
+  Comparison window: entire output. Population: all rows. Excluded warm-up rows: none.

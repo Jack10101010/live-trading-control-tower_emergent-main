@@ -1,0 +1,1383 @@
+{
+ "source_run": "d6cdae589b1e4c37a67763253c466067_20260714_101708_EURUSD_15min_RR2.0_SB1",
+ "source_file": "trades_allow_multi_position__entry_triggered_edge_25p0_d3.csv (sha ca925d54\u2026)",
+ "derivation": "empirical, per cohort x confirmed market_state; eligibility from outcome pattern; resolved_rr from decided/flattened rows",
+ "note": "12 policy-DISABLE cohorts ran as LABEL via portfolio_include_disabled_cohorts=true (with_disabled_as_label, in-memory research override)",
+ "generated": "2026-07-16",
+ "map": {
+  "EURUSD|asia|bos_long": {
+   "pm_regime": "LABEL",
+   "pm_reason": "policy_label",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 6
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 4
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.25
+     ],
+     "outcomes": {
+      "LOSS": 3,
+      "WIN": 6
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 7
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.6
+     ],
+     "outcomes": {
+      "WIN": 3
+     }
+    }
+   }
+  },
+  "EURUSD|asia|bos_short": {
+   "pm_regime": "LABEL",
+   "pm_reason": "policy_label",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.75
+     ],
+     "outcomes": {
+      "LOSS": 2,
+      "WIN": 3
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.7
+     ],
+     "outcomes": {
+      "WIN": 2
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.8
+     ],
+     "outcomes": {
+      "WIN": 7,
+      "LOSS": 1
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.5
+     ],
+     "outcomes": {
+      "WIN": 4,
+      "LOSS": 1
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.9
+     ],
+     "outcomes": {
+      "WIN": 8,
+      "LOSS": 2
+     }
+    }
+   }
+  },
+  "EURUSD|asia|choch_long": {
+   "pm_regime": "LABEL",
+   "pm_reason": "insufficient_data",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.6
+     ],
+     "outcomes": {
+      "WIN": 6,
+      "LOSS": 2
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.8
+     ],
+     "outcomes": {
+      "LOSS": 2,
+      "WIN": 5
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 6
+     }
+    },
+    "Bull/Chop": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.5
+     ],
+     "outcomes": {
+      "WIN": 3
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.7
+     ],
+     "outcomes": {
+      "LOSS": 2,
+      "WIN": 6,
+      "NEWS_FLATTEN": 1
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.6
+     ],
+     "outcomes": {
+      "WIN": 4,
+      "LOSS": 1
+     }
+    }
+   }
+  },
+  "EURUSD|asia|choch_short": {
+   "pm_regime": "LABEL",
+   "pm_reason": "policy_label",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.8
+     ],
+     "outcomes": {
+      "WIN": 7,
+      "LOSS": 2
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.9
+     ],
+     "outcomes": {
+      "WIN": 6,
+      "LOSS": 1
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.6
+     ],
+     "outcomes": {
+      "WIN": 6
+     }
+    },
+    "Bull/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 7
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 12
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.25
+     ],
+     "outcomes": {
+      "LOSS": 2,
+      "WIN": 9
+     }
+    }
+   }
+  },
+  "EURUSD|london|bos_long": {
+   "pm_regime": "LABEL",
+   "pm_reason": "insufficient_data",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.9
+     ],
+     "outcomes": {
+      "WIN": 6,
+      "LOSS": 2
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.75
+     ],
+     "outcomes": {
+      "WIN": 3,
+      "LOSS": 2
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      2.75
+     ],
+     "outcomes": {
+      "LOSS": 4,
+      "WIN": 7
+     }
+    },
+    "Bull/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 6
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.0
+     ],
+     "outcomes": {
+      "LOSS": 3,
+      "WIN": 7,
+      "NEWS_FLATTEN": 1
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      2.25
+     ],
+     "outcomes": {
+      "LOSS": 9,
+      "WIN": 6,
+      "NEWS_FLATTEN": 1
+     }
+    }
+   }
+  },
+  "EURUSD|london|bos_short": {
+   "pm_regime": "LABEL",
+   "pm_reason": "policy_label",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 7
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 5
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 15
+     }
+    },
+    "Bull/Chop": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.9
+     ],
+     "outcomes": {
+      "WIN": 2,
+      "LOSS": 2
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.75
+     ],
+     "outcomes": {
+      "WIN": 4
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 14
+     }
+    }
+   }
+  },
+  "EURUSD|london|choch_long": {
+   "pm_regime": "LABEL",
+   "pm_reason": "policy_label",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 12
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.6
+     ],
+     "outcomes": {
+      "WIN": 6,
+      "LOSS": 2
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 19
+     }
+    },
+    "Bull/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 4
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 2
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 13
+     }
+    }
+   }
+  },
+  "EURUSD|london|choch_short": {
+   "pm_regime": "LABEL",
+   "pm_reason": "policy_label",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      2.75
+     ],
+     "outcomes": {
+      "LOSS": 4,
+      "WIN": 4,
+      "NEWS_FLATTEN": 1
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.5
+     ],
+     "outcomes": {
+      "WIN": 6,
+      "LOSS": 1
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.5
+     ],
+     "outcomes": {
+      "WIN": 8,
+      "LOSS": 4,
+      "NEWS_FLATTEN": 1
+     }
+    },
+    "Bull/Chop": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.75
+     ],
+     "outcomes": {
+      "WIN": 1
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.75
+     ],
+     "outcomes": {
+      "WIN": 6,
+      "LOSS": 6,
+      "NEWS_FLATTEN": 1
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 20
+     }
+    }
+   }
+  },
+  "EURUSD|lull|bos_long": {
+   "pm_regime": "LABEL",
+   "pm_reason": "policy_label",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 4
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 5
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.5
+     ],
+     "outcomes": {
+      "WIN": 7,
+      "LOSS": 2
+     }
+    },
+    "Bull/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 3
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.8
+     ],
+     "outcomes": {
+      "WIN": 6,
+      "LOSS": 2
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 7
+     }
+    }
+   }
+  },
+  "EURUSD|lull|bos_short": {
+   "pm_regime": "LABEL",
+   "pm_reason": "policy_label",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.5
+     ],
+     "outcomes": {
+      "LOSS": 1,
+      "WIN": 5
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      2.75
+     ],
+     "outcomes": {
+      "LOSS": 2,
+      "WIN": 2
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      3.0
+     ],
+     "outcomes": {
+      "WIN": 3,
+      "LOSS": 3
+     }
+    },
+    "Bull/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 2
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.0
+     ],
+     "outcomes": {
+      "LOSS": 1,
+      "WIN": 5
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.5
+     ],
+     "outcomes": {
+      "WIN": 5,
+      "LOSS": 4
+     }
+    }
+   }
+  },
+  "EURUSD|lull|choch_long": {
+   "pm_regime": "LABEL",
+   "pm_reason": "policy_label",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 9
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.9
+     ],
+     "outcomes": {
+      "WIN": 5,
+      "LOSS": 2
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 8
+     }
+    },
+    "Bull/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 4
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.6
+     ],
+     "outcomes": {
+      "WIN": 4,
+      "LOSS": 1
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 6
+     }
+    }
+   }
+  },
+  "EURUSD|lull|choch_short": {
+   "pm_regime": "LABEL",
+   "pm_reason": "policy_label",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.0
+     ],
+     "outcomes": {
+      "LOSS": 2,
+      "WIN": 2
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      2.75
+     ],
+     "outcomes": {
+      "WIN": 1,
+      "LOSS": 1
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.0
+     ],
+     "outcomes": {
+      "LOSS": 1,
+      "WIN": 2
+     }
+    },
+    "Bull/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 2
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.0
+     ],
+     "outcomes": {
+      "WIN": 5
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      4.5
+     ],
+     "outcomes": {
+      "LOSS": 5,
+      "WIN": 3
+     }
+    }
+   }
+  },
+  "EURUSD|newYork|bos_long": {
+   "pm_regime": "LABEL",
+   "pm_reason": "policy_label",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 13
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.7
+     ],
+     "outcomes": {
+      "WIN": 5,
+      "LOSS": 2
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 23
+     }
+    },
+    "Bull/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 5
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.5
+     ],
+     "outcomes": {
+      "WIN": 9,
+      "LOSS": 2
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 17
+     }
+    }
+   }
+  },
+  "EURUSD|newYork|bos_short": {
+   "pm_regime": "LABEL",
+   "pm_reason": "policy_label",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.0
+     ],
+     "outcomes": {
+      "WIN": 11,
+      "LOSS": 4
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.9
+     ],
+     "outcomes": {
+      "LOSS": 3,
+      "WIN": 6
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.7
+     ],
+     "outcomes": {
+      "WIN": 13,
+      "NEWS_FLATTEN": 1,
+      "LOSS": 1
+     }
+    },
+    "Bull/Chop": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      2.5
+     ],
+     "outcomes": {
+      "WIN": 5,
+      "NEWS_FLATTEN": 1,
+      "LOSS": 2
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      2.0
+     ],
+     "outcomes": {
+      "WIN": 9,
+      "LOSS": 9,
+      "NEWS_FLATTEN": 1
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.25
+     ],
+     "outcomes": {
+      "WIN": 13,
+      "LOSS": 4
+     }
+    }
+   }
+  },
+  "EURUSD|newYork|choch_long": {
+   "pm_regime": "LABEL",
+   "pm_reason": "policy_label",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      2.0
+     ],
+     "outcomes": {
+      "WIN": 12,
+      "LOSS": 10
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 15
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 23
+     }
+    },
+    "Bull/Chop": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.75
+     ],
+     "outcomes": {
+      "WIN": 7,
+      "LOSS": 5,
+      "NEWS_FLATTEN": 1
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 18
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 20
+     }
+    }
+   }
+  },
+  "EURUSD|newYork|choch_short": {
+   "pm_regime": "DIRECTION_AWARE",
+   "pm_reason": "policy_direction_aware",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      2.75
+     ],
+     "outcomes": {
+      "LOSS": 8,
+      "WIN": 7,
+      "NEWS_FLATTEN": 2
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      3.0
+     ],
+     "outcomes": {
+      "WIN": 3,
+      "LOSS": 1,
+      "NEWS_FLATTEN": 1
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      2.0
+     ],
+     "outcomes": {
+      "WIN": 7,
+      "LOSS": 3
+     }
+    },
+    "Bull/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 10
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "PM_REGIME_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "REGIME_BLOCKED": 18
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "PM_REGIME_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "REGIME_BLOCKED": 14
+     }
+    }
+   }
+  },
+  "EURUSD|ny_pm|bos_long": {
+   "pm_regime": "LABEL",
+   "pm_reason": "policy_label",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 5
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 4
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 6
+     }
+    },
+    "Bull/Chop": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.9
+     ],
+     "outcomes": {
+      "WIN": 5
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.5
+     ],
+     "outcomes": {
+      "WIN": 3
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.6
+     ],
+     "outcomes": {
+      "WIN": 6,
+      "LOSS": 1
+     }
+    }
+   }
+  },
+  "EURUSD|ny_pm|bos_short": {
+   "pm_regime": "LABEL",
+   "pm_reason": "policy_label",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 7
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 5
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 14
+     }
+    },
+    "Bull/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 1
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 8
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.5
+     ],
+     "outcomes": {
+      "WIN": 6
+     }
+    }
+   }
+  },
+  "EURUSD|ny_pm|choch_long": {
+   "pm_regime": "LABEL",
+   "pm_reason": "insufficient_data",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.5
+     ],
+     "outcomes": {
+      "WIN": 3,
+      "LOSS": 2
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.8
+     ],
+     "outcomes": {
+      "LOSS": 3,
+      "WIN": 7,
+      "NEWS_FLATTEN": 1
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.25
+     ],
+     "outcomes": {
+      "WIN": 6,
+      "LOSS": 4,
+      "NEWS_FLATTEN": 1
+     }
+    },
+    "Bull/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 3
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.5
+     ],
+     "outcomes": {
+      "WIN": 5
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.5
+     ],
+     "outcomes": {
+      "WIN": 2
+     }
+    }
+   }
+  },
+  "EURUSD|ny_pm|choch_short": {
+   "pm_regime": "DIRECTION_AWARE",
+   "pm_reason": "policy_direction_aware",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.25
+     ],
+     "outcomes": {
+      "WIN": 11,
+      "LOSS": 3
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.0
+     ],
+     "outcomes": {
+      "WIN": 6,
+      "LOSS": 2
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      2.0
+     ],
+     "outcomes": {
+      "LOSS": 11,
+      "WIN": 1
+     }
+    },
+    "Bull/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 1
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "PM_REGIME_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "REGIME_BLOCKED": 8
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "PM_REGIME_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "REGIME_BLOCKED": 11
+     }
+    }
+   }
+  },
+  "EURUSD|outside|bos_long": {
+   "pm_regime": "DIRECTION_AWARE",
+   "pm_reason": "policy_direction_aware",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.25
+     ],
+     "outcomes": {
+      "LOSS": 5,
+      "WIN": 7
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "PM_REGIME_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "REGIME_BLOCKED": 4
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "PM_REGIME_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "REGIME_BLOCKED": 6
+     }
+    },
+    "Bull/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 3
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 6
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.7
+     ],
+     "outcomes": {
+      "WIN": 8,
+      "LOSS": 2
+     }
+    }
+   }
+  },
+  "EURUSD|outside|bos_short": {
+   "pm_regime": "LABEL",
+   "pm_reason": "policy_label",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 5
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.5
+     ],
+     "outcomes": {
+      "LOSS": 2,
+      "WIN": 5
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 11
+     }
+    },
+    "Bull/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 3
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 7
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 9
+     }
+    }
+   }
+  },
+  "EURUSD|outside|choch_long": {
+   "pm_regime": "STATE_ONLY",
+   "pm_reason": "policy_state_only",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "PM_REGIME_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "REGIME_BLOCKED": 17
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.6
+     ],
+     "outcomes": {
+      "WIN": 3,
+      "LOSS": 1
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.9
+     ],
+     "outcomes": {
+      "WIN": 11,
+      "LOSS": 1
+     }
+    },
+    "Bull/Chop": {
+     "eligibility": "PM_REGIME_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "REGIME_BLOCKED": 4
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.5
+     ],
+     "outcomes": {
+      "WIN": 3,
+      "LOSS": 2
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      0.5
+     ],
+     "outcomes": {
+      "WIN": 7,
+      "LOSS": 1
+     }
+    }
+   }
+  },
+  "EURUSD|outside|choch_short": {
+   "pm_regime": "DIRECTION_AWARE",
+   "pm_reason": "policy_direction_aware",
+   "cells": {
+    "Bear/Chop": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.0
+     ],
+     "outcomes": {
+      "WIN": 10,
+      "LOSS": 4
+     }
+    },
+    "Bear/Compress": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.25
+     ],
+     "outcomes": {
+      "WIN": 7,
+      "LOSS": 2
+     }
+    },
+    "Bear/Expand": {
+     "eligibility": "TRADED",
+     "resolved_rr": [
+      1.5
+     ],
+     "outcomes": {
+      "WIN": 5,
+      "LOSS": 4
+     }
+    },
+    "Bull/Chop": {
+     "eligibility": "SCENARIO_STATE_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "STATE_BLOCKED": 6
+     }
+    },
+    "Bull/Compress": {
+     "eligibility": "PM_REGIME_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "REGIME_BLOCKED": 7
+     }
+    },
+    "Bull/Expand": {
+     "eligibility": "PM_REGIME_BLOCKED",
+     "resolved_rr": null,
+     "outcomes": {
+      "REGIME_BLOCKED": 11
+     }
+    }
+   }
+  }
+ }
+}

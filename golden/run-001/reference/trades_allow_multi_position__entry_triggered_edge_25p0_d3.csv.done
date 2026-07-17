@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "marker_kind": "scenario_done",
+  "output_file": "trades_allow_multi_position__entry_triggered_edge_25p0_d3.csv",
+  "scenario_label": "trades_allow_multi_position__entry_triggered_edge_25p0_d3",
+  "scenario_kind": "entry",
+  "row_count": 2060,
+  "byte_size": 2685456,
+  "sha256": "ca925d544601ad243ba0909045dc00384eaea0e9d41977ab7189b8a8c1e9a964",
+  "completed_at": "2026-07-14T09:22:22.025047+00:00"
+}

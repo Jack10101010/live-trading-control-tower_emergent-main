@@ -1,0 +1,58 @@
+{
+ "reference": "/sessions/happy-amazing-davinci/mnt/Dev Projects/live-trading-control-tower_emergent-main/golden/run-001/reference",
+ "candidate": "/sessions/happy-amazing-davinci/mnt/Dev Projects/Lux-OB-Backtester/outputs/runs/m2slice6parity_20260717_123804_EURUSD_15min_RR2.0_SB1",
+ "verdict": "PASS",
+ "artifacts": [
+  {
+   "artifact": "trades_allow_multi_position__entry_triggered_edge_25p0_d3.csv",
+   "mode": "byte",
+   "status": "PASS",
+   "duplicate_keys": {
+    "a": [],
+    "b": []
+   },
+   "schema": {
+    "missing_in_b": [],
+    "extra_in_b": []
+   },
+   "missing_rows": [],
+   "extra_rows": [],
+   "ordering": null,
+   "value_diffs": [],
+   "rows": {
+    "a": 2060,
+    "b": 2060
+   }
+  },
+  {
+   "artifact": "order_blocks.csv",
+   "mode": "byte",
+   "status": "PASS",
+   "duplicate_keys": {
+    "a": [],
+    "b": []
+   },
+   "schema": {
+    "missing_in_b": [],
+    "extra_in_b": []
+   },
+   "missing_rows": [],
+   "extra_rows": [],
+   "ordering": null,
+   "value_diffs": [],
+   "rows": {
+    "a": 2080,
+    "b": 2080
+   }
+  },
+  {
+   "artifact": "summary.json",
+   "mode": "json",
+   "status": "PASS",
+   "value_diffs": [],
+   "ignored": [],
+   "missing_in_b": [],
+   "extra_in_b": []
+  }
+ ]
+}

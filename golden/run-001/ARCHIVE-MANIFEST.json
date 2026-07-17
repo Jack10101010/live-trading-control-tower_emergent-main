@@ -1,0 +1,43 @@
+{
+ "archive": "golden/run-001",
+ "created": "2026-07-16",
+ "milestone": "M1 Scope Lock + Golden Run #1",
+ "reference_run": {
+  "source_path": "Lux-OB-Backtester/outputs/runs/d6cdae589b1e4c37a67763253c466067_20260714_101708_EURUSD_15min_RR2.0_SB1",
+  "run_id": "d6cdae589b1e4c37a67763253c466067",
+  "completed_at": "2026-07-14T09:23:49Z",
+  "archived": "exactly as found (all 22 output files + candles.csv)",
+  "modifications": "none"
+ },
+ "hashes_sha256": {
+  "dataset:data/candles/EURUSD_1m_extended_2015_2026.csv": "314a0efa450e54df256b99796d042f72a51a2998709f91de56e1a1577ef5f681",
+  "reference/candles.csv (embedded; BYTE-IDENTICAL to dataset)": "314a0efa450e54df256b99796d042f72a51a2998709f91de56e1a1577ef5f681",
+  "reference/config.json": "d1dc4518f9ca6a88efe44c5630b87fcb4efbc2ca41c505fee02ec82b63053418",
+  "reference/manifest.json": "4284635e5d5b857a593de960465a5c6a7f02ecf4d6e09f32fcac6d2e939236bf",
+  "reference/news_events.csv (run-exported)": "0ace65ab4767cd1b37d3e4402948602ae0d282935440dea677f156eb0e2ff3ea",
+  "source news calendar data/news/master_economic_calendar_2020_present.csv": "7e37fc88796b0691864957d4d9c10e7f990ac49402779076620d14af0a10da14",
+  "reference/summary.json": "f67609bc3c2da5592576c8cd5cd3a273b5aa8ae109d1a11749ed2fc0a7af0b52",
+  "reference/order_blocks.csv": "bb67b6557a4a88fcfb1e83e6bf1558c8b3530ba9431a2e3e35d4d480078b7159",
+  "reference/trades_allow_multi_position.csv": "aa77176b54cc4f96acccf3d0540fe41ee3b6c252847ddd3bc65702fe180214c1",
+  "reference/trades__entry_triggered_edge_25p0_d3.csv": "ca925d544601ad243ba0909045dc00384eaea0e9d41977ab7189b8a8c1e9a964",
+  "reference/trades__scenario_baseline.csv": "5b68506adc8bc5855db147172a07ee3b46b4155ed2357a22144685eb6ba2a7d2",
+  "reference/generated_config.original.json": "7b877cabcb075afe345df5ef10d9e1dfa3b4e2c4a19f32e5a12643af4270526c",
+  "deployedPolicy.v1.json": "e15f4125a6b053c78f077c694b7a5e7feb5dccbaf349c1a623094d5293fc2444",
+  "mvp-instance/config.mvp.json": "3e23f445c2ffd78847f8d65533d9afee928651a53dd207c16d05c62713e3b35a"
+ },
+ "policy": {
+  "version": "2026-07-09.te-v1.2-surgical-disable",
+  "policy_payload_sha256_recorded_in_manifest": "86ff709c6346dc5e0e695de5c550577d15877ebda0b4025e70da327bfb5c00a9",
+  "mode": "enforce"
+ },
+ "git": {
+  "Lux-OB-Backtester_HEAD": "6be5bbb759ea8c3443ca813c9568c9aa027e35da",
+  "FX-OB-Research-Lab_HEAD": "83d1c1e46e0f9aec9e77c28ce9d87900f82698d8 (codex-dev)",
+  "control_tower": "no git repository initialised (noted)"
+ },
+ "engine_identity": {
+  "engine_version": "c5e29837f044d5483b42d22d5b17a9a5d40cecea3ff43d98468928e16a038bc0",
+  "detection_config_hash": "36dcf74c9be8b1367a013a1aff954377f35ce28ffbaa08991f4eff6aaf75d35d",
+  "execution_config_hash": "90b1da8f6c27d57ab88aebb41d82d750e61d0bd9ac01adafa40987785cfdcacf"
+ }
+}

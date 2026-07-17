@@ -1,0 +1,10 @@
+PINNING RECORD (Task 1) — 2026-07-16
+base commit      : 6be5bbb759ea8c3443ca813c9568c9aa027e35da (main)
+snapshot commit  : ebd58c7245a31fc9ada679d54b701ba180dfe0b5
+branch           : golden-run-001-engine
+tag              : golden-run-001
+committed files  : the 10 tracked-dirty files; 10/10 blob hashes == dirty-files.sha256
+engine_version @tag (from tag blobs): c5e29837f044d5483b42d22d5b17a9a5d40cecea3ff43d98468928e16a038bc0  == golden manifest
+method note      : commit built via GIT_INDEX_FILE plumbing (stale .git/index.lock is
+                   mount-unremovable); refs/tag written normally; .git/index NOT updated
+                   (cosmetic: git status may show the 10 files modified until index refresh).

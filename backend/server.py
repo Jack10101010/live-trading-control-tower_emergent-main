@@ -1717,6 +1717,44 @@ async def feature_flags() -> dict[str, Any]:
     }
 
 
+# ── Live-slice ingest (M3 Phase 1, additive) ─────────────────────────────────
+# The VPS runner publishes consolidated status here. Storage: latest payload in
+# memory (+ a LIVE_STATUS BotEvent in the append-only events spine, idempotent
+# per instance/boundary). Read side: /live/status for the UI/operators.
+_LIVE_STATUS: dict = {}
+
+
+@api_router.post("/live/ingest")
+async def live_ingest(request: Request):
+    payload = await request.json()
+    if not isinstance(payload, dict) or "instance_id" not in payload:
+        raise HTTPException(status_code=400, detail="payload must include instance_id")
+    _LIVE_STATUS[payload["instance_id"]] = payload
+    idem = f"live|{payload['instance_id']}|{payload.get('runner', {}).get('boundary')}|{payload.get('at')}"
+    event = {
+        "eventId": f"evt_live_{uuid.uuid4().hex[:12]}",
+        "type": "LIVE_STATUS",
+        "at": payload.get("at"),
+        "instanceId": payload["instance_id"],
+        "boundary": payload.get("runner", {}).get("boundary"),
+        "mode": payload.get("mode"),
+        "intents": len(payload.get("intents", [])),
+        "frozen": bool(payload.get("execution", {}).get("frozen")),
+    }
+    stored, deduplicated = _append_event(event, idem)
+    return {"ok": True, "seq": stored.get("seq"), "deduplicated": deduplicated}
+
+
+@api_router.get("/live/status")
+async def live_status(instance_id: str | None = None):
+    if instance_id:
+        payload = _LIVE_STATUS.get(instance_id)
+        if payload is None:
+            raise HTTPException(status_code=404, detail=f"no status for {instance_id}")
+        return payload
+    return {"instances": sorted(_LIVE_STATUS), "statuses": _LIVE_STATUS}
+
+
 app.include_router(api_router)
 
 app.add_middleware(

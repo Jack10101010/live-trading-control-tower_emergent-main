@@ -1,0 +1,29 @@
+ENVIRONMENT SNAPSHOT — Milestone 2 Foundation (recorded 2026-07-16)
+===================================================================
+
+## A. ORIGINAL July 14 run environment — NOT PROVEN
+The 2026-07-14 reference run executed on the operator's Mac
+(/Users/jack/Documents/Dev Projects/Lux-OB-Backtester per stdout.log).
+No interpreter/package snapshot was taken by the runner at the time.
+UNKNOWN: exact python, numpy, pandas versions of the original run.
+The authoritative identity is the engine_version source hash, not the env.
+
+## B. OBSERVED NOW — this analysis sandbox (Linux VM over the mounted repo)
+python executable : /usr/bin/python3
+python version    : Python 3.10.12 (main, Jun 22 2026, 18:55:27) [GCC 11.4.0]
+platform          : Linux 6.8.0-124-generic aarch64
+numpy             : 2.2.6
+pandas            : 2.3.3
+default locale    : ('en_US', 'UTF-8')
+TZ env            : Europe/Dublin
+PYTHONHASHSEED    : <unset> (dict order is insertion-based; hash seed not used by engine)
+cpu count         : 4
+
+## C. Invocation (from the archived run + repo docs)
+command shape     : python scripts/run_backtest.py --config generated_configs/<id>.json  (config_path in manifest.json)
+relevant env vars : none required by the engine (no os.environ reads in src/ core candidates)
+
+## D. Determinism posture
+- Engine reads no clock/random/env; ordering from dict-insertion + list order.
+- Float results depend on numpy/pandas versions & op order -> parity runs must
+  compare runs made in the SAME environment, or prove cross-env equality (Task 3).
