@@ -159,8 +159,13 @@ class LiveRunner:
         intents = diff_frontier(prev, trades_str, frontier_bar) if prev is not None else []
 
         first_run = prev is None
+        # LR-1: durably reserve every generated intent as PENDING BEFORE the single
+        # atomic commit below, so the boundary can never become durable without its
+        # intents. No separate save may split them.
+        for intent in intents:
+            self.state.reserve_pending(intent)
         self.state.store_frame(trades_str, boundary_str)
-        self.state.save()
+        self.state.save()   # ONE atomic commit: last_boundary + prev_frame + PENDING intents
         return {
             "status": "bootstrap" if first_run else "ok",
             "boundary": boundary_str,

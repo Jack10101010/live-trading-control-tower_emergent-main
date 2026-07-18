@@ -21,6 +21,13 @@ LEDGER_FAILED = "failed"
 LEDGER_BLOCKED = "blocked"
 LEDGER_SIMULATED = "simulated"   # dry_run terminal state
 
+# Statuses that reserve_pending must never overwrite: terminal outcomes plus the
+# unresolved-but-in-flight SENT state (downgrading SENT -> PENDING could create a
+# future resubmission path). This set governs re-reservation only; it is NOT a
+# terminal-vs-unresolved classification used elsewhere.
+_NON_RERESERVABLE_STATUSES = frozenset({LEDGER_SENT, LEDGER_CONFIRMED, LEDGER_FAILED,
+                                        LEDGER_BLOCKED, LEDGER_SIMULATED, "frozen"})
+
 
 def frame_hash(frame) -> str:
     return hashlib.sha256(frame.to_csv(index=False).encode()).hexdigest() if frame is not None else ""
@@ -69,6 +76,31 @@ class RunnerState:
     def ledger_set(self, intent_id: str, status: str, detail: dict | None = None) -> None:
         self.data["ledger"][intent_id] = {"status": status, "detail": detail or {},
                                           "at": datetime.now(timezone.utc).isoformat()}
+
+    # ── durable pending-intent reservation (LR-1) ────────────────────────────
+    def reserve_pending(self, intent) -> None:
+        """Record a generated intent as PENDING with a fully reconstructable
+        payload in the existing ledger ``detail``. In-memory only; the caller's
+        single atomic ``save()`` commits it together with the boundary. Never
+        overwrites a terminal record (idempotent re-reservation)."""
+        existing = self.data["ledger"].get(intent.intent_id)
+        if existing and existing.get("status") in _NON_RERESERVABLE_STATUSES:
+            return
+        self.ledger_set(intent.intent_id, LEDGER_PENDING, {"intent": intent.to_dict()})
+
+    def pending_intents(self) -> list:
+        """(intent_id, detail) for each PENDING ledger record, in stable insertion
+        order (JSON preserves object order across reload)."""
+        return [(iid, entry.get("detail", {}))
+                for iid, entry in self.data["ledger"].items()
+                if entry.get("status") == LEDGER_PENDING]
+
+    def sent_intents(self) -> list:
+        """(intent_id, detail) for each unresolved SENT ledger record (restart
+        reconciliation of the live submission window)."""
+        return [(iid, entry.get("detail", {}))
+                for iid, entry in self.data["ledger"].items()
+                if entry.get("status") == LEDGER_SENT]
 
     def mirror_ticket(self, trade_id: str) -> int | None:
         return self.data["mirror"].get(trade_id)

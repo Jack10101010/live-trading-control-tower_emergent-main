@@ -10,10 +10,36 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from live.intents import CLOSE_POSITION, MODIFY_STOP, OPEN_POSITION, SKIP_INTRA_WINDOW
+from live.intents import (CLOSE_POSITION, MODIFY_STOP, OPEN_POSITION, SKIP_INTRA_WINDOW,
+                          OrderIntent)
 from live.safety import SafetyRails
-from live.state import (LEDGER_CONFIRMED, LEDGER_FAILED, LEDGER_SENT, LEDGER_SIMULATED)
+from live.state import (LEDGER_CONFIRMED, LEDGER_FAILED, LEDGER_PENDING, LEDGER_SENT,
+                        LEDGER_SIMULATED)
 from live.config import SYMBOL
+
+
+_INTENT_FIELDS = ("intent_id", "action", "trade_id", "side", "frontier_bar",
+                  "entry", "stop", "target", "reason")
+_INTENT_REQUIRED = ("intent_id", "action", "trade_id", "side", "frontier_bar")
+
+
+class MalformedIntent(Exception):
+    """A persisted pending/sent payload cannot be strictly reconstructed."""
+
+
+def reconstruct_intent(detail: dict) -> OrderIntent:
+    """Strictly rebuild an OrderIntent from a persisted ledger ``detail``. Never
+    silently skips: a malformed payload raises MalformedIntent with a diagnostic."""
+    data = detail.get("intent") if isinstance(detail, dict) else None
+    if not isinstance(data, dict):
+        raise MalformedIntent(f"missing intent payload in ledger detail: {str(detail)[:120]}")
+    missing = [k for k in _INTENT_REQUIRED if data.get(k) in (None, "")]
+    if missing:
+        raise MalformedIntent(f"pending intent missing required fields {missing}: {str(data)[:160]}")
+    try:
+        return OrderIntent(**{k: data[k] for k in _INTENT_FIELDS if k in data})
+    except TypeError as exc:
+        raise MalformedIntent(f"cannot reconstruct OrderIntent: {exc}")
 
 
 class ReconcileReport:
@@ -100,6 +126,78 @@ class Executor:
         return {"frozen": False, "reconcile": report.to_dict(),
                 "applied": applied, "blocked": blocked, "skipped": skipped}
 
+    # ── crash recovery: drain durably-reserved intents (LR-1) ────────────────
+    def drain_pending(self, today: str | None = None) -> dict:
+        """Recover intents made durable before a crash, reusing the normal apply
+        path. Idempotent; deterministic order; skips terminal records; freezes
+        (never blindly resubmits) on a malformed payload or an ambiguous SENT
+        outcome. A drain with nothing pending is a cheap no-op."""
+        today = today or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        report = ReconcileReport()
+        empty = {"frozen": False, "reconcile": report.to_dict(), "applied": [],
+                 "blocked": [], "skipped": [], "drained": [], "sent_resolved": []}
+
+        # 1. Unresolved SENT records: reconcile against broker truth; never resubmit.
+        sent = self.state.sent_intents()
+        sent_resolved = []
+        for iid, detail in sent:
+            outcome, info = self._reconcile_sent(iid, detail)
+            sent_resolved.append({"intent_id": iid, "outcome": outcome, "detail": str(info)})
+            if outcome == "frozen":
+                report.frozen = True
+                report.add("critical", "sent_ambiguous", f"{iid}: {info}")
+        if sent:
+            self.state.save()
+        if report.frozen:
+            return {**empty, "frozen": True, "reconcile": report.to_dict(),
+                    "sent_resolved": sent_resolved}
+
+        # 2. Reconstruct PENDING records strictly (never regenerate from prev_frame).
+        pending = self.state.pending_intents()
+        if not pending:
+            return {**empty, "sent_resolved": sent_resolved}
+        intents, malformed = [], []
+        for iid, detail in pending:
+            try:
+                intents.append(reconstruct_intent(detail))
+            except MalformedIntent as exc:
+                malformed.append((iid, str(exc)))
+        if malformed:
+            for iid, reason in malformed:
+                self.state.ledger_set(iid, "frozen",
+                                      {"reason": "malformed_pending_payload", "error": reason})
+                report.add("critical", "malformed_pending", f"{iid}: {reason}")
+            report.frozen = True
+            self.state.save()
+            return {**empty, "frozen": True, "reconcile": report.to_dict(),
+                    "sent_resolved": sent_resolved}
+
+        # 3. Re-apply through the existing rails/reconcile/_execute path.
+        result = self.apply(intents, today)
+        result["drained"] = [i.intent_id for i in intents]
+        result["sent_resolved"] = sent_resolved
+        return result
+
+    def _reconcile_sent(self, intent_id: str, detail: dict):
+        """Resolve a SENT-but-unconfirmed intent against broker truth. Adopt a
+        UNIQUE matching magic-tagged position (comment == intent_id[:26]); freeze
+        on unreachable / absent / duplicate. At-most-once: never resubmits."""
+        ok, snap = self.gateway.snapshot()
+        if not ok:
+            return "frozen", f"broker_unreachable: {snap}"
+        tag = intent_id[:26]
+        matches = [p for p in snap.get("positions", [])
+                   if p.get("magic") == self.config.magic_number and p.get("comment") == tag]
+        if len(matches) == 1:
+            data = (detail or {}).get("intent", {})
+            trade_id = data.get("trade_id")
+            if trade_id is not None:
+                self.state.mirror_set(trade_id, matches[0]["ticket"])
+            self.state.ledger_set(intent_id, LEDGER_CONFIRMED,
+                                  {"adopted_ticket": matches[0]["ticket"], "via": "reconcile"})
+            return "confirmed", matches[0]["ticket"]
+        return "frozen", f"{len(matches)} matching broker positions (need exactly 1)"
+
     def _execute(self, intent) -> dict:
         if self.config.mode != "live":
             self.state.ledger_set(intent.intent_id, LEDGER_SIMULATED, {"mode": self.config.mode})
@@ -109,7 +207,9 @@ class Executor:
                 self.state.mirror_set(intent.trade_id, None)
             return {"result": "simulated"}
 
-        self.state.ledger_set(intent.intent_id, LEDGER_SENT)
+        self.state.ledger_set(intent.intent_id, LEDGER_SENT, {"intent": intent.to_dict()})
+        self.state.save()   # SENT (with full payload) durable BEFORE the broker call
+                            # -> at-most-once submission; restart can restore the mirror
         if intent.action == OPEN_POSITION:
             ok, res = self.gateway.open_position(intent.side, self.config.fixed_risk_lots,
                                                  intent.stop or 0.0, intent.target or 0.0,
@@ -130,5 +230,6 @@ class Executor:
         self.state.ledger_set(intent.intent_id,
                               LEDGER_CONFIRMED if ok else LEDGER_FAILED,
                               res if isinstance(res, dict) else {"error": str(res)})
+        self.state.save()   # terminal outcome durable immediately after the broker result
         return {"result": "confirmed" if ok else "failed",
                 "detail": res if isinstance(res, dict) else str(res)}

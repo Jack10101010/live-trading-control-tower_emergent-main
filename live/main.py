@@ -52,13 +52,22 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops) -> dict:
     executor_result = None
     delivery = None
     try:
-        bridge_result = bridge.poll_once()
-        runner_result = runner.run_once()
-        if runner_result.get("status") == "ok" and runner_result.get("intents"):
-            executor_result = executor.apply(runner_result["intents"])
+        # Pending recovery (LR-1) always precedes fresh evaluation. Normally a
+        # cheap no-op; after a crash it drains durably-reserved intents. An
+        # ambiguous/frozen recovery must NOT proceed into fresh strategy evaluation.
+        drain_result = executor.drain_pending() if executor is not None else None
+        if drain_result and (drain_result.get("frozen") or drain_result.get("drained")):
+            executor_result = drain_result
+        if drain_result and drain_result.get("frozen"):
+            runner_result = {"status": "frozen_pending_recovery", "boundary": None}
+        else:
+            bridge_result = bridge.poll_once()
+            runner_result = runner.run_once()
+            if runner_result.get("status") == "ok" and runner_result.get("intents"):
+                executor_result = executor.apply(runner_result["intents"])
         payload = publisher.build_payload(
             runner_result, executor_result,
-            engine_version=runner.session.engine_version if runner.session else "n/a",
+            engine_version=runner.session.engine_version if (runner and runner.session) else "n/a",
             mode=config.mode)
         payload["bridge"] = bridge_result
         delivery = publisher.publish(payload)
@@ -90,6 +99,14 @@ def main() -> None:  # pragma: no cover - VPS loop
     print(f"[{datetime.now(timezone.utc).isoformat()}] gateway: {detail} | mode={config.mode}")
     if not ok:
         raise SystemExit("MT5 gateway unavailable — refusing to start")
+    # Startup recovery before the loop: drain any intents durably reserved pre-crash.
+    startup = executor.drain_pending()
+    if startup.get("frozen"):
+        print(f"[{datetime.now(timezone.utc).isoformat()}] STARTUP FREEZE — unresolved "
+              f"pending/sent recovery: {startup.get('reconcile')}")
+    elif startup.get("drained"):
+        print(f"[{datetime.now(timezone.utc).isoformat()}] startup drained "
+              f"{len(startup['drained'])} pending intent(s)")
     consecutive_errors = 0
     try:
         while True:

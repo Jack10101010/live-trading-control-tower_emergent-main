@@ -456,3 +456,255 @@ def test_ct_mt5_adapter_reports_disconnected_off_vps():
     assert h.connection == broker_layer.ConnectionState.DISCONNECTED
     assert adapter.positions(None) == [] and adapter.orders(None) == []
     assert broker_layer.active_kind() == "mock"                    # CT default untouched
+
+
+# ── Phase 1: LR-1 durable intent transaction ────────────────────────────────────
+from live.state import LEDGER_SENT                                  # noqa: E402
+from live.intents import OrderIntent                                # noqa: E402
+
+
+def _lr1_runner(tmp_path):
+    """Runner with an injected pipeline: bootstrap frame, then an OPEN fill frame."""
+    cfg = _cfg(tmp_path)
+    lux_candles = cfg.lux_root / "data" / "candles"
+    lux_candles.mkdir(parents=True)
+    times = pd.date_range("2026-07-17 09:00:00+00:00", periods=75, freq="1min")
+    pd.DataFrame({"time": times.strftime("%Y-%m-%d %H:%M:%S+00:00"),
+                  "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 0}
+                 ).to_csv(lux_candles / "EURUSD_1m_extended_2015_2026.csv", index=False)
+    frames = [
+        _frame([{"trade_id": "L_1", "direction": "bullish", "fill_time": "", "outcome": "UNFILLED"}]),
+        _frame([{"trade_id": "L_1", "direction": "bullish", "fill_time": "t",
+                 "outcome": "OPEN", "entry": "1.1", "stop": "1.09", "tp": "1.12"}]),
+    ]
+    calls = {"n": 0}
+
+    def fake_pipeline(candles, frontier_date):
+        frame = frames[min(calls["n"], 1)]
+        calls["n"] += 1
+        return frame
+
+    runner = LiveRunner(cfg, session=None, pipeline=fake_pipeline)
+    assert runner.run_once()["status"] == "bootstrap"
+    more = pd.date_range("2026-07-17 10:15:00+00:00", periods=16, freq="1min")
+    pd.DataFrame({"time": more.strftime("%Y-%m-%d %H:%M:%S+00:00"),
+                  "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 0}
+                 ).to_csv(cfg.live_segment_csv, index=False)
+    r2 = runner.run_once()          # commits boundary + reserves PENDING intent, NO executor.apply
+    assert r2["status"] == "ok" and len(r2["intents"]) == 1
+    return cfg, r2["intents"][0].intent_id, fake_pipeline
+
+
+# A. LR-1 core crash: intent survives a crash before executor.apply, applied exactly once.
+def test_lr1_crash_before_apply_recovers_intent_exactly_once(tmp_path):
+    cfg, iid, _ = _lr1_runner(tmp_path)
+    # crash simulated: process dies before executor.apply. State is durable.
+    st = RunnerState(cfg.state_dir)
+    assert st.ledger_status(iid) == "pending"          # intent durably reserved
+    assert st.data["last_boundary"] is not None         # boundary durable too
+    # restart: fresh state + executor, drain
+    ex = Executor(cfg, RunnerState(cfg.state_dir), MT5Gateway(cfg, sdk=None))
+    d = ex.drain_pending(today="2026-07-17")
+    assert d["drained"] == [iid] and len(d["applied"]) == 1
+    assert RunnerState(cfg.state_dir).ledger_status(iid) == LEDGER_SIMULATED   # applied once
+    # repeated drain is a no-op (idempotent)
+    ex2 = Executor(cfg, RunnerState(cfg.state_dir), MT5Gateway(cfg, sdk=None))
+    d2 = ex2.drain_pending(today="2026-07-17")
+    assert d2["drained"] == [] and d2["applied"] == []
+
+
+# B. Atomic boundary invariant: no committed boundary without its generated intents.
+def test_lr1_boundary_and_intents_committed_together(tmp_path):
+    cfg, iid, _ = _lr1_runner(tmp_path)
+    st = RunnerState(cfg.state_dir)                      # reloaded from disk
+    assert st.data["last_boundary"] is not None
+    assert iid in dict(st.pending_intents())            # intent durable alongside the boundary
+
+
+# C. No-new-bar restart still recovers the intent independently of the gate.
+def test_lr1_restart_no_new_bar_but_drain_recovers(tmp_path):
+    cfg, iid, pipeline = _lr1_runner(tmp_path)
+    runner2 = LiveRunner(cfg, session=None, pipeline=pipeline)
+    assert runner2.run_once()["status"] == "no_new_bar"     # boundary already committed
+    ex = Executor(cfg, RunnerState(cfg.state_dir), MT5Gateway(cfg, sdk=None))
+    d = ex.drain_pending(today="2026-07-17")
+    assert len(d["applied"]) == 1 and d["drained"] == [iid]
+
+
+# D. Multiple pending intents: deterministic order, each once, repeat no-op.
+def test_lr1_multiple_pending_deterministic_once(tmp_path):
+    cfg = _cfg(tmp_path)
+    st = RunnerState(cfg.state_dir)
+    ids = []
+    for k in range(3):
+        it = OrderIntent(intent_id=f"p{k}", action=OPEN_POSITION, trade_id=f"T{k}",
+                         side="long", frontier_bar="B", entry=1.1, stop=1.09, target=1.12)
+        st.reserve_pending(it)
+        ids.append(it.intent_id)
+    st.save()
+    ex = Executor(cfg, RunnerState(cfg.state_dir), MT5Gateway(cfg, sdk=None))
+    d = ex.drain_pending(today="2026-07-17")
+    assert d["drained"] == ids                          # stable insertion order
+    assert len(d["applied"]) == 3
+    ex2 = Executor(cfg, RunnerState(cfg.state_dir), MT5Gateway(cfg, sdk=None))
+    d2 = ex2.drain_pending(today="2026-07-17")
+    assert d2["drained"] == [] and d2["applied"] == []
+
+
+# E. Malformed persisted payload: not silently ignored -> freeze with diagnostic.
+def test_lr1_malformed_pending_freezes_with_diagnostic(tmp_path):
+    cfg = _cfg(tmp_path)
+    st = RunnerState(cfg.state_dir)
+    st.ledger_set("bad1", "pending", {"intent": {"action": "OPEN_POSITION"}})  # missing fields
+    st.save()
+    ex = Executor(cfg, RunnerState(cfg.state_dir), MT5Gateway(cfg, sdk=None))
+    d = ex.drain_pending(today="2026-07-17")
+    assert d["frozen"] is True and d["applied"] == []
+    assert any("bad1" in f["detail"] for f in d["reconcile"]["findings"])   # id surfaced
+    assert RunnerState(cfg.state_dir).ledger_status("bad1") == "frozen"     # not dropped
+
+
+# F. Existing terminal records are never resubmitted.
+def test_lr1_drain_skips_terminal_records(tmp_path):
+    cfg = _cfg(tmp_path)
+    st = RunnerState(cfg.state_dir)
+    st.ledger_set("t1", LEDGER_SIMULATED, {"mode": "dry_run"})
+    st.ledger_set("t2", "confirmed")
+    st.ledger_set("t3", "failed")
+    st.ledger_set("t4", "blocked")
+    st.save()
+    ex = Executor(cfg, RunnerState(cfg.state_dir), MT5Gateway(cfg, sdk=None))
+    d = ex.drain_pending(today="2026-07-17")
+    assert d["drained"] == [] and d["applied"] == [] and not d["frozen"]
+
+
+class _SnapshotGateway(MT5Gateway):
+    """Fake gateway exposing a fixed broker snapshot; counts any order op."""
+    def __init__(self, cfg, positions):
+        super().__init__(cfg, sdk=None)
+        self._positions = positions
+        self.order_ops = 0
+
+    def snapshot(self):
+        return True, {"account": None, "positions": self._positions, "orders": []}
+
+    def open_position(self, *a, **k):
+        self.order_ops += 1
+        return True, {"ticket": 999}
+
+
+class _RaisingOpenGateway(MT5Gateway):
+    """Live gateway whose open_position raises AFTER the SENT record is durable —
+    simulates a crash during order_send. snapshot() later reveals the position."""
+    def __init__(self, cfg, positions_after=None):
+        super().__init__(cfg, sdk=None)
+        self._positions_after = positions_after or []
+        self.order_ops = 0
+
+    def snapshot(self):
+        return True, {"account": None, "positions": self._positions_after, "orders": []}
+
+    def open_position(self, *a, **k):
+        self.order_ops += 1
+        raise RuntimeError("connection dropped mid-order_send")
+
+
+# G. SENT adoption on restart, via the PRODUCTION record shape (reserve_pending +
+#    the exact _execute SENT write). Adopt unique match; restore mirror; never resubmit.
+def test_lr1_sent_adopts_unique_match_and_never_resubmits(tmp_path):
+    cfg = _cfg(tmp_path)
+    cfg.mode = "live"
+    it = OrderIntent(intent_id="sent_open_xyz9876", action=OPEN_POSITION, trade_id="L_9",
+                     side="long", frontier_bar="B", entry=1.1, stop=1.09, target=1.12)
+    st = RunnerState(cfg.state_dir)
+    st.reserve_pending(it)                                          # PENDING with payload (prod helper)
+    st.ledger_set(it.intent_id, LEDGER_SENT, {"intent": it.to_dict()})  # exact _execute SENT write
+    st.save()
+    # persisted SENT detail retains the full reconstructable payload
+    reloaded = RunnerState(cfg.state_dir)
+    assert reloaded.data["ledger"][it.intent_id]["status"] == "sent"
+    assert reloaded.data["ledger"][it.intent_id]["detail"]["intent"]["trade_id"] == "L_9"
+    # restart: one uniquely matching broker position (comment == intent_id[:26])
+    tag = it.intent_id[:26]
+    gw = _SnapshotGateway(cfg, [{"ticket": 555, "magic": cfg.magic_number, "comment": tag}])
+    d = Executor(cfg, RunnerState(cfg.state_dir), gw).drain_pending(today="2026-07-17")
+    assert d["frozen"] is False
+    st2 = RunnerState(cfg.state_dir)
+    assert st2.ledger_status(it.intent_id) == "confirmed"          # adopted, not resubmitted
+    assert st2.mirror_ticket("L_9") == 555                         # mirror restored
+    assert gw.order_ops == 0
+    # subsequent reconcile is healthy: adopted position is in the mirror -> no unknown freeze
+    rep = Executor(cfg, RunnerState(cfg.state_dir), gw).reconcile()
+    assert rep.frozen is False
+    assert all(f["code"] != "unknown_position" for f in rep.findings)
+    # idempotent: a repeat drain is a no-op
+    d2 = Executor(cfg, RunnerState(cfg.state_dir), gw).drain_pending(today="2026-07-17")
+    assert d2["drained"] == [] and not d2["frozen"]
+
+
+# G2. Focused regression for the exact defect: drive the REAL _execute path, crash
+#     during order_send, then prove restart restores BOTH ledger and mirror. Fails
+#     against the pre-fix code (SENT written without payload -> mirror not restorable).
+def test_lr1_sent_crash_during_order_send_restores_ledger_and_mirror(tmp_path):
+    cfg = _cfg(tmp_path)
+    cfg.mode = "live"
+    it = OrderIntent(intent_id="live_open_abc12345", action=OPEN_POSITION, trade_id="L_7",
+                     side="long", frontier_bar="B", entry=1.1, stop=1.09, target=1.12)
+    st = RunnerState(cfg.state_dir)
+    st.reserve_pending(it)                                          # PENDING with payload
+    st.save()
+    # drive the real production _execute; crash (raise) during order_send
+    crash_gw = _RaisingOpenGateway(cfg)
+    with pytest.raises(RuntimeError):
+        Executor(cfg, RunnerState(cfg.state_dir), crash_gw).apply([it], today="2026-07-17")
+    assert crash_gw.order_ops == 1                                  # order_send was attempted
+    # the fix: SENT is durable WITH the payload, so the trade_id survives the crash
+    after = RunnerState(cfg.state_dir)
+    assert after.ledger_status(it.intent_id) == LEDGER_SENT
+    assert after.data["ledger"][it.intent_id]["detail"]["intent"]["trade_id"] == "L_7"
+    # restart: broker actually holds the position
+    tag = it.intent_id[:26]
+    recover_gw = _SnapshotGateway(cfg, [{"ticket": 771, "magic": cfg.magic_number, "comment": tag}])
+    d = Executor(cfg, RunnerState(cfg.state_dir), recover_gw).drain_pending(today="2026-07-17")
+    assert d["frozen"] is False
+    st2 = RunnerState(cfg.state_dir)
+    assert st2.ledger_status(it.intent_id) == "confirmed"          # ledger restored
+    assert st2.mirror_ticket("L_7") == 771                         # mirror restored (defect fix)
+    assert recover_gw.order_ops == 0                               # never resubmitted
+    # next reconcile stays healthy (no unknown_position freeze)
+    rep = Executor(cfg, RunnerState(cfg.state_dir), recover_gw).reconcile()
+    assert rep.frozen is False
+    assert all(f["code"] != "unknown_position" for f in rep.findings)
+
+
+def test_lr1_sent_freezes_when_ambiguous_never_resubmits(tmp_path):
+    cfg = _cfg(tmp_path)
+    cfg.mode = "live"
+    iid = "sent_zzz111222333444555666"
+    st = RunnerState(cfg.state_dir)
+    st.ledger_set(iid, LEDGER_SENT, {"intent": {
+        "intent_id": iid, "action": OPEN_POSITION, "trade_id": "L_8", "side": "long",
+        "frontier_bar": "B"}})
+    st.save()
+    gw = _SnapshotGateway(cfg, [])                    # no matching position -> ambiguous
+    ex = Executor(cfg, RunnerState(cfg.state_dir), gw)
+    d = ex.drain_pending(today="2026-07-17")
+    assert d["frozen"] is True
+    assert any(iid in f["detail"] for f in d["reconcile"]["findings"])
+    assert gw.order_ops == 0                           # never blindly resubmitted
+
+
+# H. Dry-run drain never submits.
+def test_lr1_drain_dry_run_never_submits(tmp_path):
+    from live.rehearsal import CountingGateway
+    cfg = _cfg(tmp_path)
+    st = RunnerState(cfg.state_dir)
+    it = OrderIntent(intent_id="dr1", action=OPEN_POSITION, trade_id="L_1", side="long",
+                     frontier_bar="B", entry=1.1, stop=1.09, target=1.12)
+    st.reserve_pending(it)
+    st.save()
+    gw = CountingGateway(cfg)
+    ex = Executor(cfg, RunnerState(cfg.state_dir), gw)
+    d = ex.drain_pending(today="2026-07-17")
+    assert len(d["applied"]) == 1 and gw.order_ops == 0
+    assert RunnerState(cfg.state_dir).ledger_status("dr1") == LEDGER_SIMULATED
