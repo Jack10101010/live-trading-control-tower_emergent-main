@@ -51,26 +51,41 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops) -> dict:
     runner_result: dict = {"status": "error"}
     executor_result = None
     delivery = None
+    # C1-A: coarse per-stage wall-clock timing, measured externally around each
+    # existing stage (bridge.poll_once timed here, not inside the bridge). Purely
+    # observational — never alters control flow or any stage's result.
+    stage_timings: dict = {}
+    clock = time.monotonic
     try:
         # Pending recovery (LR-1) always precedes fresh evaluation. Normally a
         # cheap no-op; after a crash it drains durably-reserved intents. An
         # ambiguous/frozen recovery must NOT proceed into fresh strategy evaluation.
+        _t = clock()
         drain_result = executor.drain_pending() if executor is not None else None
+        stage_timings["drain_s"] = round(clock() - _t, 6)
         if drain_result and (drain_result.get("frozen") or drain_result.get("drained")):
             executor_result = drain_result
         if drain_result and drain_result.get("frozen"):
             runner_result = {"status": "frozen_pending_recovery", "boundary": None}
         else:
+            _t = clock()
             bridge_result = bridge.poll_once()
+            stage_timings["bridge_s"] = round(clock() - _t, 6)
+            _t = clock()
             runner_result = runner.run_once()
+            stage_timings["runner_s"] = round(clock() - _t, 6)
             if runner_result.get("status") == "ok" and runner_result.get("intents"):
+                _t = clock()
                 executor_result = executor.apply(runner_result["intents"])
+                stage_timings["executor_s"] = round(clock() - _t, 6)
+        _t = clock()
         payload = publisher.build_payload(
             runner_result, executor_result,
             engine_version=runner.session.engine_version if (runner and runner.session) else "n/a",
             mode=config.mode)
         payload["bridge"] = bridge_result
         delivery = publisher.publish(payload)
+        stage_timings["publish_s"] = round(clock() - _t, 6)
     except Exception as exc:  # logged, loop continues; supervisor handles repeats
         error = f"{type(exc).__name__}: {exc}"
     ex = executor_result or {}
@@ -84,7 +99,8 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops) -> dict:
         applied=len(ex.get("applied", [])), blocked=len(ex.get("blocked", [])),
         skipped=len(ex.get("skipped", [])),
         reconcile_findings=(ex.get("reconcile") or {}).get("findings"),
-        frozen=bool(ex.get("frozen")), published=delivery, error=error)
+        frozen=bool(ex.get("frozen")), published=delivery, error=error,
+        stage_timings=stage_timings, phase_timings=runner_result.get("phase_timings"))
     return record
 
 

@@ -708,3 +708,114 @@ def test_lr1_drain_dry_run_never_submits(tmp_path):
     d = ex.drain_pending(today="2026-07-17")
     assert len(d["applied"]) == 1 and gw.order_ops == 0
     assert RunnerState(cfg.state_dir).ledger_status("dr1") == LEDGER_SIMULATED
+
+
+# ── C1-A instrumentation: driver-side timing (cycle + golden_pipeline) ───────────
+import types  # noqa: E402
+
+
+def _fake_session(trades_df):
+    """Minimal stub of LuxSession/rb/core so golden_pipeline runs fast and
+    deterministically without the real 963s Golden pipeline."""
+    ns = types.SimpleNamespace
+    cfg = ns(news_flatten_minutes_before_blackout=0, detection_timeframe="15min",
+             swing_length=5, ob_filter=None, pip_size=0.0001, min_ob_size_pips=0,
+             max_ob_size_pips=999, structure_filter=None,
+             allowed_structure_directions=None, execution_modes=["triggered_edge"])
+    rb = ns(
+        filter_date_range=lambda c, cf: c,
+        load_news_calendar_events=lambda cf: [],
+        load_news_events=lambda cf: [],
+        resample_candles=lambda c, tf: c,
+        tag_order_blocks_with_news=lambda ob, ce: ob,
+        filter_order_blocks_by_structure=lambda ob, sf: ob,
+        filter_order_blocks_by_structure_direction=lambda ob, ad: (ob, None),
+        entry_scenarios=lambda cf: [{"mode": "triggered_edge", "key": "k"}],
+        execute_scenario_job=lambda job, cf, c, sob, ob, nc: {
+            "results": [{"trades": trades_df, "summary": {"net_r": "0"}}]},
+    )
+    core = ns(
+        prepare_candles_for_simulation=lambda c: c,
+        detect_order_blocks=lambda d, **kw: [],
+        prepare_order_blocks_for_simulation=lambda ob: [],
+    )
+    return ns(rb=rb, core=core, engine_version="fake",
+              golden_config=lambda path, end_date: cfg,
+              prepare_news_cache=lambda ne, c, m: {})
+
+
+def test_phase_profiler_and_timed_noop():
+    from live.runner import PhaseProfiler, _timed
+    p = PhaseProfiler()
+    with _timed(p, "a"):
+        pass
+    with _timed(None, "b"):          # None profiler must be a safe no-op
+        pass
+    p.increment("cnt", 2)
+    p.increment("cnt")
+    snap = p.snapshot()
+    assert "a" in snap["phase_timings"] and snap["phase_timings"]["a"] >= 0.0
+    assert "b" not in snap["phase_timings"]
+    assert snap["counters"]["cnt"] == 3
+
+
+def test_golden_pipeline_profiler_is_parity_safe(tmp_path):
+    from live.runner import PhaseProfiler
+    cfg = _cfg(tmp_path)
+    trades = pd.DataFrame({"trade_id": ["L_1"], "direction": ["bullish"], "fill_time": [""],
+                           "outcome": ["OPEN"], "entry": ["1.1"], "stop": ["1.09"], "tp": ["1.12"]})
+    runner = LiveRunner(cfg, session=_fake_session(trades))
+    candles = pd.DataFrame({"time": pd.date_range("2026-07-17 09:00:00+00:00", periods=3,
+                            freq="1min").strftime("%Y-%m-%d %H:%M:%S+00:00")})
+    art_off, art_on = {}, {}
+    out_off = runner.golden_pipeline(candles, "2026-07-17", artifacts=art_off)
+    prof = PhaseProfiler()
+    out_on = runner.golden_pipeline(candles, "2026-07-17", artifacts=art_on, profiler=prof)
+    pd.testing.assert_frame_equal(out_off, out_on)            # timing never changes results
+    # timing NEVER leaks into the deterministic artifacts channel
+    assert "phase_timings" not in art_off and "phase_timings" not in art_on
+    assert set(art_on) == {"config", "candles", "order_blocks",
+                           "simulation_obs", "news_cache", "summary"}
+    assert "execute_scenario_job" in prof.snapshot()["phase_timings"]
+
+
+def test_run_once_emits_phase_timings_real_path(tmp_path):
+    cfg = _cfg(tmp_path)
+    trades = pd.DataFrame({"trade_id": ["L_1"], "direction": ["bullish"], "fill_time": [""],
+                           "outcome": ["UNFILLED"], "entry": [""], "stop": [""], "tp": [""]})
+    candles = pd.DataFrame({"time": pd.date_range("2026-07-17 09:00:00+00:00", periods=40,
+                            freq="1min").strftime("%Y-%m-%d %H:%M:%S+00:00")})
+    runner = LiveRunner(cfg, session=_fake_session(trades), candles_provider=lambda: candles)
+    out = runner.run_once()
+    assert out["status"] in ("bootstrap", "ok")
+    assert out["phase_timings"] and "execute_scenario_job" in out["phase_timings"]
+    assert isinstance(out["pipeline_s"], float) and out["pipeline_s"] >= 0.0
+
+
+def test_run_once_injected_pipeline_has_empty_phase_timings(tmp_path):
+    cfg = _cfg(tmp_path)
+    lux_candles = cfg.lux_root / "data" / "candles"
+    lux_candles.mkdir(parents=True)
+    times = pd.date_range("2026-07-17 09:00:00+00:00", periods=40, freq="1min")
+    pd.DataFrame({"time": times.strftime("%Y-%m-%d %H:%M:%S+00:00"),
+                  "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 0}
+                 ).to_csv(lux_candles / "EURUSD_1m_extended_2015_2026.csv", index=False)
+    frame = _frame([{"trade_id": "L_1", "direction": "bullish", "fill_time": "", "outcome": "UNFILLED"}])
+    runner = LiveRunner(cfg, session=None, pipeline=lambda c, d: frame)
+    out = runner.run_once()
+    assert out["phase_timings"] == {} and out["pipeline_s"] >= 0.0
+
+
+def test_ops_log_records_stage_and_phase_timings(tmp_path):
+    from live.ops_log import OpsLog
+    ops = OpsLog(tmp_path)
+    rec = ops.cycle_start()
+    ops.cycle_end(rec, boundary="B", status="ok",
+                  stage_timings={"runner_s": 1.5}, phase_timings={"resample": 0.2})
+    got = ops.read_cycles()
+    assert got[-1]["stage_timings"] == {"runner_s": 1.5}
+    assert got[-1]["phase_timings"] == {"resample": 0.2}
+    # a legacy record (pre-C1, no timing keys) still parses
+    with (tmp_path / "ops" / "cycles.jsonl").open("a") as fh:
+        fh.write(json.dumps({"cycle_start": "x", "status": "ok"}) + "\n")
+    assert ops.read_cycles()[-1].get("stage_timings", {}) == {}

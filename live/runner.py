@@ -12,6 +12,8 @@ frontier (you cannot trade the past); everything else, including
 from __future__ import annotations
 
 import sys
+import time
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +25,51 @@ from live.intents import diff_frontier
 from live.state import RunnerState
 
 FIFTEEN_MIN = pd.Timedelta(minutes=15)
+
+
+class PhaseProfiler:
+    """Driver-side timing profiler (C1-A instrumentation).
+
+    Conforms to ``strategy_core.ports.Profiler`` (``now``/``increment``) but is
+    NEVER injected into core execution — it only wraps the driver-side stage
+    calls in ``golden_pipeline``. Its readings are operational telemetry and
+    must never enter deterministic artifacts or parity outputs.
+    """
+
+    __slots__ = ("_timings", "_counters")
+
+    def __init__(self) -> None:
+        self._timings: dict[str, float] = {}
+        self._counters: dict[str, int] = {}
+
+    def now(self) -> float:
+        return time.monotonic()
+
+    def increment(self, key: str, amount: int = 1) -> None:
+        self._counters[key] = self._counters.get(key, 0) + amount
+
+    def record(self, name: str, seconds: float) -> None:
+        # accumulate so a repeated phase name sums rather than overwrites
+        self._timings[name] = round(self._timings.get(name, 0.0) + seconds, 6)
+
+    def snapshot(self) -> dict:
+        return {"phase_timings": dict(self._timings), "counters": dict(self._counters)}
+
+
+@contextmanager
+def _timed(profiler: PhaseProfiler | None, name: str):
+    """Time a driver-side stage into ``profiler`` when present; a no-op otherwise.
+
+    Wall-clock only; never influences the wrapped stage's inputs or outputs, so
+    a timed run and an untimed run are byte-identical in their results."""
+    if profiler is None:
+        yield
+        return
+    start = profiler.now()
+    try:
+        yield
+    finally:
+        profiler.record(name, profiler.now() - start)
 
 
 class LuxSession:
@@ -95,27 +142,41 @@ class LiveRunner:
 
     # ── pipeline (mirrors the Golden driver stage-for-stage) ─────────────────
     def golden_pipeline(self, candles_raw: pd.DataFrame, frontier_date: str,
-                        artifacts: dict | None = None) -> pd.DataFrame:
+                        artifacts: dict | None = None, *,
+                        profiler: PhaseProfiler | None = None) -> pd.DataFrame:
+        # `profiler` (keyword-only, optional) records driver-side stage timings
+        # externally; it never alters stage inputs/outputs and is NOT written
+        # into `artifacts`, which stays deterministic and parity-safe.
         s = self.session
         rb, core = s.rb, s.core
         config = s.golden_config(self.config.golden_config_path, end_date=frontier_date)
 
-        candles = rb.filter_date_range(candles_raw, config)
-        candles = core.prepare_candles_for_simulation(candles)
-        calendar_events = rb.load_news_calendar_events(config)
-        news_events = rb.load_news_events(config)
-        news_cache = s.prepare_news_cache(news_events, candles,
-                                          config.news_flatten_minutes_before_blackout)
-        detection = rb.resample_candles(candles, config.detection_timeframe)
-        order_blocks = core.detect_order_blocks(
-            detection, swing_length=config.swing_length, ob_filter=config.ob_filter,
-            pip_size=config.pip_size, min_ob_size_pips=config.min_ob_size_pips,
-            max_ob_size_pips=config.max_ob_size_pips)
-        order_blocks = rb.tag_order_blocks_with_news(order_blocks, calendar_events)
-        order_blocks = rb.filter_order_blocks_by_structure(order_blocks, config.structure_filter)
-        order_blocks, _ = rb.filter_order_blocks_by_structure_direction(
-            order_blocks, config.allowed_structure_directions)
-        simulation_obs = core.prepare_order_blocks_for_simulation(order_blocks)
+        with _timed(profiler, "filter_date_range"):
+            candles = rb.filter_date_range(candles_raw, config)
+        with _timed(profiler, "prepare_candles"):
+            candles = core.prepare_candles_for_simulation(candles)
+        with _timed(profiler, "load_news_calendar"):
+            calendar_events = rb.load_news_calendar_events(config)
+        with _timed(profiler, "load_news_events"):
+            news_events = rb.load_news_events(config)
+        with _timed(profiler, "prepare_news_cache"):
+            news_cache = s.prepare_news_cache(news_events, candles,
+                                              config.news_flatten_minutes_before_blackout)
+        with _timed(profiler, "resample"):
+            detection = rb.resample_candles(candles, config.detection_timeframe)
+        with _timed(profiler, "detect_order_blocks"):
+            order_blocks = core.detect_order_blocks(
+                detection, swing_length=config.swing_length, ob_filter=config.ob_filter,
+                pip_size=config.pip_size, min_ob_size_pips=config.min_ob_size_pips,
+                max_ob_size_pips=config.max_ob_size_pips)
+        with _timed(profiler, "tag_obs_news"):
+            order_blocks = rb.tag_order_blocks_with_news(order_blocks, calendar_events)
+        with _timed(profiler, "filter_obs"):
+            order_blocks = rb.filter_order_blocks_by_structure(order_blocks, config.structure_filter)
+            order_blocks, _ = rb.filter_order_blocks_by_structure_direction(
+                order_blocks, config.allowed_structure_directions)
+        with _timed(profiler, "prepare_obs"):
+            simulation_obs = core.prepare_order_blocks_for_simulation(order_blocks)
 
         entry = [x for x in rb.entry_scenarios(config) if x["mode"] == "triggered_edge"]
         if len(entry) != 1:
@@ -125,8 +186,9 @@ class LiveRunner:
         # by execute_scenario_job's result wrapper)
         job = {"kind": "entry", "execution_mode": mode, "scenario": entry[0],
                "job_id": f"{mode}:entry:{entry[0]['key']}", "label": entry[0]["key"]}
-        out = rb.execute_scenario_job(job, config, candles, simulation_obs,
-                                      order_blocks, news_cache)
+        with _timed(profiler, "execute_scenario_job"):
+            out = rb.execute_scenario_job(job, config, candles, simulation_obs,
+                                          order_blocks, news_cache)
         result = out["results"][0]
         if artifacts is not None:   # rehearsal capture only — no behavioural effect
             artifacts.update({"config": config, "candles": candles,
@@ -148,9 +210,18 @@ class LiveRunner:
         if self.state.data["last_boundary"] == boundary_str:
             return {"status": "no_new_bar", "boundary": boundary_str}
 
-        pipeline = self._pipeline or self.golden_pipeline
         frontier_date = str(boundary.date())
-        trades = pipeline(candles, frontier_date)
+        # Real path is timed via a driver-side profiler; the injected test/rehearsal
+        # pipeline keeps its 2-arg contract and is only wall-clock wrapped.
+        _t0 = time.monotonic()
+        if self._pipeline is not None:
+            trades = self._pipeline(candles, frontier_date)
+            phase_timings: dict = {}
+        else:
+            profiler = PhaseProfiler()
+            trades = self.golden_pipeline(candles, frontier_date, profiler=profiler)
+            phase_timings = profiler.snapshot()["phase_timings"]
+        pipeline_s = round(time.monotonic() - _t0, 6)
         trades_str = trades.astype(str)
 
         prev = self.state.load_prev_frame()
@@ -172,6 +243,8 @@ class LiveRunner:
             "intents": intents,
             "trades_rows": len(trades),
             "engine_version": self.session.engine_version if self.session else "injected",
+            "phase_timings": phase_timings,   # C1-A telemetry (non-deterministic; ops only)
+            "pipeline_s": pipeline_s,
             "note": ("first run establishes the baseline frame; no intents emitted"
                      if first_run else ""),
         }

@@ -30,7 +30,7 @@ class OpsLog:
     def cycle_end(self, record: dict, *, boundary=None, last_bar=None, appended=0,
                   status="", intents=0, applied=0, blocked=0, skipped=0,
                   reconcile_findings=None, frozen=False, published=None,
-                  error: str = "") -> dict:
+                  error: str = "", stage_timings=None, phase_timings=None) -> dict:
         end = datetime.now(timezone.utc)
         start = datetime.fromisoformat(record["cycle_start"])
         record.update({
@@ -41,6 +41,9 @@ class OpsLog:
             "blocked": blocked, "skipped": skipped,
             "reconcile_findings": reconcile_findings or [],
             "frozen": bool(frozen), "published": published, "error": error,
+            # C1-A instrumentation: additive per-cycle timing telemetry. Legacy
+            # records without these keys still parse (read_cycles is tolerant).
+            "stage_timings": stage_timings or {}, "phase_timings": phase_timings or {},
         })
         with self.cycles_path.open("a") as fh:
             fh.write(json.dumps(record, default=str) + "\n")
