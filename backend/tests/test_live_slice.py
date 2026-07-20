@@ -819,3 +819,178 @@ def test_ops_log_records_stage_and_phase_timings(tmp_path):
     with (tmp_path / "ops" / "cycles.jsonl").open("a") as fh:
         fh.write(json.dumps({"cycle_start": "x", "status": "ok"}) + "\n")
     assert ops.read_cycles()[-1].get("stage_timings", {}) == {}
+
+
+# ── C1-B mid-cycle liveness (daemon beacon; operational telemetry only) ──────────
+import time as _time  # noqa: E402
+
+
+def _wait_until(pred, timeout=3.0, interval=0.01):
+    """Poll pred() until true or the deadline; robust to thread timing."""
+    deadline = _time.monotonic() + timeout
+    while _time.monotonic() < deadline:
+        try:
+            if pred():
+                return True
+        except Exception:
+            pass
+        _time.sleep(interval)
+    try:
+        return bool(pred())
+    except Exception:
+        return False
+
+
+def _read_liveness(path):
+    try:
+        return json.loads(Path(path).read_text())
+    except Exception:
+        return None
+
+
+def test_liveness_tick_advances_while_caller_blocked(tmp_path):
+    from live.liveness import Liveness
+    path = tmp_path / "ops" / "liveness.json"
+    lv = Liveness(path, interval_s=0.02)
+    lv.start()
+    try:
+        lv.begin_cycle()
+        assert _wait_until(lambda: (_read_liveness(path) or {}).get("tick", 0) >= 1)
+        t1 = _read_liveness(path)["tick"]
+        _time.sleep(0.2)                              # caller thread blocked in "compute"
+        assert _wait_until(lambda: (_read_liveness(path) or {}).get("tick", 0) > t1)
+    finally:
+        lv.stop()
+
+
+def test_liveness_phase_update_reflected_promptly(tmp_path):
+    from live.liveness import Liveness
+    path = tmp_path / "ops" / "liveness.json"
+    lv = Liveness(path, interval_s=5.0)               # long tick: only the wake Event is prompt
+    lv.start()
+    try:
+        lv.begin_cycle()
+        lv.set_phase("runner")
+        assert _wait_until(lambda: (_read_liveness(path) or {}).get("phase") == "runner")
+        seq1 = _read_liveness(path)["cycle_seq"]
+        lv.begin_cycle()
+        assert _wait_until(lambda: (_read_liveness(path) or {}).get("cycle_seq") == seq1 + 1)
+    finally:
+        lv.stop()
+
+
+def test_liveness_schema_and_atomic_replacement(tmp_path):
+    from live.liveness import Liveness
+    path = tmp_path / "ops" / "liveness.json"
+    lv = Liveness(path, interval_s=0.02)
+    lv.start()
+    try:
+        lv.begin_cycle()
+        assert _wait_until(lambda: (_read_liveness(path) or {}).get("tick", 0) >= 2)
+        d = _read_liveness(path)
+        for k in ("at", "started_at", "cycle_seq", "phase", "tick",
+                  "elapsed_s", "state", "interval_s", "pid"):
+            assert k in d, k
+        assert isinstance(d["tick"], int) and isinstance(d["elapsed_s"], float)
+        assert isinstance(d["cycle_seq"], int) and isinstance(d["pid"], int)
+    finally:
+        lv.stop()
+    assert not path.with_name(path.name + ".tmp").exists()   # no stale temp after clean stop
+
+
+def test_liveness_write_failure_is_inert(tmp_path):
+    from live.liveness import Liveness
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x")                           # a FILE where a dir is needed
+    path = blocker / "liveness.json"                  # parent is a file -> mkdir/write fail
+    lv = Liveness(path, interval_s=0.02)
+    lv.start()
+    try:
+        lv.begin_cycle()                              # none of these may raise
+        lv.set_phase("runner")
+        _time.sleep(0.1)                              # let the worker attempt writes
+        assert not path.exists()                      # write never succeeded, but no crash
+    finally:
+        lv.stop()                                     # must not raise
+
+
+def test_liveness_cycle_exception_propagates_and_ends_idle(tmp_path):
+    from live.liveness import Liveness
+    from live.main import cycle
+    cfg = _cfg(tmp_path)
+
+    class Ops:
+        def cycle_start(self):
+            return {"cycle_start": datetime.now(timezone.utc).isoformat()}
+
+        def cycle_end(self, *a, **k):
+            raise RuntimeError("boom-logging")        # a logging failure that must propagate
+
+    class Bridge:
+        def poll_once(self):
+            return {}
+
+    class Runner:
+        session = None
+
+        def run_once(self):
+            return {"status": "no_new_bar", "boundary": "B"}
+
+    class Executor:
+        def drain_pending(self):
+            return None
+
+    class Pub:
+        def build_payload(self, *a, **k):
+            return {}
+
+        def publish(self, payload):
+            return None
+
+    path = tmp_path / "ops" / "liveness.json"
+    lv = Liveness(path, interval_s=5.0)
+    lv.start()
+    try:
+        with pytest.raises(RuntimeError, match="boom-logging"):   # original exception unchanged
+            cycle(cfg, None, Bridge(), Runner(), Executor(), Pub(), Ops(), lv)
+        assert _wait_until(lambda: (_read_liveness(path) or {}).get("state") == "idle")
+    finally:
+        lv.stop()
+
+
+def test_liveness_bounded_idempotent_shutdown(tmp_path):
+    from live.liveness import Liveness
+    lv = Liveness(tmp_path / "ops" / "liveness.json", interval_s=0.05)
+    lv.start()
+    lv.begin_cycle()
+    lv.stop(timeout=2.0)
+    assert _wait_until(lambda: not (lv._thread and lv._thread.is_alive()))
+    lv.stop()                                          # idempotent — must not raise
+
+
+def test_cycle_without_liveness_writes_no_beacon(tmp_path):
+    from live import main as live_main
+    from live.ops_log import OpsLog
+    cfg = _cfg(tmp_path)
+
+    class Bridge:
+        def poll_once(self):
+            return {"last_bar_time": None, "appended": 0}
+
+    class Runner:
+        session = None
+
+        def run_once(self):
+            return {"status": "no_new_bar", "boundary": "B"}
+
+    class Pub:
+        def build_payload(self, *a, **k):
+            return {}
+
+        def publish(self, payload):
+            return None
+
+    ops = OpsLog(cfg.state_dir)
+    rec = live_main.cycle(cfg, None, Bridge(), Runner(), None, Pub(), ops)   # 7 args, no liveness
+    assert rec["status"] == "no_new_bar" and not rec.get("error")
+    assert not (cfg.state_dir / "ops" / "liveness.json").exists()            # no beacon written

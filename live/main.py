@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 
 from live.config import LiveConfig
 from live.executor import Executor
+from live.liveness import Liveness
 from live.mt5_bridge import MT5BarBridge
 from live.mt5_gateway import MT5Gateway
 from live.ops_log import OpsLog
@@ -44,64 +45,82 @@ def build() -> tuple:
     return config, gateway, bridge, runner, executor, publisher, ops
 
 
-def cycle(config, gateway, bridge, runner, executor, publisher, ops) -> dict:
+def cycle(config, gateway, bridge, runner, executor, publisher, ops, liveness=None) -> dict:
     record = ops.cycle_start()
-    error = ""
-    bridge_result: dict = {}
-    runner_result: dict = {"status": "error"}
-    executor_result = None
-    delivery = None
-    # C1-A: coarse per-stage wall-clock timing, measured externally around each
-    # existing stage (bridge.poll_once timed here, not inside the bridge). Purely
-    # observational — never alters control flow or any stage's result.
-    stage_timings: dict = {}
-    clock = time.monotonic
+    if liveness is not None:
+        liveness.begin_cycle()
+    # end_cycle() must run whenever begin_cycle() ran, on every exit path, without
+    # suppressing or replacing an exception raised by the trading stages or logging.
     try:
-        # Pending recovery (LR-1) always precedes fresh evaluation. Normally a
-        # cheap no-op; after a crash it drains durably-reserved intents. An
-        # ambiguous/frozen recovery must NOT proceed into fresh strategy evaluation.
-        _t = clock()
-        drain_result = executor.drain_pending() if executor is not None else None
-        stage_timings["drain_s"] = round(clock() - _t, 6)
-        if drain_result and (drain_result.get("frozen") or drain_result.get("drained")):
-            executor_result = drain_result
-        if drain_result and drain_result.get("frozen"):
-            runner_result = {"status": "frozen_pending_recovery", "boundary": None}
-        else:
+        error = ""
+        bridge_result: dict = {}
+        runner_result: dict = {"status": "error"}
+        executor_result = None
+        delivery = None
+        # C1-A: coarse per-stage wall-clock timing, measured externally around each
+        # existing stage (bridge.poll_once timed here, not inside the bridge). Purely
+        # observational — never alters control flow or any stage's result.
+        stage_timings: dict = {}
+        clock = time.monotonic
+        try:
+            # Pending recovery (LR-1) always precedes fresh evaluation. Normally a
+            # cheap no-op; after a crash it drains durably-reserved intents. An
+            # ambiguous/frozen recovery must NOT proceed into fresh strategy evaluation.
+            if liveness is not None:
+                liveness.set_phase("drain")
             _t = clock()
-            bridge_result = bridge.poll_once()
-            stage_timings["bridge_s"] = round(clock() - _t, 6)
-            _t = clock()
-            runner_result = runner.run_once()
-            stage_timings["runner_s"] = round(clock() - _t, 6)
-            if runner_result.get("status") == "ok" and runner_result.get("intents"):
+            drain_result = executor.drain_pending() if executor is not None else None
+            stage_timings["drain_s"] = round(clock() - _t, 6)
+            if drain_result and (drain_result.get("frozen") or drain_result.get("drained")):
+                executor_result = drain_result
+            if drain_result and drain_result.get("frozen"):
+                runner_result = {"status": "frozen_pending_recovery", "boundary": None}
+            else:
+                if liveness is not None:
+                    liveness.set_phase("bridge")
                 _t = clock()
-                executor_result = executor.apply(runner_result["intents"])
-                stage_timings["executor_s"] = round(clock() - _t, 6)
-        _t = clock()
-        payload = publisher.build_payload(
-            runner_result, executor_result,
-            engine_version=runner.session.engine_version if (runner and runner.session) else "n/a",
-            mode=config.mode)
-        payload["bridge"] = bridge_result
-        delivery = publisher.publish(payload)
-        stage_timings["publish_s"] = round(clock() - _t, 6)
-    except Exception as exc:  # logged, loop continues; supervisor handles repeats
-        error = f"{type(exc).__name__}: {exc}"
-    ex = executor_result or {}
-    ops.cycle_end(
-        record,
-        boundary=runner_result.get("boundary"),
-        last_bar=bridge_result.get("last_bar_time"),
-        appended=bridge_result.get("appended", 0),
-        status=runner_result.get("status", "error"),
-        intents=len(runner_result.get("intents") or []),
-        applied=len(ex.get("applied", [])), blocked=len(ex.get("blocked", [])),
-        skipped=len(ex.get("skipped", [])),
-        reconcile_findings=(ex.get("reconcile") or {}).get("findings"),
-        frozen=bool(ex.get("frozen")), published=delivery, error=error,
-        stage_timings=stage_timings, phase_timings=runner_result.get("phase_timings"))
-    return record
+                bridge_result = bridge.poll_once()
+                stage_timings["bridge_s"] = round(clock() - _t, 6)
+                if liveness is not None:
+                    liveness.set_phase("runner")
+                _t = clock()
+                runner_result = runner.run_once()
+                stage_timings["runner_s"] = round(clock() - _t, 6)
+                if runner_result.get("status") == "ok" and runner_result.get("intents"):
+                    if liveness is not None:
+                        liveness.set_phase("executor")
+                    _t = clock()
+                    executor_result = executor.apply(runner_result["intents"])
+                    stage_timings["executor_s"] = round(clock() - _t, 6)
+            if liveness is not None:
+                liveness.set_phase("publish")
+            _t = clock()
+            payload = publisher.build_payload(
+                runner_result, executor_result,
+                engine_version=runner.session.engine_version if (runner and runner.session) else "n/a",
+                mode=config.mode)
+            payload["bridge"] = bridge_result
+            delivery = publisher.publish(payload)
+            stage_timings["publish_s"] = round(clock() - _t, 6)
+        except Exception as exc:  # logged, loop continues; supervisor handles repeats
+            error = f"{type(exc).__name__}: {exc}"
+        ex = executor_result or {}
+        ops.cycle_end(
+            record,
+            boundary=runner_result.get("boundary"),
+            last_bar=bridge_result.get("last_bar_time"),
+            appended=bridge_result.get("appended", 0),
+            status=runner_result.get("status", "error"),
+            intents=len(runner_result.get("intents") or []),
+            applied=len(ex.get("applied", [])), blocked=len(ex.get("blocked", [])),
+            skipped=len(ex.get("skipped", [])),
+            reconcile_findings=(ex.get("reconcile") or {}).get("findings"),
+            frozen=bool(ex.get("frozen")), published=delivery, error=error,
+            stage_timings=stage_timings, phase_timings=runner_result.get("phase_timings"))
+        return record
+    finally:
+        if liveness is not None:
+            liveness.end_cycle()   # best-effort; never suppresses the original exception
 
 
 def main() -> None:  # pragma: no cover - VPS loop
@@ -111,6 +130,10 @@ def main() -> None:  # pragma: no cover - VPS loop
             "REFUSED: LIVE_MODE=live is not permitted in M3 P1 shadow. "
             "Promotion to P2 is an explicit operator decision.")
     config, gateway, bridge, runner, executor, publisher, ops = build()
+    # Mid-cycle liveness beacon (C1-B): a daemon worker that keeps advancing while
+    # the cycle thread is blocked in long compute. Fail-open; never trading-critical.
+    liveness = Liveness(config.state_dir / "ops" / "liveness.json")
+    liveness.start()
     ok, detail = gateway.connect()
     print(f"[{datetime.now(timezone.utc).isoformat()}] gateway: {detail} | mode={config.mode}")
     if not ok:
@@ -126,7 +149,7 @@ def main() -> None:  # pragma: no cover - VPS loop
     consecutive_errors = 0
     try:
         while True:
-            record = cycle(config, gateway, bridge, runner, executor, publisher, ops)
+            record = cycle(config, gateway, bridge, runner, executor, publisher, ops, liveness)
             if record.get("error"):
                 consecutive_errors += 1
                 print(f"[{record['cycle_end']}] ERROR ({consecutive_errors}/"
@@ -140,6 +163,7 @@ def main() -> None:  # pragma: no cover - VPS loop
                       f"intents={record['intents']} dur={record['duration_s']}s")
             time.sleep(10)
     finally:
+        liveness.stop()        # bounded, fail-open; independent of gateway teardown
         gateway.disconnect()
 
 
