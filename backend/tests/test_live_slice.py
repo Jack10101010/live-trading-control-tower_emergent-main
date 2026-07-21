@@ -785,7 +785,10 @@ def test_run_once_emits_phase_timings_real_path(tmp_path):
                            "outcome": ["UNFILLED"], "entry": [""], "stop": [""], "tp": [""]})
     candles = pd.DataFrame({"time": pd.date_range("2026-07-17 09:00:00+00:00", periods=40,
                             freq="1min").strftime("%Y-%m-%d %H:%M:%S+00:00")})
-    runner = LiveRunner(cfg, session=_fake_session(trades), candles_provider=lambda: candles)
+    from live.runner import snapshot_from_bytes
+    snapshot = snapshot_from_bytes(candles.to_csv(index=False).encode(), None,
+                                   engine_version="fake-engine")
+    runner = LiveRunner(cfg, session=_fake_session(trades), input_provider=lambda: snapshot)
     out = runner.run_once()
     assert out["status"] in ("bootstrap", "ok")
     assert out["phase_timings"] and "execute_scenario_job" in out["phase_timings"]

@@ -38,7 +38,8 @@ from live.config import ENGINE_VERSION_EXPECTED, LiveConfig
 from live.executor import Executor
 from live.intents import diff_frontier
 from live.mt5_gateway import MT5Gateway
-from live.runner import LiveRunner, LuxSession, latest_closed_boundary
+from live.runner import (LiveRunner, LuxSession, latest_closed_boundary,
+                         snapshot_from_bytes)
 from live.state import RunnerState
 
 EXPECTED_COMMIT = "d978074a2ee938fb4803e50d419788c584d6ef57"
@@ -141,16 +142,29 @@ def main() -> int:
           session.golden_config(cfg.golden_config_path, "2026-06-19")
                  .portfolio_include_disabled_cohorts is True)
 
-    frozen = pd.read_csv(lux / "data" / "candles" / "EURUSD_1m_extended_2015_2026.csv")
+    frozen_path = lux / "data" / "candles" / "EURUSD_1m_extended_2015_2026.csv"
+    frozen_bytes = frozen_path.read_bytes()          # captured ONCE; the identity source
+    frozen = pd.read_csv(frozen_path)
     times = pd.to_datetime(frozen["time"])
     final_boundary = latest_closed_boundary(times.max())
-    truncated = frozen[times < final_boundary].reset_index(drop=True)
-    check("closed_bar_truncation", len(truncated) < len(frozen),
-          f"{len(frozen)}->{len(truncated)} rows; frontier window starts {final_boundary}")
+    # Truncate the RAW BYTES, never the DataFrame: keep the exact header bytes plus
+    # the original data-record bytes whose time < final_boundary, with their original
+    # terminators. Parsing a verbatim subsequence of the file yields values, dtypes and
+    # float representations identical to parsing those rows from the file itself — a
+    # DataFrame.to_csv round-trip could not guarantee that, and RUN A's output is the
+    # prev_frame baseline RUN B diffs against.
+    _lines = frozen_bytes.splitlines(keepends=True)
+    truncated_bytes = _lines[0] + b"".join(
+        line for line, keep in zip(_lines[1:], (times < final_boundary).tolist()) if keep)
+    run_a_snapshot = snapshot_from_bytes(truncated_bytes, None,
+                                         engine_version=session.engine_version)
+    check("closed_bar_truncation", len(run_a_snapshot.candles) < len(frozen),
+          f"{len(frozen)}->{len(run_a_snapshot.candles)} rows; "
+          f"frontier window starts {final_boundary}")
 
     # ── 2. RUN A — bootstrap on truncated data (ReplayFeed-equivalent step) ──
-    provider = {"df": truncated}
-    runner = LiveRunner(cfg, session=session, candles_provider=lambda: provider["df"])
+    provider = {"snapshot": run_a_snapshot}
+    runner = LiveRunner(cfg, session=session, input_provider=lambda: provider["snapshot"])
     print("RUN A (bootstrap, truncated)…")
     ra = runner.run_once()
     check("runA_bootstrap", ra["status"] == "bootstrap", ra["status"])
@@ -159,7 +173,8 @@ def main() -> int:
     print("RUN B (full frozen)…")
     artifacts: dict = {}
     raw_b = runner.golden_pipeline(frozen, "2026-06-19", artifacts=artifacts)
-    provider["df"] = frozen
+    provider["snapshot"] = snapshot_from_bytes(frozen_bytes, None,
+                                               engine_version=session.engine_version)
     runner._pipeline = lambda c, d: raw_b          # reuse — no recompute inside run_once
     rb_result = runner.run_once()
     check("runB_ok", rb_result["status"] == "ok", rb_result["status"])
@@ -175,7 +190,11 @@ def main() -> int:
     check("diff_deterministic", redo1 == redo2 == [])
 
     # restart/resume: fresh runner instance, same state dir -> nothing new
-    runner2 = LiveRunner(cfg, session=session, candles_provider=lambda: frozen)
+    # Rebuilt from the SAME frozen bytes: identical bytes must yield an identical
+    # InputRevision, so the C3 gate (boundary AND revision unchanged) must skip.
+    runner2 = LiveRunner(cfg, session=session,
+                         input_provider=lambda: snapshot_from_bytes(
+                             frozen_bytes, None, engine_version=session.engine_version))
     rr = runner2.run_once()
     check("restart_no_extra_intents", rr["status"] == "no_new_bar", rr.get("status"))
 

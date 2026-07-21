@@ -11,10 +11,12 @@ frontier (you cannot trade the past); everything else, including
 
 from __future__ import annotations
 
+import hashlib
+import io
 import sys
 import time
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -25,6 +27,11 @@ from live.intents import diff_frontier
 from live.state import RunnerState
 
 FIFTEEN_MIN = pd.Timedelta(minutes=15)
+
+# C3 — input identity. The version literal is part of the hashed preimage, so any
+# format change yields a non-equal revision (fail-safe recompute; no migration).
+INPUT_REVISION_VERSION = "ct.input-revision.v1"
+LIVE_ABSENT = "absent"
 
 
 class PhaseProfiler:
@@ -109,17 +116,87 @@ class LuxSession:
         return replace(config, end_date=end_date)   # the ONE live delta
 
 
-def assemble_candles(frozen_csv: Path, live_segment_csv: Path) -> pd.DataFrame:
-    """Frozen history + live segment. Seam policy: frozen rows win at or before
-    the frozen end; live rows win strictly after (no interleaving, no rewrite)."""
-    frozen = pd.read_csv(frozen_csv)
-    if live_segment_csv.exists():
-        live = pd.read_csv(live_segment_csv)
+@dataclass(frozen=True)
+class InputSnapshot:
+    """One evaluation's complete deterministic input (C3).
+
+    ``candles`` is parsed from exactly the bytes whose SHA-256 digests compose
+    ``input_revision``; that pairing is fixed at construction and never revisited.
+    ``input_revision`` is the SOLE authoritative identity — no component hashes,
+    metadata or diagnostics live here. Single-use per ``run_once`` evaluation.
+
+    Immutability: the dataclass is frozen, ``input_revision`` is computed exactly
+    once at capture and never recomputed (in particular never re-derived from the
+    DataFrame), and the ``candles`` reference is never replaced. The contained
+    DataFrame is itself mutable — pandas offers no frozen frame — but that cannot
+    violate the invariant: the revision describes the *captured bytes*, is never
+    recomputed from the frame, and the snapshot is consumed once and discarded.
+    """
+
+    candles: pd.DataFrame
+    input_revision: str
+
+
+def _sha256_bytes(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _input_revision_preimage(frozen_sha: str, live_sha: str, engine_version: str) -> str:
+    """The locked canonical preimage: fixed field order, LF-joined, NO trailing
+    newline. ``engine_version`` is stripped and lowercased."""
+    return "\n".join((
+        f"version={INPUT_REVISION_VERSION}",
+        f"frozen_sha256={frozen_sha}",
+        f"live_sha256={live_sha}",
+        f"engine_version={engine_version.strip().lower()}",
+    ))
+
+
+def _assemble_from_bytes(frozen_bytes: bytes, live_bytes: bytes | None) -> pd.DataFrame:
+    """THE single assembly implementation. Seam policy (unchanged): frozen rows win
+    at or before the frozen end; live rows win strictly after (no interleaving, no
+    rewrite). Parses only the supplied bytes — never re-opens a path."""
+    frozen = pd.read_csv(io.BytesIO(frozen_bytes))
+    if live_bytes is not None:
+        live = pd.read_csv(io.BytesIO(live_bytes))
         if len(live):
             frozen_end = pd.to_datetime(frozen["time"]).max()
             live = live[pd.to_datetime(live["time"]) > frozen_end]
             frozen = pd.concat([frozen, live], ignore_index=True)
     return frozen
+
+
+def snapshot_from_bytes(frozen_bytes: bytes, live_bytes: bytes | None, *,
+                        engine_version: str) -> InputSnapshot:
+    """Hash the exact captured bytes, then parse those SAME bytes. There is no
+    public constructor accepting a caller-supplied revision, so a DataFrame can
+    never be paired with a revision that does not describe it."""
+    frozen_sha = _sha256_bytes(frozen_bytes)
+    live_sha = _sha256_bytes(live_bytes) if live_bytes is not None else LIVE_ABSENT
+    preimage = _input_revision_preimage(frozen_sha, live_sha, engine_version)
+    revision = hashlib.sha256(preimage.encode("utf-8")).hexdigest()
+    return InputSnapshot(candles=_assemble_from_bytes(frozen_bytes, live_bytes),
+                         input_revision=revision)
+
+
+def capture_input_snapshot(frozen_csv: Path, live_segment_csv: Path, *,
+                           engine_version: str) -> InputSnapshot:
+    """Production capture: read each configured input file ONCE and snapshot it.
+    No path is re-opened after hashing, so there is no TOCTOU window."""
+    frozen_bytes = Path(frozen_csv).read_bytes()
+    live_path = Path(live_segment_csv)
+    live_bytes = live_path.read_bytes() if live_path.exists() else None
+    return snapshot_from_bytes(frozen_bytes, live_bytes, engine_version=engine_version)
+
+
+def assemble_candles(frozen_csv: Path, live_segment_csv: Path) -> pd.DataFrame:
+    """Frozen history + live segment (public contract unchanged). Delegates to the
+    single assembly implementation; returns only the DataFrame and never fabricates
+    an InputRevision."""
+    frozen_bytes = Path(frozen_csv).read_bytes()
+    live_path = Path(live_segment_csv)
+    live_bytes = live_path.read_bytes() if live_path.exists() else None
+    return _assemble_from_bytes(frozen_bytes, live_bytes)
 
 
 def latest_closed_boundary(last_m1_time: pd.Timestamp) -> pd.Timestamp:
@@ -160,13 +237,19 @@ def latest_closed_boundary(last_m1_time: pd.Timestamp) -> pd.Timestamp:
 
 class LiveRunner:
     def __init__(self, config, session: LuxSession | None = None, pipeline=None,
-                 candles_provider=None):
+                 input_provider=None):
         self.config = config
         config.ensure_dirs()
         self.session = session
         self.state = RunnerState(config.state_dir)
-        self._pipeline = pipeline                    # injectable for tests
-        self._candles_provider = candles_provider    # injectable for rehearsal (P0)
+        self._pipeline = pipeline                # injectable for tests
+        # () -> InputSnapshot. None = production capture from the configured paths.
+        # Providers must return a complete InputSnapshot built by the capture API;
+        # plain DataFrames and caller-supplied revisions are not supported.
+        self._input_provider = input_provider
+
+    def _engine_version(self) -> str:
+        return self.session.engine_version if self.session else "injected"
 
     # ── pipeline (mirrors the Golden driver stage-for-stage) ─────────────────
     def golden_pipeline(self, candles_raw: pd.DataFrame, frontier_date: str,
@@ -226,16 +309,24 @@ class LiveRunner:
 
     # ── one cycle ────────────────────────────────────────────────────────────
     def run_once(self, now_utc: datetime | None = None) -> dict:
-        if self._candles_provider is not None:
-            candles = self._candles_provider()
+        if self._input_provider is not None:
+            snapshot = self._input_provider()
         else:
             frozen_csv = self.config.lux_root / "data" / "candles" / "EURUSD_1m_extended_2015_2026.csv"
-            candles = assemble_candles(frozen_csv, self.config.live_segment_csv)
+            snapshot = capture_input_snapshot(
+                frozen_csv, self.config.live_segment_csv,
+                engine_version=self._engine_version())
+        candles = snapshot.candles
+        input_revision = snapshot.input_revision
         last_m1 = pd.to_datetime(candles["time"]).max()
         boundary = latest_closed_boundary(last_m1)
         boundary_str = str(boundary)
 
-        if self.state.data["last_boundary"] == boundary_str:
+        # C3 gate: skip ONLY when the candidate boundary AND the exact input
+        # revision are both unchanged. A missing stored revision (pre-C3 state) is
+        # unknown and therefore always re-evaluates — fail-safe by construction.
+        if (self.state.data["last_boundary"] == boundary_str
+                and self.state.data.get("last_recomputed_input_revision") == input_revision):
             return {"status": "no_new_bar", "boundary": boundary_str}
 
         frontier_date = str(boundary.date())
@@ -263,14 +354,14 @@ class LiveRunner:
         # intents. No separate save may split them.
         for intent in intents:
             self.state.reserve_pending(intent)
-        self.state.store_frame(trades_str, boundary_str)
-        self.state.save()   # ONE atomic commit: last_boundary + prev_frame + PENDING intents
+        self.state.store_frame(trades_str, boundary_str, input_revision)
+        self.state.save()   # ONE atomic commit: boundary + revision + prev_frame + PENDING intents
         return {
             "status": "bootstrap" if first_run else "ok",
             "boundary": boundary_str,
             "intents": intents,
             "trades_rows": len(trades),
-            "engine_version": self.session.engine_version if self.session else "injected",
+            "engine_version": self._engine_version(),
             "phase_timings": phase_timings,   # C1-A telemetry (non-deterministic; ops only)
             "pipeline_s": pipeline_s,
             "note": ("first run establishes the baseline frame; no intents emitted"

@@ -1,9 +1,14 @@
 """Crash-safe runner state: atomic JSON writes (tmp + rename).
 
-Holds: last processed 15m boundary, hash of the previous trades frame, the
-intent ledger (intent_id -> status/ticket), the trade->ticket mirror map and
-the daily realised-R counter for the loss kill switch. Restart = reload state,
-re-run pipeline, re-diff; idempotent intent ids make replays harmless.
+Holds: last processed 15m boundary, the exact input revision that boundary was
+computed from (C3), hash of the previous trades frame, the intent ledger
+(intent_id -> status/ticket), the trade->ticket mirror map and the daily
+realised-R counter for the loss kill switch. Restart = reload state, re-run
+pipeline, re-diff; idempotent intent ids make replays harmless.
+
+Pre-C3 state files load unchanged: `last_recomputed_input_revision` is simply
+absent, which readers treat as unknown (and therefore recompute). There is no
+migration and no schema rewrite on load.
 """
 
 from __future__ import annotations
@@ -43,7 +48,8 @@ class RunnerState:
     def _load(self) -> dict:
         if self.path.exists():
             return json.loads(self.path.read_text())
-        return {"last_boundary": None, "prev_frame_hash": "", "prev_frame_file": None,
+        return {"last_boundary": None, "last_recomputed_input_revision": None,
+                "prev_frame_hash": "", "prev_frame_file": None,
                 "ledger": {}, "mirror": {}, "daily": {"date": None, "realized_r": 0.0},
                 "updated_at": None}
 
@@ -54,12 +60,20 @@ class RunnerState:
         os.replace(tmp, self.path)
 
     # ── frames ───────────────────────────────────────────────────────────────
-    def store_frame(self, frame, boundary: str) -> None:
+    def store_frame(self, frame, boundary: str, input_revision: str) -> None:
+        """Record the evaluated frame, its boundary AND the exact input revision
+        that produced it — all in memory; the caller's single atomic ``save()``
+        commits them together with any reserved PENDING intents.
+
+        ``input_revision`` is REQUIRED (C3): a boundary can never advance without
+        the revision it was computed from, so durable state can never hold a new
+        boundary paired with a stale revision."""
         f = self.frames_dir / "prev_trades.csv"
         frame.to_csv(f, index=False)
         self.data["prev_frame_file"] = str(f)
         self.data["prev_frame_hash"] = frame_hash(frame)
         self.data["last_boundary"] = boundary
+        self.data["last_recomputed_input_revision"] = input_revision
 
     def load_prev_frame(self):
         import pandas as pd
