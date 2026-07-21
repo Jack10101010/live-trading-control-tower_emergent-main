@@ -123,9 +123,37 @@ def assemble_candles(frozen_csv: Path, live_segment_csv: Path) -> pd.DataFrame:
 
 
 def latest_closed_boundary(last_m1_time: pd.Timestamp) -> pd.Timestamp:
-    """A 15m bar [B, B+15) is confirmed closed once M1 data reaches B+15.
-    With next_open = close time of the last stored M1 bar, the latest closed
-    boundary is uniformly floor(next_open, 15m) - 15m."""
+    """Candidate evaluation boundary — the OPEN timestamp of the latest fully
+    CLOSED 15-minute detection bar (C2 formalized contract; formula unchanged).
+
+    Semantic meaning: returns ``B`` such that the 15m bar ``[B, B+15m)`` is the
+    most recent interval guaranteed closed given the data on hand. This is the
+    candidate the live driver evaluates, and the value the C3 gate compares
+    against the durably-stored ``last_boundary``.
+
+    M1 source assumption: ``last_m1_time`` is the OPEN time of the last stored,
+    already-closed 1-minute bar — the live segment only ever contains closed M1
+    bars — so that bar's close (the current forming instant) is
+    ``last_m1_time + 1min``. A 15m bar ``[B, B+15m)`` is confirmed closed once
+    data reaches ``B+15m``; the latest such boundary is uniformly
+    ``floor(last_m1_time + 1min, 15min) - 15min``.
+
+    Detection timeframe: fixed at 15 minutes (the Golden ``detection_timeframe``);
+    the 1-minute source granularity is fixed by the MT5-bridge data seam. Neither
+    is a parameter — there is exactly one production timeframe.
+
+    Timezone behaviour: purely arithmetic (floor + fixed offsets); the result
+    carries the input's timezone with NO conversion — tz-aware UTC in yields
+    tz-aware UTC out, tz-naive in yields tz-naive out.
+
+    NaT propagation: ``NaT`` in yields ``NaT`` out (an empty candle frame's
+    ``.max()`` is ``NaT``); the helper adds no empty-input guard — emptiness is
+    the caller's concern.
+
+    Determinism & purity: same input always yields the same output. No wall-clock
+    read, no I/O, no broker/MT5 access, no mutable state, no telemetry, no side
+    effects.
+    """
     next_open = last_m1_time + pd.Timedelta(minutes=1)
     return next_open.floor("15min") - FIFTEEN_MIN
 
