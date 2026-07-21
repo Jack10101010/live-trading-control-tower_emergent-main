@@ -6,6 +6,7 @@ today. This backend exposes route shapes that match the future data-repository
 contract so hooks can flip from fixture → API without component churn.
 """
 from fastapi import FastAPI, APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 import asyncio
@@ -29,10 +30,23 @@ import market_data as market_data_layer
 import data_service as data_service_layer
 import risk_engine as risk_layer
 import portfolio as portfolio_layer
+# L1A frozen Operational Status Model. Flat import matching every sibling above —
+# the app runs as `uvicorn server:app` from backend/, so this is the ONE module
+# object for L1A in the process (no dual identity via a package-form import).
+import ops_status as ops_status_layer
 
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
+
+# ── L1B Dashboard API configuration ───────────────────────────────────────────
+# Where the live node writes its operational outputs. Same environment variables
+# and defaults as live/config.py, so the operator configures one set. Resolved at
+# import; never derived from request input (no path traversal surface).
+OPS_STATE_DIR = Path(os.environ.get("LIVE_STATE_DIR", "./live_state")).resolve()
+OPS_MARKET_DATA_DIR = Path(
+    os.environ.get("MARKET_DATA_DIR", "./live_state/market_data")).resolve()
+OPS_KILL_FILE = Path(os.environ.get("LIVE_KILL_FILE", "./live_state/KILL")).resolve()
 
 logger = logging.getLogger(__name__)
 
@@ -1743,6 +1757,34 @@ async def live_ingest(request: Request):
     }
     stored, deduplicated = _append_event(event, idem)
     return {"ok": True, "seq": stored.get("seq"), "deduplicated": deduplicated}
+
+
+@api_router.get("/ops/status")
+def ops_status_endpoint():
+    """L1B — expose the FROZEN L1A Operational Status Model (schema_version 1).
+
+    Pure transport pipeline: collect_sources -> build_operational_status -> return.
+    The returned document is emitted verbatim — nothing is added, removed, renamed,
+    merged, normalized, or reinterpreted here; `null` stays null and "unknown"
+    stays "unknown". Every request performs a FRESH collection: no singleton, no
+    cached model, no memoization, no request coalescing (OP-1).
+
+    Operational degradation (missing / malformed / partial sources) is DATA, not an
+    error — it is carried by sources_available, source_errors and "unknown" fields,
+    so those cases return 200 with the model. Only an unexpected server failure
+    yields 500, and its public detail is a STABLE, GENERIC string: the exception
+    repr, type, traceback, filesystem paths and OS/decoder text stay server-side in
+    the log. Sync def so the blocking reads run in the threadpool.
+    """
+    try:
+        sources = ops_status_layer.collect_sources(
+            OPS_STATE_DIR, OPS_MARKET_DATA_DIR, OPS_KILL_FILE)
+        model = ops_status_layer.build_operational_status(
+            sources, datetime.now(timezone.utc))
+    except Exception:  # genuine server fault only; never source degradation
+        logger.exception("operational status build failed")
+        raise HTTPException(status_code=500, detail="operational status unavailable")
+    return JSONResponse(content=model, headers={"Cache-Control": "no-store"})
 
 
 @api_router.get("/live/status")
