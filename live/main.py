@@ -17,6 +17,7 @@ supervisor restarts the process visibly.
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from live.config import LiveConfig
@@ -29,6 +30,53 @@ from live.publisher import CTPublisher
 from live.runner import LiveRunner, LuxSession
 
 MAX_CONSECUTIVE_ERRORS = 10
+
+# ── C5 adaptive cadence (scheduler-owned; runner stays cadence-unaware) ────────
+# Fixed operator decisions, deliberately NOT configurable in C5. MAX_IDLE stays
+# below the 120s heartbeat-freshness contract enforced by deploy_check (N5).
+CADENCE_BASE_SLEEP_S = 10.0
+CADENCE_MAX_IDLE_SLEEP_S = 60.0
+
+
+@dataclass(frozen=True)
+class _CadenceState:
+    """Private, process-local scheduler state (C5). Immutable; every transition
+    returns a NEW instance. Never persisted, never serialized, never added to
+    RunnerState or OpsLog records, never exposed through public interfaces —
+    it lives only as a local variable inside main()'s loop."""
+
+    mode: str        # "active" | "idle"
+    sleep_s: float   # always within [CADENCE_BASE_SLEEP_S, CADENCE_MAX_IDLE_SLEEP_S]
+
+
+def _cadence_transition(state: _CadenceState, record: dict) -> _CadenceState:
+    """Pure, deterministic, total transition over the COMPLETED cycle record.
+
+    The record is immutable scheduler input (N6): this function only reads it —
+    no key writes, no deletions, no setdefault, no nested mutation, and no
+    reference is retained beyond the call. No I/O, no clock, no randomness.
+
+    Semantic outcomes (derived from today's record fields; the transition table
+    is defined over the MEANINGS, not the literals):
+      EVALUATION_OCCURRED  status in {ok, bootstrap}        -> reset BASE
+      BARS_APPENDED        bars_appended > 0                -> reset BASE
+      ERROR_OCCURRED       error truthy                     -> reset BASE
+      FROZEN_OCCURRED      frozen truthy                    -> reset BASE
+      IDLE_OCCURRED        status == no_new_bar, none above -> deepen idle
+    Precedence: ANY reset outcome wins over IDLE_OCCURRED (a mixed record such
+    as no_new_bar + appended bars resets). Anything unrecognized fails safe to
+    active/BASE — cadence may only ever fail fast, never fail slow (N3)."""
+    evaluation_occurred = record.get("status") in ("ok", "bootstrap")
+    bars_appended = (record.get("bars_appended") or 0) > 0
+    error_occurred = bool(record.get("error"))
+    frozen_occurred = bool(record.get("frozen"))
+    idle_occurred = record.get("status") == "no_new_bar"
+
+    if evaluation_occurred or bars_appended or error_occurred or frozen_occurred:
+        return _CadenceState("active", CADENCE_BASE_SLEEP_S)
+    if idle_occurred:
+        return _CadenceState("idle", min(state.sleep_s * 2, CADENCE_MAX_IDLE_SLEEP_S))
+    return _CadenceState("active", CADENCE_BASE_SLEEP_S)   # unknown outcome: fail safe
 
 
 def build() -> tuple:
@@ -147,21 +195,27 @@ def main() -> None:  # pragma: no cover - VPS loop
         print(f"[{datetime.now(timezone.utc).isoformat()}] startup drained "
               f"{len(startup['drained'])} pending intent(s)")
     consecutive_errors = 0
+    # C5: loop-local cadence state — the ONLY scheduler state, never persisted
+    # and never passed downstream. First cycle runs immediately (sleep follows).
+    cadence = _CadenceState("active", CADENCE_BASE_SLEEP_S)
     try:
         while True:
             record = cycle(config, gateway, bridge, runner, executor, publisher, ops, liveness)
+            cadence = _cadence_transition(cadence, record)
             if record.get("error"):
                 consecutive_errors += 1
                 print(f"[{record['cycle_end']}] ERROR ({consecutive_errors}/"
-                      f"{MAX_CONSECUTIVE_ERRORS}): {record['error']}")
+                      f"{MAX_CONSECUTIVE_ERRORS}): {record['error']} "
+                      f"next_sleep={cadence.sleep_s:.0f}s")
                 if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
                     raise SystemExit("too many consecutive failures — exiting for supervisor restart")
             else:
                 consecutive_errors = 0
                 print(f"[{record['cycle_end']}] {record['status']} "
                       f"boundary={record['boundary']} bars+={record['bars_appended']} "
-                      f"intents={record['intents']} dur={record['duration_s']}s")
-            time.sleep(10)
+                      f"intents={record['intents']} dur={record['duration_s']}s "
+                      f"next_sleep={cadence.sleep_s:.0f}s")
+            time.sleep(cadence.sleep_s)
     finally:
         liveness.stop()        # bounded, fail-open; independent of gateway teardown
         gateway.disconnect()
