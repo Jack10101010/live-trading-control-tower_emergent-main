@@ -166,27 +166,83 @@ def _assemble_from_bytes(frozen_bytes: bytes, live_bytes: bytes | None) -> pd.Da
     return frozen
 
 
+@dataclass(frozen=True)
+class _FastIdleMemo:
+    """Private, process-local, advisory memo (C4 strict Fast Idle).
+
+    Records the (revision, boundary) pair most recently validated by a COMPLETE
+    C3 decision in this process — either a slow-path ``no_new_bar`` (both values
+    freshly computed and seen equal to state) or a successful evaluation
+    (primed strictly AFTER the atomic ``save()`` returns). Never authoritative,
+    never persisted, may disappear at any time; loss or any disagreement with
+    state always degrades to the C3 slow path. One frozen object so both fields
+    replace atomically (no torn memo)."""
+
+    input_revision: str
+    boundary: str
+
+
+@dataclass(frozen=True)
+class _CapturedInput:
+    """Private, single-use pairing of the exact captured bytes with the
+    InputRevision computed FROM those bytes (C4 capture/parse split).
+
+    The revision here is the same single composite identity — computed by the
+    same preimage code — not a second identity. Instances are consumed once:
+    after either a successful fast skip (bytes discarded unparsed) or a
+    successful ``_parse_captured`` call, the object falls out of scope and is
+    never retained."""
+
+    frozen_bytes: bytes
+    live_bytes: bytes | None
+    input_revision: str
+
+
+def _captured_from_bytes(frozen_bytes: bytes, live_bytes: bytes | None, *,
+                         engine_version: str) -> _CapturedInput:
+    """Compute the InputRevision from the exact supplied bytes. NO parsing."""
+    frozen_sha = _sha256_bytes(frozen_bytes)
+    live_sha = _sha256_bytes(live_bytes) if live_bytes is not None else LIVE_ABSENT
+    preimage = _input_revision_preimage(frozen_sha, live_sha, engine_version)
+    revision = hashlib.sha256(preimage.encode("utf-8")).hexdigest()
+    return _CapturedInput(frozen_bytes=frozen_bytes, live_bytes=live_bytes,
+                          input_revision=revision)
+
+
+def _capture_bytes(frozen_csv: Path, live_segment_csv: Path, *,
+                   engine_version: str) -> _CapturedInput:
+    """Production capture: read each configured input file ONCE and compute the
+    revision from those bytes. No path is re-opened after hashing (no TOCTOU
+    window) and no DataFrame is constructed."""
+    frozen_bytes = Path(frozen_csv).read_bytes()
+    live_path = Path(live_segment_csv)
+    live_bytes = live_path.read_bytes() if live_path.exists() else None
+    return _captured_from_bytes(frozen_bytes, live_bytes, engine_version=engine_version)
+
+
+def _parse_captured(captured: _CapturedInput) -> InputSnapshot:
+    """Parse exactly the captured bytes (slow path only) and pair the frame with
+    the revision computed from those same bytes."""
+    return InputSnapshot(candles=_assemble_from_bytes(captured.frozen_bytes,
+                                                      captured.live_bytes),
+                         input_revision=captured.input_revision)
+
+
 def snapshot_from_bytes(frozen_bytes: bytes, live_bytes: bytes | None, *,
                         engine_version: str) -> InputSnapshot:
     """Hash the exact captured bytes, then parse those SAME bytes. There is no
     public constructor accepting a caller-supplied revision, so a DataFrame can
     never be paired with a revision that does not describe it."""
-    frozen_sha = _sha256_bytes(frozen_bytes)
-    live_sha = _sha256_bytes(live_bytes) if live_bytes is not None else LIVE_ABSENT
-    preimage = _input_revision_preimage(frozen_sha, live_sha, engine_version)
-    revision = hashlib.sha256(preimage.encode("utf-8")).hexdigest()
-    return InputSnapshot(candles=_assemble_from_bytes(frozen_bytes, live_bytes),
-                         input_revision=revision)
+    return _parse_captured(_captured_from_bytes(frozen_bytes, live_bytes,
+                                                engine_version=engine_version))
 
 
 def capture_input_snapshot(frozen_csv: Path, live_segment_csv: Path, *,
                            engine_version: str) -> InputSnapshot:
     """Production capture: read each configured input file ONCE and snapshot it.
     No path is re-opened after hashing, so there is no TOCTOU window."""
-    frozen_bytes = Path(frozen_csv).read_bytes()
-    live_path = Path(live_segment_csv)
-    live_bytes = live_path.read_bytes() if live_path.exists() else None
-    return snapshot_from_bytes(frozen_bytes, live_bytes, engine_version=engine_version)
+    return _parse_captured(_capture_bytes(frozen_csv, live_segment_csv,
+                                          engine_version=engine_version))
 
 
 def assemble_candles(frozen_csv: Path, live_segment_csv: Path) -> pd.DataFrame:
@@ -247,6 +303,8 @@ class LiveRunner:
         # Providers must return a complete InputSnapshot built by the capture API;
         # plain DataFrames and caller-supplied revisions are not supported.
         self._input_provider = input_provider
+        # C4 fast-idle memo: per-instance, advisory only, never serialized.
+        self._fast_idle_memo: _FastIdleMemo | None = None
 
     def _engine_version(self) -> str:
         return self.session.engine_version if self.session else "injected"
@@ -310,12 +368,35 @@ class LiveRunner:
     # ── one cycle ────────────────────────────────────────────────────────────
     def run_once(self, now_utc: datetime | None = None) -> dict:
         if self._input_provider is not None:
+            # Provider-backed inputs (rehearsal/tests) always take the C3 slow
+            # path — the snapshot is already parsed, so there is nothing to skip.
             snapshot = self._input_provider()
         else:
             frozen_csv = self.config.lux_root / "data" / "candles" / "EURUSD_1m_extended_2015_2026.csv"
-            snapshot = capture_input_snapshot(
+            captured = _capture_bytes(
                 frozen_csv, self.config.live_segment_csv,
                 engine_version=self._engine_version())
+
+            # C4 strict fast idle — INVARIANT: the fast path must never construct
+            # a DataFrame. It may only CONFIRM a skip the C3 gate would produce:
+            # identical revision ⇒ identical bytes ⇒ identical CandidateBoundary
+            # (a pure function of those bytes), and the memo certifies that this
+            # process validated the stored pair via a complete C3 decision. Any
+            # missing value or mismatch falls through to the unchanged slow path.
+            memo = self._fast_idle_memo
+            stored_rev = self.state.data.get("last_recomputed_input_revision")
+            stored_boundary = self.state.data.get("last_boundary")
+            if (memo is not None
+                    and stored_rev is not None
+                    and stored_boundary is not None
+                    and captured.input_revision == stored_rev
+                    and memo.input_revision == stored_rev
+                    and memo.boundary == stored_boundary):
+                return {"status": "no_new_bar", "boundary": stored_boundary}
+
+            # Slow path: parse exactly the captured bytes (single-use; `captured`
+            # falls out of scope after this parse and is never retained).
+            snapshot = _parse_captured(captured)
         candles = snapshot.candles
         input_revision = snapshot.input_revision
         last_m1 = pd.to_datetime(candles["time"]).max()
@@ -327,6 +408,10 @@ class LiveRunner:
         # unknown and therefore always re-evaluates — fail-safe by construction.
         if (self.state.data["last_boundary"] == boundary_str
                 and self.state.data.get("last_recomputed_input_revision") == input_revision):
+            # Complete C3 decision with freshly computed values equal to state —
+            # safe to prime the C4 memo from these just-validated values.
+            self._fast_idle_memo = _FastIdleMemo(input_revision=input_revision,
+                                                 boundary=boundary_str)
             return {"status": "no_new_bar", "boundary": boundary_str}
 
         frontier_date = str(boundary.date())
@@ -356,6 +441,10 @@ class LiveRunner:
             self.state.reserve_pending(intent)
         self.state.store_frame(trades_str, boundary_str, input_revision)
         self.state.save()   # ONE atomic commit: boundary + revision + prev_frame + PENDING intents
+        # C4: prime the memo ONLY after the save succeeded — the memo never
+        # claims a (revision, boundary) pair that is not durably committed.
+        self._fast_idle_memo = _FastIdleMemo(input_revision=input_revision,
+                                             boundary=boundary_str)
         return {
             "status": "bootstrap" if first_run else "ok",
             "boundary": boundary_str,
