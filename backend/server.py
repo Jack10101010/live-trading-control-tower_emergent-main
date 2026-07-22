@@ -5,7 +5,7 @@ Presentation-first: the frontend consumes `world.v1.json` via a fixture provider
 today. This backend exposes route shapes that match the future data-repository
 contract so hooks can flip from fixture → API without component churn.
 """
-from fastapi import FastAPI, APIRouter, HTTPException, Request
+from fastapi import FastAPI, APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -157,16 +157,85 @@ def _events_db() -> sqlite3.Connection:
     return conn
 
 
-def _stored_events() -> list[dict]:
+# P-2 retention: only the newest EVENTS_RETENTION_MAX stored rows are kept —
+# pruned oldest-first inside _append_event's transaction. Frozen fixture events
+# live in WORLD, not this table, and are never pruned. Pruning removes each
+# row's idempotency key with it: keys older than the retained window no longer
+# deduplicate (accepted P-2 consequence). Sequence numbers are never renumbered
+# or reused; MAX(seq) stays monotonic across ordinary pruning.
+EVENTS_RETENTION_MAX = 10000
+# Defensive ceiling for GET /api/events `limit` (framework-validated).
+EVENTS_PAGE_LIMIT_MAX = 1000
+
+# Once-per-seq malformed-payload warning suppression (process-local; bounded by
+# the retention cap since pruned rows can no longer be read).
+_MALFORMED_WARNED: set[int] = set()
+
+
+class EventStoreIntegrityError(RuntimeError):
+    """A row the store MUST honour (e.g. an idempotency match) is undecodable.
+    Raised instead of pretending the row does not exist, so deduplication can
+    never silently degrade into replay."""
+
+
+def _decode_event_row(seq: int, payload: str) -> dict | None:
+    """Decode one stored payload; on malformed data, warn once per seq and
+    return None so ordinary readers skip the row instead of failing. Malformed
+    means (audit defect D2): invalid JSON, non-object JSON, missing eventId,
+    and a payload seq that is missing, non-int (bool included), or inconsistent
+    with the stored row's seq column — so no invalid seq can ever reach
+    sorting or the API response."""
+    try:
+        ev = json.loads(payload)
+        if not isinstance(ev, dict) or "eventId" not in ev:
+            raise ValueError("payload is not an event object")
+        payload_seq = ev.get("seq")
+        if (not isinstance(payload_seq, int) or isinstance(payload_seq, bool)
+                or payload_seq != seq):
+            raise ValueError("payload seq missing, non-integer, or inconsistent with row seq")
+        return ev
+    except Exception:
+        if seq not in _MALFORMED_WARNED:
+            _MALFORMED_WARNED.add(seq)
+            logger.warning("bot_events row seq=%s has malformed payload; skipping", seq)
+        return None
+
+
+def _stored_events_since(since_seq: int = 0, limit: int | None = None) -> list[dict]:
+    """Indexed stored-row read: rows with seq > since_seq, ascending, decoded
+    tolerantly (malformed rows are skipped and warned once). With a limit, the
+    fetch loop refills past skipped malformed rows so a page is never silently
+    under-full while more valid rows exist."""
     if not EVENTS_DB_PATH.exists():
         return []
-    with _events_lock:
-        conn = _events_db()
-        try:
-            rows = conn.execute("SELECT payload FROM bot_events ORDER BY seq ASC").fetchall()
-        finally:
-            conn.close()
-    return [json.loads(r[0]) for r in rows]
+    out: list[dict] = []
+    cursor = since_seq
+    while True:
+        want = None if limit is None else (limit - len(out))
+        with _events_lock:
+            conn = _events_db()
+            try:
+                if want is None:
+                    rows = conn.execute(
+                        "SELECT seq, payload FROM bot_events WHERE seq > ? ORDER BY seq ASC",
+                        (cursor,)).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT seq, payload FROM bot_events WHERE seq > ? ORDER BY seq ASC LIMIT ?",
+                        (cursor, want)).fetchall()
+            finally:
+                conn.close()
+        for seq, payload in rows:
+            ev = _decode_event_row(seq, payload)
+            if ev is not None:
+                out.append(ev)
+        if want is None or len(out) >= limit or len(rows) < want:
+            return out
+        cursor = rows[-1][0]
+
+
+def _stored_events() -> list[dict]:
+    return _stored_events_since(0, None)
 
 
 def _all_events() -> list[dict]:
@@ -190,51 +259,87 @@ def _max_seq() -> int:
 
 
 def _events_since(since: int, pair: str | None = None) -> list[dict]:
-    """Events with seq strictly greater than `since` (the delta), oldest first."""
-    evs = [e for e in _all_events() if e.get("seq", 0) > since]
+    """Events with seq strictly greater than `since` (the delta), oldest first.
+    Stored rows come from the indexed seq-filtered read (no full-history scan
+    per polling iteration); fixture events are filtered in Python (three rows)."""
+    fixtures = [e for e in WORLD.get("events", []) if e.get("seq", 0) > since]
+    evs = fixtures + _stored_events_since(since, None)
+    evs.sort(key=lambda e: e.get("seq", 0))
     if pair:
         evs = [e for e in evs if e.get("scenarioKey") is None or e.get("scenarioKey", "").startswith(f"{pair}:")]
     return evs
 
 
+def _decode_idempotent_row(idempotency_key: str, row: tuple) -> dict:
+    """Strict decode for an idempotency MATCH: the key exists, so the store must
+    honour it. A malformed matching payload raises EventStoreIntegrityError —
+    never 'not found' — so the caller's action is NOT re-executed and the
+    failure surfaces through existing route failure semantics."""
+    seq, payload = row
+    ev = _decode_event_row(seq, payload)
+    if ev is None:
+        logger.error(
+            "bot_events integrity: idempotency key %r matches seq=%s but its "
+            "payload is malformed; refusing to treat as absent", idempotency_key, seq)
+        raise EventStoreIntegrityError(
+            f"idempotent event record seq={seq} is undecodable")
+    return ev
+
+
 def _find_event_by_idempotency(idempotency_key: str) -> dict | None:
     """Return the event previously stored under this idempotency key, if any.
-    Used to short-circuit a retried command BEFORE its runtime effect re-applies."""
+    Used to short-circuit a retried command BEFORE its runtime effect re-applies.
+    A matching row with a malformed payload raises EventStoreIntegrityError
+    (deduplication must never degrade into replay). Keys pruned by retention
+    are genuinely absent and return None."""
     if not idempotency_key or not EVENTS_DB_PATH.exists():
         return None
     with _events_lock:
         conn = _events_db()
         try:
             row = conn.execute(
-                "SELECT payload FROM bot_events WHERE idempotency_key = ?", (idempotency_key,)
+                "SELECT seq, payload FROM bot_events WHERE idempotency_key = ?", (idempotency_key,)
             ).fetchone()
         finally:
             conn.close()
-    return json.loads(row[0]) if row else None
+    return _decode_idempotent_row(idempotency_key, row) if row else None
 
 
 def _append_event(event: dict, idempotency_key: str | None) -> tuple[dict, bool]:
-    """Append a BotEvent, assigning the next monotonic seq. Returns
-    (event, deduplicated). A replayed idempotency key returns the original
-    event untouched — the log is append-only and retry-safe (Track B §4.18).
-    """
+    """Append a BotEvent, assigning the next monotonic seq, then prune stored
+    rows beyond EVENTS_RETENTION_MAX — insert and prune commit atomically in
+    one transaction (a failure rolls both back). Returns (event, deduplicated).
+    A replayed idempotency key returns the original event untouched, without
+    inserting or pruning; a malformed matching row raises
+    EventStoreIntegrityError rather than replaying (Track B §4.18)."""
     with _events_lock:
         conn = _events_db()
         try:
             if idempotency_key:
                 row = conn.execute(
-                    "SELECT payload FROM bot_events WHERE idempotency_key = ?",
+                    "SELECT seq, payload FROM bot_events WHERE idempotency_key = ?",
                     (idempotency_key,),
                 ).fetchone()
                 if row:
-                    return json.loads(row[0]), True
+                    return _decode_idempotent_row(idempotency_key, row), True
             max_stored = conn.execute("SELECT COALESCE(MAX(seq), 0) FROM bot_events").fetchone()[0]
             event["seq"] = max(_FIXTURE_MAX_SEQ, max_stored) + 1
             conn.execute(
                 "INSERT INTO bot_events (seq, event_id, idempotency_key, payload) VALUES (?, ?, ?, ?)",
                 (event["seq"], event["eventId"], idempotency_key, json.dumps(event)),
             )
+            # Retention: delete everything at or below the (CAP+1)-th newest seq,
+            # keeping exactly the newest EVENTS_RETENTION_MAX rows. Index-only
+            # (seq primary key); payloads are never loaded to decide pruning.
+            conn.execute(
+                "DELETE FROM bot_events WHERE seq <= COALESCE("
+                "(SELECT seq FROM bot_events ORDER BY seq DESC LIMIT 1 OFFSET ?), -1)",
+                (EVENTS_RETENTION_MAX,),
+            )
             conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
     return event, False
@@ -508,7 +613,17 @@ def _overlay_count() -> int:
 
 
 def _event_count() -> int:
-    return len(WORLD.get("events", [])) + len(_stored_events())
+    """Fixture events + retained stored rows, via SQL COUNT (payloads are not
+    loaded or decoded; malformed rows still count as stored rows)."""
+    stored = 0
+    if EVENTS_DB_PATH.exists():
+        with _events_lock:
+            conn = _events_db()
+            try:
+                stored = conn.execute("SELECT COUNT(*) FROM bot_events").fetchone()[0]
+            finally:
+                conn.close()
+    return len(WORLD.get("events", [])) + stored
 
 
 def _runtime_health() -> dict:
@@ -1600,12 +1715,33 @@ async def decision(decision_id: str):
 
 
 @api_router.get("/events")
-async def events(pair: str | None = None):
-    """Merged audit stream: frozen fixture events + appended operator events,
-    ordered by monotonic seq (newest seq last)."""
-    evs = _all_events()
+async def events(
+    pair: str | None = None,
+    since_seq: int = Query(0, ge=0),
+    limit: int | None = Query(None, ge=1, le=EVENTS_PAGE_LIMIT_MAX),
+):
+    """Merged audit stream: frozen fixture events + retained stored events,
+    ordered by monotonic seq (newest seq last). Sequence pagination (P-2):
+    `since_seq` returns events with seq strictly greater (default 0 = the full
+    available merged stream); `limit` caps the page, applied to the final
+    merged ordered stream AFTER sequence filtering. Defaults preserve the
+    pre-P-2 response exactly (bounded only by retention). This is a snapshot
+    endpoint — no stale-cursor semantics; since_seq beyond head returns [].
+    Filtered pagination is NOT supported: combining `pair` with `limit` is
+    rejected with 422, because a pair-filtered page could come back empty
+    while matching events still exist beyond it, which a seq-walking client
+    cannot distinguish from exhaustion (audit defect D1)."""
+    if pair is not None and limit is not None:
+        raise HTTPException(
+            status_code=422,
+            detail="pair cannot be combined with limit; filtered pagination is not supported")
+    fixtures = [e for e in WORLD.get("events", []) if e.get("seq", 0) > since_seq]
+    stored = _stored_events_since(since_seq, limit)
+    evs = sorted(fixtures + stored, key=lambda e: e.get("seq", 0))
     if pair:
         evs = [e for e in evs if e.get("scenarioKey") is None or e.get("scenarioKey", "").startswith(f"{pair}:")]
+    if limit is not None:
+        evs = evs[:limit]
     return evs
 
 
@@ -1725,7 +1861,8 @@ async def run_command(name: str, request: Request) -> dict[str, Any]:
 @api_router.post("/runtime/reset")
 async def runtime_reset() -> dict[str, Any]:
     """Clear all runtime overlays, reverting reads to the pristine fixture.
-    The append-only event log is NOT cleared (audit history is immutable)."""
+    The append-only event log is NOT cleared (audit history is preserved
+    within the EVENTS_RETENTION_MAX retention window)."""
     count = 0
     if RUNTIME_DB_PATH.exists():
         with _runtime_lock:
