@@ -109,13 +109,13 @@ def key_spy(monkeypatch):
 
 # ── 1. Producer inventory guard ──────────────────────────────────────────────
 
-def test_exactly_three_append_event_production_call_sites():
+def test_exactly_four_append_event_production_call_sites():
     src = (BACKEND_DIR / "server.py").read_text()
     calls = [m for m in re.finditer(r"_append_event\(", src)
              if not src[max(0, m.start() - 4):m.start()].endswith("def ")]
-    assert len(calls) == 3, (
-        f"expected exactly 3 production _append_event call sites "
-        f"(command, broker-sync, LIVE_STATUS); found {len(calls)} — "
+    assert len(calls) == 4, (
+        f"expected exactly 4 production _append_event call sites "
+        f"(command, broker-sync, LIVE_STATUS, L2 projector wiring); found {len(calls)} — "
         "a new producer must be reviewed before it ships")
 
 

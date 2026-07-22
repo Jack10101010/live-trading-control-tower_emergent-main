@@ -34,6 +34,7 @@ import portfolio as portfolio_layer
 # the app runs as `uvicorn server:app` from backend/, so this is the ONE module
 # object for L1A in the process (no dual identity via a package-form import).
 import ops_status as ops_status_layer
+import ops_journal as ops_journal_layer
 
 
 ROOT_DIR = Path(__file__).parent
@@ -2082,7 +2083,32 @@ logging.basicConfig(
 )
 
 
+# ── L2-A: Operational Transition Log projector wiring (additive) ─────────────
+# One process-local projector (D5 single-process guarantee). Disabled by
+# default; OPS_JOURNAL_ENABLED must be explicitly truthy to start it. The
+# projector reads the canonical cycle stream via the same configured paths as
+# L1A and appends narration through the shared _append_event path — the lambda
+# wrapper is the fourth (and only new) production append call site, and it
+# late-binds so the serialized store path stays the single writer route.
+OPS_JOURNAL_ENABLED = ops_journal_layer.env_flag(os.environ.get("OPS_JOURNAL_ENABLED"))
+OPS_JOURNAL_CHECKPOINT = ROOT_DIR / "ops_journal_checkpoint.json"
+_ops_journal = ops_journal_layer.OpsJournalProjector(
+    cycles_path=OPS_STATE_DIR / "ops" / "cycles.jsonl",
+    checkpoint_path=OPS_JOURNAL_CHECKPOINT,
+    append_event=lambda ev, key: _append_event(ev, key),
+    package_hash=lambda: _active_package_hash(),
+    logger=logger,
+)
+
+
+@app.on_event("startup")
+async def _start_ops_journal():
+    if OPS_JOURNAL_ENABLED:
+        _ops_journal.start()
+
+
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    _ops_journal.stop()  # safe when never started
     if client is not None:
         client.close()

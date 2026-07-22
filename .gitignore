@@ -93,6 +93,9 @@ credentials.json
 # Runtime event store (append-only BotEvent log, Phase 4)
 backend/events.db
 
+# L2-A Operational Transition Log projector checkpoint (narration progress only)
+backend/ops_journal_checkpoint.json
+
 # Runtime state overlay (mutable, layered over the fixture, Phase 4 Step 3)
 backend/runtime.db
 
