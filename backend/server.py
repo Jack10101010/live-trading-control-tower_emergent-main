@@ -1731,11 +1731,29 @@ async def feature_flags() -> dict[str, Any]:
     }
 
 
-# ── Live-slice ingest (M3 Phase 1, additive) ─────────────────────────────────
+# ── Live-slice ingest (M3 Phase 1; P-1 transition gate) ──────────────────────
 # The VPS runner publishes consolidated status here. Storage: latest payload in
-# memory (+ a LIVE_STATUS BotEvent in the append-only events spine, idempotent
-# per instance/boundary). Read side: /live/status for the UI/operators.
+# memory. Narration (P-1): BotEvents are appended ONLY for genuine transitions
+# in the instance's operational identity — never per cycle. Per-cycle facts
+# (boundary, intents, runner.status, execution.frozen) never narrate here;
+# execution.frozen is reserved for L2's sequence-derived narration.
+# Read side: /live/status for the UI/operators.
 _LIVE_STATUS: dict = {}
+
+# Per-instance in-memory transition gate (best-effort; L2 owns durable
+# narration). Maps instance_id -> (signature, anchor_at). `signature` is the
+# operational identity tuple over _LIVE_SIGNATURE_FIELDS; `anchor_at` is the
+# producer-supplied payload `at` recorded when that signature was seeded or
+# last advanced. Idempotency keys derive from the PRIOR anchor, so a retry on
+# any later equivalent ingest (fresh `at`) reconstructs the identical key and
+# deduplicates at the store instead of double-narrating. The gate advances
+# only after every required append has inserted or confirmed-deduplicated;
+# a failed append leaves (signature, anchor_at) untouched for retry. First
+# observation of an instance — including after a backend restart — seeds
+# silently: a first sighting has no from-state and is not a transition.
+_LIVE_GATE: dict[str, tuple[tuple, Any]] = {}
+_LIVE_SIGNATURE_FIELDS = ("mode", "engine_version", "deployment_profile", "data_seam")
+_LIVE_CONFIG_FIELDS = ("engine_version", "deployment_profile", "data_seam")
 
 
 @api_router.post("/live/ingest")
@@ -1743,20 +1761,103 @@ async def live_ingest(request: Request):
     payload = await request.json()
     if not isinstance(payload, dict) or "instance_id" not in payload:
         raise HTTPException(status_code=400, detail="payload must include instance_id")
-    _LIVE_STATUS[payload["instance_id"]] = payload
-    idem = f"live|{payload['instance_id']}|{payload.get('runner', {}).get('boundary')}|{payload.get('at')}"
-    event = {
-        "eventId": f"evt_live_{uuid.uuid4().hex[:12]}",
-        "type": "LIVE_STATUS",
-        "at": payload.get("at"),
-        "instanceId": payload["instance_id"],
-        "boundary": payload.get("runner", {}).get("boundary"),
-        "mode": payload.get("mode"),
-        "intents": len(payload.get("intents", [])),
-        "frozen": bool(payload.get("execution", {}).get("frozen")),
-    }
-    stored, deduplicated = _append_event(event, idem)
-    return {"ok": True, "seq": stored.get("seq"), "deduplicated": deduplicated}
+    instance_id = payload["instance_id"]
+    # Runtime state updates on EVERY valid ingest, before and independently of
+    # narration — a narration failure never prevents or rolls back this update.
+    _LIVE_STATUS[instance_id] = payload
+
+    incoming = tuple(payload.get(f) for f in _LIVE_SIGNATURE_FIELDS)
+    payload_at = payload.get("at")
+    prior = _LIVE_GATE.get(instance_id)
+    if prior is None:
+        # Silent first observation / restart re-seed: no event, steady response.
+        _LIVE_GATE[instance_id] = (incoming, payload_at)
+        return {"ok": True, "seq": None, "deduplicated": None}
+    prior_sig, anchor_at = prior
+    if incoming == prior_sig:
+        # Steady state: no transition, no append attempted.
+        return {"ok": True, "seq": None, "deduplicated": None}
+
+    prior_map = dict(zip(_LIVE_SIGNATURE_FIELDS, prior_sig))
+    new_map = dict(zip(_LIVE_SIGNATURE_FIELDS, incoming))
+    runner = payload.get("runner")
+    boundary = runner.get("boundary") if isinstance(runner, dict) else None
+    grounding = {"instance_id": instance_id, "at": payload_at, "boundary": boundary}
+    event_at = payload_at if payload_at else (
+        datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
+
+    # Fixed order: LIVE_MODE_CHANGED first, then the single aggregated
+    # LIVE_CONFIG_CHANGED — at most two events per ingest.
+    pending: list[tuple[dict, str]] = []
+    if new_map["mode"] != prior_map["mode"]:
+        pending.append((
+            {
+                "eventId": f"ev_{uuid.uuid4().hex[:26].upper()}",
+                "seq": 0,  # assigned inside _append_event
+                "category": "operational",
+                "code": "LIVE_MODE_CHANGED",
+                "humanExplanation": (
+                    f"Live instance {instance_id} changed mode from "
+                    f"{prior_map['mode']} to {new_map['mode']}."),
+                "scenarioKey": None,
+                "packageHash": _active_package_hash(),
+                "who": "system",
+                "causedBy": f"live_ingest:{instance_id}",
+                "before": {"mode": prior_map["mode"]},
+                "after": {"mode": new_map["mode"], **grounding},
+                "at": event_at,
+            },
+            f"live|{instance_id}|LIVE_MODE_CHANGED|"
+            f"{prior_map['mode']}|{new_map['mode']}|{anchor_at}",
+        ))
+    changed_cfg = [f for f in _LIVE_CONFIG_FIELDS if new_map[f] != prior_map[f]]
+    if changed_cfg:
+        # Canonical transition delta: exactly the changed fields, stable order,
+        # prior and new values — one aggregated event and one key regardless of
+        # how many of the three fields changed together.
+        delta = ";".join(f"{f}:{prior_map[f]}→{new_map[f]}" for f in changed_cfg)
+        changes_txt = ", ".join(
+            f"{f} {prior_map[f]} → {new_map[f]}" for f in changed_cfg)
+        pending.append((
+            {
+                "eventId": f"ev_{uuid.uuid4().hex[:26].upper()}",
+                "seq": 0,
+                "category": "operational",
+                "code": "LIVE_CONFIG_CHANGED",
+                "humanExplanation": (
+                    f"Live instance {instance_id} configuration changed: "
+                    f"{changes_txt}."),
+                "scenarioKey": None,
+                "packageHash": _active_package_hash(),
+                "who": "system",
+                "causedBy": f"live_ingest:{instance_id}",
+                "before": {f: prior_map[f] for f in changed_cfg},
+                "after": {**{f: new_map[f] for f in changed_cfg}, **grounding},
+                "at": event_at,
+            },
+            f"live|{instance_id}|LIVE_CONFIG_CHANGED|{delta}|{anchor_at}",
+        ))
+
+    last_seq: Any = None
+    any_inserted = False
+    any_processed = False
+    try:
+        for event, idem_key in pending:
+            stored, deduplicated = _append_event(event, idem_key)
+            any_processed = True
+            last_seq = stored.get("seq")
+            if not deduplicated:
+                any_inserted = True
+    except Exception:
+        # Do NOT advance the gate: the same transition retries on the next
+        # equivalent ingest with the identical anchor-derived keys, so any
+        # event that already landed deduplicates instead of duplicating.
+        logger.exception("live_ingest transition narration failed for %s", instance_id)
+        return {"ok": True, "seq": last_seq,
+                "deduplicated": None if not any_processed else (not any_inserted)}
+    # Every required event inserted or confirmed-deduplicated: advance the gate.
+    _LIVE_GATE[instance_id] = (incoming, payload_at)
+    return {"ok": True, "seq": last_seq, "deduplicated": (not any_inserted)}
 
 
 @api_router.get("/ops/status")
