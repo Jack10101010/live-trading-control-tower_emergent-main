@@ -569,7 +569,15 @@ def _runtime_health() -> dict:
 _SYNC_CACHE: dict | None = None
 _SYNC_SEQ = 0
 _LAST_SUCCESSFUL_SYNC_AT: str | None = None
-_LAST_SYNC_SIGNATURE: tuple | None = None
+# P-1B broker-sync transition gate: (signature, anchor_at). `signature` is the
+# canonical reconciliation fingerprint from _sync_signature; `anchor_at` is the
+# sync timestamp at which that signature was seeded or last advanced. The
+# idempotency key derives from the PRIOR anchor, so an equivalent retry of an
+# unadvanced transition reconstructs the identical key regardless of the new
+# sync timestamp; the gate advances only after the append inserts or
+# confirmed-deduplicates. A None gate (process start / backend restart) seeds
+# SILENTLY — a first observation has no from-state and is not a transition.
+_BROKER_SYNC_GATE: tuple[tuple, str] | None = None
 _SYNC_CODE_BY_STATUS = {"ok": "BROKER_SYNC_OK", "warning": "BROKER_SYNC_WARNING", "error": "BROKER_SYNC_ERROR"}
 
 
@@ -612,7 +620,7 @@ def _normalized_broker_views():
 
 
 def _run_broker_sync(append_event: bool = True) -> dict:
-    global _SYNC_CACHE, _SYNC_SEQ, _LAST_SUCCESSFUL_SYNC_AT, _LAST_SYNC_SIGNATURE
+    global _SYNC_CACHE, _SYNC_SEQ, _LAST_SUCCESSFUL_SYNC_AT, _BROKER_SYNC_GATE
     now = _now_iso()
     positions, orders, accounts, connection, capabilities = _normalized_broker_views()
     views = sync_layer.RuntimeViews(
@@ -636,18 +644,41 @@ def _run_broker_sync(append_event: bool = True) -> dict:
     # sync fields update every cycle regardless.
     signature = _sync_signature(result)
     result["eventAppended"] = False
-    if append_event and signature != _LAST_SYNC_SIGNATURE:
+    if append_event and _BROKER_SYNC_GATE is None:
+        # Silent first observation (process start / backend restart): seed the
+        # gate, emit nothing — a first sighting is not a transition. The lazily
+        # triggered append_event=False path never touches the gate, preserving
+        # GET /broker/reconciliation's non-emitting behaviour exactly.
+        _BROKER_SYNC_GATE = (signature, now)
+    elif append_event and signature != _BROKER_SYNC_GATE[0]:
+        prior_sig, anchor_at = _BROKER_SYNC_GATE
         summary = result["reconciliation"]["summary"]
         code = _SYNC_CODE_BY_STATUS.get(status, "BROKER_SYNC_OK")
         explanation = (f"Broker sync {status}: {summary['warnings']} warning(s), {summary['errors']} error(s), "
                        f"{summary['brokerPositions']} position(s), {summary['brokerOrders']} order(s) "
                        f"({result['durationMs']}ms).")
+        # Canonical transition states: exactly the signature's own data —
+        # status plus the deterministically sorted findings identity.
+        before_state = {"status": prior_sig[0], "findings": [list(f) for f in prior_sig[1]]}
+        after_state = {"status": signature[0], "findings": [list(f) for f in signature[1]]}
+        # Deterministic idempotency key: code + prior/new transition state +
+        # the PRIOR anchor. Canonical JSON (sorted keys, no whitespace) — no
+        # process-randomized hashing, no emission timestamp. A retry of the
+        # same unadvanced transition reproduces this key byte-for-byte; a
+        # genuine recurrence follows a gate advance and mints a new key.
+        idem_key = "broker|" + json.dumps(
+            [code, before_state, after_state, anchor_at],
+            sort_keys=True, separators=(",", ":"))
         event = {"eventId": f"ev_{uuid.uuid4().hex[:26].upper()}", "seq": 0, "category": "broker",
                  "code": code, "humanExplanation": explanation, "scenarioKey": None,
-                 "packageHash": _active_package_hash(), "who": "system", "causedBy": f"sync_{_SYNC_SEQ}",
-                 "before": None, "after": {"durationMs": result["durationMs"], **summary}, "at": now}
-        ev, _ = _append_event(event, None)
-        _LAST_SYNC_SIGNATURE = signature
+                 "packageHash": _active_package_hash(), "who": "system",
+                 "causedBy": f"broker_sync:{anchor_at}",
+                 "before": before_state, "after": after_state, "at": now}
+        ev, _ = _append_event(event, idem_key)
+        # Advance only after the append inserted or confirmed-deduplicated; an
+        # exception above propagates (route failure semantics unchanged) and
+        # leaves the gate at (prior_sig, anchor_at) so the retry's key matches.
+        _BROKER_SYNC_GATE = (signature, now)
         result["eventAppended"] = True
         result["eventCode"] = code
         result["eventSeqAppended"] = ev["seq"]
