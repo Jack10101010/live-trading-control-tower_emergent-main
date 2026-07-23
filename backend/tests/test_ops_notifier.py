@@ -711,3 +711,537 @@ def test_policy_phase_completes_before_delivery(dl):
     s = dl.n.tick_once(T(1))
     assert s["initial"] == 1 and s["delivered"] == 1      # policy paged, then delivered
     assert dl_outbox(dl)[0]["status"] == "delivered"
+
+
+# ── L3-C read-only operational surface: last_tick publication + inspect ───────
+# These prove the observability surface is PURE READ (no writes, no quarantine,
+# never _load_outbox), that last_tick is an immutable-after-publish activity
+# snapshot, and that the dead-letter projection is a strict allowlist. They must
+# not weaken any L3-A/L3-B behaviour above.
+
+def _write_outbox(nf, records):
+    nf.outbox.write_text(json.dumps({"schema_version": 1, "records": records}))
+
+
+def _dead(nid, created_at="2026-01-01T00:00:00+00:00", **extra):
+    rec = {"status": "dead_letter", "notification_id": nid, "code": "frozen",
+           "episode_key": f"frozen@{nid}", "decision": "INITIAL",
+           "created_at": created_at, "attempts": 6, "delivered_at": None,
+           "next_attempt_at": None, "last_error": "HTTP 400",
+           "source_generated_at": created_at,
+           "payload": {"code": "frozen", "humanExplanation": "h",
+                       "first_generated_at": "x"}}
+    rec.update(extra)
+    return rec
+
+
+# -- last_tick publication (unit 1-9) --
+
+def test_last_tick_null_before_first_tick(nf):
+    assert nf.n._last_tick is None
+    assert nf.n.inspect(enabled=True, limit=50)["last_tick"] is None
+
+
+def test_baseline_does_not_publish_last_tick(nf):
+    nf.n.baseline(T(0))
+    assert nf.n._last_tick is None
+
+
+def test_completed_tick_publishes_last_tick(nf):
+    nf.n.tick_once(T(0))
+    assert nf.n._last_tick is not None
+
+
+def test_last_tick_at_is_completion_timestamp(tmp_path):
+    # D-L3C-1: at must be the PUBLICATION instant (completion clock), not the
+    # tick-start clock. Tick starts at T1 but the completion clock returns T2.
+    t1 = datetime(2026, 7, 22, 9, 0, 0, tzinfo=timezone.utc)
+    t2 = datetime(2026, 7, 22, 9, 0, 5, tzinfo=timezone.utc)   # later completion
+    n = ops_notifier.OpsNotifier(
+        l1a_provider=lambda now: model(), state_path=tmp_path / "s.json",
+        outbox_path=tmp_path / "o.json", logger=logging.getLogger("l3c_clock"),
+        clock=lambda: t2)
+    n.tick_once(t1)
+    assert n._last_tick["at"] == t2.isoformat()
+    assert n._last_tick["at"] != t1.isoformat()
+
+
+def test_outer_tick_failure_publishes_error_snapshot(nf, monkeypatch):
+    nf.holder["m"] = model(["frozen"], gen_at="GE")
+
+    def boom(*a, **k):
+        raise RuntimeError("delivery blew up")
+
+    monkeypatch.setattr(nf.n, "_deliver_phase", boom)      # outer-try exception
+    nf.n.tick_once(T(1))
+    lt = nf.n._last_tick
+    assert lt is not None and lt["error"] is not None
+    # notifier state was still persisted before the failure (not corrupted).
+    assert nf.n._state is not None and "frozen" in nf.n._state["episodes"]
+
+
+def test_last_tick_decisions_matches_persisted_policy_count(nf):
+    nf.n.tick_once(T(0))
+    nf.holder["m"] = model(["kill_file_present"], gen_at="GK")
+    nf.n.tick_once(T(1))                                   # immediate INITIAL
+    assert nf.n._last_tick["decisions"] == 1 == len(outbox(nf))
+    assert nf.n._last_tick["initial"] == 1
+
+
+def test_last_tick_delivery_subcounts_preserved(dl):
+    dl.fake.script = [200]
+    dl.holder["m"] = model([]); dl.n.tick_once(T(0))
+    dl.holder["m"] = model(["frozen"], gen_at="GD"); dl.n.tick_once(T(1))
+    assert dl.n._last_tick["delivered"] == 1
+
+
+def test_prior_last_tick_unchanged_after_next_tick(nf):
+    nf.n.tick_once(T(0))
+    first = nf.n._last_tick
+    snapshot = dict(first)
+    nf.n.tick_once(T(1))
+    assert first == snapshot                               # byte-for-byte unchanged
+    assert nf.n._last_tick is not first                    # a new object was swapped in
+
+
+def test_publication_does_not_alias_returned_summary(nf):
+    s = nf.n.tick_once(T(0))
+    assert nf.n._last_tick is not s                        # not the mutable summary
+
+
+# -- inspect: read-only + aggregates + projection + corruption (unit 10-23) --
+
+def test_inspect_absent_creates_nothing(nf):
+    m = nf.n.inspect(enabled=True, limit=50)
+    assert m["outbox"] == {"pending": 0, "retry_wait": 0, "delivered": 0,
+                           "dead_letter": 0, "unknown": 0, "total": 0}
+    assert m["dead_letters"] == [] and m["outbox_error"] is None
+    assert not nf.outbox.exists() and not nf.state.exists()
+
+
+def test_inspect_leaves_files_byte_identical(nf):
+    _write_outbox(nf, [_dead("l3|x")])
+    nf.state.write_text(json.dumps({"schema_version": 1, "episodes": {}}))
+    ob_before, st_before = nf.outbox.read_bytes(), nf.state.read_bytes()
+    nf.n.inspect(enabled=True, limit=50)
+    assert nf.outbox.read_bytes() == ob_before
+    assert nf.state.read_bytes() == st_before
+
+
+def test_inspect_does_not_call_delivery(nf, monkeypatch):
+    _write_outbox(nf, [_dead("l3|x")])
+    called = {"n": 0}
+    monkeypatch.setattr(nf.n, "_deliver_phase",
+                        lambda *a, **k: called.__setitem__("n", called["n"] + 1))
+    nf.n.inspect(enabled=True, limit=50)
+    assert called["n"] == 0
+
+
+def test_inspect_does_not_call_pruning(nf, monkeypatch):
+    _write_outbox(nf, [_dead("l3|x")])
+    called = {"n": 0}
+    monkeypatch.setattr(ops_notifier, "_prune_outbox",
+                        lambda r: (called.__setitem__("n", called["n"] + 1), r)[1])
+    nf.n.inspect(enabled=True, limit=50)
+    assert called["n"] == 0
+
+
+def test_inspect_does_not_call_load_outbox(nf, monkeypatch):
+    _write_outbox(nf, [_dead("l3|x")])
+
+    def forbidden(*a, **k):
+        raise AssertionError("_load_outbox (mutating) must not be used by inspect")
+
+    monkeypatch.setattr(nf.n, "_load_outbox", forbidden)
+    m = nf.n.inspect(enabled=True, limit=50)               # must not raise
+    assert m["outbox"]["dead_letter"] == 1
+
+
+def test_inspect_corrupt_not_quarantined(nf):
+    nf.outbox.write_text("{ not valid json ]")
+    before = nf.outbox.read_bytes()
+    m = nf.n.inspect(enabled=True, limit=50)
+    assert m["outbox"] is None and m["outbox_error"] == "outbox unreadable"
+    assert m["dead_letters"] == []
+    assert not nf.outbox.with_name(nf.outbox.name + ".corrupt").exists()
+    assert nf.outbox.read_bytes() == before
+
+
+def test_inspect_corrupt_logs_once_then_resets(nf, caplog):
+    nf.outbox.write_text("{ bad")
+    with caplog.at_level(logging.ERROR):
+        nf.n.inspect(enabled=True, limit=50)
+        nf.n.inspect(enabled=True, limit=50)
+        assert sum("outbox unreadable" in r.getMessage() for r in caplog.records) == 1
+        assert nf.n._inspect_corrupt_logged is True
+        _write_outbox(nf, [])                              # clean read re-arms
+        nf.n.inspect(enabled=True, limit=50)
+        assert nf.n._inspect_corrupt_logged is False
+        nf.outbox.write_text("{ bad again")               # fresh corruption logs again
+        nf.n.inspect(enabled=True, limit=50)
+        assert sum("outbox unreadable" in r.getMessage() for r in caplog.records) == 2
+
+
+def test_inspect_concurrent_during_ticks_is_coherent(nf):
+    import threading
+    stop = threading.Event()
+    errors = []
+
+    def ticker():
+        i = 0
+        while not stop.is_set():
+            try:
+                nf.holder["m"] = model(["consecutive_errors"] if i % 2 else [], gen_at="GC")
+                nf.n.tick_once(T(i)); i += 1
+            except Exception as exc:                       # pragma: no cover
+                errors.append(exc)
+
+    th = threading.Thread(target=ticker); th.start()
+    try:
+        for _ in range(60):
+            m = nf.n.inspect(enabled=True, limit=50)
+            assert set(m) == {"schema_version", "enabled", "running",
+                              "webhook_configured", "interval_s", "last_tick",
+                              "outbox", "outbox_error", "dead_letters"}
+            assert (m["outbox"] is None) == (m["outbox_error"] is not None)
+    finally:
+        stop.set(); th.join()
+    assert not errors
+
+
+def test_inspect_malformed_created_at_does_not_crash(nf):
+    _write_outbox(nf, [_dead("l3|a", created_at="2026-06-01T00:00:00+00:00"),
+                       _dead("l3|b", created_at=None),
+                       _dead("l3|c", created_at=12345)])
+    m = nf.n.inspect(enabled=True, limit=50)               # must not raise
+    order = [d["notification_id"] for d in m["dead_letters"]]
+    assert order[0] == "l3|a"                              # real timestamp newest-first
+    assert set(order) == {"l3|a", "l3|b", "l3|c"}
+
+
+def test_inspect_mixed_status_aggregate(nf):
+    _write_outbox(nf, [
+        {"status": "pending", "notification_id": "p"},
+        {"status": "pending", "notification_id": "p2"},
+        {"status": "retry_wait", "notification_id": "r"},
+        {"status": "delivered", "notification_id": "d"},
+        _dead("l3|x")])
+    agg = nf.n.inspect(enabled=True, limit=50)["outbox"]
+    assert agg == {"pending": 2, "retry_wait": 1, "delivered": 1,
+                   "dead_letter": 1, "unknown": 0, "total": 5}
+
+
+def test_inspect_unknown_status_counted(nf):
+    _write_outbox(nf, [{"status": "weird", "notification_id": "w"},
+                       {"status": None, "notification_id": "n"},
+                       {"status": "pending", "notification_id": "p"}])
+    agg = nf.n.inspect(enabled=True, limit=50)["outbox"]
+    assert agg["unknown"] == 2 and agg["pending"] == 1 and agg["total"] == 3
+
+
+def test_dead_letter_projection_is_allowlisted(nf):
+    _write_outbox(nf, [_dead("l3|x")])
+    d0 = nf.n.inspect(enabled=True, limit=50)["dead_letters"][0]
+    assert set(d0) == {"notification_id", "code", "episode_key", "decision",
+                       "created_at", "attempts", "delivered_at", "next_attempt_at",
+                       "last_error", "source_generated_at", "payload"}
+    assert set(d0["payload"]) == {"code", "humanExplanation", "first_generated_at"}
+
+
+def test_dead_letter_projection_excludes_extra_fields(nf):
+    rec = _dead("l3|x", secret_field="LEAKVALUE")
+    rec["payload"]["secret_payload"] = "LEAKVALUE2"
+    _write_outbox(nf, [rec])
+    blob = json.dumps(nf.n.inspect(enabled=True, limit=50))
+    assert "secret_field" not in blob and "LEAKVALUE" not in blob
+    assert "secret_payload" not in blob and "LEAKVALUE2" not in blob
+
+
+def test_inspect_response_has_no_url_or_paths(nf):
+    _write_outbox(nf, [_dead("l3|x")])
+    nf.n._webhook_url = "https://secret-hook.example/abc?token=SUPERSECRET"
+    blob = json.dumps(nf.n.inspect(enabled=True, limit=50))
+    assert "secret-hook" not in blob and "SUPERSECRET" not in blob
+    assert str(nf.tmp) not in blob and "outbox.json" not in blob
+    assert nf.n.inspect(enabled=True, limit=50)["webhook_configured"] is True
+
+
+# ── L3-C remediation regressions (D-L3C-1 / D-L3C-2 / D-L3C-3 + N2) ───────────
+# Each block below fails under the pre-remediation implementation.
+
+def _clocked(tmp_path, clock, **kw):
+    return ops_notifier.OpsNotifier(
+        l1a_provider=lambda now: model(), state_path=tmp_path / "s.json",
+        outbox_path=tmp_path / "o.json", logger=logging.getLogger("l3c_rem"),
+        clock=clock, **kw)
+
+
+# -- D-L3C-1: completion-time --
+
+def test_completion_time_distinguishes_start_from_publish(tmp_path):
+    t1 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    t2 = t1 + timedelta(seconds=42)
+    seen = {}
+
+    def clock():
+        # publication reads the clock only after the tick body has run.
+        seen["at_publish"] = True
+        return t2
+
+    n = _clocked(tmp_path, clock)
+    n.tick_once(t1)
+    assert n._last_tick["at"] == t2.isoformat() and n._last_tick["at"] != t1.isoformat()
+    assert seen.get("at_publish") is True
+
+
+def test_completion_time_used_on_outer_error(tmp_path, monkeypatch):
+    t1 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    t2 = t1 + timedelta(seconds=7)
+    n = _clocked(tmp_path, clock=lambda: t2)
+    monkeypatch.setattr(n, "_deliver_phase",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    n.tick_once(t1)
+    assert n._last_tick["error"] is not None
+    assert n._last_tick["at"] == t2.isoformat()            # completion clock, even on error
+
+
+def test_default_clock_is_utc_now(tmp_path):
+    before = datetime.now(timezone.utc)
+    n = ops_notifier.OpsNotifier(
+        l1a_provider=lambda now: model(), state_path=tmp_path / "s.json",
+        outbox_path=tmp_path / "o.json", logger=logging.getLogger("l3c_def"))
+    n.tick_once(datetime(2000, 1, 1, tzinfo=timezone.utc))  # ancient tick-start
+    at = datetime.fromisoformat(n._last_tick["at"])
+    assert at >= before                                     # real now, not the 2000 tick time
+
+
+def test_summary_semantics_unchanged_under_clock(tmp_path):
+    n = _clocked(tmp_path, clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc))
+    n.tick_once(T(0))
+    n._provider = lambda now: model(["kill_file_present"], gen_at="GK")
+    s = n.tick_once(T(1))
+    assert s["initial"] == 1 and n._last_tick["decisions"] == 1  # policy counts intact
+
+
+# -- D-L3C-2: parsed chronological ordering --
+
+def _dead_ts(nid, created_at):
+    return {"status": "dead_letter", "notification_id": nid, "created_at": created_at,
+            "payload": {"code": "frozen", "humanExplanation": "h", "first_generated_at": "f"}}
+
+
+def test_mixed_offsets_ordered_by_instant_not_lexical(nf):
+    # +05:00 midnight (2025-12-31T19:00Z) is chronologically OLDER than +00:00 midnight.
+    _write_outbox(nf, [_dead_ts("A", "2026-01-01T00:00:00+05:00"),
+                       _dead_ts("B", "2026-01-01T00:00:00+00:00")])
+    order = [d["notification_id"] for d in nf.n.inspect(enabled=True, limit=50)["dead_letters"]]
+    assert order == ["B", "A"]                              # newest instant first
+
+
+def test_z_and_offset_same_instant_tiebreak_by_id(nf):
+    _write_outbox(nf, [_dead_ts("B", "2026-01-01T00:00:00+00:00"),
+                       _dead_ts("Z", "2026-01-01T00:00:00Z")])
+    order = [d["notification_id"] for d in nf.n.inspect(enabled=True, limit=50)["dead_letters"]]
+    assert order == ["Z", "B"]                              # equal instant -> id desc
+
+
+def test_older_positive_offset_placed_later(nf):
+    _write_outbox(nf, [_dead_ts("old", "2026-01-01T00:00:00+05:00"),
+                       _dead_ts("new", "2026-01-01T00:00:00+00:00")])
+    order = [d["notification_id"] for d in nf.n.inspect(enabled=True, limit=50)["dead_letters"]]
+    assert order.index("old") > order.index("new")
+
+
+def test_naive_iso_treated_as_utc(nf):
+    _write_outbox(nf, [_dead_ts("naive", "2026-01-01T00:00:00"),
+                       _dead_ts("utc", "2026-01-01T00:00:00+00:00")])
+    order = [d["notification_id"] for d in nf.n.inspect(enabled=True, limit=50)["dead_letters"]]
+    assert set(order) == {"naive", "utc"}                   # equal instant, no crash, both present
+
+
+def test_malformed_missing_nonstring_created_at_no_crash(nf):
+    _write_outbox(nf, [_dead_ts("good", "2026-06-01T00:00:00+00:00"),
+                       _dead_ts("bad", "not-a-date"),
+                       _dead_ts("none", None),
+                       _dead_ts("num", 12345)])
+    order = [d["notification_id"] for d in nf.n.inspect(enabled=True, limit=50)["dead_letters"]]
+    assert order[0] == "good"                               # valid ahead of malformed
+    assert set(order) == {"good", "bad", "none", "num"}
+
+
+def test_valid_sorts_ahead_of_malformed(nf):
+    _write_outbox(nf, [_dead_ts("m", "garbage"),
+                       _dead_ts("v", "2020-01-01T00:00:00+00:00")])
+    order = [d["notification_id"] for d in nf.n.inspect(enabled=True, limit=50)["dead_letters"]]
+    assert order == ["v", "m"]
+
+
+def test_equal_instant_ordered_by_id_desc(nf):
+    ts = "2026-01-01T00:00:00+00:00"
+    _write_outbox(nf, [_dead_ts("a", ts), _dead_ts("c", ts), _dead_ts("b", ts)])
+    order = [d["notification_id"] for d in nf.n.inspect(enabled=True, limit=50)["dead_letters"]]
+    assert order == ["c", "b", "a"]
+
+
+def test_projected_created_at_is_stored_value_not_parsed(nf):
+    _write_outbox(nf, [_dead_ts("z", "2026-01-01T00:00:00Z")])
+    d = nf.n.inspect(enabled=True, limit=50)["dead_letters"][0]
+    assert d["created_at"] == "2026-01-01T00:00:00Z"        # stored form, not normalized
+
+
+# -- D-L3C-3: malformed-but-parseable records --
+
+def test_non_dict_records_return_200_aggregate(nf):
+    _write_outbox(nf, [{"status": "pending", "notification_id": "p"}, 123, "s", None, [1, 2]])
+    agg = nf.n.inspect(enabled=True, limit=50)["outbox"]
+    assert agg["total"] == 5 and agg["unknown"] == 4 and agg["pending"] == 1
+
+
+def test_every_malformed_element_increments_unknown_and_total(nf):
+    _write_outbox(nf, [1, "x", None, [], {}])              # 5 malformed/unknown
+    agg = nf.n.inspect(enabled=True, limit=50)["outbox"]
+    assert agg["unknown"] == 5 and agg["total"] == 5
+
+
+def test_malformed_elements_never_enter_dead_letters(nf):
+    _write_outbox(nf, [123, "str", None, _dead_ts("d", "2026-01-01T00:00:00+00:00")])
+    dls = nf.n.inspect(enabled=True, limit=50)["dead_letters"]
+    assert [d["notification_id"] for d in dls] == ["d"]
+
+
+def test_missing_status_dict_increments_unknown(nf):
+    _write_outbox(nf, [{"notification_id": "x"}])
+    assert nf.n.inspect(enabled=True, limit=50)["outbox"]["unknown"] == 1
+
+
+def test_unknown_or_nonstring_status_increments_unknown(nf):
+    _write_outbox(nf, [{"status": "weird", "notification_id": "w"},
+                       {"status": 5, "notification_id": "n"}])
+    assert nf.n.inspect(enabled=True, limit=50)["outbox"]["unknown"] == 2
+
+
+def test_dead_letter_null_payload_no_crash(nf):
+    rec = _dead_ts("d", "2026-01-01T00:00:00+00:00"); rec["payload"] = None
+    _write_outbox(nf, [rec])
+    d = nf.n.inspect(enabled=True, limit=50)["dead_letters"][0]
+    assert d["payload"] == {"code": None, "humanExplanation": None, "first_generated_at": None}
+
+
+def test_dead_letter_string_or_list_payload_no_crash(nf):
+    r1 = _dead_ts("a", "2026-01-01T00:00:00+00:00"); r1["payload"] = "oops"
+    r2 = _dead_ts("b", "2026-02-01T00:00:00+00:00"); r2["payload"] = ["x"]
+    _write_outbox(nf, [r1, r2])
+    for d in nf.n.inspect(enabled=True, limit=50)["dead_letters"]:
+        assert set(d["payload"]) == {"code", "humanExplanation", "first_generated_at"}
+
+
+def test_nested_values_in_allowlisted_fields_returned_null(nf):
+    rec = _dead_ts("d", "2026-01-01T00:00:00+00:00")
+    rec["last_error"] = {"leak": "x"}; rec["code"] = ["nested"]
+    rec["payload"]["humanExplanation"] = {"nested": "y"}
+    _write_outbox(nf, [rec])
+    blob = json.dumps(nf.n.inspect(enabled=True, limit=50))
+    assert "leak" not in blob and "nested" not in blob
+    d = nf.n.inspect(enabled=True, limit=50)["dead_letters"][0]
+    assert d["last_error"] is None and d["code"] is None
+    assert d["payload"]["humanExplanation"] is None
+
+
+def test_invalid_attempts_returns_zero(nf):
+    for bad in (True, "6", 6.0, None, {"x": 1}):
+        rec = _dead_ts("d", "2026-01-01T00:00:00+00:00"); rec["attempts"] = bad
+        _write_outbox(nf, [rec])
+        assert nf.n.inspect(enabled=True, limit=50)["dead_letters"][0]["attempts"] == 0
+    rec = _dead_ts("d", "2026-01-01T00:00:00+00:00"); rec["attempts"] = 4
+    _write_outbox(nf, [rec])
+    assert nf.n.inspect(enabled=True, limit=50)["dead_letters"][0]["attempts"] == 4
+
+
+def test_projection_keys_still_exact_under_corruption(nf):
+    rec = _dead_ts("d", "2026-01-01T00:00:00+00:00"); rec["payload"] = 42
+    _write_outbox(nf, [rec])
+    d = nf.n.inspect(enabled=True, limit=50)["dead_letters"][0]
+    assert set(d) == {"notification_id", "code", "episode_key", "decision", "created_at",
+                      "attempts", "delivered_at", "next_attempt_at", "last_error",
+                      "source_generated_at", "payload"}
+    assert set(d["payload"]) == {"code", "humanExplanation", "first_generated_at"}
+
+
+def test_aggregate_total_independent_of_limit(nf):
+    _write_outbox(nf, [_dead_ts(f"d{i}", f"2026-01-{i+1:02d}T00:00:00+00:00") for i in range(6)])
+    m = nf.n.inspect(enabled=True, limit=2)
+    assert len(m["dead_letters"]) == 2 and m["outbox"]["dead_letter"] == 6 and m["outbox"]["total"] == 6
+
+
+# -- N2: returned last_tick is a copy, not the live published object --
+
+def test_returned_last_tick_is_a_copy(nf):
+    nf.n.tick_once(T(0))
+    returned = nf.n.inspect(enabled=True, limit=50)["last_tick"]
+    returned["decisions"] = 9999
+    assert nf.n._last_tick["decisions"] != 9999            # published object untouched
+
+
+# ── D-L3C-4: non-finite floats in allowlisted fields (must not break serialization) ──
+# json.loads accepts NaN/Infinity/-Infinity from a parseable-but-malformed outbox;
+# strict JSON serialization (allow_nan=False, as Starlette uses) would raise. The
+# scalar boundary must degrade them to null so the endpoint stays 200.
+
+def _write_raw_outbox(nf, records_json_fragment):
+    # write NON-finite tokens as raw JSON so the value is non-finite ONLY after the
+    # production reader's json.loads — never sanitized before the reader sees it.
+    nf.outbox.write_text('{"schema_version":1,"records":[' + records_json_fragment + ']}')
+
+
+def _nonfinite_dead(token_for_code, token_for_payload="\"h\""):
+    return ('{"status":"dead_letter","notification_id":"d",'
+            '"created_at":"2026-01-01T00:00:00+00:00","code":' + token_for_code + ','
+            '"payload":{"code":"frozen","humanExplanation":' + token_for_payload +
+            ',"first_generated_at":"f"}}')
+
+
+def test_scalar_or_none_rejects_nonfinite_floats():
+    assert ops_notifier._scalar_or_none(float("nan")) is None
+    assert ops_notifier._scalar_or_none(float("inf")) is None
+    assert ops_notifier._scalar_or_none(float("-inf")) is None
+    assert ops_notifier._scalar_or_none(3.14) == 3.14      # finite preserved
+    assert ops_notifier._scalar_or_none(True) is True      # bool preserved
+    assert ops_notifier._scalar_or_none(0) == 0
+
+
+import pytest as _pytest
+
+
+@_pytest.mark.parametrize("token", ["NaN", "Infinity", "-Infinity"])
+def test_nonfinite_topfield_degrades_to_null_and_inspect_ok(nf, token):
+    _write_raw_outbox(nf, _nonfinite_dead(token))
+    before = nf.outbox.read_bytes()
+    m = nf.n.inspect(enabled=True, limit=50)               # must not raise
+    d = m["dead_letters"][0]
+    assert d["code"] is None                               # offending top-level field null
+    assert d["payload"]["humanExplanation"] == "h"         # finite/valid sibling intact
+    assert m["outbox"] == {"pending": 0, "retry_wait": 0, "delivered": 0,
+                           "dead_letter": 1, "unknown": 0, "total": 1}   # aggregates coherent
+    assert len(m["dead_letters"]) == 1                     # record still listed
+    assert set(d) == {"notification_id", "code", "episode_key", "decision", "created_at",
+                      "attempts", "delivered_at", "next_attempt_at", "last_error",
+                      "source_generated_at", "payload"}    # projection shape intact
+    json.dumps(m, allow_nan=False)                         # strict-JSON serializable
+    assert nf.outbox.read_bytes() == before                # file untouched
+    assert not nf.outbox.with_name(nf.outbox.name + ".corrupt").exists()
+    assert not nf.state.exists()
+
+
+@_pytest.mark.parametrize("token", ["NaN", "Infinity", "-Infinity"])
+def test_nonfinite_payload_field_degrades_to_null(nf, token):
+    _write_raw_outbox(nf, _nonfinite_dead("\"frozen\"", token_for_payload=token))
+    d = nf.n.inspect(enabled=True, limit=50)["dead_letters"][0]
+    assert d["payload"]["humanExplanation"] is None        # offending payload field null
+    assert d["code"] == "frozen"                           # valid sibling intact
+    json.dumps(nf.n.inspect(enabled=True, limit=50), allow_nan=False)
+
+
+def test_finite_float_field_preserved(nf):
+    _write_raw_outbox(nf, _nonfinite_dead("1.5"))          # finite float in `code`
+    d = nf.n.inspect(enabled=True, limit=50)["dead_letters"][0]
+    assert d["code"] == 1.5

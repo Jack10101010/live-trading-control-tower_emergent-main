@@ -2068,6 +2068,30 @@ async def live_status(instance_id: str | None = None):
     return {"instances": sorted(_LIVE_STATUS), "statuses": _LIVE_STATUS}
 
 
+@api_router.get("/notifier/status")
+def notifier_status_endpoint(limit: int = Query(50, ge=1, le=200)):
+    """L3-C — READ-ONLY Notifier Operational Surface.
+
+    Reports the notifier's live config + worker liveness, its process-lifetime
+    last-tick activity snapshot, fresh full-file outbox aggregates, and a
+    bounded newest-first allowlisted dead-letter projection. It performs NO
+    writes: it never quarantines/renames/prunes the outbox, never delivers,
+    never touches notifier state, and never invokes policy/baseline — all
+    inspection is notifier-owned and server.py never opens or parses the outbox
+    itself. A missing outbox is not an error (zero aggregates); a corrupt or
+    unreadable outbox is DATA (200 with outbox=null + a generic outbox_error);
+    only an unexpected programming fault yields a STABLE generic 500 (details
+    stay server-side). Sync def so the blocking file read runs in the
+    threadpool. `limit` (1..200, default 50) bounds only the listing; aggregates
+    always cover the whole file."""
+    try:
+        model = _ops_notifier.inspect(enabled=OPS_NOTIFIER_ENABLED, limit=limit)
+    except Exception:  # unexpected fault only; degradation is handled as data
+        logger.exception("notifier status inspection failed")
+        raise HTTPException(status_code=500, detail="notifier status unavailable")
+    return JSONResponse(content=model, headers={"Cache-Control": "no-store"})
+
+
 app.include_router(api_router)
 
 app.add_middleware(

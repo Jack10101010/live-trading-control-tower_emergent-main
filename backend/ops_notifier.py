@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import threading
 import urllib.error
@@ -96,12 +97,18 @@ class OpsNotifier:
                  state_path: Path, outbox_path: Path,
                  interval_s: float = 10.0,
                  logger: logging.Logger | None = None,
-                 webhook_url: str | None = None):
+                 webhook_url: str | None = None,
+                 clock: Callable[[], Any] | None = None):
         self._provider = l1a_provider
         self.state_path = Path(state_path)
         self.outbox_path = Path(outbox_path)
         self.interval_s = interval_s
         self.log = logger or logging.getLogger(__name__)
+        # L3-C: completion-clock seam. Used ONLY to stamp last_tick.at at
+        # PUBLICATION time (D-L3C-1) — never for episode identity, policy time,
+        # retry math, or delivery timestamps, which all keep the injected tick
+        # clock. Defaults to UTC-now; tests inject a deterministic sequence.
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
         # L3-B: env-only webhook destination (single operator URL). None/blank
         # or malformed -> delivery is skipped, records stay pending (config
         # error, never a page loss). Read once (env config; restart to change).
@@ -114,6 +121,14 @@ class OpsNotifier:
         self._stop_evt = threading.Event()
         self._lock = threading.Lock()
         self._state: dict | None = None
+        # L3-C read-only observability. `_last_tick` is a process-lifetime
+        # activity snapshot published by the worker after each tick (sole
+        # publisher; the status route only reads the reference). None until the
+        # first tick_once completes and after every restart (never persisted).
+        self._last_tick: dict | None = None
+        # Once-per-process guard so repeated polling of a corrupt outbox by the
+        # read-only status route cannot flood the log; reset on a clean read.
+        self._inspect_corrupt_logged = False
 
     # ── lifecycle (mirrors the projector) ────────────────────────────────────
 
@@ -362,7 +377,37 @@ class OpsNotifier:
         except Exception as exc:
             summary["error"] = str(exc)
             self.log.exception("ops-notifier tick failed safely; state retained")
+        finally:
+            # L3-C: publish this tick's activity snapshot on EVERY exit (normal,
+            # provider-skip, malformed-skip, outer-exception). Purely
+            # observational — it changes no decision/delivery/persistence.
+            self._publish_last_tick(summary)
         return summary
+
+    def _publish_last_tick(self, summary: dict) -> None:
+        """L3-C: publish a completed-tick activity snapshot. Sole publisher is
+        the tick thread; the status route is a reader only. A brand-new dict of
+        copied SCALARS (no reference to the mutable summary/outbox/records/
+        episodes/payload) is assigned to `self._last_tick` in one reference
+        swap and never mutated afterward — so a reader sees the prior-complete
+        or the new-complete object, never a partial one (no lock needed; the
+        start lock is unrelated). `at` is read from the completion clock at
+        PUBLICATION time (D-L3C-1) — the tick-start clock is NOT reused, so a
+        slow delivery phase cannot backdate the snapshot. The delivery
+        sub-counts are ATTEMPTED outcomes for this tick, not a persisted ledger
+        (persisted truth is the fresh outbox aggregate); this preserves the
+        existing summary semantics verbatim."""
+        self._last_tick = {
+            "at": self._clock().isoformat(),
+            "error": summary.get("error"),
+            "decisions": int(summary.get("decisions", 0)),
+            "initial": int(summary.get("initial", 0)),
+            "remind": int(summary.get("remind", 0)),
+            "resolved": int(summary.get("resolved", 0)),
+            "delivered": int(summary.get("delivered", 0)),
+            "retried": int(summary.get("retried", 0)),
+            "dead_lettered": int(summary.get("dead_lettered", 0)),
+        }
 
     # ── L3-B delivery ────────────────────────────────────────────────────────
 
@@ -479,6 +524,135 @@ class OpsNotifier:
         except (OSError, TimeoutError, ValueError) as exc:
             return {"outcome": "retry", "error": type(exc).__name__}
 
+    # ── L3-C read-only operational surface (NO writes; never _load_outbox) ────
+
+    def inspect(self, enabled: bool, limit: int) -> dict:
+        """Assemble the READ-ONLY notifier status model (L3-C). Pure read: it
+        reports live config/liveness + the last-tick snapshot, reads the outbox
+        via the NON-MUTATING reader (never `_load_outbox`, which quarantines by
+        rename), and computes fresh full-file aggregates plus a bounded
+        newest-first allowlisted dead-letter projection. It writes nothing,
+        renames nothing, prunes nothing, delivers nothing, and starts/stops no
+        thread. A corrupt/unreadable outbox is DATA (outbox=null + generic
+        outbox_error, still returned to a 200 route); only an unexpected fault
+        propagates to the route's generic 500. `enabled` is the server-level
+        OPS_NOTIFIER_ENABLED flag (the notifier instance does not own it)."""
+        t = self._thread
+        model = {
+            "schema_version": 1,
+            "enabled": bool(enabled),
+            "running": bool(enabled) and t is not None and t.is_alive(),
+            "webhook_configured": _valid_webhook_url(self._webhook_url),
+            "interval_s": self.interval_s,
+            # N2 hardening: hand callers a shallow SCALAR copy, never the live
+            # published object, so no reachable caller can mutate self._last_tick.
+            "last_tick": (dict(self._last_tick) if self._last_tick is not None else None),
+            "outbox": None,
+            "outbox_error": None,
+            "dead_letters": [],
+        }
+        try:
+            records = self._read_outbox_records()
+        except (ValueError, OSError) as exc:
+            # Known integrity / I/O degradation -> DATA (200). Never quarantine,
+            # never leak path/exception text; log once per process, reset later.
+            model["outbox_error"] = "outbox unreadable"
+            if not self._inspect_corrupt_logged:
+                self._inspect_corrupt_logged = True
+                self.log.error("ops-notifier inspect: outbox unreadable (%s)",
+                               type(exc).__name__)
+            return model
+        # Clean read (absent or valid): re-arm the once-per-process log so a
+        # FUTURE corruption is reported again.
+        self._inspect_corrupt_logged = False
+        model["outbox"] = self._aggregate(records)
+        model["dead_letters"] = self._dead_letter_projection(records, limit)
+        return model
+
+    def _read_outbox_records(self) -> list[dict]:
+        """NON-MUTATING outbox read for L3-C inspection ONLY. Unlike
+        `_load_outbox`, it NEVER renames/quarantines/writes: an absent file
+        returns [] (absence is not corruption); corrupt JSON/shape raises
+        ValueError; an I/O/permission failure raises OSError. The caller turns
+        those into 200 degradation. Read-only by construction."""
+        try:
+            raw = self.outbox_path.read_text()
+        except FileNotFoundError:
+            return []
+        doc = json.loads(raw)  # JSONDecodeError <: ValueError
+        if not isinstance(doc, dict) or doc.get("schema_version") != OUTBOX_SCHEMA_VERSION \
+                or not isinstance(doc.get("records"), list):
+            raise ValueError("outbox shape/schema invalid")
+        return doc["records"]
+
+    @staticmethod
+    def _aggregate(records: list) -> dict:
+        """Full-file status aggregate — NEVER bounded by the listing limit.
+        Every element contributes exactly one to `total`. A non-dict element,
+        or a dict whose status is missing/unknown, contributes one to `unknown`
+        (D-L3C-3: a single malformed-but-parseable record is DATA, never a 500).
+        So counts never mislead and a corrupt record cannot crash the read."""
+        counts = {"pending": 0, "retry_wait": 0, "delivered": 0, "dead_letter": 0}
+        unknown = 0
+        for r in records:
+            st = r.get("status") if isinstance(r, dict) else None
+            if st in counts:
+                counts[st] += 1
+            else:
+                unknown += 1
+        counts["unknown"] = unknown
+        counts["total"] = len(records)
+        return counts
+
+    def _dead_letter_projection(self, records: list, limit: int) -> list[dict]:
+        """Newest-first by PARSED chronological instant (D-L3C-2), tie-broken by
+        notification_id descending (deterministic). Only dict records whose
+        status is exactly 'dead_letter' enter (D-L3C-3). Malformed/missing/
+        non-string created_at parses to a fixed minimum UTC instant (sorts
+        behind all valid timestamps) and never raises; stored values are not
+        mutated while sorting, and the projected created_at is the stored value
+        unchanged (never the parsed datetime)."""
+        dead = [r for r in records
+                if isinstance(r, dict) and r.get("status") == "dead_letter"]
+        dead = sorted(dead,
+                      key=lambda r: (_parse_created_at_utc(r.get("created_at")),
+                                     _sort_key_str(r.get("notification_id"))),
+                      reverse=True)
+        return [self._project_dead_letter(r) for r in dead[:limit]]
+
+    @staticmethod
+    def _project_dead_letter(rec: dict) -> dict:
+        """Explicit allowlist — NEVER the verbatim record, NEVER verbatim
+        payload, so a future record/payload field cannot leak. Every field is
+        scalar-sanitized (D-L3C-3): a stored dict/list/other object in an
+        allowlisted field is returned as null, never leaked by reference.
+        `attempts` returns the stored value only if it is a real int (not bool),
+        else 0. `payload` missing/null/non-dict -> a fully-null allowlisted
+        payload. `last_error` is bounded by L3-B to 'HTTP <n>' / an exception
+        TYPE name (never a URL or body); the webhook URL is never in a record."""
+        payload = rec.get("payload")
+        if not isinstance(payload, dict):
+            payload = {}
+        att = rec.get("attempts")
+        attempts = att if isinstance(att, int) and not isinstance(att, bool) else 0
+        return {
+            "notification_id": _scalar_or_none(rec.get("notification_id")),
+            "code": _scalar_or_none(rec.get("code")),
+            "episode_key": _scalar_or_none(rec.get("episode_key")),
+            "decision": _scalar_or_none(rec.get("decision")),
+            "created_at": _scalar_or_none(rec.get("created_at")),
+            "attempts": attempts,
+            "delivered_at": _scalar_or_none(rec.get("delivered_at")),
+            "next_attempt_at": _scalar_or_none(rec.get("next_attempt_at")),
+            "last_error": _scalar_or_none(rec.get("last_error")),
+            "source_generated_at": _scalar_or_none(rec.get("source_generated_at")),
+            "payload": {
+                "code": _scalar_or_none(payload.get("code")),
+                "humanExplanation": _scalar_or_none(payload.get("humanExplanation")),
+                "first_generated_at": _scalar_or_none(payload.get("first_generated_at")),
+            },
+        }
+
     def baseline(self, now_utc) -> dict:
         """Silent baseline: seed episode state from the current snapshot WITHOUT
         paging. A condition already present at startup/first-run is recorded as
@@ -581,6 +755,58 @@ def _parse_retry_after(value: Any) -> float | None:
     if secs < 0:
         return None
     return float(min(secs, _BACKOFF_CAP_S))
+
+
+def _sort_key_str(value: Any) -> str:
+    """Deterministic, crash-proof sort key: a str passes through; anything else
+    (None, int, malformed) coerces to '' so a malformed notification_id never
+    raises on comparison and sorts last under a descending (newest-first)
+    order."""
+    return value if isinstance(value, str) else ""
+
+
+# A fixed minimum UTC instant for malformed/missing created_at values, so they
+# sort behind every valid timestamp under descending (newest-first) order.
+_MIN_UTC = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _parse_created_at_utc(value: Any) -> datetime:
+    """Parse an ISO-8601 created_at into a UTC-normalized aware datetime for
+    CHRONOLOGICAL ordering (D-L3C-2), never lexical. Supports datetime.isoformat()
+    output, a trailing 'Z' (normalized to +00:00), and explicit offsets. A
+    successfully-parsed NAIVE datetime is treated as UTC. Malformed, missing,
+    or non-string values return a fixed minimum UTC instant so they sort behind
+    all valid timestamps. Never raises; never mutates the stored value."""
+    if not isinstance(value, str):
+        return _MIN_UTC
+    text = value.strip()
+    if text.endswith("Z") or text.endswith("z"):
+        text = text[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(text)
+    except Exception:
+        return _MIN_UTC
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _scalar_or_none(value: Any) -> Any:
+    """Response-safety boundary (D-L3C-3): allow only JSON scalar leaves
+    (str / int / bool / None, and FINITE float) into the projection. A stored
+    dict, list, or any other object in an allowlisted field is returned as null
+    rather than leaked by reference — so parseable corruption cannot smuggle
+    arbitrary nested structures into the response. (bool is a subclass of int,
+    so it is naturally accepted as a boolean.) A NON-finite float (NaN / +Inf /
+    -Inf) — which Python's json.loads accepts from a malformed-but-parseable
+    outbox but which strict JSON serialization (allow_nan=False) rejects — is
+    degraded to null (D-L3C-4), so the read-only status endpoint stays
+    serializable and returns HTTP 200 rather than crashing to 500."""
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    return None
 
 
 def _backoff_s(attempts: int) -> float:
