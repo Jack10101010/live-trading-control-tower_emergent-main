@@ -35,6 +35,7 @@ import portfolio as portfolio_layer
 # object for L1A in the process (no dual identity via a package-form import).
 import ops_status as ops_status_layer
 import ops_journal as ops_journal_layer
+import ops_notifier as ops_notifier_layer
 
 
 ROOT_DIR = Path(__file__).parent
@@ -2106,14 +2107,37 @@ _ops_journal = ops_journal_layer.OpsJournalProjector(
 )
 
 
+# ── L3-A: Notifier policy engine wiring (additive, headless) ─────────────────
+# One process-local notifier (D5). Disabled by default; OPS_NOTIFIER_ENABLED
+# must be explicitly truthy to start it. It is a POLICY engine over the frozen
+# L1A model (same public-API seam as the projector) — it owns no health, writes
+# no BotEvent, and delivers nothing (delivery is L3-B). Its only outputs are its
+# own durable state + outbox files under the backend-owned directory.
+OPS_NOTIFIER_ENABLED = ops_notifier_layer.env_flag(os.environ.get("OPS_NOTIFIER_ENABLED"))
+OPS_NOTIFIER_STATE = ROOT_DIR / "ops_notifier_state.json"
+OPS_NOTIFIER_OUTBOX = ROOT_DIR / "ops_notifier_outbox.json"
+_ops_notifier = ops_notifier_layer.OpsNotifier(
+    l1a_provider=lambda now: ops_status_layer.build_operational_status(
+        ops_status_layer.collect_sources(OPS_STATE_DIR, OPS_MARKET_DATA_DIR, OPS_KILL_FILE),
+        now),
+    state_path=OPS_NOTIFIER_STATE,
+    outbox_path=OPS_NOTIFIER_OUTBOX,
+    logger=logger,
+)
+
+
 @app.on_event("startup")
 async def _start_ops_journal():
     if OPS_JOURNAL_ENABLED:
         _ops_journal.start()
+    if OPS_NOTIFIER_ENABLED:
+        _ops_notifier.baseline(datetime.now(timezone.utc))  # silent seed, no back-page
+        _ops_notifier.start()
 
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
     _ops_journal.stop()  # safe when never started
+    _ops_notifier.stop()  # safe when never started
     if client is not None:
         client.close()

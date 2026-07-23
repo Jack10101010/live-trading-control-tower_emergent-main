@@ -96,6 +96,10 @@ backend/events.db
 # L2-A Operational Transition Log projector checkpoint (narration progress only)
 backend/ops_journal_checkpoint.json
 
+# L3-A Notifier durable state + outbox (derived notifier bookkeeping only)
+backend/ops_notifier_state.json
+backend/ops_notifier_outbox.json
+
 # Runtime state overlay (mutable, layered over the fixture, Phase 4 Step 3)
 backend/runtime.db
 
