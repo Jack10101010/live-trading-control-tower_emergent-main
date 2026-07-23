@@ -43,7 +43,9 @@ import json
 import logging
 import os
 import threading
-from datetime import datetime, timezone
+import urllib.error
+import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -57,10 +59,17 @@ OUTBOX_SCHEMA_VERSION = 1
 _CONFIRM_TICKS = 2
 _IMMEDIATE_CODES = frozenset({"kill_file_present", "frozen"})
 _REMINDER_CADENCE_S = 1800.0  # sustained-degradation reminder interval
-# Bound the delivered/resolved outbox tail (retention pattern; L3-B/L3-C add
-# delivery-aware pruning — here we only cap terminal records to avoid unbounded
-# growth while nothing drains the outbox yet).
-_OUTBOX_MAX_TERMINAL = 5000
+
+# ── L3-B delivery constants (tunable module policy, not frozen architecture) ─
+_DELIVERY_BUDGET_PER_TICK = 20     # max webhook attempts per tick (latency bound)
+_WEBHOOK_TIMEOUT_S = 5.0           # per-request HTTP timeout
+_MAX_ATTEMPTS = 6                  # bounded retries before dead_letter
+_BACKOFF_BASE_S = 30.0             # exponential backoff base
+_BACKOFF_CAP_S = 3600.0            # backoff ceiling
+_DELIVERED_RETENTION = 5000        # keep newest N delivered records
+_DEAD_LETTER_RETENTION = 5000      # keep newest N dead-lettered records (L3-C inspects)
+# HTTP 4xx that are transient and therefore retryable (per the frozen contract).
+_RETRYABLE_4XX = frozenset({408, 425, 429})
 
 
 def env_flag(value: str | None) -> bool:
@@ -86,12 +95,21 @@ class OpsNotifier:
     def __init__(self, l1a_provider: Callable[[Any], dict],
                  state_path: Path, outbox_path: Path,
                  interval_s: float = 10.0,
-                 logger: logging.Logger | None = None):
+                 logger: logging.Logger | None = None,
+                 webhook_url: str | None = None):
         self._provider = l1a_provider
         self.state_path = Path(state_path)
         self.outbox_path = Path(outbox_path)
         self.interval_s = interval_s
         self.log = logger or logging.getLogger(__name__)
+        # L3-B: env-only webhook destination (single operator URL). None/blank
+        # or malformed -> delivery is skipped, records stay pending (config
+        # error, never a page loss). Read once (env config; restart to change).
+        self._webhook_url = (webhook_url or "").strip()
+        self._no_url_warned = False           # once-per-process missing-URL log
+        # A non-redirect-following opener: a webhook must not redirect; a 3xx is
+        # a misconfiguration (permanent), never an SSRF-surprise follow.
+        self._opener = urllib.request.build_opener(_NoRedirect)
         self._thread: threading.Thread | None = None
         self._stop_evt = threading.Event()
         self._lock = threading.Lock()
@@ -334,14 +352,132 @@ class OpsNotifier:
                 have = {r.get("notification_id") for r in records}
                 appended = [r for r in new_records if r["notification_id"] not in have]
                 records.extend(appended)
-                records = _prune_terminal(records, _OUTBOX_MAX_TERMINAL)
+                records = _prune_outbox(records)
                 self._save_outbox(records)
                 summary["decisions"] = len(appended)
             self._save_state(state)
+
+            # ── L3-B delivery phase (single writer; strictly AFTER policy) ────
+            self._deliver_phase(now_utc, summary)
         except Exception as exc:
             summary["error"] = str(exc)
             self.log.exception("ops-notifier tick failed safely; state retained")
         return summary
+
+    # ── L3-B delivery ────────────────────────────────────────────────────────
+
+    def _deliver_phase(self, now_utc, summary: dict) -> None:
+        """Drain due outbox records to the webhook, up to the per-tick budget.
+        Runs in the single tick thread (no separate writer), strictly after the
+        policy phase, so a slow webhook can never delay condition detection.
+        Contained: any failure here is logged and never propagates to the API."""
+        summary["delivered"] = 0
+        summary["retried"] = 0
+        summary["dead_lettered"] = 0
+        if not _valid_webhook_url(self._webhook_url):
+            # Enabled but no/invalid URL: records stay pending, NO attempt, no
+            # attempts++/retry/dead_letter — a config error must not lose pages.
+            if not self._no_url_warned:
+                self._no_url_warned = True
+                self.log.warning("ops-notifier enabled but OPS_NOTIFIER_WEBHOOK_URL "
+                                 "is absent/invalid; notifications remain pending")
+            return
+        try:
+            records = self._load_outbox()
+        except Exception:
+            self.log.exception("ops-notifier delivery: outbox load failed; skipping")
+            return
+        due = self._select_due(records, now_utc)
+        for rec in due:
+            self._attempt(rec, now_utc, summary)
+            # Persist EACH outcome atomically (crash bounds duplicate resends to
+            # the single in-flight record). Then re-prune terminals.
+            try:
+                self._save_outbox(_prune_outbox(records))
+            except Exception:
+                self.log.exception("ops-notifier delivery: outbox save failed; retrying next tick")
+                return
+
+    def _select_due(self, records: list[dict], now_utc) -> list[dict]:
+        """Currently-due delivery records: status in {pending, retry_wait} and
+        (next_attempt_at is None or reached). Oldest created_at first, tie-broken
+        by notification_id (both existing, unique). A backing-off record is not
+        due, so it never blocks later due records. Capped at the tick budget."""
+        due = [r for r in records
+               if r.get("status") in ("pending", "retry_wait") and self._is_due(r, now_utc)]
+        due.sort(key=lambda r: (r.get("created_at", ""), r.get("notification_id", "")))
+        return due[:_DELIVERY_BUDGET_PER_TICK]
+
+    @staticmethod
+    def _is_due(rec: dict, now_utc) -> bool:
+        na = rec.get("next_attempt_at")
+        if na is None:
+            return True
+        return _age_s(now_utc, na) >= 0.0        # now >= next_attempt_at
+
+    def _attempt(self, rec: dict, now_utc, summary: dict) -> None:
+        """One delivery attempt; classify; mutate the record in place. attempts
+        is incremented HERE (on the completed, about-to-be-persisted attempt) —
+        never before the request — so a crash mid-request under-counts (extra
+        retries) rather than premature dead-lettering."""
+        envelope = {
+            "notification_id": rec["notification_id"], "code": rec["code"],
+            "decision": rec["decision"], "episode_key": rec["episode_key"],
+            "payload": rec["payload"], "created_at": rec["created_at"],
+        }
+        result = self._deliver(envelope, rec["notification_id"])
+        rec["attempts"] = rec.get("attempts", 0) + 1
+        now_iso = now_utc.isoformat()
+        if result["outcome"] == "delivered":
+            rec["status"] = "delivered"
+            rec["delivered_at"] = now_iso
+            rec["next_attempt_at"] = None
+            rec["last_error"] = None
+            summary["delivered"] += 1
+        elif result["outcome"] == "permanent" or rec["attempts"] >= _MAX_ATTEMPTS:
+            rec["status"] = "dead_letter"
+            rec["last_error"] = result.get("error")
+            summary["dead_lettered"] += 1
+        else:  # retry
+            delay = result.get("retry_after") or _backoff_s(rec["attempts"])
+            rec["next_attempt_at"] = (now_utc + timedelta(seconds=delay)).isoformat()
+            rec["status"] = "retry_wait"
+            rec["last_error"] = result.get("error")
+            summary["retried"] += 1
+
+    def _deliver(self, envelope: dict, notification_id: str) -> dict:
+        """POST the envelope to the webhook. Returns {outcome, status?, error?,
+        retry_after?}. 2xx=delivered; {408,425,429,5xx}/timeout/URLError/OSError
+        =retry; other 4xx / 3xx=permanent. Response body is never read/parsed/
+        logged; only the status line matters. URL is never logged."""
+        # The caller has already validated the URL shape (missing/malformed ->
+        # records stay pending, no attempt), so this path assumes a well-formed
+        # http(s) URL; any exotic construction failure is caught below as retry
+        # (bounded by _MAX_ATTEMPTS), never a silent page loss.
+        try:
+            data = json.dumps(envelope).encode("utf-8")
+            req = urllib.request.Request(
+                self._webhook_url, data=data, method="POST",
+                headers={"Content-Type": "application/json",
+                         "Idempotency-Key": notification_id})
+            with self._opener.open(req, timeout=_WEBHOOK_TIMEOUT_S) as resp:
+                status = getattr(resp, "status", None) or resp.getcode()
+            if 200 <= int(status) < 300:
+                return {"outcome": "delivered", "status": int(status)}
+            return {"outcome": "permanent", "status": int(status),
+                    "error": f"HTTP {status}"}
+        except urllib.error.HTTPError as exc:
+            status = int(exc.code)
+            if status in _RETRYABLE_4XX or 500 <= status < 600:
+                ra = _parse_retry_after(exc.headers.get("Retry-After")) if status == 429 else None
+                return {"outcome": "retry", "status": status,
+                        "error": f"HTTP {status}", "retry_after": ra}
+            return {"outcome": "permanent", "status": status, "error": f"HTTP {status}"}
+        except urllib.error.URLError as exc:
+            return {"outcome": "retry", "error": type(exc.reason).__name__
+                    if getattr(exc, "reason", None) else "URLError"}
+        except (OSError, TimeoutError, ValueError) as exc:
+            return {"outcome": "retry", "error": type(exc).__name__}
 
     def baseline(self, now_utc) -> dict:
         """Silent baseline: seed episode state from the current snapshot WITHOUT
@@ -406,11 +542,56 @@ def _age_s(now_utc, iso: str) -> float:
         return 0.0
 
 
-def _prune_terminal(records: list[dict], cap: int) -> list[dict]:
-    """Bound growth by capping RESOLVED records (terminal in L3-A, since nothing
-    delivers yet); pending INITIAL/REMIND are always retained."""
-    terminal = [r for r in records if r.get("decision") == "RESOLVED"]
-    if len(terminal) <= cap:
+def _prune_outbox(records: list[dict]) -> list[dict]:
+    """Delivery-STATUS-aware pruning (L3-B). NEVER prunes on decision alone:
+    `pending` and `retry_wait` records are always retained (including a
+    RESOLVED that is still undelivered), so no page is dropped before delivery.
+    Only terminal records are compacted, by count (oldest-first, list order):
+    `delivered` beyond _DELIVERED_RETENTION and `dead_letter` beyond
+    _DEAD_LETTER_RETENTION (dead-letters are retained for the future L3-C
+    operator surface — terminal is not dispensable)."""
+    delivered = [r for r in records if r.get("status") == "delivered"]
+    dead = [r for r in records if r.get("status") == "dead_letter"]
+    drop: set[int] = set()
+    if len(delivered) > _DELIVERED_RETENTION:
+        drop.update(id(r) for r in delivered[:len(delivered) - _DELIVERED_RETENTION])
+    if len(dead) > _DEAD_LETTER_RETENTION:
+        drop.update(id(r) for r in dead[:len(dead) - _DEAD_LETTER_RETENTION])
+    if not drop:
         return records
-    drop = set(id(r) for r in terminal[:len(terminal) - cap])
     return [r for r in records if id(r) not in drop]
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Disable automatic redirect following: a webhook 3xx surfaces as an
+    HTTPError (classified permanent), never a silent cross-host follow."""
+    def redirect_request(self, *args, **kwargs):  # noqa: D401
+        return None
+
+
+def _parse_retry_after(value: Any) -> float | None:
+    """HTTP 429 Retry-After: integer delay-seconds only (smallest reliable
+    form), CLAMPED to _BACKOFF_CAP_S so an untrusted header can never postpone
+    delivery beyond the retry cap or overflow timedelta (D-L3B-1). Negative,
+    malformed, or HTTP-date values -> None (fall back to normal backoff)."""
+    try:
+        secs = int(str(value).strip())
+    except Exception:
+        return None
+    if secs < 0:
+        return None
+    return float(min(secs, _BACKOFF_CAP_S))
+
+
+def _backoff_s(attempts: int) -> float:
+    """Exponential backoff: base * 2^(attempts-1), capped."""
+    n = max(1, attempts)
+    return min(_BACKOFF_CAP_S, _BACKOFF_BASE_S * (2 ** (n - 1)))
+
+
+def _valid_webhook_url(url: str) -> bool:
+    """A usable webhook destination: non-blank and http(s). A blank or
+    malformed value means delivery is skipped and records stay pending (a
+    config error must never lose a page)."""
+    u = (url or "").strip()
+    return u.startswith("http://") or u.startswith("https://")

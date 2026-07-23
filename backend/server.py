@@ -2123,6 +2123,9 @@ _ops_notifier = ops_notifier_layer.OpsNotifier(
     state_path=OPS_NOTIFIER_STATE,
     outbox_path=OPS_NOTIFIER_OUTBOX,
     logger=logger,
+    # L3-B: env-only webhook destination. Absent/blank -> notifications remain
+    # pending (no delivery attempt); the notifier still records decisions.
+    webhook_url=os.environ.get("OPS_NOTIFIER_WEBHOOK_URL"),
 )
 
 
