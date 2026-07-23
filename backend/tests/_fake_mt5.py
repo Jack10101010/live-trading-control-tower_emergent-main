@@ -1,0 +1,162 @@
+"""Deterministic in-process fake of the MetaTrader5 SDK surface used by
+`live/mt5_gateway.py`.
+
+Test-only helper: it requires no real MetaTrader5 package, performs no network
+or filesystem access, and is injected via ``MT5Gateway(config, sdk=FakeMT5(...))``
+so the *real* request-construction code in the gateway runs unchanged. Every
+``order_send`` request is deep-copied when recorded, so a later mutation of the
+request dict by production code (or a test) cannot alter the captured evidence.
+
+It implements only the surface the current gateway touches — it is not a general
+MT5 simulator. Constants are arbitrary but distinct sentinels; tests assert the
+gateway forwards *these* values, not any real broker numbers.
+"""
+
+from __future__ import annotations
+
+import copy
+from types import SimpleNamespace
+
+# ── constants referenced by live/mt5_gateway.py (distinct sentinels) ──────────
+TRADE_ACTION_DEAL = "TRADE_ACTION_DEAL"
+TRADE_ACTION_SLTP = "TRADE_ACTION_SLTP"
+ORDER_TYPE_BUY = 0
+ORDER_TYPE_SELL = 1
+ORDER_TIME_GTC = "ORDER_TIME_GTC"
+ORDER_FILLING_IOC = "ORDER_FILLING_IOC"
+ORDER_FILLING_FOK = "ORDER_FILLING_FOK"
+ORDER_FILLING_RETURN = "ORDER_FILLING_RETURN"
+TRADE_RETCODE_DONE = 10009
+TRADE_RETCODE_DONE_PARTIAL = 10010
+TRADE_RETCODE_REJECT = 10006
+TIMEFRAME_M1 = 1
+
+_UNSET = object()
+
+
+def make_tick(bid: float, ask: float, time: int = 1_700_000_000) -> SimpleNamespace:
+    """A fake symbol tick (only .bid/.ask/.time are read by the gateway)."""
+    return SimpleNamespace(bid=bid, ask=ask, time=time)
+
+
+def make_position(ticket: int, type: int, volume: float, *, symbol: str = "EURUSD",
+                  price_open: float = 1.10000, sl: float = 0.0, tp: float = 0.0,
+                  comment: str = "", magic: int = 77001,
+                  profit: float = 0.0) -> SimpleNamespace:
+    """A fake broker position (fields the gateway/executor read)."""
+    return SimpleNamespace(ticket=ticket, type=type, volume=volume, symbol=symbol,
+                           price_open=price_open, sl=sl, tp=tp, comment=comment,
+                           magic=magic, profit=profit)
+
+
+def make_result(retcode: int = TRADE_RETCODE_DONE, *, order: int = 0,
+                price: float = 0.0, volume: float = 0.0) -> SimpleNamespace:
+    """A fake order_send result (only .retcode/.order/.price/.volume are read)."""
+    return SimpleNamespace(retcode=retcode, order=order, price=price, volume=volume)
+
+
+def make_account(login: int = 1_000_001, server: str = "Broker-Demo",
+                 balance: float = 10_000.0, equity: float = 10_000.0,
+                 currency: str = "EUR", trade_allowed: bool = True) -> SimpleNamespace:
+    return SimpleNamespace(login=login, server=server, balance=balance,
+                           equity=equity, currency=currency, trade_allowed=trade_allowed)
+
+
+class FakeMT5:
+    """Scriptable stand-in for the MetaTrader5 module. Constants live as class
+    attributes so ``gateway.sdk.ORDER_TYPE_BUY`` resolves exactly as in production."""
+
+    # constants (as attributes — the gateway reads them off the injected sdk)
+    TRADE_ACTION_DEAL = TRADE_ACTION_DEAL
+    TRADE_ACTION_SLTP = TRADE_ACTION_SLTP
+    ORDER_TYPE_BUY = ORDER_TYPE_BUY
+    ORDER_TYPE_SELL = ORDER_TYPE_SELL
+    ORDER_TIME_GTC = ORDER_TIME_GTC
+    ORDER_FILLING_IOC = ORDER_FILLING_IOC
+    ORDER_FILLING_FOK = ORDER_FILLING_FOK
+    ORDER_FILLING_RETURN = ORDER_FILLING_RETURN
+    TRADE_RETCODE_DONE = TRADE_RETCODE_DONE
+    TRADE_RETCODE_DONE_PARTIAL = TRADE_RETCODE_DONE_PARTIAL
+    TRADE_RETCODE_REJECT = TRADE_RETCODE_REJECT
+    TIMEFRAME_M1 = TIMEFRAME_M1
+
+    def __init__(self, *, tick=None, positions=None, account=None, terminal=None,
+                 symbol_info=None, order_result=_UNSET, order_exc=None, rates=None,
+                 initialize_ok: bool = True, last_error=(0, "ok")):
+        self._tick = tick
+        self._positions = list(positions or [])
+        self._account = account
+        self._terminal = terminal
+        self._symbol_info = symbol_info
+        self._order_result = make_result() if order_result is _UNSET else order_result
+        self._order_exc = order_exc
+        self._rates = rates
+        self._initialize_ok = initialize_ok
+        self._last_error = last_error
+        # ── call recorders (explicit, inspectable) ──
+        self.initialize_calls: list[dict] = []
+        self.shutdown_calls: int = 0
+        self.symbol_select_calls: list = []
+        self.symbol_info_tick_calls: list = []
+        self.positions_get_calls: list[dict] = []
+        self.orders_get_calls: list[dict] = []
+        self.account_info_calls: int = 0
+        self.copy_rates_range_calls: list = []
+        self.order_send_calls: list[dict] = []
+
+    # ── lifecycle ────────────────────────────────────────────────────────────
+    def initialize(self, **kwargs) -> bool:
+        self.initialize_calls.append(dict(kwargs))
+        return self._initialize_ok
+
+    def shutdown(self) -> None:
+        self.shutdown_calls += 1
+
+    def last_error(self):
+        return self._last_error
+
+    def terminal_info(self):
+        return self._terminal
+
+    # ── account / symbol ──────────────────────────────────────────────────────
+    def account_info(self):
+        self.account_info_calls += 1
+        return self._account
+
+    def symbol_info(self, symbol):
+        return self._symbol_info
+
+    def symbol_select(self, symbol, enable: bool = True) -> bool:
+        self.symbol_select_calls.append((symbol, enable))
+        return True
+
+    def symbol_info_tick(self, symbol):
+        self.symbol_info_tick_calls.append(symbol)
+        return self._tick
+
+    # ── positions / orders ─────────────────────────────────────────────────────
+    def positions_get(self, ticket=None, symbol=None):
+        self.positions_get_calls.append({"ticket": ticket, "symbol": symbol})
+        pos = self._positions
+        if ticket is not None:
+            pos = [p for p in pos if p.ticket == ticket]
+        elif symbol is not None:
+            pos = [p for p in pos if p.symbol == symbol]
+        return list(pos)
+
+    def orders_get(self, symbol=None):
+        self.orders_get_calls.append({"symbol": symbol})
+        return []
+
+    # ── market data ────────────────────────────────────────────────────────────
+    def copy_rates_range(self, symbol, timeframe, date_from, date_to):
+        self.copy_rates_range_calls.append((symbol, timeframe, date_from, date_to))
+        return self._rates
+
+    # ── order submission ───────────────────────────────────────────────────────
+    def order_send(self, request):
+        # Deep-copy so later mutation cannot rewrite the recorded evidence.
+        self.order_send_calls.append(copy.deepcopy(request))
+        if self._order_exc is not None:
+            raise self._order_exc
+        return self._order_result
