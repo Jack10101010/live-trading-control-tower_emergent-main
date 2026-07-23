@@ -51,12 +51,46 @@ from typing import Any, Callable
 CHECKPOINT_SCHEMA_VERSION = 1
 CATEGORY = "operational"
 
-# The complete authorized L2-A vocabulary. No lifecycle/bookkeeping codes exist.
+# The complete authorized vocabulary. No lifecycle/bookkeeping codes exist.
+# Sequence-derived (L2-A): edges in canonical cycle records.
+# Level-derived (L2-B): confirmed edges in canonical L1A classifications,
+# consumed verbatim via the injected level provider — thresholds are NEVER
+# re-derived here, and attention.intervention_required is deliberately NOT
+# narrated (it is a roll-up whose underlying facts are narrated individually).
 CODES = (
     "CYCLE_ERROR", "CYCLE_ERROR_CLEARED",
     "EXECUTION_FROZEN", "EXECUTION_UNFROZEN",
     "PUBLISH_DELIVERY_LOST", "PUBLISH_DELIVERY_RESTORED",
+    "NODE_UNAVAILABLE", "NODE_RECOVERED",
+    "CYCLE_STALLED", "CYCLE_RECOVERED",
+    "FEED_UNHEALTHY", "FEED_RESTORED",
+    "KILL_FILE_ENGAGED", "KILL_FILE_CLEARED",
+    "SOURCES_DEGRADED", "SOURCES_RESTORED",
 )
+
+# Level kinds: checkpoint detector field, (degrade code, recover code), and
+# whether confirmation is debounced (two consecutive observations) or
+# immediate (kill file — a source-grounded existence fact, not NOW-derived).
+# ORDER MATTERS and is the deterministic within-tick emission order:
+# sources_degraded is evaluated FIRST because, while a source outage is
+# confirmed, no per-field classification is trusted — the other kinds neither
+# seed nor debounce until SOURCES_RESTORED reseeds them (silence rule §9).
+_LEVEL_KINDS = {
+    "sources_degraded": ("SOURCES_DEGRADED", "SOURCES_RESTORED", True),
+    "node_unavailable": ("NODE_UNAVAILABLE", "NODE_RECOVERED", True),
+    "cycle_stalled": ("CYCLE_STALLED", "CYCLE_RECOVERED", True),
+    "feed_unhealthy": ("FEED_UNHEALTHY", "FEED_RESTORED", True),
+    "kill_file_present": ("KILL_FILE_ENGAGED", "KILL_FILE_CLEARED", False),
+}
+_DEBOUNCE_CONFIRMATIONS = 2  # consecutive observations required for NOW-derived kinds
+
+# Kinds whose classifications depend on the degraded-able sources: suppressed
+# (no seed, no debounce) while a source outage is confirmed, and reseeded
+# silently after SOURCES_RESTORED. kill_file_present is deliberately EXCLUDED:
+# it derives solely from the S7 existence check, which is always performed and
+# stays canonical during other-source outages — operator kill actions must
+# narrate even mid-outage, and are therefore never reseeded either.
+_OUTAGE_GUARDED = ("node_unavailable", "cycle_stalled", "feed_unhealthy")
 
 _MALFORMED_LOG_PER_TICK = 3  # individually logged bad lines per tick; rest summarized
 
@@ -78,13 +112,18 @@ class OpsJournalProjector:
                  append_event: Callable[[dict, str], tuple],
                  package_hash: Callable[[], str] = lambda: "",
                  interval_s: float = 10.0,
-                 logger: logging.Logger | None = None):
+                 logger: logging.Logger | None = None,
+                 level_provider: Callable[[Any], dict] | None = None):
         self.cycles_path = Path(cycles_path)
         self.checkpoint_path = Path(checkpoint_path)
         self._append = append_event
         self._package_hash = package_hash
         self.interval_s = interval_s
         self.log = logger or logging.getLogger(__name__)
+        # L2-B: injected canonical-status provider (now_utc -> the frozen L1A
+        # model, built via collect_sources + build_operational_status by the
+        # caller). None disables the level pass entirely (L2-A behaviour).
+        self._level_provider = level_provider
         self._thread: threading.Thread | None = None
         self._stop_evt = threading.Event()
         self._lock = threading.Lock()
@@ -128,6 +167,11 @@ class OpsJournalProjector:
             "last_record_identity": None,   # identity string for continuity check
             "detector": {"error_present": None, "frozen": None, "delivered": None},
             "pending": [],                  # [{event, idempotency_key, source_identity}]
+            # L2-B additive keys (schema stays v1: the loader auto-defaults
+            # missing keys, so L2-A checkpoints upgrade by silent seeding and
+            # an L2-A rollback simply ignores them):
+            "level": {k: None for k in _LEVEL_KINDS},   # last CONFIRMED state per kind
+            "debounce": {},                 # kind -> {"state": bool, "count": int}
         }
 
     def _load_checkpoint(self) -> dict:
@@ -153,6 +197,10 @@ class OpsJournalProjector:
                 state.setdefault(key, default)
             if not isinstance(state.get("pending"), list):
                 raise ValueError("pending is not a list")
+            if not isinstance(state.get("level"), dict) or not isinstance(state.get("debounce"), dict):
+                raise ValueError("level/debounce state is not an object")
+            for k in _LEVEL_KINDS:
+                state["level"].setdefault(k, None)
             return state
         except Exception as exc:
             self.log.warning("ops-journal checkpoint malformed (%s); re-baselining", exc)
@@ -161,11 +209,29 @@ class OpsJournalProjector:
     def _baseline(self, reason: str) -> dict:
         """Silent baseline: cursor at the current safe end (end of the last
         COMPLETE line), detector state unseeded, no pending, ZERO events.
-        The projector never back-narrates and never emits a lifecycle event."""
+        Used on cold start and on checkpoint loss/corruption, where there is
+        no trustworthy prior state to carry forward. The projector never
+        back-narrates and never emits a lifecycle event."""
         state = self._fresh_state()
         state["cursor"] = self._safe_end()
         self.log.info("ops-journal baselined at byte %s (%s)", state["cursor"], reason)
         return state
+
+    def _rebaseline_source(self, state: dict, reason: str) -> dict:
+        """Re-baseline ONLY the cycles-source cursor and the sequence detector
+        on a source discontinuity (shrink/replacement). Level narration
+        (pending / level / debounce) is INDEPENDENT of cycles.jsonl, so it is
+        PRESERVED — a confirmed level pending must never be silently discarded
+        just because the cycles file was rotated (audit D-L2B-1). Only the
+        cursor, span, identity and sequence detector legitimately reset here."""
+        fresh = self._fresh_state()
+        fresh["cursor"] = self._safe_end()
+        fresh["pending"] = state.get("pending", [])
+        fresh["level"] = {k: state.get("level", {}).get(k) for k in _LEVEL_KINDS}
+        fresh["debounce"] = state.get("debounce", {})
+        self.log.warning("ops-journal source re-baselined at byte %s (%s); "
+                         "level narration preserved", fresh["cursor"], reason)
+        return fresh
 
     def _safe_end(self) -> int:
         """End of the last complete (newline-terminated) line, or 0."""
@@ -198,8 +264,9 @@ class OpsJournalProjector:
     def _verify_continuity(self, state: dict) -> dict:
         """Detect source discontinuity: file shrink below the cursor, or the
         saved last-record identity no longer matching the bytes at its span.
-        On discontinuity: log, SILENTLY re-baseline (zero events), reset the
-        detector from the new baseline. Never back-narrate a replacement file."""
+        On discontinuity: log, SILENTLY re-baseline the cycles cursor + sequence
+        detector (zero events), PRESERVING level narration (audit D-L2B-1).
+        Never back-narrate a replacement file."""
         try:
             size = self.cycles_path.stat().st_size
         except OSError:
@@ -207,7 +274,7 @@ class OpsJournalProjector:
         if size < state["cursor"]:
             self.log.warning("ops-journal source shrank below cursor (%s < %s); re-baselining",
                              size, state["cursor"])
-            return self._baseline("source shrank")
+            return self._rebaseline_source(state, "source shrank")
         span = state.get("last_record_span")
         if span and state.get("last_record_identity"):
             start, end = span
@@ -221,7 +288,7 @@ class OpsJournalProjector:
                 identity = None
             if identity != state["last_record_identity"]:
                 self.log.warning("ops-journal source continuity mismatch at span %s; re-baselining", span)
-                return self._baseline("continuity mismatch")
+                return self._rebaseline_source(state, "continuity mismatch")
         return state
 
     def _read_new_lines(self, cursor: int) -> tuple[list[tuple[int, int, bytes]], int]:
@@ -337,6 +404,156 @@ class OpsJournalProjector:
                 det["delivered"] = True
         return out
 
+    # ── level-derived narration (L2-B) ───────────────────────────────────────
+
+    @staticmethod
+    def _observe_levels(model: dict) -> dict:
+        """Map the canonical L1A model onto per-kind boolean conditions,
+        consuming ONLY canonical classifications — no thresholds, no
+        timestamps, no direct file inspection. None = not comparable this
+        tick (unknown, or a deliberately silent intermediate): the kind is
+        skipped without touching detector or debounce state.
+
+          node_unavailable : aliveness UNAVAILABLE->True, ALIVE->False;
+                             STALE is a silent intermediate -> None
+          cycle_stalled    : freshness DEGRADED/UNAVAILABLE->True,
+                             FRESH/COMPUTING (both healthy)->False
+          feed_unhealthy   : polling_healthy False->True, True->False
+          kill_file_present: canonical bool, immediate (not NOW-derived)
+          sources_degraded : any expected source unavailable
+        """
+        obs: dict[str, Any] = {}
+        aliveness = (model.get("process") or {}).get("aliveness")
+        obs["node_unavailable"] = {"UNAVAILABLE": True, "ALIVE": False}.get(aliveness)
+        freshness = (model.get("cycle") or {}).get("cycle_freshness")
+        obs["cycle_stalled"] = {"DEGRADED": True, "UNAVAILABLE": True,
+                                "FRESH": False, "COMPUTING": False}.get(freshness)
+        polling = (model.get("data_feed") or {}).get("polling_healthy")
+        obs["feed_unhealthy"] = (not polling) if isinstance(polling, bool) else None
+        kill = (model.get("attention") or {}).get("kill_file_present")
+        obs["kill_file_present"] = kill if isinstance(kill, bool) else None
+        available = (model.get("meta") or {}).get("sources_available")
+        if isinstance(available, dict) and available:
+            obs["sources_degraded"] = not all(v is True for v in available.values())
+            obs["_unavailable_sources"] = sorted(
+                k for k, v in available.items() if v is not True)
+        else:
+            obs["sources_degraded"] = None
+            obs["_unavailable_sources"] = []
+        return obs
+
+    def _level_event(self, kind: str, code: str, old: bool, new: bool,
+                     confirmed_at: str, observed: dict) -> tuple[dict, str]:
+        """Freeze a complete level EventEntry + deterministic key. Level
+        transitions have no replayable source identity, so the confirmation
+        identity (the injected NOW at confirmation, frozen here) IS the
+        identity — it is persisted into pending BEFORE append and never
+        regenerated after a restart."""
+        explanations = {
+            "NODE_UNAVAILABLE": "Live node liveness beacon UNAVAILABLE — process presumed down.",
+            "NODE_RECOVERED": "Live node liveness recovered — beacon ALIVE again.",
+            "CYCLE_STALLED": "Live node cycle heartbeat degraded/unavailable — evaluation stalled.",
+            "CYCLE_RECOVERED": "Live node cycle heartbeat recovered.",
+            "FEED_UNHEALTHY": "Market-data feed polling unhealthy.",
+            "FEED_RESTORED": "Market-data feed polling restored.",
+            "KILL_FILE_ENGAGED": "Operator kill file ENGAGED — new entries blocked.",
+            "KILL_FILE_CLEARED": "Operator kill file cleared.",
+            "SOURCES_DEGRADED": "Operational sources degraded: "
+                                + (", ".join(observed.get("_unavailable_sources", [])) or "unknown") + ".",
+            "SOURCES_RESTORED": "All operational sources available again.",
+        }
+        event = {
+            "eventId": f"ev_{uuid.uuid4().hex[:26].upper()}",
+            "seq": 0,
+            "category": CATEGORY,
+            "code": code,
+            "humanExplanation": explanations[code],
+            "scenarioKey": None,
+            "packageHash": self._package_hash(),
+            "who": "system",
+            "causedBy": f"l2_projector:level:{kind}",
+            "before": {kind: old},
+            "after": {kind: new, "confirmed_at": confirmed_at,
+                      **({"unavailable_sources": observed.get("_unavailable_sources", [])}
+                         if kind == "sources_degraded" and new else {})},
+            "at": confirmed_at,
+        }
+        key = f"l2|{code}|{old}|{new}|{confirmed_at}"
+        return event, key
+
+    def _level_pass(self, state: dict, now_utc, summary: dict) -> None:
+        """Confirmed-edge narration over canonical classifications. Contained
+        independently: a provider failure is logged and skipped (zero events)
+        without disturbing the sequence pass or existing state."""
+        if self._level_provider is None:
+            return
+        try:
+            model = self._level_provider(now_utc)
+            obs = self._observe_levels(model)
+        except Exception:
+            self.log.warning("ops-journal level provider failed; level pass skipped",
+                             exc_info=True)
+            return
+
+        confirmed_at = now_utc.isoformat()
+        level, debounce = state["level"], state["debounce"]
+        transitions: list[tuple[dict, str, str]] = []
+        for kind, (code_on, code_off, debounced) in _LEVEL_KINDS.items():
+            if kind in _OUTAGE_GUARDED and level.get("sources_degraded") is True:
+                # Confirmed source outage: source-dependent classifications are
+                # not trusted — they neither seed nor debounce (any open window
+                # dies) until SOURCES_RESTORED confirms and reseeds them.
+                # kill_file_present is exempt (see _OUTAGE_GUARDED).
+                debounce.pop(kind, None)
+                continue
+            value = obs.get(kind)
+            if value is None:
+                continue                     # unknown/silent-intermediate: untouched
+            if level[kind] is None:
+                level[kind] = value          # SILENT first-observation seed
+                debounce.pop(kind, None)
+                continue
+            if value == level[kind]:
+                debounce.pop(kind, None)     # steady: any pending window dies
+                continue
+            # changed vs confirmed state
+            if debounced:
+                cand = debounce.get(kind)
+                if cand and cand.get("state") == value:
+                    cand["count"] += 1
+                else:
+                    debounce[kind] = cand = {"state": value, "count": 1}
+                if cand["count"] < _DEBOUNCE_CONFIRMATIONS:
+                    continue                 # window open — not yet confirmed
+            debounce.pop(kind, None)
+            code = code_on if value else code_off
+            ev, key = self._level_event(kind, code, level[kind], value,
+                                        confirmed_at, obs)
+            transitions.append((ev, key, f"level:{kind}:{confirmed_at}"))
+            level[kind] = value
+            if kind == "sources_degraded" and not value:
+                # SOURCES_RESTORED: source-dependent detector state reseeds
+                # silently — post-outage classifications must seed fresh, never
+                # narrate against the pre-outage world. kill_file_present is
+                # not reseeded: it stayed trusted throughout the outage.
+                for other in _OUTAGE_GUARDED:
+                    level[other] = None
+                    debounce.pop(other, None)
+
+        if transitions:
+            # Same crash-safe lifecycle as sequence events: freeze -> persist
+            # pending -> append -> remove -> (final checkpoint save follows in
+            # tick_once). Frozen payloads/keys are never regenerated.
+            state["pending"].extend(
+                {"event": ev, "idempotency_key": key, "source_identity": ident}
+                for ev, key, ident in transitions)
+            self._save_checkpoint(state)
+            while state["pending"]:
+                item = state["pending"][0]
+                stored, dedup = self._append(item["event"], item["idempotency_key"])
+                summary["deduplicated" if dedup else "appended"] += 1
+                state["pending"].pop(0)
+
     # ── tick ─────────────────────────────────────────────────────────────────
 
     def tick_once(self, now_utc) -> dict:
@@ -361,11 +578,9 @@ class OpsJournalProjector:
                 summary["deduplicated" if dedup else "appended"] += 1
                 state["pending"].pop(0)
 
-            # 2) Read new complete lines from the cursor.
+            # 2) Read new complete lines from the cursor. (No idle early-return:
+            #    the L2-B level pass below runs on every tick.)
             lines, new_cursor = self._read_new_lines(state["cursor"])
-            if not lines and new_cursor == state["cursor"]:
-                self._save_checkpoint(state)
-                return summary
 
             malformed_logged = 0
             for start, end, raw in lines:
@@ -413,6 +628,11 @@ class OpsJournalProjector:
             if summary["skipped_lines"] > _MALFORMED_LOG_PER_TICK:
                 self.log.warning("ops-journal skipped %s malformed cycles lines this tick",
                                  summary["skipped_lines"])
+
+            # 3) Level-derived narration (L2-B) — always AFTER the sequence
+            #    pass, preserving deterministic within-tick ordering.
+            self._level_pass(state, now_utc, summary)
+
             self._save_checkpoint(state)
         except Exception as exc:
             # Containment: log, keep pending/cursor state for retry, never

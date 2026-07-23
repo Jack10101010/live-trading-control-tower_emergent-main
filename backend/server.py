@@ -2098,6 +2098,11 @@ _ops_journal = ops_journal_layer.OpsJournalProjector(
     append_event=lambda ev, key: _append_event(ev, key),
     package_hash=lambda: _active_package_hash(),
     logger=logger,
+    # L2-B: canonical level classifications, consumed verbatim through the
+    # frozen L1A public API — no thresholds or file inspection in the projector.
+    level_provider=lambda now: ops_status_layer.build_operational_status(
+        ops_status_layer.collect_sources(OPS_STATE_DIR, OPS_MARKET_DATA_DIR, OPS_KILL_FILE),
+        now),
 )
 
 
