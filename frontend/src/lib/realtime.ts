@@ -54,6 +54,10 @@ function affectedRoots(ev: EventEntry): string[] {
       return ['fleet', 'runtimeHealth'];
     case 'policy':
       return ['packages', 'fleet', 'runtimeHealth'];
+    case 'operational':
+      // L2 operational-transition narration: touches only runtime health
+      // (explicit so it no longer relies on the default arm).
+      return ['runtimeHealth'];
     default:
       return ['runtimeHealth'];
   }

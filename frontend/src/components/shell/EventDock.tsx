@@ -2,7 +2,7 @@ import { useEvents } from '@/hooks/useRepository';
 import { useShellStore } from '@/store/shellStore';
 import { IconButton } from '@/components/primitives/Button';
 import { TimestampUTC } from '@/components/primitives';
-import { ChevronDown, ChevronUp, Zap, GitBranch, TrendingUp, Cog } from 'lucide-react';
+import { ChevronDown, ChevronUp, Zap, GitBranch, TrendingUp, Cog, Activity } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /**
@@ -39,8 +39,26 @@ export function EventDock() {
         <div className="h-32 overflow-auto" data-testid="event-dock-content">
           <ul className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
             {events.map((ev) => {
+              // L2-C: operational-transition rows get a distinct Activity glyph,
+              // tinted positive on a recovery edge (code ending _RECOVERED /
+              // _RESTORED / _CLEARED / _UNFROZEN) and warning otherwise, so
+              // health transitions read apart from command/audit rows. Purely
+              // presentational — driven by the event's own category and code;
+              // no severity, no backend lookup, no vocabulary table. Any future
+              // operational code intentionally defaults to the warning tint
+              // unless it adopts one of the approved recovery suffixes above.
+              const isRecovery = /_(RECOVERED|RESTORED|CLEARED|UNFROZEN)$/.test(ev.code);
               const icon =
-                ev.category === 'policy' ? (
+                ev.category === 'operational' ? (
+                  <Activity
+                    size={11}
+                    className={
+                      isRecovery
+                        ? 'text-[color:var(--positive)]'
+                        : 'text-[color:var(--warning)]'
+                    }
+                  />
+                ) : ev.category === 'policy' ? (
                   <GitBranch size={11} className="text-[color:var(--recommendation)]" />
                 ) : ev.category === 'trade' ? (
                   <TrendingUp size={11} className="text-[color:var(--positive)]" />
@@ -56,7 +74,10 @@ export function EventDock() {
                     #{ev.seq}
                   </span>
                   <span className="shrink-0">{icon}</span>
-                  <span className="text-2xs text-text-2 uppercase tracking-wider w-16 shrink-0">
+                  <span
+                    className="text-2xs text-text-2 uppercase tracking-wider w-16 shrink-0"
+                    title={ev.category}
+                  >
                     {ev.category}
                   </span>
                   <span className="mono text-2xs text-text w-40 shrink-0 truncate">{ev.code}</span>
