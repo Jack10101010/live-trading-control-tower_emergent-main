@@ -626,7 +626,10 @@ def test_lr1_sent_adopts_unique_match_and_never_resubmits(tmp_path):
     assert reloaded.data["ledger"][it.intent_id]["detail"]["intent"]["trade_id"] == "L_9"
     # restart: one uniquely matching broker position (comment == intent_id[:26])
     tag = it.intent_id[:26]
-    gw = _SnapshotGateway(cfg, [{"ticket": 555, "magic": cfg.magic_number, "comment": tag}])
+    # Faithful to the real gateway _pos(): a snapshot position always carries
+    # symbol + volume (Slice 4 is symbol/volume-aware; a full-volume match adopts).
+    gw = _SnapshotGateway(cfg, [{"ticket": 555, "magic": cfg.magic_number, "comment": tag,
+                                 "symbol": "EURUSD", "volume": cfg.fixed_risk_lots}])
     d = Executor(cfg, RunnerState(cfg.state_dir), gw).drain_pending(today="2026-07-17")
     assert d["frozen"] is False
     st2 = RunnerState(cfg.state_dir)
@@ -664,7 +667,8 @@ def test_lr1_sent_crash_during_order_send_restores_ledger_and_mirror(tmp_path):
     assert after.data["ledger"][it.intent_id]["detail"]["intent"]["trade_id"] == "L_7"
     # restart: broker actually holds the position
     tag = it.intent_id[:26]
-    recover_gw = _SnapshotGateway(cfg, [{"ticket": 771, "magic": cfg.magic_number, "comment": tag}])
+    recover_gw = _SnapshotGateway(cfg, [{"ticket": 771, "magic": cfg.magic_number, "comment": tag,
+                                         "symbol": "EURUSD", "volume": cfg.fixed_risk_lots}])
     d = Executor(cfg, RunnerState(cfg.state_dir), recover_gw).drain_pending(today="2026-07-17")
     assert d["frozen"] is False
     st2 = RunnerState(cfg.state_dir)
