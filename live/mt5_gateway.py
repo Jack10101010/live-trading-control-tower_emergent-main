@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from live import mt5_results
 from live.broker_constraints import normalize_open
 
 try:  # Windows VPS only; absent everywhere else by design
@@ -131,18 +132,24 @@ class MT5Gateway:
         )
 
     def open_position(self, side: str, lots: float, sl: float, tp: float,
-                      intent_id: str) -> tuple[bool, dict | str]:
+                      intent_id: str) -> "mt5_results.MT5SubmitResult":
+        """Submit ONE open-market order and return a typed classification
+        (LX-1 Slice 3). Never returns a loose tuple; never resubmits; an
+        order_send exception is CAUGHT and typed (EXCEPTION), reconciling the
+        module docstring's 'never raises broker SDK exceptions upward'."""
         if not self._connected:
-            return False, "not connected"
+            return mt5_results.not_submitted("gateway_not_connected", requested_volume=lots)
         tick = self.sdk.symbol_info_tick(self.config.broker_symbol)
         symbol_info = self.sdk.symbol_info(self.config.broker_symbol)
-        # Broker-constraint normalization (LX-1 Slice 2): reject rather than
-        # order_send when the request cannot be made broker-valid. Never widens
+        # Broker-constraint normalization (LX-1 Slice 2): NOT_SUBMITTED (zero
+        # order_send) when the request cannot be made broker-valid. Never widens
         # a strategy stop; never increases volume.
         norm = normalize_open(symbol_info, tick, side, lots, sl, tp,
                               filling_preference=self._filling_preference())
         if not norm.ok:
-            return False, f"normalization_rejected: {norm.reason.value} ({norm.diagnostic})"
+            return mt5_results.not_submitted(
+                f"normalization_rejected: {norm.reason.value} ({norm.diagnostic})",
+                requested_volume=lots)
         o = norm.order
         order_type = self.sdk.ORDER_TYPE_BUY if side == "long" else self.sdk.ORDER_TYPE_SELL
         request = {
@@ -153,10 +160,12 @@ class MT5Gateway:
             "type_time": self.sdk.ORDER_TIME_GTC,
             "type_filling": o.type_filling,
         }
-        result = self.sdk.order_send(request)
-        if result is None or result.retcode != self.sdk.TRADE_RETCODE_DONE:
-            return False, f"order_send failed: {getattr(result, 'retcode', 'none')} {self.sdk.last_error()}"
-        return True, {"ticket": result.order, "price": result.price, "volume": result.volume}
+        try:
+            result = self.sdk.order_send(request)      # called exactly once
+        except Exception as exc:                        # noqa: BLE001 - typed, never propagates
+            return mt5_results.from_exception(exc, requested_volume=o.volume)
+        return mt5_results.classify(mt5_results.extract_evidence(result), o.volume,
+                                    mt5_results.build_retcode_map(self.sdk))
 
     def modify_position_sl(self, ticket: int, sl: float) -> tuple[bool, dict | str]:
         if not self._connected:

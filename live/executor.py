@@ -12,9 +12,10 @@ from datetime import datetime, timezone
 
 from live.intents import (CLOSE_POSITION, MODIFY_STOP, OPEN_POSITION, SKIP_INTRA_WINDOW,
                           OrderIntent)
+from live.mt5_results import MT5SubmitDisposition, usable_ticket, _finite_positive_volume
 from live.safety import SafetyRails
-from live.state import (LEDGER_CONFIRMED, LEDGER_FAILED, LEDGER_PENDING, LEDGER_SENT,
-                        LEDGER_SIMULATED)
+from live.state import (LEDGER_CONFIRMED, LEDGER_FAILED, LEDGER_PARTIAL, LEDGER_PENDING,
+                        LEDGER_SENT, LEDGER_SIMULATED)
 from live.config import SYMBOL
 
 
@@ -121,6 +122,13 @@ class Executor:
                 continue
             result = self._execute(intent)
             applied.append({**intent.to_dict(), **result})
+            # A partial fill, or an ambiguous/exception OPEN outcome, freezes the
+            # cycle: stop processing further intents and require reconciliation
+            # (never resubmit; never auto-place the partial remainder).
+            if result.get("freeze"):
+                self.state.save()
+                return {"frozen": True, "reconcile": report.to_dict(),
+                        "applied": applied, "blocked": blocked, "skipped": skipped}
 
         self.state.save()
         return {"frozen": False, "reconcile": report.to_dict(),
@@ -211,12 +219,15 @@ class Executor:
         self.state.save()   # SENT (with full payload) durable BEFORE the broker call
                             # -> at-most-once submission; restart can restore the mirror
         if intent.action == OPEN_POSITION:
-            ok, res = self.gateway.open_position(intent.side, self.config.fixed_risk_lots,
-                                                 intent.stop or 0.0, intent.target or 0.0,
-                                                 intent.intent_id)
-            if ok:
-                self.state.mirror_set(intent.trade_id, res["ticket"])
-        elif intent.action == MODIFY_STOP:
+            # OPEN goes through the typed result classifier (LX-1 Slice 3).
+            res = self.gateway.open_position(intent.side, self.config.fixed_risk_lots,
+                                             intent.stop or 0.0, intent.target or 0.0,
+                                             intent.intent_id)
+            return self._record_open_result(intent, res)
+
+        # MODIFY / CLOSE keep the existing binary (ok, dict|str) path — their
+        # normalization/classification is out of this slice's scope.
+        if intent.action == MODIFY_STOP:
             ticket = self.state.mirror_ticket(intent.trade_id)
             ok, res = self.gateway.modify_position_sl(ticket, intent.stop)
         elif intent.action == CLOSE_POSITION:
@@ -233,3 +244,44 @@ class Executor:
         self.state.save()   # terminal outcome durable immediately after the broker result
         return {"result": "confirmed" if ok else "failed",
                 "detail": res if isinstance(res, dict) else str(res)}
+
+    def _record_open_result(self, intent, res) -> dict:
+        """Map a typed OPEN MT5SubmitResult to durable ledger/mirror state.
+        Never resubmits and never places a partial remainder. FILLED persists the
+        broker-reported filled volume (not the requested volume). PARTIALLY_FILLED
+        records LEDGER_PARTIAL (never full success) and freezes the cycle.
+        AMBIGUOUS/EXCEPTION leave the record SENT (with its {intent} payload) for
+        _reconcile_sent adoption and freeze the cycle. REJECTED / NOT_SUBMITTED
+        (incl. normalization rejection) are terminal LEDGER_FAILED — no position."""
+        d = res.disposition
+        detail = res.to_ledger_detail()
+        # Defensive backstop (D-S3-1/D-S3-3): FILLED/PARTIALLY_FILLED must carry
+        # BOTH a usable broker ticket AND a finite, strictly-positive filled
+        # volume. The classifier already guarantees this; if an impossible result
+        # reaches here, NEVER record a CONFIRMED/PARTIAL or mutate the mirror —
+        # downgrade to the frozen ambiguous/SENT path (never mirror_set(None)).
+        if d in (MT5SubmitDisposition.FILLED, MT5SubmitDisposition.PARTIALLY_FILLED) \
+                and not (usable_ticket(res.broker_order_ticket)
+                         and _finite_positive_volume(res.filled_volume)):
+            self.state.save()   # leave the SENT record intact for reconciliation
+            return {"result": "ambiguous", "disposition": MT5SubmitDisposition.AMBIGUOUS.value,
+                    "detail": detail, "freeze": True}
+        if d is MT5SubmitDisposition.FILLED:
+            self.state.mirror_set(intent.trade_id, res.broker_order_ticket)
+            self.state.ledger_set(intent.intent_id, LEDGER_CONFIRMED, detail)
+            self.state.save()
+            return {"result": "confirmed", "disposition": d.value, "detail": detail}
+        if d is MT5SubmitDisposition.PARTIALLY_FILLED:
+            self.state.mirror_set(intent.trade_id, res.broker_order_ticket)  # a (partial) position exists
+            self.state.ledger_set(intent.intent_id, LEDGER_PARTIAL, detail)
+            self.state.save()
+            return {"result": "partial", "disposition": d.value, "detail": detail, "freeze": True}
+        if d in (MT5SubmitDisposition.REJECTED, MT5SubmitDisposition.NOT_SUBMITTED):
+            self.state.ledger_set(intent.intent_id, LEDGER_FAILED, detail)
+            self.state.save()
+            return {"result": "failed", "disposition": d.value, "detail": detail}
+        # AMBIGUOUS or EXCEPTION: leave the SENT record intact (do NOT mark
+        # CONFIRMED/FAILED); reconciliation (same-cycle reconcile or restart
+        # _reconcile_sent) resolves it — never a blind resubmit.
+        self.state.save()
+        return {"result": "ambiguous", "disposition": d.value, "detail": detail, "freeze": True}

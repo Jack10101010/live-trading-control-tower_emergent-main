@@ -22,16 +22,19 @@ from pathlib import Path
 LEDGER_PENDING = "pending"
 LEDGER_SENT = "sent"
 LEDGER_CONFIRMED = "confirmed"
+LEDGER_PARTIAL = "partial"       # OPEN filled below requested volume (LX-1 Slice 3)
 LEDGER_FAILED = "failed"
 LEDGER_BLOCKED = "blocked"
 LEDGER_SIMULATED = "simulated"   # dry_run terminal state
 
 # Statuses that reserve_pending must never overwrite: terminal outcomes plus the
 # unresolved-but-in-flight SENT state (downgrading SENT -> PENDING could create a
-# future resubmission path). This set governs re-reservation only; it is NOT a
-# terminal-vs-unresolved classification used elsewhere.
-_NON_RERESERVABLE_STATUSES = frozenset({LEDGER_SENT, LEDGER_CONFIRMED, LEDGER_FAILED,
-                                        LEDGER_BLOCKED, LEDGER_SIMULATED, "frozen"})
+# future resubmission path). PARTIAL is included: a partially-filled position
+# exists at the broker and must never be re-reserved/resubmitted. This set
+# governs re-reservation only; it is NOT a terminal-vs-unresolved classification.
+_NON_RERESERVABLE_STATUSES = frozenset({LEDGER_SENT, LEDGER_CONFIRMED, LEDGER_PARTIAL,
+                                        LEDGER_FAILED, LEDGER_BLOCKED, LEDGER_SIMULATED,
+                                        "frozen"})
 
 
 def frame_hash(frame) -> str:

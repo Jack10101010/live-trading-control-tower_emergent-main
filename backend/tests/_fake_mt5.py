@@ -29,6 +29,20 @@ ORDER_FILLING_RETURN = "ORDER_FILLING_RETURN"
 TRADE_RETCODE_DONE = 10009
 TRADE_RETCODE_DONE_PARTIAL = 10010
 TRADE_RETCODE_REJECT = 10006
+# reject family (deterministic, no position created)
+TRADE_RETCODE_REQUOTE = 10004
+TRADE_RETCODE_INVALID = 10013
+TRADE_RETCODE_INVALID_VOLUME = 10014
+TRADE_RETCODE_INVALID_PRICE = 10015
+TRADE_RETCODE_INVALID_STOPS = 10016
+TRADE_RETCODE_TRADE_DISABLED = 10017
+TRADE_RETCODE_MARKET_CLOSED = 10018
+TRADE_RETCODE_NO_MONEY = 10019
+TRADE_RETCODE_INVALID_FILL = 10030
+# ambiguous family (execution not safely knowable)
+TRADE_RETCODE_PLACED = 10008
+TRADE_RETCODE_TIMEOUT = 10012
+TRADE_RETCODE_CONNECTION = 10031
 TIMEFRAME_M1 = 1
 
 # Symbol filling-capability bitmask flags. FOK/IOC mirror the real MetaTrader5
@@ -69,10 +83,16 @@ def make_position(ticket: int, type: int, volume: float, *, symbol: str = "EURUS
                            magic=magic, profit=profit)
 
 
-def make_result(retcode: int = TRADE_RETCODE_DONE, *, order: int = 0,
-                price: float = 0.0, volume: float = 0.0) -> SimpleNamespace:
-    """A fake order_send result (only .retcode/.order/.price/.volume are read)."""
-    return SimpleNamespace(retcode=retcode, order=order, price=price, volume=volume)
+def make_result(retcode: int = TRADE_RETCODE_DONE, *, order: int = 0, deal: int = 0,
+                price: float = 0.0, volume: float = 0.0, bid: float = 0.0, ask: float = 0.0,
+                comment: str = "", request_id: int = 0,
+                retcode_external: int = 0) -> SimpleNamespace:
+    """A fake order_send result exposing the MT5 result fields the classifier
+    snapshots (retcode/order/deal/volume/price/bid/ask/comment/request_id/
+    retcode_external)."""
+    return SimpleNamespace(retcode=retcode, order=order, deal=deal, price=price,
+                           volume=volume, bid=bid, ask=ask, comment=comment,
+                           request_id=request_id, retcode_external=retcode_external)
 
 
 def make_account(login: int = 1_000_001, server: str = "Broker-Demo",
@@ -98,6 +118,18 @@ class FakeMT5:
     TRADE_RETCODE_DONE = TRADE_RETCODE_DONE
     TRADE_RETCODE_DONE_PARTIAL = TRADE_RETCODE_DONE_PARTIAL
     TRADE_RETCODE_REJECT = TRADE_RETCODE_REJECT
+    TRADE_RETCODE_REQUOTE = TRADE_RETCODE_REQUOTE
+    TRADE_RETCODE_INVALID = TRADE_RETCODE_INVALID
+    TRADE_RETCODE_INVALID_VOLUME = TRADE_RETCODE_INVALID_VOLUME
+    TRADE_RETCODE_INVALID_PRICE = TRADE_RETCODE_INVALID_PRICE
+    TRADE_RETCODE_INVALID_STOPS = TRADE_RETCODE_INVALID_STOPS
+    TRADE_RETCODE_TRADE_DISABLED = TRADE_RETCODE_TRADE_DISABLED
+    TRADE_RETCODE_MARKET_CLOSED = TRADE_RETCODE_MARKET_CLOSED
+    TRADE_RETCODE_NO_MONEY = TRADE_RETCODE_NO_MONEY
+    TRADE_RETCODE_INVALID_FILL = TRADE_RETCODE_INVALID_FILL
+    TRADE_RETCODE_PLACED = TRADE_RETCODE_PLACED
+    TRADE_RETCODE_TIMEOUT = TRADE_RETCODE_TIMEOUT
+    TRADE_RETCODE_CONNECTION = TRADE_RETCODE_CONNECTION
     TIMEFRAME_M1 = TIMEFRAME_M1
     SYMBOL_FILLING_FOK = SYMBOL_FILLING_FOK
     SYMBOL_FILLING_IOC = SYMBOL_FILLING_IOC

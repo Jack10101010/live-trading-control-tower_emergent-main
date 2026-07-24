@@ -9,7 +9,8 @@ from dataclasses import dataclass
 
 from live.config import SYMBOL
 from live.intents import CLOSE_POSITION, MODIFY_STOP, OPEN_POSITION
-from live.state import LEDGER_BLOCKED, LEDGER_CONFIRMED, LEDGER_SENT, LEDGER_SIMULATED
+from live.state import (LEDGER_BLOCKED, LEDGER_CONFIRMED, LEDGER_PARTIAL, LEDGER_SENT,
+                        LEDGER_SIMULATED)
 
 ALLOWED = "allowed"
 
@@ -38,7 +39,7 @@ class SafetyRails:
             return RailVerdict(False, "symbol_whitelist", f"{symbol} != {SYMBOL}")
         # 3) duplicate-order protection — idempotent ledger
         status = self.state.ledger_status(intent.intent_id)
-        if status in (LEDGER_SENT, LEDGER_CONFIRMED, LEDGER_SIMULATED):
+        if status in (LEDGER_SENT, LEDGER_CONFIRMED, LEDGER_PARTIAL, LEDGER_SIMULATED):
             return RailVerdict(False, "duplicate_intent", f"already {status}")
         # 4) daily loss kill switch (opens only)
         if intent.action == OPEN_POSITION:

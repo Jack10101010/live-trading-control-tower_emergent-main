@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 BACKEND_DIR = REPO_ROOT / "backend"
 for p in (str(REPO_ROOT), str(BACKEND_DIR)):
@@ -28,6 +29,7 @@ for p in (str(REPO_ROOT), str(BACKEND_DIR)):
 
 from live.config import LiveConfig                        # noqa: E402
 from live.mt5_gateway import MT5Gateway                   # noqa: E402
+from live.mt5_results import MT5SubmitDisposition as Disp # noqa: E402
 
 from _fake_mt5 import (                                   # noqa: E402
     FakeMT5, make_tick, make_position, make_result, make_symbol_info,
@@ -77,8 +79,8 @@ def test_open_buy_request_shape(tmp_path):
     fake = FakeMT5(tick=make_tick(BID, ASK), symbol_info=_si_passthrough(),
                    order_result=make_result(order=1, price=ASK, volume=VOLUME))
     gw = _connected(tmp_path, fake)
-    ok, _ = gw.open_position("long", VOLUME, SL, TP, LONG_INTENT_ID)
-    assert ok
+    res = gw.open_position("long", VOLUME, SL, TP, LONG_INTENT_ID)
+    assert res.disposition is Disp.FILLED
     assert len(fake.order_send_calls) == 1
     assert fake.order_send_calls[0] == {
         "action": TRADE_ACTION_DEAL, "symbol": "EURUSD",
@@ -104,8 +106,8 @@ def test_open_sell_request_shape(tmp_path):
     fake = FakeMT5(tick=make_tick(BID, ASK), symbol_info=_si_passthrough(),
                    order_result=make_result(order=2, price=BID, volume=VOLUME))
     gw = _connected(tmp_path, fake)
-    ok, _ = gw.open_position("short", VOLUME, sl_short, tp_short, "shortIntent")
-    assert ok
+    res = gw.open_position("short", VOLUME, sl_short, tp_short, "shortIntent")
+    assert res.disposition is Disp.FILLED
     req = fake.order_send_calls[0]
     assert req["type"] == ORDER_TYPE_SELL
     assert req["price"] == BID            # SELL -> bid side
@@ -168,51 +170,53 @@ def test_modify_stop_request_shape_sl_only(tmp_path):
     assert "tp" not in req
 
 
-# ── F. Success result mapping ────────────────────────────────────────────────
+# ── F. Success result mapping (typed FILLED) ─────────────────────────────────
 
-def test_open_success_result_mapping(tmp_path):
+def test_open_success_maps_to_typed_filled(tmp_path):
     fake = FakeMT5(tick=make_tick(BID, ASK), symbol_info=_si_passthrough(),
-                   order_result=make_result(TRADE_RETCODE_DONE, order=555, price=ASK, volume=VOLUME))
+                   order_result=make_result(TRADE_RETCODE_DONE, order=555, deal=777,
+                                            price=ASK, volume=VOLUME))
     gw = _connected(tmp_path, fake)
-    ok, data = gw.open_position("long", VOLUME, SL, TP, LONG_INTENT_ID)
-    assert ok is True
-    assert data == {"ticket": 555, "price": ASK, "volume": VOLUME}
+    res = gw.open_position("long", VOLUME, SL, TP, LONG_INTENT_ID)
+    assert res.disposition is Disp.FILLED and res.freeze is False
+    assert res.broker_order_ticket == 555 and res.broker_deal_ticket == 777
+    assert res.price == ASK and res.filled_volume == VOLUME and res.remaining_volume == 0.0
 
 
-# ── G. Non-success retcode -> collapsed error string ─────────────────────────
+# ── G. Non-success reject -> typed REJECTED (Slice 3, was a collapsed string) ─
 
-def test_non_success_retcode_collapsed_to_error_string(tmp_path):
+def test_non_success_retcode_maps_to_typed_rejected(tmp_path):
     fake = FakeMT5(tick=make_tick(BID, ASK), symbol_info=_si_passthrough(),
                    order_result=make_result(TRADE_RETCODE_REJECT), last_error=(10006, "reject"))
     gw = _connected(tmp_path, fake)
-    ok, err = gw.open_position("long", VOLUME, SL, TP, LONG_INTENT_ID)
-    assert ok is False
-    # Characterize: the retcode is COLLAPSED into a free-text string, not a
-    # structured category (this is exactly what LX-1 slice 3 will replace).
-    assert isinstance(err, str) and str(TRADE_RETCODE_REJECT) in err
+    res = gw.open_position("long", VOLUME, SL, TP, LONG_INTENT_ID)
+    assert res.disposition is Disp.REJECTED and res.freeze is False
+    assert res.retcode == TRADE_RETCODE_REJECT
 
 
-# ── H. None result mapping ───────────────────────────────────────────────────
+# ── H. None result -> typed AMBIGUOUS + freeze (Slice 3) ─────────────────────
 
-def test_none_result_mapping(tmp_path):
+def test_none_result_maps_to_typed_ambiguous(tmp_path):
     fake = FakeMT5(tick=make_tick(BID, ASK), symbol_info=_si_passthrough(),
                    order_result=None, last_error=(1, "no result"))
     gw = _connected(tmp_path, fake)
-    ok, err = gw.open_position("long", VOLUME, SL, TP, LONG_INTENT_ID)
-    assert ok is False
-    assert isinstance(err, str) and "none" in err       # getattr(result,'retcode','none')
+    res = gw.open_position("long", VOLUME, SL, TP, LONG_INTENT_ID)
+    assert res.disposition is Disp.AMBIGUOUS and res.freeze is True
+    assert len(fake.order_send_calls) == 1
 
 
-# ── I. order_send raising an exception -> propagates (characterized) ─────────
+# ── I. order_send exception -> typed EXCEPTION + freeze (Slice 3) ────────────
 
-def test_order_send_exception_propagates(tmp_path):
+def test_order_send_exception_maps_to_typed_exception(tmp_path):
     fake = FakeMT5(tick=make_tick(BID, ASK), symbol_info=_si_passthrough(),
                    order_exc=RuntimeError("connection dropped mid-order_send"))
     gw = _connected(tmp_path, fake)
-    # Current behaviour: the gateway does NOT wrap order_send; the exception
-    # propagates to the caller (the executor relies on this for LR-1 adoption).
-    with pytest.raises(RuntimeError, match="connection dropped"):
-        gw.open_position("long", VOLUME, SL, TP, LONG_INTENT_ID)
+    # Slice 3: order_send exceptions are CAUGHT and typed (never propagate),
+    # reconciling the gateway docstring; the outcome is unknown -> freeze.
+    res = gw.open_position("long", VOLUME, SL, TP, LONG_INTENT_ID)
+    assert res.disposition is Disp.EXCEPTION and res.freeze is True
+    assert "RuntimeError" in res.diagnostic and "connection dropped" in res.diagnostic
+    assert len(fake.order_send_calls) == 1
 
 
 # ── J. Close with missing position -> no order_send ──────────────────────────
@@ -234,7 +238,8 @@ def test_gateway_without_sdk_is_safe(tmp_path):
     ok, detail = gw.connect()
     assert ok is False and "not available" in detail
     # order ops refuse cleanly (not connected), never raising.
-    assert gw.open_position("long", VOLUME, SL, TP, "x") == (False, "not connected")
+    open_res = gw.open_position("long", VOLUME, SL, TP, "x")
+    assert open_res.disposition is Disp.NOT_SUBMITTED and "not_connected" in open_res.diagnostic
     assert gw.close_position(TICKET) == (False, "not connected")
     assert gw.modify_position_sl(TICKET, SL) == (False, "not connected")
 
@@ -253,43 +258,42 @@ def _open(tmp_path, symbol_info, *, volume=0.02, sl=1.09000, tp=1.11000, side="l
     fake = FakeMT5(tick=make_tick(*_OK_TICK), symbol_info=symbol_info,
                    order_result=make_result(TRADE_RETCODE_DONE, order=1, price=1.10123, volume=volume))
     gw = _connected(tmp_path, fake)
-    ok, detail = gw.open_position(side, volume, sl, tp, "normIntent")
-    return fake, ok, detail
+    return fake, gw.open_position(side, volume, sl, tp, "normIntent")
 
 
 # -- Volume --
 
 def test_volume_exact_step_unchanged(tmp_path):
-    fake, ok, _ = _open(tmp_path, _si(volume_step=0.01), volume=0.02)
-    assert ok and fake.order_send_calls[0]["volume"] == 0.02
+    fake, res = _open(tmp_path, _si(volume_step=0.01), volume=0.02)
+    assert res.disposition is Disp.FILLED and fake.order_send_calls[0]["volume"] == 0.02
 
 
 def test_volume_fractional_step_quantized_down(tmp_path):
-    fake, ok, _ = _open(tmp_path, _si(volume_step=0.01), volume=0.017)
-    assert ok and fake.order_send_calls[0]["volume"] == 0.01     # floored, never up
+    fake, res = _open(tmp_path, _si(volume_step=0.01), volume=0.017)
+    assert res.disposition is Disp.FILLED and fake.order_send_calls[0]["volume"] == 0.01     # floored, never up
 
 
 def test_volume_below_minimum_rejected_no_send(tmp_path):
-    fake, ok, detail = _open(tmp_path, _si(volume_min=0.01, volume_step=0.01), volume=0.009)
-    assert ok is False and "volume_below_min" in detail
+    fake, res = _open(tmp_path, _si(volume_min=0.01, volume_step=0.01), volume=0.009)
+    assert res.disposition is Disp.NOT_SUBMITTED and "volume_below_min" in res.diagnostic
     assert fake.order_send_calls == []
 
 
 def test_volume_above_maximum_rejected_no_send(tmp_path):
-    fake, ok, detail = _open(tmp_path, _si(volume_max=1.0, volume_step=0.01), volume=2.0)
-    assert ok is False and "volume_above_max" in detail
+    fake, res = _open(tmp_path, _si(volume_max=1.0, volume_step=0.01), volume=2.0)
+    assert res.disposition is Disp.NOT_SUBMITTED and "volume_above_max" in res.diagnostic
     assert fake.order_send_calls == []
 
 
 def test_volume_zero_rejected_no_send(tmp_path):
-    fake, ok, detail = _open(tmp_path, _si(), volume=0.0)
-    assert ok is False and "invalid_volume" in detail
+    fake, res = _open(tmp_path, _si(), volume=0.0)
+    assert res.disposition is Disp.NOT_SUBMITTED and "invalid_volume" in res.diagnostic
     assert fake.order_send_calls == []
 
 
 def test_volume_nan_rejected_no_send(tmp_path):
-    fake, ok, detail = _open(tmp_path, _si(), volume=float("nan"))
-    assert ok is False and "non_finite" in detail
+    fake, res = _open(tmp_path, _si(), volume=float("nan"))
+    assert res.disposition is Disp.NOT_SUBMITTED and "non_finite" in res.diagnostic
     assert fake.order_send_calls == []
 
 
@@ -297,22 +301,22 @@ def test_volume_nan_rejected_no_send(tmp_path):
 
 def test_stop_wrong_side_rejected_no_send(tmp_path):
     # long with SL ABOVE price -> wrong side.
-    fake, ok, detail = _open(tmp_path, _si(), sl=1.10500, tp=1.11000, side="long")
-    assert ok is False and "stop_wrong_side" in detail
+    fake, res = _open(tmp_path, _si(), sl=1.10500, tp=1.11000, side="long")
+    assert res.disposition is Disp.NOT_SUBMITTED and "stop_wrong_side" in res.diagnostic
     assert fake.order_send_calls == []
 
 
 def test_stop_too_close_rejected_no_send(tmp_path):
     # stops_level 100 * point 0.00001 = 0.001 min distance; SL 0.0001 away.
     si = _si(trade_stops_level=100)
-    fake, ok, detail = _open(tmp_path, si, sl=1.10113, tp=1.11000, side="long")  # ask 1.10123
-    assert ok is False and "stop_too_close" in detail
+    fake, res = _open(tmp_path, si, sl=1.10113, tp=1.11000, side="long")  # ask 1.10123
+    assert res.disposition is Disp.NOT_SUBMITTED and "stop_too_close" in res.diagnostic
     assert fake.order_send_calls == []
 
 
 def test_stops_valid_pass_through(tmp_path):
-    fake, ok, _ = _open(tmp_path, _si(), sl=1.09000, tp=1.11000, side="long")
-    assert ok
+    fake, res = _open(tmp_path, _si(), sl=1.09000, tp=1.11000, side="long")
+    assert res.disposition is Disp.FILLED
     req = fake.order_send_calls[0]
     assert req["sl"] == 1.09000 and req["tp"] == 1.11000
 
@@ -324,8 +328,8 @@ def test_price_and_stops_rounded_to_digits(tmp_path):
     fake = FakeMT5(tick=make_tick(1.230123, 1.234567), symbol_info=_si(digits=3, point=0.001),
                    order_result=make_result(TRADE_RETCODE_DONE, order=1, price=1.235, volume=0.02))
     gw = _connected(tmp_path, fake)
-    ok, _ = gw.open_position("long", 0.02, 1.230444, 1.240555, "roundIntent")
-    assert ok
+    res = gw.open_position("long", 0.02, 1.230444, 1.240555, "roundIntent")
+    assert res.disposition is Disp.FILLED
     req = fake.order_send_calls[0]
     assert req["price"] == 1.235 and req["sl"] == 1.230 and req["tp"] == 1.241
 
@@ -335,8 +339,8 @@ def test_price_and_stops_rounded_to_digits(tmp_path):
 def test_missing_tick_rejected_no_send(tmp_path):
     fake = FakeMT5(tick=None, symbol_info=_si())
     gw = _connected(tmp_path, fake)
-    ok, detail = gw.open_position("long", 0.02, 1.09, 1.11, "x")
-    assert ok is False and "missing_tick" in detail
+    res = gw.open_position("long", 0.02, 1.09, 1.11, "x")
+    assert res.disposition is Disp.NOT_SUBMITTED and "missing_tick" in res.diagnostic
     assert fake.order_send_calls == []
 
 
@@ -354,8 +358,8 @@ def test_stale_tick_rejected_by_module():
 # -- Filling mode selection --
 
 def _filling_req(tmp_path, filling_mode):
-    fake, ok, _ = _open(tmp_path, _si(filling_mode=filling_mode))
-    assert ok
+    fake, res = _open(tmp_path, _si(filling_mode=filling_mode))
+    assert res.disposition is Disp.FILLED
     return fake.order_send_calls[0]["type_filling"]
 
 
@@ -374,8 +378,8 @@ def test_filling_return_preferred_first(tmp_path):
 
 
 def test_filling_unsupported_rejected_no_send(tmp_path):
-    fake, ok, detail = _open(tmp_path, _si(filling_mode=0))
-    assert ok is False and "unsupported_filling" in detail
+    fake, res = _open(tmp_path, _si(filling_mode=0))
+    assert res.disposition is Disp.NOT_SUBMITTED and "unsupported_filling" in res.diagnostic
     assert fake.order_send_calls == []
 
 
@@ -384,8 +388,8 @@ def test_filling_unsupported_rejected_no_send(tmp_path):
 def test_missing_symbol_info_rejected_no_send(tmp_path):
     fake = FakeMT5(tick=make_tick(*_OK_TICK), symbol_info=None)
     gw = _connected(tmp_path, fake)
-    ok, detail = gw.open_position("long", 0.02, 1.09, 1.11, "x")
-    assert ok is False and "missing_symbol_meta" in detail
+    res = gw.open_position("long", 0.02, 1.09, 1.11, "x")
+    assert res.disposition is Disp.NOT_SUBMITTED and "missing_symbol_meta" in res.diagnostic
     assert fake.order_send_calls == []
 
 
@@ -397,16 +401,15 @@ def _open_tick(tmp_path, bid, ask, *, sl=0.0, tp=0.0, side="long"):
     fake = FakeMT5(tick=make_tick(bid, ask), symbol_info=_si(),
                    order_result=make_result(TRADE_RETCODE_DONE, order=1, price=ask, volume=0.02))
     gw = _connected(tmp_path, fake)
-    ok, detail = gw.open_position(side, 0.02, sl, tp, "x")
-    return fake, ok, detail
+    return fake, gw.open_position(side, 0.02, sl, tp, "x")
 
 
 # -- D-S2-1: invalid volume_step fails closed --
 
 @pytest.mark.parametrize("bad_step", [0.0, -0.01, float("nan")])
 def test_invalid_volume_step_rejected_no_send(tmp_path, bad_step):
-    fake, ok, detail = _open(tmp_path, _si(volume_step=bad_step), volume=0.02)
-    assert ok is False and "missing_symbol_meta" in detail
+    fake, res = _open(tmp_path, _si(volume_step=bad_step), volume=0.02)
+    assert res.disposition is Disp.NOT_SUBMITTED and "missing_symbol_meta" in res.diagnostic
     assert fake.order_send_calls == []
 
 
@@ -414,15 +417,15 @@ def test_invalid_volume_step_rejected_no_send(tmp_path, bad_step):
 
 @pytest.mark.parametrize("bad_side", ["buy", "sell", "LONG", "", None])
 def test_unknown_side_rejected_no_send(tmp_path, bad_side):
-    fake, ok, detail = _open(tmp_path, _si(), side=bad_side)
-    assert ok is False and "invalid_side" in detail
+    fake, res = _open(tmp_path, _si(), side=bad_side)
+    assert res.disposition is Disp.NOT_SUBMITTED and "invalid_side" in res.diagnostic
     assert fake.order_send_calls == []
 
 
 def test_canonical_sides_still_accepted(tmp_path):
     for side, sl, tp in (("long", 1.09000, 1.11000), ("short", 1.10500, 1.09500)):
-        fake, ok, _ = _open(tmp_path, _si(), side=side, sl=sl, tp=tp)
-        assert ok and len(fake.order_send_calls) == 1
+        fake, res = _open(tmp_path, _si(), side=side, sl=sl, tp=tp)
+        assert res.disposition is Disp.FILLED and len(fake.order_send_calls) == 1
 
 
 # -- D-S2-3: non-positive / non-finite tick prices fail closed --
@@ -433,8 +436,8 @@ def test_canonical_sides_still_accepted(tmp_path):
     (float("inf"), 1.10123), (1.10101, float("inf")),
 ])
 def test_non_positive_or_nonfinite_tick_rejected_no_send(tmp_path, bid, ask):
-    fake, ok, detail = _open_tick(tmp_path, bid, ask)
-    assert ok is False and "missing_tick" in detail
+    fake, res = _open_tick(tmp_path, bid, ask)
+    assert res.disposition is Disp.NOT_SUBMITTED and "missing_tick" in res.diagnostic
     assert fake.order_send_calls == []
 
 
@@ -443,34 +446,34 @@ def test_non_positive_or_nonfinite_tick_rejected_no_send(tmp_path, bid, ask):
 # Short price = bid 1.10101.
 
 def test_long_sl_exactly_at_min_distance_accepted(tmp_path):
-    fake, ok, _ = _open(tmp_path, _si(trade_stops_level=10), sl=1.10113, tp=1.11000, side="long")
-    assert ok and len(fake.order_send_calls) == 1     # 1.10123-1.10113 == 0.0001 exactly
+    fake, res = _open(tmp_path, _si(trade_stops_level=10), sl=1.10113, tp=1.11000, side="long")
+    assert res.disposition is Disp.FILLED and len(fake.order_send_calls) == 1     # 1.10123-1.10113 == 0.0001 exactly
 
 
 def test_long_tp_exactly_at_min_distance_accepted(tmp_path):
-    fake, ok, _ = _open(tmp_path, _si(trade_stops_level=10), sl=1.09000, tp=1.10133, side="long")
-    assert ok and len(fake.order_send_calls) == 1     # 1.10133-1.10123 == 0.0001 exactly
+    fake, res = _open(tmp_path, _si(trade_stops_level=10), sl=1.09000, tp=1.10133, side="long")
+    assert res.disposition is Disp.FILLED and len(fake.order_send_calls) == 1     # 1.10133-1.10123 == 0.0001 exactly
 
 
 def test_long_sl_one_quantum_inside_rejected(tmp_path):
-    fake, ok, detail = _open(tmp_path, _si(trade_stops_level=10), sl=1.10114, tp=1.11000, side="long")
-    assert ok is False and "stop_too_close" in detail
+    fake, res = _open(tmp_path, _si(trade_stops_level=10), sl=1.10114, tp=1.11000, side="long")
+    assert res.disposition is Disp.NOT_SUBMITTED and "stop_too_close" in res.diagnostic
     assert fake.order_send_calls == []
 
 
 def test_long_tp_one_quantum_inside_rejected(tmp_path):
-    fake, ok, detail = _open(tmp_path, _si(trade_stops_level=10), sl=1.09000, tp=1.10132, side="long")
-    assert ok is False and "stop_too_close" in detail
+    fake, res = _open(tmp_path, _si(trade_stops_level=10), sl=1.09000, tp=1.10132, side="long")
+    assert res.disposition is Disp.NOT_SUBMITTED and "stop_too_close" in res.diagnostic
     assert fake.order_send_calls == []
 
 
 def test_short_sl_exactly_at_min_distance_accepted(tmp_path):
     # short: SL above bid, TP below bid. SL exactly 0.0001 above 1.10101 = 1.10111.
-    fake, ok, _ = _open(tmp_path, _si(trade_stops_level=10), sl=1.10111, tp=1.09000, side="short")
-    assert ok and len(fake.order_send_calls) == 1
+    fake, res = _open(tmp_path, _si(trade_stops_level=10), sl=1.10111, tp=1.09000, side="short")
+    assert res.disposition is Disp.FILLED and len(fake.order_send_calls) == 1
 
 
 def test_short_sl_one_quantum_inside_rejected(tmp_path):
-    fake, ok, detail = _open(tmp_path, _si(trade_stops_level=10), sl=1.10110, tp=1.09000, side="short")
-    assert ok is False and "stop_too_close" in detail
+    fake, res = _open(tmp_path, _si(trade_stops_level=10), sl=1.10110, tp=1.09000, side="short")
+    assert res.disposition is Disp.NOT_SUBMITTED and "stop_too_close" in res.diagnostic
     assert fake.order_send_calls == []
