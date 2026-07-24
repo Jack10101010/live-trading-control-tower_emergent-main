@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,6 +20,21 @@ def _env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
+def _pos_float(name: str, default: str) -> float:
+    """Strictly parse an env-overridable positive float. Fails safely at startup
+    (SystemExit) on a non-numeric, non-finite, or non-positive value — never a
+    silent 0/NaN threshold. (env values are strings, so bool can't arrive here;
+    the finite/>0 gate is the real guard.)"""
+    raw = os.environ.get(name, default)
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        raise SystemExit(f"REFUSED: invalid {name}={raw!r} (not a number)")
+    if not math.isfinite(v) or v <= 0:
+        raise SystemExit(f"REFUSED: invalid {name}={raw!r} (must be finite and > 0)")
+    return v
+
+
 @dataclass
 class LiveConfig:
     # paths
@@ -33,6 +49,12 @@ class LiveConfig:
     max_open_positions: int = int(_env("LIVE_MAX_OPEN_POSITIONS", "6"))
     daily_loss_limit_r: float = float(_env("LIVE_DAILY_LOSS_LIMIT_R", "5.0"))
     magic_number: int = int(_env("LIVE_MT5_MAGIC", "77001"))
+
+    # pre-trade market-condition rails (LX-1 Slice 5) — conservative EURUSD shadow
+    # defaults, price units. max_spread 0.0005 = 5 pips (blocks blown-out spreads);
+    # max_feed_age_s 90 = block a frozen/lagging feed while tolerating minor lag.
+    max_spread: float = field(default_factory=lambda: _pos_float("LIVE_MAX_SPREAD", "0.0005"))
+    max_feed_age_s: float = field(default_factory=lambda: _pos_float("LIVE_MAX_FEED_AGE_S", "90"))
 
     # MT5 (used only on the VPS; gateway degrades gracefully elsewhere)
     mt5_login: str = field(default_factory=lambda: _env("MT5_LOGIN", ""))

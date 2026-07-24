@@ -73,6 +73,13 @@ def make_tick(bid: float, ask: float, time: int = 1_700_000_000) -> SimpleNamesp
     return SimpleNamespace(bid=bid, ask=ask, time=time)
 
 
+def fresh_tick(bid: float, ask: float, *, age_s: float = 1.0) -> SimpleNamespace:
+    """A tick stamped ``age_s`` seconds before now — passes the LX-1 Slice 5
+    feed-freshness rail (unlike make_tick's fixed 2023 default)."""
+    import time as _t
+    return SimpleNamespace(bid=bid, ask=ask, time=int(_t.time() - age_s))
+
+
 def make_position(ticket: int, type: int, volume: float, *, symbol: str = "EURUSD",
                   price_open: float = 1.10000, sl: float = 0.0, tp: float = 0.0,
                   comment: str = "", magic: int = 77001,

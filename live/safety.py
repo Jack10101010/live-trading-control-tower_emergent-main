@@ -5,7 +5,10 @@ automatically). Rails are config-frozen at process start.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
 
 from live.config import SYMBOL
 from live.intents import CLOSE_POSITION, MODIFY_STOP, OPEN_POSITION
@@ -14,12 +17,62 @@ from live.state import (LEDGER_BLOCKED, LEDGER_CONFIRMED, LEDGER_PARTIAL, LEDGER
 
 ALLOWED = "allowed"
 
+# Sentinel: the executor did not sample market conditions this cycle (e.g. the
+# gateway is not connected, or there is no OPEN intent). The market-condition
+# rails are then SKIPPED — distinct from ``None``, which means "sampled but
+# unavailable/malformed" and BLOCKS an OPEN fail-closed.
+MARKET_NOT_EVALUATED = object()
+
+# Small allowance for broker/VPS clock jitter when judging a tick "ahead of
+# server time". A tick more than this many seconds in the future is malformed.
+_CLOCK_SKEW_TOLERANCE_S = 2.0
+
 
 @dataclass(frozen=True)
 class RailVerdict:
     allowed: bool
     rail: str
     detail: str = ""
+
+
+@dataclass(frozen=True)
+class MarketCondition:
+    """Immutable pre-trade market sample — plain scalars only, no SDK object.
+    Produced by the gateway's read-only accessor, consumed by the OPEN rails.
+
+    ``server_time_utc`` is the LOCAL/reference process clock (time-synced VPS) at
+    sample time — NOT the broker's server clock — used only as the reference for
+    how old ``tick_time_utc`` (the broker's last-tick time) is. Both must be
+    timezone-aware UTC; the freshness rail rejects naive/mixed evidence."""
+    symbol: str
+    bid: float
+    ask: float
+    tick_time_utc: datetime
+    server_time_utc: datetime
+
+
+def _finite_pos(x) -> bool:
+    """A usable price: numeric, finite, strictly > 0 — never bool/None/str."""
+    if isinstance(x, bool) or x is None:
+        return False
+    if isinstance(x, (int, float)):
+        return math.isfinite(x) and x > 0
+    return False
+
+
+def _age_seconds(market: MarketCondition):
+    """server_time - tick_time in seconds, or None if either timestamp is missing,
+    not a datetime, or naive (tz-aware UTC evidence is required — a naive or mixed
+    pair is malformed, never subtracted/clamped). Never raises."""
+    st, tt = market.server_time_utc, market.tick_time_utc
+    if not isinstance(st, datetime) or not isinstance(tt, datetime):
+        return None
+    if st.tzinfo is None or st.utcoffset() is None or tt.tzinfo is None or tt.utcoffset() is None:
+        return None   # require timezone-aware evidence on BOTH sides
+    try:
+        return (st - tt).total_seconds()
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 class SafetyRails:
@@ -30,7 +83,8 @@ class SafetyRails:
     def _kill_switch_on(self) -> bool:
         return self.config.kill_file.exists()
 
-    def evaluate(self, intent, symbol: str, today: str) -> RailVerdict:
+    def evaluate(self, intent, symbol: str, today: str,
+                 market=MARKET_NOT_EVALUATED) -> RailVerdict:
         # 1) global kill switch — blocks everything except engine-driven closes
         if self._kill_switch_on() and intent.action != CLOSE_POSITION:
             return RailVerdict(False, "kill_switch", str(self.config.kill_file))
@@ -51,11 +105,55 @@ class SafetyRails:
             if self.state.open_mirror_count() >= self.config.max_open_positions:
                 return RailVerdict(False, "max_open_positions",
                                    f"mirror at {self.state.open_mirror_count()}")
+            # 7) pre-trade market-condition rails (LX-1 Slice 5) — OPEN-only,
+            # evaluated only when the executor sampled market conditions this
+            # cycle (gateway connected). CLOSE/MODIFY are never gated by these.
+            if market is not MARKET_NOT_EVALUATED:
+                mv = self._market_verdict(market)
+                if not mv.allowed:
+                    return mv
         # 6) modify/close must reference a mirrored position
         if intent.action in (MODIFY_STOP, CLOSE_POSITION):
             if self.state.mirror_ticket(intent.trade_id) is None:
                 return RailVerdict(False, "unknown_position",
                                    f"no mirrored ticket for {intent.trade_id}")
+        return RailVerdict(True, ALLOWED)
+
+    def _market_verdict(self, market) -> RailVerdict:
+        """OPEN market-condition gate: spread ceiling + feed freshness. Fail-
+        closed — an unavailable (None) or malformed sample blocks as stale_feed;
+        the rail never trusts unvalidated numbers even though the gateway already
+        rejects them. All evidence is a plain JSON-safe string."""
+        if market is None:
+            return RailVerdict(False, "stale_feed", "market conditions unavailable")
+        # defensive re-validation of the sampled prices
+        if not (_finite_pos(market.bid) and _finite_pos(market.ask)):
+            return RailVerdict(False, "stale_feed",
+                               f"malformed prices bid={market.bid!r} ask={market.ask!r}")
+        if market.ask < market.bid:
+            return RailVerdict(False, "stale_feed",
+                               f"ask {market.ask} below bid {market.bid}")
+        # spread ceiling — Decimal-exact so equality at the ceiling is ALLOWED
+        # (block strictly-greater only) and clean quotes carry no float dust.
+        try:
+            spread = Decimal(str(market.ask)) - Decimal(str(market.bid))
+            ceiling = Decimal(str(self.config.max_spread))
+        except (InvalidOperation, ValueError):
+            return RailVerdict(False, "stale_feed", "non-numeric spread comparison")
+        if spread > ceiling:
+            return RailVerdict(False, "spread_ceiling",
+                               f"spread {float(spread)} > ceiling {float(ceiling)} "
+                               f"(bid={market.bid}, ask={market.ask})")
+        # feed freshness — server_time - tick_time
+        age = _age_seconds(market)
+        if age is None:
+            return RailVerdict(False, "stale_feed", "malformed tick/server timestamps")
+        if age > self.config.max_feed_age_s:
+            return RailVerdict(False, "stale_feed",
+                               f"tick age {age:.1f}s > max {self.config.max_feed_age_s}s")
+        if age < -_CLOCK_SKEW_TOLERANCE_S:
+            return RailVerdict(False, "stale_feed",
+                               f"tick {(-age):.1f}s ahead of server time")
         return RailVerdict(True, ALLOWED)
 
     def record_block(self, intent, verdict: RailVerdict) -> None:

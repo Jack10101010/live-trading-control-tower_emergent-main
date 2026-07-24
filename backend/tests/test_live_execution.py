@@ -46,7 +46,9 @@ def _intent(iid="ex1", trade_id="T1"):
 
 def _run(tmp_path, *, order_result=..., order_exc=None, positions=None, mode="live"):
     cfg = _cfg(tmp_path, mode)
-    fake = F.FakeMT5(tick=F.make_tick(*_TICK), symbol_info=_SI, account=F.make_account(),
+    # Fresh tick (age ~1s) so the LX-1 Slice 5 feed-freshness rail passes; spread
+    # 2.2 pips is well below the 5-pip ceiling — OPENs follow the normal path.
+    fake = F.FakeMT5(tick=F.fresh_tick(*_TICK), symbol_info=_SI, account=F.make_account(),
                      order_result=order_result, order_exc=order_exc, positions=positions or [])
     gw = MT5Gateway(cfg, sdk=fake)
     if mode == "live":
@@ -190,12 +192,22 @@ def test_done_zero_volume_via_gateway_stays_sent(tmp_path):
 
 class _StubGateway:
     """Minimal gateway: clean reconcile snapshot + a scripted open_position result
-    (used to force an IMPOSSIBLE classifier result at the executor guard)."""
+    (used to force an IMPOSSIBLE classifier result at the executor guard).
+    Connected with a fresh, in-spread market sample so the OPEN passes the
+    Slice-5 rails and reaches _record_open_result."""
+    connected = True
+
     def __init__(self, result):
         self._result = result
 
     def snapshot(self):
         return True, {"account": None, "positions": [], "orders": []}
+
+    def market_condition(self):
+        from datetime import datetime, timezone
+        from live.safety import MarketCondition
+        now = datetime.now(timezone.utc)
+        return MarketCondition("EURUSD", 1.10101, 1.10123, now, now)
 
     def open_position(self, *a, **k):
         return self._result

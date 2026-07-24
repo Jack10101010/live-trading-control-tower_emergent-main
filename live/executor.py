@@ -16,7 +16,7 @@ from live.mt5_results import MT5SubmitDisposition, usable_ticket, _finite_positi
 from live.reconciliation import (ReconOutcome, ReconFinding, ReconciliationReport,
                                  classify_fill, classify_matched, match_candidates,
                                  normalize_snapshot)
-from live.safety import SafetyRails
+from live.safety import MARKET_NOT_EVALUATED, SafetyRails
 from live.state import (LEDGER_CONFIRMED, LEDGER_FAILED, LEDGER_PARTIAL, LEDGER_PENDING,
                         LEDGER_SENT, LEDGER_SIMULATED)
 from live.config import SYMBOL
@@ -234,13 +234,29 @@ class Executor:
             return {"frozen": True, "reconcile": report.to_dict(),
                     "applied": [], "blocked": [i.to_dict() for i in intents], "skipped": []}
 
+        # Market conditions are sampled ONCE per cycle and reused for every OPEN
+        # (never per-intent). Sampled only when the gateway is connected AND the
+        # cycle contains an OPEN — otherwise MARKET_NOT_EVALUATED skips the rails
+        # (a not-connected gateway cannot submit anyway). Ordering: reconcile (done
+        # above) -> sample -> rail evaluation -> execution.
+        market = MARKET_NOT_EVALUATED
+        if self.gateway.connected and any(i.action == OPEN_POSITION for i in intents):
+            # The gateway accessor is non-throwing by contract; this guard is
+            # defence-in-depth — a sampling exception becomes UNAVAILABLE (None)
+            # so every OPEN blocks fail-closed via the existing stale_feed rail
+            # (no normalization logic is duplicated here).
+            try:
+                market = self.gateway.market_condition()   # MarketCondition | None (None -> block)
+            except Exception:   # noqa: BLE001
+                market = None
+
         for intent in intents:
             if intent.action == SKIP_INTRA_WINDOW:
                 self.state.ledger_set(intent.intent_id, LEDGER_SIMULATED,
                                       {"note": "intra-window fill+exit; never sent"})
                 skipped.append(intent.to_dict())
                 continue
-            verdict = self.rails.evaluate(intent, SYMBOL, today)
+            verdict = self.rails.evaluate(intent, SYMBOL, today, market)
             if not verdict.allowed:
                 self.rails.record_block(intent, verdict)
                 blocked.append({**intent.to_dict(), "rail": verdict.rail, "detail": verdict.detail})

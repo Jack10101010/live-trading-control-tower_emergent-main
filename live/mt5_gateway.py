@@ -6,11 +6,14 @@ structured (ok, data|error) pair and never raises broker SDK exceptions upward.
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 from typing import Any
 
 from live import mt5_results
 from live.broker_constraints import normalize_open
+from live.config import SYMBOL
+from live.safety import MarketCondition
 
 try:  # Windows VPS only; absent everywhere else by design
     import MetaTrader5 as _mt5  # type: ignore
@@ -61,6 +64,50 @@ class MT5Gateway:
         if tick is None:
             return None
         return datetime.fromtimestamp(tick.time, tz=timezone.utc)
+
+    def market_condition(self):
+        """Read-only current market condition (LX-1 Slice 5) as an immutable
+        ``MarketCondition``, or ``None`` if unavailable/malformed. Never mutates,
+        never submits, retains no SDK object. Rejects missing data, non-finite /
+        non-positive / bool prices, ask < bid, and malformed tick timestamps.
+        ``server_time_utc`` is the process/local (time-synced VPS) reference
+        clock — NOT the broker's server clock (contrast ``server_time_utc()``,
+        which returns the broker's last-tick time) — the honest reference for how
+        old the broker's last tick is right now.
+
+        NON-THROWING (F1): the ENTIRE body is exception-guarded, so a hostile or
+        broken SDK tick (symbol_info_tick raising, a raising attribute/property,
+        a raising ``float()``/timestamp conversion) yields ``None`` (unavailable)
+        rather than propagating — the accessor's fail-closed contract."""
+        if not self._connected:
+            return None
+        try:
+            return self._read_market_condition()
+        except Exception:   # noqa: BLE001 — any malformed/hostile tick -> unavailable
+            return None
+
+    def _read_market_condition(self):
+        tick = self.sdk.symbol_info_tick(self.config.broker_symbol)
+        if tick is None:
+            return None
+        bid = getattr(tick, "bid", None)
+        ask = getattr(tick, "ask", None)
+        raw_t = getattr(tick, "time", None)
+        if isinstance(bid, bool) or isinstance(ask, bool):
+            return None
+        if not isinstance(bid, (int, float)) or not isinstance(ask, (int, float)):
+            return None
+        if not (math.isfinite(bid) and math.isfinite(ask)) or bid <= 0 or ask <= 0:
+            return None
+        if ask < bid:
+            return None
+        if isinstance(raw_t, bool) or not isinstance(raw_t, (int, float)) \
+                or not math.isfinite(raw_t) or raw_t <= 0:
+            return None
+        tick_time = datetime.fromtimestamp(float(raw_t), tz=timezone.utc)
+        return MarketCondition(symbol=SYMBOL, bid=float(bid), ask=float(ask),
+                               tick_time_utc=tick_time,
+                               server_time_utc=datetime.now(timezone.utc))
 
     def closed_m1_bars(self, since_utc: datetime, limit: int = 5000) -> tuple[bool, list[dict] | str]:
         """Closed M1 bars with open time > since_utc. The currently forming
