@@ -56,6 +56,21 @@ class LiveConfig:
     max_spread: float = field(default_factory=lambda: _pos_float("LIVE_MAX_SPREAD", "0.0005"))
     max_feed_age_s: float = field(default_factory=lambda: _pos_float("LIVE_MAX_FEED_AGE_S", "90"))
 
+    # account-identity policy (LX-1 Slice 6). LIVE_ALLOWED_LOGINS (comma-separated
+    # positive ints) and LIVE_ALLOWED_SERVERS (comma-separated names) are REQUIRED
+    # and have NO permissive default — an empty/malformed value fails when
+    # identity_policy() is built (deploy-check preflight), never at construction
+    # (so dry-run/tests are unaffected) and never silently permissive.
+    # LIVE_EXPECTED_CURRENCY default EUR; LIVE_ALLOWED_TRADE_MODES a bounded subset
+    # of {demo,contest,real} (default "demo,real"); the ceilings are small-account
+    # sanity bounds (reject an accidental large account). No secrets are stored.
+    allowed_logins_raw: str = field(default_factory=lambda: _env("LIVE_ALLOWED_LOGINS", ""))
+    allowed_servers_raw: str = field(default_factory=lambda: _env("LIVE_ALLOWED_SERVERS", ""))
+    expected_currency: str = field(default_factory=lambda: _env("LIVE_EXPECTED_CURRENCY", "EUR"))
+    allowed_trade_modes_raw: str = field(default_factory=lambda: _env("LIVE_ALLOWED_TRADE_MODES", "demo,real"))
+    max_balance_ceiling: float = field(default_factory=lambda: _pos_float("LIVE_MAX_BALANCE_CEILING", "50000"))
+    max_equity_ceiling: float = field(default_factory=lambda: _pos_float("LIVE_MAX_EQUITY_CEILING", "50000"))
+
     # MT5 (used only on the VPS; gateway degrades gracefully elsewhere)
     mt5_login: str = field(default_factory=lambda: _env("MT5_LOGIN", ""))
     mt5_password: str = field(default_factory=lambda: _env("MT5_PASSWORD", ""))
@@ -85,6 +100,23 @@ class LiveConfig:
     @property
     def golden_config_path(self) -> Path:
         return self.lux_root / GOLDEN_CONFIG_RELPATH
+
+    def identity_policy(self):
+        """Build the account-identity allowlist policy (LX-1 Slice 6), STRICTLY
+        parsing the operator config. Raises ``IdentityConfigError`` on an empty or
+        malformed allowlist — deferred to here (not construction) so dry-run/tests
+        that never verify identity are unaffected, while any consumer that DOES
+        verify (deploy-check preflight, future arming) fails closed."""
+        from live.account_identity import (IdentityPolicy, normalize_currency,
+                                           parse_login_set, parse_server_set,
+                                           parse_trade_mode_set)
+        return IdentityPolicy(
+            allowed_logins=parse_login_set(self.allowed_logins_raw),
+            allowed_servers=parse_server_set(self.allowed_servers_raw),
+            expected_currency=normalize_currency(self.expected_currency),
+            allowed_trade_modes=parse_trade_mode_set(self.allowed_trade_modes_raw),
+            max_balance=self.max_balance_ceiling,
+            max_equity=self.max_equity_ceiling)
 
     def ensure_dirs(self) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)

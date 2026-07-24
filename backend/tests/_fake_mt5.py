@@ -104,9 +104,12 @@ def make_result(retcode: int = TRADE_RETCODE_DONE, *, order: int = 0, deal: int 
 
 def make_account(login: int = 1_000_001, server: str = "Broker-Demo",
                  balance: float = 10_000.0, equity: float = 10_000.0,
-                 currency: str = "EUR", trade_allowed: bool = True) -> SimpleNamespace:
+                 currency: str = "EUR", trade_allowed: bool = True,
+                 trade_mode: int = 0) -> SimpleNamespace:
+    # trade_mode mirrors MT5 ACCOUNT_TRADE_MODE_* (0=demo, 1=contest, 2=real).
     return SimpleNamespace(login=login, server=server, balance=balance,
-                           equity=equity, currency=currency, trade_allowed=trade_allowed)
+                           equity=equity, currency=currency, trade_allowed=trade_allowed,
+                           trade_mode=trade_mode)
 
 
 class FakeMT5:
@@ -114,6 +117,10 @@ class FakeMT5:
     attributes so ``gateway.sdk.ORDER_TYPE_BUY`` resolves exactly as in production."""
 
     # constants (as attributes — the gateway reads them off the injected sdk)
+    # account trade-mode enum (matches the real MetaTrader5 package values)
+    ACCOUNT_TRADE_MODE_DEMO = 0
+    ACCOUNT_TRADE_MODE_CONTEST = 1
+    ACCOUNT_TRADE_MODE_REAL = 2
     TRADE_ACTION_DEAL = TRADE_ACTION_DEAL
     TRADE_ACTION_SLTP = TRADE_ACTION_SLTP
     ORDER_TYPE_BUY = ORDER_TYPE_BUY

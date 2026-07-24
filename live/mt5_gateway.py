@@ -11,9 +11,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 from live import mt5_results
+from live.account_identity import AccountIdentity, finite_nonneg
 from live.broker_constraints import normalize_open
 from live.config import SYMBOL
 from live.safety import MarketCondition
+
+_MAX_SERVER_LEN = 64
+_MAX_CURRENCY_LEN = 8
 
 try:  # Windows VPS only; absent everywhere else by design
     import MetaTrader5 as _mt5  # type: ignore
@@ -139,6 +143,61 @@ class MT5Gateway:
                 "volume": float(rec.get("tick_volume", 0.0)),
             })
         return True, out
+
+    # ── account identity (LX-1 Slice 6 — preflight verification only) ─────────
+    def account_identity(self):
+        """Read-only, non-throwing snapshot of the connected account's identity as
+        an immutable ``AccountIdentity``, or ``None`` if disconnected/unavailable/
+        malformed. Never mutates the connection, submits nothing, retains no SDK
+        object, and exposes NO password/credentials. Used only by preflight
+        verification (never threaded into execution). The ENTIRE read is
+        exception-guarded — a hostile/broken account object yields ``None``."""
+        if not self._connected:
+            return None
+        try:
+            return self._read_account_identity()
+        except Exception:   # noqa: BLE001 — any malformed/hostile account -> unavailable
+            return None
+
+    def _normalize_trade_mode(self, raw):
+        """MT5 account trade_mode int -> {demo, contest, real}, read via sdk
+        constants (like build_retcode_map); unknown/bool/None -> None (fail closed)."""
+        if isinstance(raw, bool) or not isinstance(raw, int):
+            return None
+        s = self.sdk
+        known = {getattr(s, "ACCOUNT_TRADE_MODE_DEMO", 0): "demo",
+                 getattr(s, "ACCOUNT_TRADE_MODE_CONTEST", 1): "contest",
+                 getattr(s, "ACCOUNT_TRADE_MODE_REAL", 2): "real"}
+        return known.get(raw)
+
+    def _read_account_identity(self):
+        acct = self.sdk.account_info()
+        if acct is None:
+            return None
+        login = getattr(acct, "login", None)
+        if isinstance(login, bool) or not isinstance(login, int) or login <= 0:
+            return None
+        server = getattr(acct, "server", None)
+        if not isinstance(server, str):
+            return None
+        server = server.strip()
+        if not server or len(server) > _MAX_SERVER_LEN:
+            return None
+        currency = getattr(acct, "currency", None)
+        if not isinstance(currency, str):
+            return None
+        currency = currency.strip().upper()
+        if not currency or len(currency) > _MAX_CURRENCY_LEN:
+            return None
+        trade_mode = self._normalize_trade_mode(getattr(acct, "trade_mode", None))
+        if trade_mode is None:
+            return None
+        balance = finite_nonneg(getattr(acct, "balance", None))
+        equity = finite_nonneg(getattr(acct, "equity", None))
+        if balance is None or equity is None:
+            return None
+        return AccountIdentity(login=int(login), server=server, currency=currency,
+                               trade_mode=trade_mode, balance=balance, equity=equity)
 
     # ── account state ────────────────────────────────────────────────────────
     def snapshot(self) -> tuple[bool, dict | str]:
