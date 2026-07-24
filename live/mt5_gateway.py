@@ -9,6 +9,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from live.broker_constraints import normalize_open
+
 try:  # Windows VPS only; absent everywhere else by design
     import MetaTrader5 as _mt5  # type: ignore
 except ImportError:  # pragma: no cover - exercised via injection in tests
@@ -116,22 +118,40 @@ class MT5Gateway:
         }
 
     # ── order operations (market mirror model: engine is the state machine) ──
+    def _filling_preference(self):
+        """Ordered (order_filling_const, symbol_filling_flag) preference —
+        RETURN, then IOC, then FOK — read from the sdk. SYMBOL_FILLING_RETURN is
+        absent on the real MT5 package (getattr -> 0), so RETURN is skipped in
+        production and IOC/FOK win; a fake sdk may advertise it for testing."""
+        s = self.sdk
+        return (
+            (getattr(s, "ORDER_FILLING_RETURN", None), getattr(s, "SYMBOL_FILLING_RETURN", 0)),
+            (getattr(s, "ORDER_FILLING_IOC", None), getattr(s, "SYMBOL_FILLING_IOC", 0)),
+            (getattr(s, "ORDER_FILLING_FOK", None), getattr(s, "SYMBOL_FILLING_FOK", 0)),
+        )
+
     def open_position(self, side: str, lots: float, sl: float, tp: float,
                       intent_id: str) -> tuple[bool, dict | str]:
         if not self._connected:
             return False, "not connected"
-        order_type = self.sdk.ORDER_TYPE_BUY if side == "long" else self.sdk.ORDER_TYPE_SELL
         tick = self.sdk.symbol_info_tick(self.config.broker_symbol)
-        if tick is None:
-            return False, "no tick"
-        price = tick.ask if side == "long" else tick.bid
+        symbol_info = self.sdk.symbol_info(self.config.broker_symbol)
+        # Broker-constraint normalization (LX-1 Slice 2): reject rather than
+        # order_send when the request cannot be made broker-valid. Never widens
+        # a strategy stop; never increases volume.
+        norm = normalize_open(symbol_info, tick, side, lots, sl, tp,
+                              filling_preference=self._filling_preference())
+        if not norm.ok:
+            return False, f"normalization_rejected: {norm.reason.value} ({norm.diagnostic})"
+        o = norm.order
+        order_type = self.sdk.ORDER_TYPE_BUY if side == "long" else self.sdk.ORDER_TYPE_SELL
         request = {
             "action": self.sdk.TRADE_ACTION_DEAL, "symbol": self.config.broker_symbol,
-            "volume": float(lots), "type": order_type, "price": float(price),
-            "sl": float(sl), "tp": float(tp), "deviation": 20,
+            "volume": o.volume, "type": order_type, "price": o.price,
+            "sl": o.sl, "tp": o.tp, "deviation": o.deviation,
             "magic": self.config.magic_number, "comment": intent_id[:26],
             "type_time": self.sdk.ORDER_TIME_GTC,
-            "type_filling": self.sdk.ORDER_FILLING_IOC,
+            "type_filling": o.type_filling,
         }
         result = self.sdk.order_send(request)
         if result is None or result.retcode != self.sdk.TRADE_RETCODE_DONE:

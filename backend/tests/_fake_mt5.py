@@ -31,7 +31,27 @@ TRADE_RETCODE_DONE_PARTIAL = 10010
 TRADE_RETCODE_REJECT = 10006
 TIMEFRAME_M1 = 1
 
+# Symbol filling-capability bitmask flags. FOK/IOC mirror the real MetaTrader5
+# constants; SYMBOL_FILLING_RETURN does NOT exist in the real package (the
+# gateway getattr-defaults it to 0) — the fake advertises it so RETURN-first
+# selection is unit-testable.
+SYMBOL_FILLING_FOK = 1
+SYMBOL_FILLING_IOC = 2
+SYMBOL_FILLING_RETURN = 4
+
 _UNSET = object()
+
+
+def make_symbol_info(*, name: str = "EURUSD", digits: int = 5, point: float = 0.00001,
+                     volume_min: float = 0.01, volume_max: float = 100.0,
+                     volume_step: float = 0.01, trade_stops_level: int = 0,
+                     trade_freeze_level: int = 0,
+                     filling_mode: int = SYMBOL_FILLING_IOC) -> SimpleNamespace:
+    """A fake symbol_info (the fields broker_constraints reads via getattr)."""
+    return SimpleNamespace(name=name, digits=digits, point=point,
+                           volume_min=volume_min, volume_max=volume_max,
+                           volume_step=volume_step, trade_stops_level=trade_stops_level,
+                           trade_freeze_level=trade_freeze_level, filling_mode=filling_mode)
 
 
 def make_tick(bid: float, ask: float, time: int = 1_700_000_000) -> SimpleNamespace:
@@ -79,6 +99,9 @@ class FakeMT5:
     TRADE_RETCODE_DONE_PARTIAL = TRADE_RETCODE_DONE_PARTIAL
     TRADE_RETCODE_REJECT = TRADE_RETCODE_REJECT
     TIMEFRAME_M1 = TIMEFRAME_M1
+    SYMBOL_FILLING_FOK = SYMBOL_FILLING_FOK
+    SYMBOL_FILLING_IOC = SYMBOL_FILLING_IOC
+    SYMBOL_FILLING_RETURN = SYMBOL_FILLING_RETURN
 
     def __init__(self, *, tick=None, positions=None, account=None, terminal=None,
                  symbol_info=None, order_result=_UNSET, order_exc=None, rates=None,
