@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from live import mt5_results
+from live.account_health import AccountHealth
 from live.account_identity import AccountIdentity, finite_nonneg
 from live.broker_constraints import normalize_open
 from live.config import SYMBOL
@@ -198,6 +199,45 @@ class MT5Gateway:
             return None
         return AccountIdentity(login=int(login), server=server, currency=currency,
                                trade_mode=trade_mode, balance=balance, equity=equity)
+
+    # ── account health (LX-1 Slice 7 — per-OPEN-cycle capital/permission gate) ─
+    def account_health(self):
+        """Read-only, non-throwing snapshot of the connected account's capital &
+        trade-permission health as an immutable ``AccountHealth``, or ``None`` if
+        disconnected/unavailable/malformed. Exactly ONE ``account_info()`` call;
+        never mutates, submits nothing, retains no SDK object, exposes NO
+        credentials. The ENTIRE read is exception-guarded — a hostile/broken
+        account object yields ``None``. Does NOT call ``terminal_info()`` and does
+        NOT widen ``snapshot()``."""
+        if not self._connected:
+            return None
+        try:
+            return self._read_account_health()
+        except Exception:   # noqa: BLE001 — any malformed/hostile account -> unavailable
+            return None
+
+    def _read_account_health(self):
+        acct = self.sdk.account_info()
+        if acct is None:
+            return None
+        currency = getattr(acct, "currency", None)
+        if not isinstance(currency, str):
+            return None
+        currency = currency.strip().upper()
+        if not currency or len(currency) > _MAX_CURRENCY_LEN:
+            return None
+        balance = finite_nonneg(getattr(acct, "balance", None))
+        equity = finite_nonneg(getattr(acct, "equity", None))
+        free_margin = finite_nonneg(getattr(acct, "margin_free", None))
+        if balance is None or equity is None or free_margin is None:
+            return None
+        trade_allowed = getattr(acct, "trade_allowed", None)
+        trade_expert = getattr(acct, "trade_expert", None)
+        if not isinstance(trade_allowed, bool) or not isinstance(trade_expert, bool):
+            return None
+        return AccountHealth(currency=currency, balance=balance, equity=equity,
+                             free_margin=free_margin, trade_allowed=trade_allowed,
+                             trade_expert=trade_expert)
 
     # ── account state ────────────────────────────────────────────────────────
     def snapshot(self) -> tuple[bool, dict | str]:

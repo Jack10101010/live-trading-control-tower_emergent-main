@@ -71,6 +71,13 @@ class LiveConfig:
     max_balance_ceiling: float = field(default_factory=lambda: _pos_float("LIVE_MAX_BALANCE_CEILING", "50000"))
     max_equity_ceiling: float = field(default_factory=lambda: _pos_float("LIVE_MAX_EQUITY_CEILING", "50000"))
 
+    # account-health capital rail (LX-1 Slice 7). LIVE_MIN_EQUITY is REQUIRED with
+    # NO permissive default — an absolute floor in LIVE_EXPECTED_CURRENCY. An
+    # empty/malformed value fails when health_policy() is built (per OPEN cycle in
+    # connected mode), never at construction (dry-run/tests unaffected) and never
+    # silently disabling the floor.
+    min_equity_raw: str = field(default_factory=lambda: _env("LIVE_MIN_EQUITY", ""))
+
     # MT5 (used only on the VPS; gateway degrades gracefully elsewhere)
     mt5_login: str = field(default_factory=lambda: _env("MT5_LOGIN", ""))
     mt5_password: str = field(default_factory=lambda: _env("MT5_PASSWORD", ""))
@@ -117,6 +124,17 @@ class LiveConfig:
             allowed_trade_modes=parse_trade_mode_set(self.allowed_trade_modes_raw),
             max_balance=self.max_balance_ceiling,
             max_equity=self.max_equity_ceiling)
+
+    def health_policy(self):
+        """Build the account-health capital policy (LX-1 Slice 7), STRICTLY parsing
+        LIVE_MIN_EQUITY and reusing the Slice-6 expected currency. Raises
+        ``HealthConfigError`` on a missing/malformed floor — deferred to here (not
+        construction) so dry-run/tests that never evaluate health are unaffected,
+        while any OPEN cycle that DOES evaluate fails closed."""
+        from live.account_health import HealthPolicy, parse_min_equity
+        from live.account_identity import normalize_currency
+        return HealthPolicy(min_equity=parse_min_equity(self.min_equity_raw),
+                            expected_currency=normalize_currency(self.expected_currency))
 
     def ensure_dirs(self) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)

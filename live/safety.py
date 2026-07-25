@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
+from live.account_health import HealthConfigError, evaluate_health
+from live.account_identity import IdentityConfigError
 from live.config import SYMBOL
 from live.intents import CLOSE_POSITION, MODIFY_STOP, OPEN_POSITION
 from live.state import (LEDGER_BLOCKED, LEDGER_CONFIRMED, LEDGER_PARTIAL, LEDGER_SENT,
@@ -22,6 +24,11 @@ ALLOWED = "allowed"
 # rails are then SKIPPED — distinct from ``None``, which means "sampled but
 # unavailable/malformed" and BLOCKS an OPEN fail-closed.
 MARKET_NOT_EVALUATED = object()
+
+# Same contract for the LX-1 Slice 7 account-health sample: NOT_EVALUATED skips
+# the health rails (not sampled — no OPEN / not connected); ``None`` means sampled
+# but unavailable/malformed and BLOCKS an OPEN fail-closed.
+HEALTH_NOT_EVALUATED = object()
 
 # Small allowance for broker/VPS clock jitter when judging a tick "ahead of
 # server time". A tick more than this many seconds in the future is malformed.
@@ -84,7 +91,7 @@ class SafetyRails:
         return self.config.kill_file.exists()
 
     def evaluate(self, intent, symbol: str, today: str,
-                 market=MARKET_NOT_EVALUATED) -> RailVerdict:
+                 market=MARKET_NOT_EVALUATED, health=HEALTH_NOT_EVALUATED) -> RailVerdict:
         # 1) global kill switch — blocks everything except engine-driven closes
         if self._kill_switch_on() and intent.action != CLOSE_POSITION:
             return RailVerdict(False, "kill_switch", str(self.config.kill_file))
@@ -105,6 +112,14 @@ class SafetyRails:
             if self.state.open_mirror_count() >= self.config.max_open_positions:
                 return RailVerdict(False, "max_open_positions",
                                    f"mirror at {self.state.open_mirror_count()}")
+            # 6) account-health capital & permission rails (LX-1 Slice 7) —
+            # OPEN-only, evaluated only when the executor sampled health this cycle
+            # (gateway connected). Evaluated BEFORE market conditions: a capital /
+            # permission problem is more fundamental than a transient spread.
+            if health is not HEALTH_NOT_EVALUATED:
+                hv = self._health_verdict(health)
+                if not hv.allowed:
+                    return hv
             # 7) pre-trade market-condition rails (LX-1 Slice 5) — OPEN-only,
             # evaluated only when the executor sampled market conditions this
             # cycle (gateway connected). CLOSE/MODIFY are never gated by these.
@@ -118,6 +133,36 @@ class SafetyRails:
                 return RailVerdict(False, "unknown_position",
                                    f"no mirrored ticket for {intent.trade_id}")
         return RailVerdict(True, ALLOWED)
+
+    def _health_verdict(self, health) -> RailVerdict:
+        """OPEN account-health gate (LX-1 Slice 7): equity floor + trade/expert
+        permission + expected-currency continuity. Fail-closed — an unavailable
+        (None) sample, or a missing/malformed LIVE_MIN_EQUITY, blocks the OPEN. The
+        first (fixed-order) reason becomes the rail; evidence is a bounded, JSON-
+        safe string with no credentials/SDK objects."""
+        try:
+            policy = self.config.health_policy()
+        except (HealthConfigError, IdentityConfigError):
+            return RailVerdict(False, "account_health_unavailable",
+                               "health policy misconfigured (LIVE_MIN_EQUITY/currency)")
+        verdict = evaluate_health(health, policy)
+        if verdict.allowed:
+            return RailVerdict(True, ALLOWED)
+        rail = verdict.reasons[0]
+        ev = verdict.evidence
+        if rail == "account_health_unavailable":
+            detail = "account health unavailable"
+        elif rail == "equity_floor":
+            detail = f"equity {ev['equity']} < min {ev['min_equity']} {ev['currency']}"
+        elif rail == "currency_mismatch":
+            detail = f"currency {ev['currency']} != expected {ev['expected_currency']}"
+        elif rail == "trading_not_allowed":
+            detail = "account trading not allowed"
+        elif rail == "expert_trading_not_allowed":
+            detail = "expert/algo trading not allowed"
+        else:
+            detail = rail
+        return RailVerdict(False, rail, detail)
 
     def _market_verdict(self, market) -> RailVerdict:
         """OPEN market-condition gate: spread ceiling + feed freshness. Fail-

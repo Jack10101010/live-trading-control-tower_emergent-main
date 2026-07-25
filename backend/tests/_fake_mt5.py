@@ -105,11 +105,14 @@ def make_result(retcode: int = TRADE_RETCODE_DONE, *, order: int = 0, deal: int 
 def make_account(login: int = 1_000_001, server: str = "Broker-Demo",
                  balance: float = 10_000.0, equity: float = 10_000.0,
                  currency: str = "EUR", trade_allowed: bool = True,
-                 trade_mode: int = 0) -> SimpleNamespace:
-    # trade_mode mirrors MT5 ACCOUNT_TRADE_MODE_* (0=demo, 1=contest, 2=real).
+                 trade_mode: int = 0, margin_free: float = 10_000.0,
+                 trade_expert: bool = True) -> SimpleNamespace:
+    # trade_mode mirrors MT5 ACCOUNT_TRADE_MODE_* (0=demo, 1=contest, 2=real);
+    # margin_free/trade_expert mirror the real account_info fields (LX-1 Slice 7).
     return SimpleNamespace(login=login, server=server, balance=balance,
                            equity=equity, currency=currency, trade_allowed=trade_allowed,
-                           trade_mode=trade_mode)
+                           trade_mode=trade_mode, margin_free=margin_free,
+                           trade_expert=trade_expert)
 
 
 class FakeMT5:

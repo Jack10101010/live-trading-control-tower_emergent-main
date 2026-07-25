@@ -32,8 +32,11 @@ _TICK = (1.10101, 1.10123)
 
 
 def _cfg(tmp_path, mode="live"):
+    # LIVE_MIN_EQUITY set so the Slice-7 health rail can build its policy; the fake
+    # account (equity 10000 EUR, trade_allowed/expert True) is healthy above it.
     c = LiveConfig(lux_root=tmp_path / "lux", state_dir=tmp_path / "st",
-                   market_data_dir=tmp_path / "md", kill_file=tmp_path / "st" / "KILL")
+                   market_data_dir=tmp_path / "md", kill_file=tmp_path / "st" / "KILL",
+                   min_equity_raw="5000")
     c.mode = mode
     c.ensure_dirs()
     return c
@@ -208,6 +211,10 @@ class _StubGateway:
         from live.safety import MarketCondition
         now = datetime.now(timezone.utc)
         return MarketCondition("EURUSD", 1.10101, 1.10123, now, now)
+
+    def account_health(self):
+        from live.account_health import AccountHealth
+        return AccountHealth("EUR", 10_000.0, 10_000.0, 10_000.0, True, True)
 
     def open_position(self, *a, **k):
         return self._result

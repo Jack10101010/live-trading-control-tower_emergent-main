@@ -16,7 +16,7 @@ from live.mt5_results import MT5SubmitDisposition, usable_ticket, _finite_positi
 from live.reconciliation import (ReconOutcome, ReconFinding, ReconciliationReport,
                                  classify_fill, classify_matched, match_candidates,
                                  normalize_snapshot)
-from live.safety import MARKET_NOT_EVALUATED, SafetyRails
+from live.safety import HEALTH_NOT_EVALUATED, MARKET_NOT_EVALUATED, SafetyRails
 from live.state import (LEDGER_CONFIRMED, LEDGER_FAILED, LEDGER_PARTIAL, LEDGER_PENDING,
                         LEDGER_SENT, LEDGER_SIMULATED)
 from live.config import SYMBOL
@@ -239,12 +239,19 @@ class Executor:
         # cycle contains an OPEN — otherwise MARKET_NOT_EVALUATED skips the rails
         # (a not-connected gateway cannot submit anyway). Ordering: reconcile (done
         # above) -> sample -> rail evaluation -> execution.
+        # Sample account health (Slice 7) and market conditions (Slice 5) ONCE per
+        # cycle, reused for every OPEN. Sampled only when the gateway is connected
+        # AND an OPEN exists — otherwise NOT_EVALUATED skips the rails. Health is
+        # sampled first (evaluated first). Both accessors are non-throwing by
+        # contract; the guards are defence-in-depth — a sampling exception becomes
+        # UNAVAILABLE (None) so every OPEN blocks fail-closed.
+        health = HEALTH_NOT_EVALUATED
         market = MARKET_NOT_EVALUATED
         if self.gateway.connected and any(i.action == OPEN_POSITION for i in intents):
-            # The gateway accessor is non-throwing by contract; this guard is
-            # defence-in-depth — a sampling exception becomes UNAVAILABLE (None)
-            # so every OPEN blocks fail-closed via the existing stale_feed rail
-            # (no normalization logic is duplicated here).
+            try:
+                health = self.gateway.account_health()     # AccountHealth | None (None -> block)
+            except Exception:   # noqa: BLE001
+                health = None
             try:
                 market = self.gateway.market_condition()   # MarketCondition | None (None -> block)
             except Exception:   # noqa: BLE001
@@ -256,7 +263,7 @@ class Executor:
                                       {"note": "intra-window fill+exit; never sent"})
                 skipped.append(intent.to_dict())
                 continue
-            verdict = self.rails.evaluate(intent, SYMBOL, today, market)
+            verdict = self.rails.evaluate(intent, SYMBOL, today, market, health)
             if not verdict.allowed:
                 self.rails.record_block(intent, verdict)
                 blocked.append({**intent.to_dict(), "rail": verdict.rail, "detail": verdict.detail})

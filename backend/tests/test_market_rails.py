@@ -35,8 +35,11 @@ NOW = datetime(2026, 7, 24, 12, 0, 0, tzinfo=timezone.utc)
 
 
 def _cfg(tmp_path, mode="live"):
+    # LIVE_MIN_EQUITY set so the Slice-7 health rail (sampled in the executor
+    # integration tests) can build its policy; the fake account is healthy above it.
     c = LiveConfig(lux_root=tmp_path / "lux", state_dir=tmp_path / "st",
-                   market_data_dir=tmp_path / "md", kill_file=tmp_path / "st" / "KILL")
+                   market_data_dir=tmp_path / "md", kill_file=tmp_path / "st" / "KILL",
+                   min_equity_raw="5000")
     c.mode = mode
     c.ensure_dirs()
     return c
