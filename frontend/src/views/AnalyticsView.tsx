@@ -4,7 +4,7 @@ import { Panel } from '@/components/structures/Panel';
 import { FeatureGate } from '@/components/FeatureGate';
 import { ChartPanel } from '@/components/domain/ChartPanel';
 import { DataTable, type Column } from '@/components/structures/DataTable';
-import { RValue, MetricStat } from '@/components/primitives';
+import { RValue, MetricStat, ProvenanceChip } from '@/components/primitives';
 import { fmtPercent, fmtR } from '@/lib/format';
 import { useMemo, useState } from 'react';
 import {
@@ -28,6 +28,10 @@ export function AnalyticsView() {
   const groups = useMemo(() => groupMetrics(trades.live, dim), [trades.live, dim]);
 
   const cells = Object.values(matrix.cells);
+  // UI-0: these two panels aggregate policy cells. When any cell is generated the
+  // aggregate is not a research finding and is labelled accordingly.
+  const synthesizedCells = matrix.synthesizedCells ?? 0;
+  const policyAggregatesSynthesized = synthesizedCells > 0;
 
   // Aggregations
   const bySession = useMemo(() => {
@@ -126,7 +130,20 @@ export function AnalyticsView() {
         <DataTable columns={groupColumns} data={groups} rowKey={(g) => g.group} emptyMessage="No trades in scope" />
       </Panel>
 
-      <Panel title="By Session (policy expectancy)" className="col-span-6">
+      <Panel
+        title={
+          <span className="flex items-center gap-2">
+            By Session (policy expectancy)
+            {policyAggregatesSynthesized && (
+              <ProvenanceChip
+                provenance="synthesized"
+                detail={`${synthesizedCells} of ${cells.length} policy cells are generated locally.`}
+              />
+            )}
+          </span>
+        }
+        className="col-span-6"
+      >
         <div className="space-y-2">
           {bySession.map((row) => (
             <BarRow
@@ -141,7 +158,20 @@ export function AnalyticsView() {
         </div>
       </Panel>
 
-      <Panel title="By Market State (expectancy · allowed %)" className="col-span-6">
+      <Panel
+        title={
+          <span className="flex items-center gap-2">
+            By Market State (expectancy · allowed %)
+            {policyAggregatesSynthesized && (
+              <ProvenanceChip
+                provenance="synthesized"
+                detail={`${synthesizedCells} of ${cells.length} policy cells are generated locally.`}
+              />
+            )}
+          </span>
+        }
+        className="col-span-6"
+      >
         <div className="space-y-2">
           {byState.map((row) => (
             <BarRow

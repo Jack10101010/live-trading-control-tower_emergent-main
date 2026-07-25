@@ -1,3 +1,4 @@
+import type { DataProvenance } from '@/types/provenance';
 /**
  * fairValueGaps — the Fair Value Gap DATA SOURCE + pure zone styling (Phase 18).
  *
@@ -24,6 +25,8 @@ export interface FairValueGap {
   /** When price traded back into the gap (supplied by the source; the layer only
    *  thresholds it against replay time — it computes no fill detection itself). */
   filledAtISO?: string | null;
+  /** UI-0 — generated in the Control Tower, NOT detected by the Lux engine. */
+  provenance: DataProvenance;
 }
 
 const round5 = (x: number) => Math.round(x * 1e5) / 1e5;
@@ -51,7 +54,8 @@ export function deriveFairValueGaps(instrument: string, candles: Candle[]): Fair
     // The oldest gap fills partway through the window (deterministic).
     const filledAtISO = k === 0 ? unixToISO(candles[n - 2].time) : null;
     return {
-      id: `FVG-${2000 + idx}`,
+      id: `SYN-FVG-${2000 + idx}`,
+      provenance: 'synthesized',
       instrument,
       direction: bullish ? 'bullish' : 'bearish',
       top,
@@ -90,6 +94,6 @@ export function fairValueGapZone(
     price0: fvg.bottom,
     price1: fvg.top,
     color: `color-mix(in srgb, ${base} ${opacityPct}%, transparent)`,
-    label: `FVG ${fvg.id} · ${fvg.direction} · ${filled ? 'filled' : 'open'}`,
+    label: `SYNTHETIC ${fvg.id} · ${fvg.direction} · ${filled ? 'filled' : 'open'}`,
   };
 }

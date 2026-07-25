@@ -12,6 +12,7 @@ import {
   useMarketState,
   useOperator,
   useActivePackage,
+  useRuntimeHealth,
 } from '@/hooks/useRepository';
 import { useShellStore } from '@/store/shellStore';
 import { Panel } from '@/components/structures/Panel';
@@ -37,6 +38,7 @@ import {
   RValue,
   TimestampUTC,
   ValidationBadgeChip,
+  ProvenanceChip,
 } from '@/components/primitives';
 import { ChartWorkspace } from '@/components/domain/ChartWorkspace';
 import { FeatureGate } from '@/components/FeatureGate';
@@ -68,6 +70,8 @@ export function MarketDataView() {
   const { pairs } = useFleet();
   const [pair, setPair] = useState(pairs[0] ?? 'EURUSD');
   const ms = useMarketState(pair);
+  // UI-0: real market-data provider identity (never a hardcoded latency claim).
+  const rtHealth = useRuntimeHealth();
 
   return (
     <WorkspacePage
@@ -82,23 +86,48 @@ export function MarketDataView() {
             </ToolbarChip>
           ))}
           <ToolbarSpacer />
-          <span className="text-2xs text-text-muted mono">All feeds via MT5 · reconciled every 30s</span>
+          <span className="text-2xs text-text-muted mono">
+            Provider {rtHealth?.marketData?.provider ?? 'unknown'} · no broker reconciliation wired
+          </span>
         </>
       }
     >
       <div className="grid grid-cols-12 gap-4">
         <Panel title={`${pair} · Live Feed`} className="col-span-12" bodyClassName="p-0">
           <FeatureGate flag="charts">
-            <ChartWorkspace instrument={pair} mode="live" volume resizable initialHeight={460} />
+            <ChartWorkspace instrument={pair} mode="live" resizable initialHeight={460} />
           </FeatureGate>
         </Panel>
 
+        {/* UI-0: these four rows were hardcoded literals (a tick latency, a feed
+            lag, a disconnected news feed, a clean reconciler) asserting feed truth
+            the Control Tower cannot observe. The bar feed now reports the real
+            provider; everything else states plainly that it is not wired. Genuine
+            chart-feed freshness lives in ChartDataStatusStrip above. */}
         <Panel title="Feed Health" className="col-span-4">
-          <ul className="space-y-2 text-xs">
-            <FeedRow name="Primary tick feed" state="ok" info="42 ms" />
-            <FeedRow name="Aggregated bar feed" state="warn" info="40s lag" />
-            <FeedRow name="News feed" state="critical" info="disconnected" />
-            <FeedRow name="Reconciler" state="ok" info="clean" />
+          <ul className="space-y-2 text-xs" data-testid="feed-health">
+            <li className="flex items-center gap-2">
+              <span className="text-text">Aggregated bar feed</span>
+              <span className="ml-auto flex items-center gap-1.5">
+                <span className="mono text-text-muted">
+                  {rtHealth?.marketData?.provider ?? 'unknown'}
+                </span>
+                <ProvenanceChip
+                  provenance={rtHealth?.marketData?.provider === 'fixture' ? 'fixture' : 'market-feed'}
+                />
+              </span>
+            </li>
+            {['Primary tick feed', 'News feed', 'Reconciler (node)'].map((name) => (
+              <li key={name} className="flex items-center gap-2">
+                <span className="text-text">{name}</span>
+                <span className="ml-auto">
+                  <ProvenanceChip
+                    provenance="placeholder"
+                    detail="No source is wired; an execution node must publish this."
+                  />
+                </span>
+              </li>
+            ))}
           </ul>
         </Panel>
 
@@ -124,28 +153,32 @@ export function MarketDataView() {
           <PlaceholderChart height={180} variant="bar" />
         </Panel>
 
-        <Panel title="Snapshot integrity" className="col-span-12">
+        {/* UI-0: "1,382 snapshots", "0 divergences", "100% reconcile clean" and
+            "4.2 GB" were literals. Divergence and reconciliation truth belongs to
+            the node; none of it is wired, so no number is shown. */}
+        <Panel
+          title={
+            <span className="flex items-center gap-2">
+              Snapshot integrity
+              <ProvenanceChip
+                provenance="placeholder"
+                detail="Requires node reconciliation telemetry."
+              />
+            </span>
+          }
+          className="col-span-12"
+        >
           <PlaceholderMetricGrid
             items={[
-              { label: 'Snapshots today', value: '1,382', sub: 'append-only' },
-              { label: 'Divergences', value: '0', sub: 'MT5 vs internal' },
-              { label: 'Reconcile clean', value: '100%', sub: 'last 24h' },
-              { label: 'Storage', value: '4.2 GB', sub: 'this week' },
+              { label: 'Snapshots today', value: '—', sub: 'not wired' },
+              { label: 'Divergences', value: '—', sub: 'needs node reconciliation' },
+              { label: 'Reconcile clean', value: '—', sub: 'needs node reconciliation' },
+              { label: 'Storage', value: '—', sub: 'not wired' },
             ]}
           />
         </Panel>
       </div>
     </WorkspacePage>
-  );
-}
-
-function FeedRow({ name, state, info }: { name: string; state: 'ok' | 'warn' | 'critical'; info: string }) {
-  return (
-    <li className="flex items-center gap-2">
-      <HealthDot state={state} />
-      <span className="text-text">{name}</span>
-      <span className="ml-auto mono text-2xs text-text-muted">{info}</span>
-    </li>
   );
 }
 

@@ -166,16 +166,30 @@ export function ScopeNavigator() {
             />
           ))}
 
-          {/* Ghost / dimmed entries for pairs that would be added later */}
+          {/* UI-0: layout placeholders ONLY. These instruments are not configured
+              deployments and must never read as such — they stay non-interactive and
+              are explicitly labelled. Creating a deployment is out of scope here. */}
+          <div
+            className="mt-2 px-2 text-[9px] uppercase tracking-widest text-text-muted"
+            data-testid="placeholder-pairs-heading"
+          >
+            Placeholders · not configured
+          </div>
           {['GBPUSD', 'XAUUSD', 'NQ', 'ES', 'BTC'].map((p) => (
             <div
               key={`ghost-${p}`}
               className="flex items-center gap-2 h-7 px-2 rounded-sm text-2xs text-text-muted opacity-50 cursor-not-allowed"
-              title="No deployment yet — instrument slot ready"
+              title="Layout placeholder — no deployment exists for this instrument and none can be created here."
+              aria-disabled="true"
+              data-testid={`placeholder-pair-${p}`}
+              data-provenance="placeholder"
             >
               <CircleDot size={9} className="text-text-muted" />
               <span className="mono">{p}</span>
-              <Lock size={9} className="ml-auto text-text-muted" />
+              <span className="ml-auto flex items-center gap-1">
+                <span className="text-[8px] uppercase tracking-wider">placeholder</span>
+                <Lock size={9} className="text-text-muted" />
+              </span>
             </div>
           ))}
         </div>

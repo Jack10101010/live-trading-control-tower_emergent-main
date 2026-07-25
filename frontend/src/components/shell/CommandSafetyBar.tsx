@@ -1,10 +1,11 @@
-import { useSystemConfidence, useOperator, useFleet } from '@/hooks/useRepository';
+import { useSystemConfidence, useOperator, useFleet, useBackendHealth } from '@/hooks/useRepository';
 import { HealthDot } from '@/components/primitives';
 import { IconButton } from '@/components/primitives/Button';
 import { useShellStore } from '@/store/shellStore';
 import { Command, ShieldAlert, Radio, Sun, Moon, Monitor } from 'lucide-react';
 import { useCommand } from '@/hooks/useCommand';
 import type { ThemeName } from '@/store/shellStore';
+import { deriveDataSourceBadge } from '@/lib/dataSource';
 
 /**
  * CommandSafetyBar — top chrome. Global kill · mode banner · health · clock · ⌘K.
@@ -19,6 +20,21 @@ export function CommandSafetyBar() {
   const setTheme = useShellStore((s) => s.setTheme);
   const realtime = useShellStore((s) => s.realtime);
   const dispatch = useCommand();
+  const { health, failed: healthFailed } = useBackendHealth();
+
+  // UI-0 — global data-source truth (pure, unit-tested in lib/dataSource.ts).
+  const dataSource = deriveDataSourceBadge(health, healthFailed);
+  const sourceProvenance = dataSource.provenance;
+  const sourceLabel = dataSource.label;
+  const sourceHint = dataSource.hint;
+  const sourceColor =
+    sourceProvenance === 'live-node'
+      ? 'var(--positive)'
+      : sourceProvenance === 'unavailable'
+        ? 'var(--negative)'
+        : sourceProvenance === 'placeholder'
+          ? 'var(--text-muted)'
+          : 'var(--caution)';
 
   // Realtime read-side connection status (Phase 5).
   const rtColor =
@@ -107,7 +123,18 @@ export function CommandSafetyBar() {
         <span className="text-[11px] font-semibold tracking-widest uppercase" style={{ color: modeColor }}>
           {execMode}
         </span>
-        <span className="text-[10px] text-text-muted mono">v1.0.0</span>
+        {/* UI-0: persistent, global data-source truth. Replaces a hardcoded
+            application-version banner. The operator must never have to infer
+            fixture mode from developer knowledge. */}
+        <span
+          className="text-[9px] uppercase tracking-widest mono px-1.5 py-0.5 rounded-sm"
+          style={{ color: sourceColor, border: `1px solid ${sourceColor}` }}
+          title={sourceHint}
+          data-testid="data-source-badge"
+          data-provenance={sourceProvenance}
+        >
+          {sourceLabel}
+        </span>
         <span
           className="flex items-center gap-1 pl-2 ml-1 border-l"
           style={{ borderColor: 'var(--border-subtle)' }}

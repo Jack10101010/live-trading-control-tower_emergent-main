@@ -1,9 +1,9 @@
 import { useEffect } from 'react';
-import { useFleet, usePackages, useFeatureFlags, useRuntimeHealth, useBrokerReconciliation, useStrategyEvaluation, useSchedulerStatus, useMarketSnapshot, useRiskLimits } from '@/hooks/useRepository';
+import { useFleet, usePackages, useFeatureFlags, useRuntimeHealth, useBrokerReconciliation, useStrategyEvaluation, useSchedulerStatus, useMarketSnapshot, useRiskLimits, useActivePackage, useBackendHealth } from '@/hooks/useRepository';
 import { api, QK } from '@/lib/api';
 import { queryClient } from '@/lib/queryClient';
 import { Panel } from '@/components/structures/Panel';
-import { Badge, PackageVersionChip, TimestampUTC, KeyValueGrid, HealthDot } from '@/components/primitives';
+import { Badge, PackageVersionChip, TimestampUTC, KeyValueGrid, HealthDot, ProvenanceChip } from '@/components/primitives';
 import { fmtHash } from '@/lib/format';
 
 /** Broker poll loop cadence — simple timer, no threads, no websocket (Phase 7). */
@@ -23,6 +23,14 @@ export function SystemView() {
   const scheduler = useSchedulerStatus();
   const snapshot = useMarketSnapshot();
   const riskLimits = useRiskLimits();
+  const activePackage = useActivePackage();
+  const { health } = useBackendHealth();
+
+  // UI-0: real runtime-health values (or `undefined` = unknown). Never fabricated.
+  const rt = runtime;
+  const componentVersions: Array<[string, unknown]> = Object.entries(
+    (activePackage?.componentVersions ?? {}) as Record<string, unknown>
+  );
 
   // Poll loop: while this view is open, tick reconciliation + the Scheduler every
   // 2s. No background thread. Reconciliation appends an event only on change; the
@@ -87,22 +95,37 @@ export function SystemView() {
       </div>
 
       <div className="grid grid-cols-12 gap-4">
-        <Panel title="Engine Health" className="col-span-4">
-          <ul className="space-y-2 text-xs">
-            {[
-              { name: 'Market state model', v: 'regime@2.3.0' },
-              { name: 'Policy engine', v: 'policy-engine@1.4.0' },
-              { name: 'Execution policy', v: 'exec-policy@2.0.0' },
-              { name: 'Protection', v: 'protection@1.2.0' },
-              { name: 'Strategy brain', v: 'strategy-brain@1.1.0' },
-            ].map((e) => (
-              <li key={e.name} className="flex items-center gap-2">
-                <HealthDot state="ok" />
-                <span className="text-text">{e.name}</span>
-                <span className="ml-auto mono text-text-muted">{e.v}</span>
-              </li>
-            ))}
-          </ul>
+        {/* UI-0: previously five hardcoded component versions with forced-green
+            dots. Component versions now come from the active package (fixture) and
+            carry no health claim — the Control Tower cannot observe engine health
+            until a node publishes it. */}
+        <Panel
+          title={
+            <span className="flex items-center gap-2">
+              Engine Components
+              <ProvenanceChip provenance="fixture" detail="From the active strategy package." />
+            </span>
+          }
+          className="col-span-4"
+        >
+          {componentVersions.length > 0 ? (
+            <ul className="space-y-2 text-xs" data-testid="engine-components">
+              {componentVersions.map(([name, v]) => (
+                <li key={name} className="flex items-center gap-2">
+                  <span className="text-text">{name}</span>
+                  <span className="ml-auto mono text-text-muted">{String(v)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="text-xs text-text-muted italic">
+              No component versions in the active package.
+            </div>
+          )}
+          <div className="mt-3 pt-2 border-t text-2xs text-text-muted leading-relaxed" style={{ borderColor: 'var(--border-subtle)' }}>
+            Engine health is not observable from the Control Tower. A live execution node
+            must publish it.
+          </div>
         </Panel>
 
         <Panel title={<>Feature Flags <span className="text-text-muted mono ml-1">({Object.keys(flags).length})</span></>} className="col-span-4">
@@ -122,27 +145,48 @@ export function SystemView() {
           </ul>
         </Panel>
 
+        {/* UI-0: this panel previously asserted a document-store connection this
+            stack has no client for, plus a fixed feed-lag figure. Rows now come from
+            the real runtime-health contract, or state plainly that nothing is wired. */}
         <Panel title="Storage & Feeds" className="col-span-4">
-          <ul className="space-y-1.5 text-xs">
+          <ul className="space-y-1.5 text-xs" data-testid="storage-feeds">
             <li className="flex items-center gap-2">
-              <HealthDot state="ok" />
-              <span className="text-text">MongoDB</span>
-              <span className="ml-auto mono text-text-muted">connected</span>
+              <HealthDot state={rt?.runtimeDbHealthy ? 'ok' : 'critical'} />
+              <span className="text-text">Runtime overlay (SQLite)</span>
+              <span className="ml-auto mono text-text-muted">
+                {rt ? (rt.runtimeDbHealthy ? 'healthy' : 'unhealthy') : 'unknown'}
+              </span>
             </li>
             <li className="flex items-center gap-2">
-              <HealthDot state="warn" />
-              <span className="text-text">EURUSD MD feed</span>
-              <span className="ml-auto mono text-text-muted">40s lag</span>
+              <HealthDot state={rt?.eventStoreHealthy ? 'ok' : 'critical'} />
+              <span className="text-text">Event store</span>
+              <span className="ml-auto mono text-text-muted">
+                {rt ? (rt.eventStoreHealthy ? 'healthy' : 'unhealthy') : 'unknown'}
+              </span>
             </li>
             <li className="flex items-center gap-2">
-              <HealthDot state="ok" />
-              <span className="text-text">Event log</span>
-              <span className="ml-auto mono text-text-muted">append-only</span>
+              <HealthDot state="muted" />
+              <span className="text-text">Market-data provider</span>
+              <span className="ml-auto mono text-text-muted">
+                {rt?.marketData?.provider ?? 'unknown'} · {rt?.marketData?.connection ?? 'unknown'}
+              </span>
             </li>
             <li className="flex items-center gap-2">
-              <HealthDot state="ok" />
+              <HealthDot state="muted" />
+              <span className="text-text">Node telemetry</span>
+              <span className="ml-auto flex items-center gap-1.5">
+                <ProvenanceChip
+                  provenance={health?.liveNodeConnected ? 'live-node' : 'placeholder'}
+                  detail="No execution node has published to this backend."
+                />
+              </span>
+            </li>
+            <li className="flex items-center gap-2">
+              <HealthDot state="muted" />
               <span className="text-text">Replay dataset</span>
-              <span className="ml-auto mono text-text-muted">pinned</span>
+              <span className="ml-auto flex items-center gap-1.5">
+                <ProvenanceChip provenance="placeholder" detail="Replay pinning is not wired." />
+              </span>
             </li>
           </ul>
         </Panel>

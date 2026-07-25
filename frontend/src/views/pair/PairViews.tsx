@@ -46,6 +46,7 @@ import {
   TimestampUTC,
   ValidationBadgeChip,
   WhyButton,
+  ProvenanceChip,
 } from '@/components/primitives';
 import { ChartWorkspace } from '@/components/domain/ChartWorkspace';
 import { FeatureGate } from '@/components/FeatureGate';
@@ -115,7 +116,7 @@ export function PairDashboardView() {
             Resizable: drag the divider under the chart (persisted height). */}
         <Panel title="Recent Price Action" className="col-span-8" bodyClassName="p-0">
           <FeatureGate flag="charts">
-            <ChartWorkspace instrument={pair} mode="live" volume resizable initialHeight={420} />
+            <ChartWorkspace instrument={pair} mode="live" resizable initialHeight={420} />
           </FeatureGate>
         </Panel>
 
@@ -576,6 +577,10 @@ export function PairStrategyHealthView() {
   const insufficient = cells.filter((c) => c.evidence.badge === 'INSUFFICIENT').length;
   const notTested = cells.filter((c) => c.evidence.badge === 'NOT_TESTED').length;
 
+  // UI-0: this score is derived from cell badges/eligibility. When the grid is
+  // partly synthesized the score is NOT a research finding and must say so.
+  const synthesizedCells = matrix.synthesizedCells ?? 0;
+  const scoreIsSynthesized = synthesizedCells > 0;
   const healthScore = Math.round(((native / cells.length) * 0.5 + (allowed / cells.length) * 0.5) * 100);
 
   return (
@@ -598,6 +603,17 @@ export function PairStrategyHealthView() {
             <Badge variant="status" color={healthScore > 70 ? 'var(--positive)' : 'var(--warning)'}>
               {healthScore > 70 ? 'Healthy' : healthScore > 50 ? 'Caution' : 'At risk'}
             </Badge>
+            {scoreIsSynthesized && (
+              <div className="flex flex-col items-center gap-1" data-testid="health-score-provenance">
+                <ProvenanceChip
+                  provenance="synthesized"
+                  detail={`${synthesizedCells} of ${cells.length} cells are generated — this score is not a research finding.`}
+                />
+                <span className="text-2xs text-text-muted text-center leading-snug">
+                  {synthesizedCells} of {cells.length} cells generated locally
+                </span>
+              </div>
+            )}
           </div>
         </Panel>
 

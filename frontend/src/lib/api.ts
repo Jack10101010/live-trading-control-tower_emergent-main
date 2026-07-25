@@ -341,11 +341,29 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+/**
+ * Truthful backend PROCESS health (UI-0). `serverTime` is the real clock — the old
+ * shape returned the fixture's frozen `meta.asOf` as `asOf`, which read as freshness
+ * and was not. `brokerKind: 'mock'` must never be read as MT5 connectivity.
+ */
+export interface BackendHealth {
+  status: string;
+  scope: 'process';
+  serverTime: string;
+  backendMode: string;
+  brokerKind: string;
+  liveNodeConnected: boolean;
+  tradingReady: boolean;
+  dataSources: { world: string; broker: string; nodeTelemetry: string };
+  nodeTelemetry: { connected: boolean; instances: string[] };
+  fixture: { available: boolean; version?: string; contractVersion?: string; asOf?: string };
+}
+
 export const api = {
   world: () => apiFetch<WorldFixture>('/world'),
   fleet: () =>
     apiFetch<{ deployments: Deployment[]; brokers: Broker[]; accounts: Account[]; asOf: string }>('/fleet'),
-  health: () => apiFetch<{ status: string; asOf: string }>('/health'),
+  health: () => apiFetch<BackendHealth>('/health'),
   edgeMonitor: () => apiFetch<EdgeMonitor>('/edge-monitor'),
   systemConfidence: () => apiFetch<SystemConfidence>('/system-confidence'),
   recommendations: () => apiFetch<Recommendation[]>('/recommendations'),
@@ -445,6 +463,7 @@ export const api = {
 };
 
 export const QK = {
+  health: ['health'] as const,
   world: ['world'] as const,
   fleet: ['fleet'] as const,
   featureFlags: ['feature-flags'] as const,

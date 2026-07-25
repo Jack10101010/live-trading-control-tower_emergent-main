@@ -74,7 +74,8 @@ export function ChartWorkspace({
   endISO,
   height = 0,
   className,
-  volume = true,
+  // UI-0: synthetic range activity is OFF by default (it is not feed volume).
+  volume = false,
   controls = true,
   resizable = false,
   initialHeight = 420,

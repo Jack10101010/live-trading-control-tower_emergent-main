@@ -5,7 +5,7 @@ import { deriveFairValueGaps, type FairValueGap } from '@/lib/fairValueGaps';
 import { deriveLiquidityPools, type LiquidityPool } from '@/lib/liquidity';
 import { deriveMarketStructure, type MarketStructure } from '@/lib/marketStructure';
 import { type Candle } from '@/lib/chartData';
-import { api, QK, type BrokerReconciliation, type OperatorPreferences, type RuntimeHealth, type StrategyEvaluation, type SchedulerStatus, type MarketSnapshot, type RiskLimits, type MarketCandles } from '@/lib/api';
+import { api, QK, type BackendHealth, type BrokerReconciliation, type OperatorPreferences, type RuntimeHealth, type StrategyEvaluation, type SchedulerStatus, type MarketSnapshot, type RiskLimits, type MarketCandles } from '@/lib/api';
 import { expandMatrix } from '@/lib/matrixExpand';
 import { queryClient } from '@/lib/queryClient';
 import { applyEvents, resetLastAppliedSeq, seedLastAppliedSeq } from '@/lib/realtime';
@@ -173,10 +173,13 @@ const matrixCache = new Map<string, PolicyMatrixData>();
  */
 export function usePolicyMatrix(instrument: string, packageVersion?: number): PolicyMatrixData {
   const { data: source } = useSuspenseQuery({
-    // Instruments with no matrix (e.g. undeployed pairs) 404 → fall back to an
-    // empty matrix, exactly as the old world-based selector did (no crash/hang).
+    // UI-0: NO silent fallback. This previously swallowed every failure
+    // (`.catch(() => null)`) and then synthesized all 144 cells — complete with
+    // NATIVE badges and sample sizes — so a dead endpoint rendered as a confident
+    // policy grid. The error now propagates to the route boundary and the operator
+    // sees an explicit unavailable state instead of invented policy.
     queryKey: QK.policyMatrix(instrument, packageVersion),
-    queryFn: () => api.policyMatrix(instrument, packageVersion).catch(() => null),
+    queryFn: () => api.policyMatrix(instrument, packageVersion),
     staleTime: Infinity,
     retry: false,
   });
@@ -184,7 +187,7 @@ export function usePolicyMatrix(instrument: string, packageVersion?: number): Po
     const cacheKey = `${instrument}@${packageVersion ?? 'active'}`;
     const hit = matrixCache.get(cacheKey);
     if (hit) return hit;
-    const built = expandMatrix(instrument, source ?? undefined);
+    const built = expandMatrix(instrument, source);
     matrixCache.set(cacheKey, built);
     return built;
   }, [source, instrument, packageVersion]);
@@ -284,6 +287,22 @@ export function useMarketSnapshot(): MarketSnapshot {
  * The SINGLE candle source for every chart: `provider='replay'` for replay, undefined
  * for the active (live) provider. Non-suspending so the chart area loads independently.
  */
+/**
+ * Backend PROCESS health (UI-0). Deliberately NON-suspending and never retried into
+ * a throw: the shell renders a truthful "backend unreachable" indicator instead of
+ * being torn down. Never falls back to fixture values — `undefined` means unknown.
+ */
+export function useBackendHealth(): { health: BackendHealth | undefined; failed: boolean } {
+  const { data, isError } = useQuery({
+    queryKey: QK.health,
+    queryFn: () => api.health(),
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+    retry: false,
+  });
+  return { health: data, failed: isError };
+}
+
 export function useMarketCandles(
   symbol: string,
   opts: { provider?: string; count?: number; endISO?: string; timeframe?: string; live?: boolean } = {}

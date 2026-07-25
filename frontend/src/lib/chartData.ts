@@ -1,3 +1,4 @@
+import type { DataProvenance } from '@/types/provenance';
 /**
  * chartData — pure adapters that turn domain objects (trades, ghosts, sessions)
  * into ChartPanel props. Keeps ChartPanel dumb (props-only) and avoids
@@ -49,7 +50,15 @@ export function isoToUnix(iso: string): number {
   return Math.floor(new Date(iso).getTime() / 1000);
 }
 
-/** Deterministic per-bar volume derived from bar range (no fixture volume field). */
+/**
+ * UI-0 — SYNTHETIC "range activity", NOT feed volume. The market-data contract
+ * carries no volume field, so this is derived from (high - low). It must never be
+ * presented as genuine traded volume: it is off by default and, where a caller
+ * opts in, the series is titled with SYNTHETIC_VOLUME_LABEL.
+ */
+export const SYNTHETIC_VOLUME_PROVENANCE: DataProvenance = 'synthesized';
+export const SYNTHETIC_VOLUME_LABEL = 'Synthetic range activity';
+
 export function deriveVolume(candles: Candle[]): Array<{ time: number; value: number; color: string }> {
   return candles.map((c) => ({
     time: c.time,

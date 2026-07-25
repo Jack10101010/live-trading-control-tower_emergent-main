@@ -1249,7 +1249,42 @@ async def root():
 
 @api_router.get("/health")
 async def health():
-    return {"status": "ok", "asOf": WORLD.get("meta", {}).get("asOf")}
+    """Truthful PROCESS health (UI-0) — deliberately NOT trading readiness.
+
+    The old response returned the frozen fixture `meta.asOf` as `asOf`, which read
+    as a freshness timestamp and was not one. Server time is now the real clock;
+    the fixture's timestamp is still reported but nested under `fixture` where its
+    meaning is unambiguous. `brokerKind` is the ACTIVE broker implementation (mock
+    today) and must never be read as MT5 connectivity — `liveNodeConnected` is the
+    only statement about a real execution node, and it is true only when a node has
+    actually published telemetry to this process."""
+    node_instances = sorted(_LIVE_STATUS)
+    live_node_connected = bool(node_instances)
+    broker_kind = broker_layer.active_kind()
+    return {
+        "status": "ok",
+        "scope": "process",              # process liveness, not trading readiness
+        "serverTime": _now_iso(),        # real clock — never the fixture asOf
+        "backendMode": "fixture",        # this backend serves the fixture world
+        "brokerKind": broker_kind,       # active broker impl; "mock" != MT5 connected
+        "liveNodeConnected": live_node_connected,
+        "tradingReady": False,           # UI-0: no live path exists in this backend
+        "dataSources": {
+            "world": "fixture",
+            "broker": "mock" if broker_kind == "mock" else broker_kind,
+            "nodeTelemetry": "available" if live_node_connected else "unavailable",
+        },
+        "nodeTelemetry": {
+            "connected": live_node_connected,
+            "instances": node_instances,
+        },
+        "fixture": {
+            "available": bool(WORLD),
+            "version": WORLD.get("meta", {}).get("fixtureVersion"),
+            "contractVersion": WORLD.get("meta", {}).get("contractVersion"),
+            "asOf": WORLD.get("meta", {}).get("asOf"),   # the FIXTURE's time, not now
+        },
+    }
 
 
 @api_router.get("/world")

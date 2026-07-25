@@ -8,6 +8,7 @@ export type { BadgeVariant } from './Badge';
 export { Button, IconButton } from './Button';
 import { badgeColor, marketStateGlyph, marketStateLabel, marketStateVar, eligibilityColor, eligibilityLabel, laneColor, laneLabel } from '@/lib/utils';
 import { CircleDot, CircleAlert, CircleSlash, CircleCheck } from 'lucide-react';
+import { PROVENANCE_HINT, PROVENANCE_LABEL, PROVENANCE_TONE, type DataProvenance } from '@/types/provenance';
 
 /* -------------------------------------------------------------------------- */
 /*  HealthDot — one indicator (dot + label + tooltip) for every domain        */
@@ -238,6 +239,49 @@ export function ValidationBadgeChip({ badge }: { badge: string }) {
   return (
     <Badge variant="validation" color={badgeColor(badge)} glyph={<CircleCheck size={10} strokeWidth={2.5} />}>
       {badge}
+    </Badge>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  ProvenanceChip — where a displayed value came from (UI-0)                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The single visual treatment for data provenance. Any operator-facing value that
+ * is not genuinely emitted by a live node or a real market source must be rendered
+ * next to one of these. Uses the ONE Badge primitive (no new badge component).
+ */
+export function ProvenanceChip({
+  provenance,
+  detail,
+  className,
+}: {
+  provenance: DataProvenance;
+  detail?: string;
+  className?: string;
+}) {
+  const tone = PROVENANCE_TONE[provenance];
+  const color =
+    tone === 'trusted'
+      ? 'var(--positive)'
+      : tone === 'caution'
+        ? 'var(--caution)'
+        : tone === 'critical'
+          ? 'var(--negative)'
+          : 'var(--text-muted)';
+  const glyph =
+    tone === 'trusted' ? <CircleCheck size={10} strokeWidth={2.5} /> : tone === 'inert' ? <CircleSlash size={10} /> : <CircleAlert size={10} />;
+  return (
+    <Badge
+      variant="neutral"
+      color={color}
+      glyph={glyph}
+      outline={tone === 'inert'}
+      className={className}
+      title={detail ? `${PROVENANCE_HINT[provenance]} ${detail}` : PROVENANCE_HINT[provenance]}
+    >
+      {PROVENANCE_LABEL[provenance]}
     </Badge>
   );
 }

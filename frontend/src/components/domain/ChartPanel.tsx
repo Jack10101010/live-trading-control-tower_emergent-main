@@ -12,6 +12,7 @@ import {
 import { cn } from '@/lib/utils';
 import {
   deriveVolume,
+  SYNTHETIC_VOLUME_LABEL,
   sessionBands,
   type Candle,
   type ChartMarker,
@@ -231,6 +232,10 @@ export function ChartPanel({
         priceFormat: { type: 'volume' },
         lastValueVisible: false,
         priceLineVisible: false,
+        // UI-0: this histogram is derived from (high - low), NOT feed volume. It is
+        // off by default; when a caller opts in the series is titled so the chart
+        // can never read as genuine traded volume.
+        title: SYNTHETIC_VOLUME_LABEL,
       });
       vol.priceScale().applyOptions({ scaleMargins: { top: 0.86, bottom: 0 } });
       volRef.current = vol;

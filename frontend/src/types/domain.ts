@@ -14,6 +14,8 @@ export type MarketState =
   | 'BearCompress'
   | 'BearChop';
 export type Lane = 'live' | 'demo' | 'ghost' | 'experimental' | 'research_forward';
+import type { DataProvenance } from './provenance';
+
 export type ValidationBadge = 'NATIVE' | 'RESCORE' | 'BASE' | 'INSUFFICIENT' | 'NOT_TESTED';
 export type EligibilityAction = 'LABEL' | 'STATE_ONLY' | 'DIRECTION_AWARE' | 'DISABLE';
 
@@ -54,6 +56,12 @@ export interface PolicyCell {
     | 'rejected'
     | 'deployed';
   provenanceRecommendationId?: string | null;
+  /**
+   * UI-0 — where this cell came from. `synthesized` cells are generated in the
+   * Control Tower for design/demo and carry NO research evidence; they must never
+   * be rendered as strategy-engine output.
+   */
+  provenance?: DataProvenance;
   draftDelta?: {
     field: 'target' | 'risk' | 'eligibility';
     before: unknown;
@@ -154,6 +162,12 @@ export interface PolicyMatrixData {
   };
   cohortBaseTargets: Record<string, number>;
   cells: Record<string, PolicyCell>;
+  /** UI-0 — worst-case provenance across the grid. */
+  provenance?: DataProvenance;
+  /** UI-0 — how many cells were generated locally rather than supplied. */
+  synthesizedCells?: number;
+  /** UI-0 — how many cells came from a real source (fixture today). */
+  sourcedCells?: number;
 }
 
 export interface LiveTrade {

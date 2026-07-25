@@ -1,3 +1,4 @@
+import type { DataProvenance } from '@/types/provenance';
 /**
  * chartLayers — the canonical CHART ANNOTATION MODEL and layer registry (Phase 15).
  *
@@ -76,6 +77,12 @@ export interface ChartLayer {
   label: string;
   group: ChartLayerGroup;
   defaultOn: boolean;
+  /**
+   * UI-0 — provenance of what this layer draws. `synthesized` layers are generated
+   * in the Control Tower for design/demo and are NOT Lux engine detections; they
+   * stay off by default and are labelled in the layer control.
+   */
+  provenance?: DataProvenance;
   /** Pure: (shared context) → annotation primitives. No side effects. */
   build: (ctx: LayerContext) => AnnotationBundle;
 }
@@ -145,7 +152,8 @@ const ghostLayer: ChartLayer = {
  */
 const orderBlockLayer: ChartLayer = {
   id: 'orderBlocks',
-  label: 'Order Blocks',
+  label: 'Order Blocks (synthetic)',
+  provenance: 'synthesized',
   group: 'market',
   defaultOn: false,
   build: (ctx) => ({
@@ -163,7 +171,8 @@ const orderBlockLayer: ChartLayer = {
  */
 const fairValueGapLayer: ChartLayer = {
   id: 'fairValueGaps',
-  label: 'Fair Value Gaps',
+  label: 'Fair Value Gaps (synthetic)',
+  provenance: 'synthesized',
   group: 'market',
   defaultOn: false,
   build: (ctx) => ({
@@ -182,7 +191,8 @@ const fairValueGapLayer: ChartLayer = {
  */
 const liquidityLayer: ChartLayer = {
   id: 'liquidity',
-  label: 'Liquidity',
+  label: 'Liquidity (synthetic)',
+  provenance: 'synthesized',
   group: 'market',
   defaultOn: false,
   build: (ctx) => {
@@ -205,7 +215,8 @@ const liquidityLayer: ChartLayer = {
  */
 const swingLayer: ChartLayer = {
   id: 'swings',
-  label: 'Swings',
+  label: 'Swings (synthetic)',
+  provenance: 'synthesized',
   group: 'market',
   defaultOn: false,
   build: (ctx) => ({ markers: swingMarkers(ctx.marketStructure, ctx) }),
@@ -218,7 +229,8 @@ const swingLayer: ChartLayer = {
  */
 const structureLayer: ChartLayer = {
   id: 'structure',
-  label: 'BOS / CHOCH',
+  label: 'BOS / CHOCH (synthetic)',
+  provenance: 'synthesized',
   group: 'market',
   defaultOn: false,
   build: (ctx) => {

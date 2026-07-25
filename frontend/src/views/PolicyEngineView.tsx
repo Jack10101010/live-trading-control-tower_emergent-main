@@ -18,6 +18,7 @@ import {
   TimestampUTC,
   ValidationBadgeChip,
   ConfidenceMeter,
+  ProvenanceChip,
 } from '@/components/primitives';
 import { Button } from '@/components/primitives/Button';
 import { Pencil, CircleCheck, Rocket, ArrowUpCircle, Lock, GitCommit } from 'lucide-react';
@@ -51,6 +52,8 @@ export function PolicyEngineView() {
   const cellCount = Object.keys(matrix.cells).length;
   const allowedCount = Object.values(matrix.cells).filter((c) => c.eligibility.resolvedAllowed).length;
   const nativeCount = Object.values(matrix.cells).filter((c) => c.evidence.badge === 'NATIVE').length;
+  // UI-0: aggregates over a partly-synthesized grid inherit that provenance.
+  const synthesizedCells = matrix.synthesizedCells ?? 0;
 
   return (
     <div className="grid grid-cols-[1fr_360px] h-full min-h-0">
@@ -68,6 +71,16 @@ export function PolicyEngineView() {
             <span>{allowedCount} allowed</span>
             <span>·</span>
             <span>{nativeCount} NATIVE</span>
+            {synthesizedCells > 0 && (
+              <>
+                <span className="text-text-muted">·</span>
+                <span data-testid="policy-synthesized-count">{synthesizedCells} generated</span>
+                <ProvenanceChip
+                  provenance="synthesized"
+                  detail={`${synthesizedCells} of ${cellCount} cells are generated locally and carry no research evidence.`}
+                />
+              </>
+            )}
           </div>
         </div>
         <div className="flex-1 min-h-0">
