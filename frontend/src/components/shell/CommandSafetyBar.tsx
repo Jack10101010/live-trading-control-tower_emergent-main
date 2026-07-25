@@ -82,6 +82,10 @@ export function CommandSafetyBar() {
   const bandDot: 'ok' | 'warn' | 'critical' =
     confidence.band === 'healthy' ? 'ok' : confidence.band === 'critical' ? 'critical' : 'warn';
 
+  // UI-3: this is the FIXTURE world's planned execution posture, NOT the live
+  // node's runtime mode. The node's real mode is published in telemetry and shown
+  // by the live-operations strip; leaving this unlabelled created two competing
+  // "live status" surfaces with different meanings.
   // Execution posture — highest-risk active mode across the fleet (never hardcoded).
   const execMode: 'live' | 'demo' | 'mock' = deployments.some(
     (d) => d.executionMode === 'live' && d.liveEnabled
@@ -144,11 +148,16 @@ export function CommandSafetyBar() {
       >
         <Radio
           size={12}
-          className={execMode === 'live' ? 'ct-pulse-dot' : ''}
+          /* UI-3: pulsing removed — animation must not be a primary safety signal,
+             and this banner describes the fixture world, not the live node. */
           style={{ color: modeColor }}
         />
-        <span className="text-[11px] font-semibold tracking-widest uppercase" style={{ color: modeColor }}>
-          {execMode}
+        <span
+          className="text-[11px] font-semibold tracking-widest uppercase"
+          style={{ color: modeColor }}
+          title={`Fixture-world planned execution posture: ${execMode}. This is NOT the live node's runtime mode — see the live-operations strip.`}
+        >
+          {`plan ${execMode}`}
         </span>
         {/* UI-0: persistent, global data-source truth. Replaces a hardcoded
             application-version banner. The operator must never have to infer
@@ -169,7 +178,9 @@ export function CommandSafetyBar() {
           data-testid="realtime-status"
         >
           <span
-            className={`w-1.5 h-1.5 rounded-full ${realtime.state === 'live' ? 'ct-pulse-dot' : ''}`}
+            /* UI-3: no pulse. Animation must not be a safety signal, and this dot
+               describes the UI's own transport, not the trading system. */
+            className="w-1.5 h-1.5 rounded-full"
             style={{ background: rtColor }}
           />
           <span className="text-[9px] uppercase tracking-widest mono" style={{ color: rtColor }}>

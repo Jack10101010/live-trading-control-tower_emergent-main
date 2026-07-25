@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { CommandSafetyBar } from './CommandSafetyBar';
 import { ScopeNavigator } from './ScopeNavigator';
 import { ContextBar } from './ContextBar';
+import { LiveOperationsStrip } from './LiveOperationsStrip';
 import { EventDock } from './EventDock';
 import { CommandPalette } from './CommandPalette';
 import { InspectorHost } from '@/components/inspector/InspectorHost';
@@ -25,6 +26,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         <ScopeNavigator />
         <div className="flex flex-col flex-1 min-w-0">
           <ContextBar />
+          {/* UI-3 — persistent, read-only live-operations strip. Placed above the
+              workspace so safety-critical node state is visible on every screen. */}
+          <LiveOperationsStrip />
           <main
             className="flex-1 min-h-0 overflow-hidden"
             style={{ paddingRight: inspectorOpen ? inspectorWidth : 0, transition: 'padding-right 180ms cubic-bezier(.2,0,0,1)' }}

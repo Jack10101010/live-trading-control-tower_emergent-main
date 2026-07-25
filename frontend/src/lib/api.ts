@@ -403,9 +403,89 @@ export interface ConnectionState {
   emptyState: string | null;
 }
 
+/* ── UI-3: the persisted node snapshot, as `GET /api/live/status` returns it ──
+ * These mirror `live/telemetry.py` (schema ct.node-telemetry.v1) exactly — every
+ * field below was re-derived from a real response. Optional/nullable throughout,
+ * because the node publishes `null` for anything it did not observe and the UI
+ * must render that as unknown rather than as a default. */
+export interface TelemetryOpenEligibility {
+  /** Tri-state: never `true` — telemetry cannot authorize an OPEN (UI-1). */
+  eligible: boolean | null;
+  reasons: string[];
+}
+
+export interface TelemetrySnapshot {
+  schema_version: string;
+  instance_id: string;
+  published_at: string;
+  runtime?: {
+    mode?: string | null;
+    submission_disabled?: boolean | null;
+    kill_switch_active?: boolean | null;
+    open_eligibility?: TelemetryOpenEligibility | null;
+  } | null;
+  reconciliation?: {
+    available?: boolean | null;
+    clean?: boolean | null;
+    frozen?: boolean | null;
+    recovery_required?: boolean | null;
+    unresolved_sent_count?: number | null;
+    snapshot_status?: string | null;
+  } | null;
+  account?: {
+    identity?: { available?: boolean | null; fingerprint?: string | null } | null;
+    health?: {
+      available?: boolean | null;
+      healthy?: boolean | null;
+      trade_allowed?: boolean | null;
+      trade_expert?: boolean | null;
+      reasons?: string[] | null;
+    } | null;
+  } | null;
+  arming?: {
+    status?: string | null;
+    armed?: boolean | null;
+    expires_at?: string | null;
+    attempts_remaining?: number | null;
+    fingerprint_matches?: boolean | null;
+    reason?: string | null;
+  } | null;
+  execution?: {
+    cycle_frozen?: boolean | null;
+    pending_intents?: unknown[] | null;
+    blocks?: Array<{ rail?: string | null; intent_id?: string | null }> | null;
+    unresolved_sent?: unknown[] | null;
+  } | null;
+  engine?: { symbol?: string | null; timeframe?: string | null } | null;
+  market?: { available?: boolean | null; feed_healthy?: boolean | null } | null;
+}
+
+/** One entry of `GET /api/live/status` — the UI-2 read-side envelope. */
+export interface LiveStatusEntry {
+  instance_id: string;
+  schema_version: string;
+  legacy_source: boolean;
+  published_at: string;
+  observed_at: string;
+  received_at: string | null;
+  age_seconds: number | null;
+  stale: boolean;
+  stale_after_seconds: number;
+  snapshot: TelemetrySnapshot;
+}
+
+export interface LiveStatus {
+  schemaVersion: string;
+  observedAt: string;
+  instances: string[];
+  statuses: Record<string, LiveStatusEntry>;
+  emptyState: string | null;
+}
+
 export const api = {
   world: () => apiFetch<WorldFixture>('/world'),
   liveConnection: () => apiFetch<ConnectionState>('/live/connection'),
+  liveStatus: () => apiFetch<LiveStatus>('/live/status'),
   fleet: () =>
     apiFetch<{ deployments: Deployment[]; brokers: Broker[]; accounts: Account[]; asOf: string }>('/fleet'),
   health: () => apiFetch<BackendHealth>('/health'),

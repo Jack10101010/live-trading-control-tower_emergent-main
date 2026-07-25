@@ -132,6 +132,10 @@ export function ScopeNavigator() {
                                 >
                                   <CircleDot
                                     size={9}
+                                    /* UI-3: fixture deployment status. "Armed" here is
+                                       the fixture model's own word, NOT live-node arming
+                                       (LX-1 Slice 8) — that is in the operations strip. */
+                                    aria-label={`Fixture deployment status: ${d.status}`}
                                     style={{
                                       color:
                                         d.status === 'InTrade'
@@ -141,7 +145,12 @@ export function ScopeNavigator() {
                                           : 'var(--paused)',
                                     }}
                                   />
-                                  <span className="font-medium mono">{d.pair}</span>
+                                  <span
+                                    className="font-medium mono"
+                                    title={`Fixture deployment record: ${d.status}. Not live-node arming or execution state.`}
+                                  >
+                                    {d.pair}
+                                  </span>
                                   <span className="ml-auto text-text-muted uppercase">{d.lane}</span>
                                 </button>
                               ))}

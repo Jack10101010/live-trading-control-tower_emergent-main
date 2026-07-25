@@ -11,10 +11,15 @@ const SIGNAL_STATE: Record<string, 'ok' | 'warn' | 'critical' | 'muted'> = {
   fail: 'critical',
   unknown: 'muted',
 };
+/* UI-3: prefixed "fx" because these are FIXTURE-world confidence signals. Their
+   vocabulary ("Reconcile", "Broker") collides with the live node's real
+   reconciliation and bridge state, which the live-operations strip now shows —
+   two surfaces using the same words with different meanings is the exact
+   confusion this slice exists to remove. */
 const CHIP_SIGNALS: Array<{ key: string; label: string }> = [
-  { key: 'dataFreshness', label: 'MD feed' },
-  { key: 'reconciliation', label: 'Reconcile' },
-  { key: 'brokerHealth', label: 'Broker' },
+  { key: 'dataFreshness', label: 'fx MD feed' },
+  { key: 'reconciliation', label: 'fx Reconcile' },
+  { key: 'brokerHealth', label: 'fx Broker' },
 ];
 
 /**
