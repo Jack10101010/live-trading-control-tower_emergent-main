@@ -33,6 +33,7 @@ import portfolio as portfolio_layer
 # L1A frozen Operational Status Model. Flat import matching every sibling above —
 # the app runs as `uvicorn server:app` from backend/, so this is the ONE module
 # object for L1A in the process (no dual identity via a package-form import).
+import connection_state as connection_layer
 import live_telemetry
 import ops_status as ops_status_layer
 import ops_journal as ops_journal_layer
@@ -2237,6 +2238,28 @@ def ops_status_endpoint():
     return JSONResponse(content=model, headers={"Cache-Control": "no-store"})
 
 
+def _node_beacon():
+    """The node's own L1A aliveness classification, or None when unobtainable.
+
+    This is the ONLY evidence that can make the node `disconnected` rather than
+    `unknown`. In the target topology the node runs on a separate machine and its
+    files are not visible here, so None is the normal answer — which is why the
+    absence of a beacon must never be read as absence of the node.
+    """
+    try:
+        sources = ops_status_layer.collect_sources(
+            OPS_STATE_DIR, OPS_MARKET_DATA_DIR, OPS_KILL_FILE)
+        if not sources.get("liveness"):
+            return None                     # source not readable from this host
+        model = ops_status_layer.build_operational_status(
+            sources, datetime.now(timezone.utc))
+        beacon = (model.get("process") or {}).get("aliveness")
+        return beacon if isinstance(beacon, str) else None
+    except Exception:                       # observability must never 500
+        logger.exception("node liveness beacon unreadable")
+        return None
+
+
 def _live_status_entry(instance_id: str, record: dict, now: datetime) -> dict:
     """Wrap one stored record in the read-side observation envelope."""
     entry = live_telemetry.observation(record["snapshot"], now=now)
@@ -2275,12 +2298,41 @@ def live_status(instance_id: str | None = None):
     return {
         "schemaVersion": live_telemetry.SCHEMA_VERSION,
         "observedAt": now.isoformat().replace("+00:00", "Z"),
-        "connected": bool(instances),
+        # UI-1: no `connected` boolean. "A snapshot exists" is not a connection —
+        # it ignores freshness entirely, so a node that died days ago read as
+        # connected. Connection is four independent dimensions; see
+        # GET /api/live/connection.
         "instances": instances,
         "statuses": {iid: _live_status_entry(iid, records[iid], now) for iid in instances},
         "emptyState": None if instances else
         "No live node has published telemetry to this Control Tower.",
     }
+
+
+@api_router.get("/live/connection")
+def live_connection():
+    """UI-1 — the truthful connection model (read-only).
+
+    Four independent dimensions with separate evidence, never collapsed into one
+    "connected" flag. The backend dimension is deliberately ABSENT from this
+    response: a backend cannot report its own unreachability, so the client
+    derives it from whether this request succeeded at all.
+
+    Nothing here is inferred from the fixture world, and nothing implies trading
+    health: a running Control Tower, a published snapshot and a reachable MT5 are
+    three different facts. Absent evidence yields `unknown`; only positive
+    evidence of a failed read yields `unavailable`.
+
+    Sync def so the blocking SQLite/file reads run in the threadpool.
+    """
+    now = datetime.now(timezone.utc)
+    records = _load_live_snapshots()
+    records.update({k: v for k, v in _LIVE_STATUS.items()
+                    if isinstance(v, dict) and isinstance(v.get("snapshot"), dict)})
+    return JSONResponse(
+        content=connection_layer.build_connection_state(
+            records, now, beacon=_node_beacon()),
+        headers={"Cache-Control": "no-store"})
 
 
 @api_router.get("/notifier/status")

@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { ConnectionPanel } from '@/components/domain/ConnectionPanel';
 import { useFleet, usePackages, useFeatureFlags, useRuntimeHealth, useBrokerReconciliation, useStrategyEvaluation, useSchedulerStatus, useMarketSnapshot, useRiskLimits, useActivePackage, useBackendHealth } from '@/hooks/useRepository';
 import { api, QK } from '@/lib/api';
 import { queryClient } from '@/lib/queryClient';
@@ -92,6 +93,15 @@ export function SystemView() {
         <p className="text-xs text-text-muted mt-1">
           Deployments, manifests, feature flags, engine health, storage
         </p>
+      </div>
+
+      {/* UI-1 — the live relationship between this Control Tower, the execution
+          node and MT5. Placed first: it is the only thing on this page that
+          reports the REAL system rather than the fixture world. */}
+      <div className="grid grid-cols-12 gap-4">
+        <div className="col-span-12 lg:col-span-6">
+          <ConnectionPanel />
+        </div>
       </div>
 
       <div className="grid grid-cols-12 gap-4">

@@ -104,7 +104,13 @@ export function ContextBar() {
           const sig = confidence.signals.find((s) => s.key === key);
           if (!sig) return null;
           return (
-            <div key={key} className="flex items-center gap-1.5 text-2xs text-text-muted" title={sig.message}>
+            <div
+              key={key}
+              className="flex items-center gap-1.5 text-2xs text-text-muted"
+              /* UI-1: system-confidence signals are fixture-world derived. Scoped
+                 explicitly so a green "Broker" chip cannot read as live MT5 health. */
+              title={`${sig.message} (fixture world — not live node or MT5 state; see System → Connection)`}
+            >
               <HealthDot state={SIGNAL_STATE[sig.state] ?? 'muted'} size="sm" />
               <span>{sig.state === 'ok' ? label : `${label} · ${sig.value}`}</span>
             </div>

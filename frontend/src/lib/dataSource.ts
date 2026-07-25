@@ -9,7 +9,7 @@
  * telemetry to the backend. A mock broker never implies MT5 connectivity, and a
  * responding backend never implies trading readiness.
  */
-import type { BackendHealth } from '@/lib/api';
+import type { BackendHealth, TelemetryState } from '@/lib/api';
 import { PROVENANCE_HINT, type DataProvenance } from '@/types/provenance';
 
 export interface DataSourceBadge {
@@ -22,7 +22,10 @@ export interface DataSourceBadge {
 
 export function deriveDataSourceBadge(
   health: BackendHealth | undefined,
-  failed: boolean
+  failed: boolean,
+  /** UI-1: the backend's telemetry classification, when known. Optional so the
+   *  UI-0 contract keeps working for callers that do not have it. */
+  telemetry?: TelemetryState
 ): DataSourceBadge {
   if (failed) {
     return {
@@ -36,6 +39,20 @@ export function deriveDataSourceBadge(
       provenance: 'placeholder',
       label: 'source unknown',
       hint: 'Backend health not yet known.',
+    };
+  }
+  // UI-1: `liveNodeConnected` means "a node has published to this process at some
+  // point" — it is not freshness-aware, so on its own it would badge a node that
+  // died days ago as `live-node`. When the caller supplies the connection state we
+  // downgrade a stale/unreadable node to `stale`, which is what an operator needs
+  // to see. Without it we fall back to UI-0 behaviour rather than guessing.
+  if (health.liveNodeConnected && telemetry && telemetry !== 'fresh') {
+    return {
+      provenance: 'stale',
+      label: telemetry === 'unavailable' ? 'node telemetry unreadable' : 'live node · stale',
+      hint:
+        `${PROVENANCE_HINT.stale} Node telemetry is ${telemetry}; nothing from it is current. ` +
+        `Backend mode ${health.backendMode}; broker ${health.brokerKind}.`,
     };
   }
   const provenance: DataProvenance = health.liveNodeConnected ? 'live-node' : 'fixture';

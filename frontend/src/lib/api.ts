@@ -359,8 +359,53 @@ export interface BackendHealth {
   fixture: { available: boolean; version?: string; contractVersion?: string; asOf?: string };
 }
 
+/* ── UI-1: truthful connection state ─────────────────────────────────────────
+ * Mirrors backend/connection_state.py. Four INDEPENDENT dimensions — there is no
+ * single `connected` boolean, because a reachable backend, a publishing node and
+ * a reachable MT5 bridge are three different facts.
+ *
+ * `unknown` = no evidence either way. `unavailable` = positive evidence that
+ * something could not be read or reached. They must never be merged. */
+export type TelemetryState = 'never_received' | 'fresh' | 'stale' | 'unavailable';
+export type NodeState = 'unknown' | 'connected' | 'disconnected';
+export type BridgeState = 'unknown' | 'healthy' | 'degraded' | 'unavailable';
+export type SnapshotProblem = 'malformed_snapshot' | 'unsupported_schema' | 'unknown_schema';
+
+export interface ConnectionInstance {
+  instanceId: string;
+  telemetry: TelemetryState;
+  node: NodeState;
+  nodeEvidence: string;
+  bridge: BridgeState;
+  bridgeEvidence: string;
+  problem: SnapshotProblem | null;
+  schemaVersion: string | null;
+  legacySource: boolean;
+  /** The NODE's own publish time — the only source of freshness. */
+  publishedAt: string | null;
+  /** When this tower received it. Never used to compute age. */
+  receivedAt: string | null;
+  ageSeconds: number | null;
+  staleAfterSeconds: number;
+  mode: string | null;
+  engineVersion: string | null;
+}
+
+export interface ConnectionState {
+  observedAt: string;
+  staleAfterSeconds: number;
+  firstRun: boolean;
+  telemetry: TelemetryState;
+  node: NodeState;
+  bridge: BridgeState;
+  instanceCount: number;
+  instances: ConnectionInstance[];
+  emptyState: string | null;
+}
+
 export const api = {
   world: () => apiFetch<WorldFixture>('/world'),
+  liveConnection: () => apiFetch<ConnectionState>('/live/connection'),
   fleet: () =>
     apiFetch<{ deployments: Deployment[]; brokers: Broker[]; accounts: Account[]; asOf: string }>('/fleet'),
   health: () => apiFetch<BackendHealth>('/health'),

@@ -6,6 +6,15 @@ import { Command, ShieldAlert, Radio, Sun, Moon, Monitor } from 'lucide-react';
 import { useCommand } from '@/hooks/useCommand';
 import type { ThemeName } from '@/store/shellStore';
 import { deriveDataSourceBadge } from '@/lib/dataSource';
+import { summarize, type Tone } from '@/lib/connectionState';
+import { useConnectionState } from '@/components/domain/ConnectionPanel';
+
+const CONNECTION_TONE_COLOR: Record<Tone, string> = {
+  positive: 'var(--positive)',
+  caution: 'var(--caution, var(--warning))',
+  negative: 'var(--negative)',
+  neutral: 'var(--text-muted)',
+};
 
 /**
  * CommandSafetyBar — top chrome. Global kill · mode banner · health · clock · ⌘K.
@@ -21,9 +30,17 @@ export function CommandSafetyBar() {
   const realtime = useShellStore((s) => s.realtime);
   const dispatch = useCommand();
   const { health, failed: healthFailed } = useBackendHealth();
+  // UI-1 — four independent dimensions, summarized without collapsing them into
+  // one "connected" word. Never claims node or bridge health the backend has not
+  // actually observed.
+  const { connection, backend: backendState } = useConnectionState();
+  const connectionSummary = summarize(backendState, connection);
+  const connectionHint = connection
+    ? `Backend ${backendState} · telemetry ${connection.telemetry} · node ${connection.node} · MT5 bridge ${connection.bridge}. Freshness threshold ${connection.staleAfterSeconds}s.`
+    : `Backend ${backendState} · node telemetry not yet observed.`;
 
   // UI-0 — global data-source truth (pure, unit-tested in lib/dataSource.ts).
-  const dataSource = deriveDataSourceBadge(health, healthFailed);
+  const dataSource = deriveDataSourceBadge(health, healthFailed, connection?.telemetry);
   const sourceProvenance = dataSource.provenance;
   const sourceLabel = dataSource.label;
   const sourceHint = dataSource.hint;
@@ -43,8 +60,18 @@ export function CommandSafetyBar() {
       : realtime.state === 'offline'
       ? 'var(--negative)'
       : 'var(--warning)';
+  // UI-1: this chip describes ONE thing — this browser's event stream to the
+  // Control Tower backend. It previously rendered a green "LIVE", which beside the
+  // execution-mode banner read as "the trading system is live". It has never known
+  // anything about the execution node or MT5; the connection chip below does.
   const rtLabel =
-    realtime.state === 'live' ? 'live' : realtime.state === 'connecting' ? 'connecting' : realtime.state === 'offline' ? 'offline' : 'reconnecting';
+    realtime.state === 'live'
+      ? 'stream ok'
+      : realtime.state === 'connecting'
+        ? 'stream connecting'
+        : realtime.state === 'offline'
+          ? 'stream offline'
+          : 'stream retrying';
 
   const bandColor =
     confidence.band === 'healthy'
@@ -138,7 +165,7 @@ export function CommandSafetyBar() {
         <span
           className="flex items-center gap-1 pl-2 ml-1 border-l"
           style={{ borderColor: 'var(--border-subtle)' }}
-          title={`Realtime: ${rtLabel} · seq ${realtime.lastSeq}`}
+          title={`Browser → backend event stream: ${rtLabel} · seq ${realtime.lastSeq}. This is the UI's own transport — it reports nothing about the execution node or MT5.`}
           data-testid="realtime-status"
         >
           <span
@@ -147,6 +174,24 @@ export function CommandSafetyBar() {
           />
           <span className="text-[9px] uppercase tracking-widest mono" style={{ color: rtColor }}>
             {rtLabel}
+          </span>
+        </span>
+        {/* UI-1 — node/bridge truth, always named separately from the UI transport. */}
+        <span
+          className="flex items-center gap-1 pl-2 ml-1 border-l"
+          style={{ borderColor: 'var(--border-subtle)' }}
+          title={connectionHint}
+          data-testid="connection-status"
+        >
+          <span
+            className="w-1.5 h-1.5 rounded-full"
+            style={{ background: CONNECTION_TONE_COLOR[connectionSummary.tone] }}
+          />
+          <span
+            className="text-[9px] uppercase tracking-widest mono"
+            style={{ color: CONNECTION_TONE_COLOR[connectionSummary.tone] }}
+          >
+            {connectionSummary.label}
           </span>
         </span>
       </div>

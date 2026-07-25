@@ -716,7 +716,10 @@ def test_old_snapshot_is_reported_stale_not_hidden(clean_store):
 def test_empty_state_is_explicit_and_claims_nothing(clean_store):
     body = client.get("/api/live/status").json()
     assert body["instances"] == [] and body["statuses"] == {}
-    assert body["connected"] is False
+    # UI-1 removed the `connected` boolean from this envelope: "a snapshot exists"
+    # ignored freshness, so a node dead for days read as connected. Connection is
+    # four independent dimensions — see GET /api/live/connection.
+    assert "connected" not in body
     assert isinstance(body["emptyState"], str) and body["emptyState"]
     assert body["schemaVersion"] == "ct.node-telemetry.v1"
     assert body["observedAt"]

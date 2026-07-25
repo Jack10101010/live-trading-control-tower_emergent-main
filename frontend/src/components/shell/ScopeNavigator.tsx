@@ -105,7 +105,13 @@ export function ScopeNavigator() {
                       className="flex items-center gap-1 w-full text-left h-6 px-1.5 text-2xs text-text-2 hover:bg-[color:var(--panel-2)] rounded-sm"
                     >
                       {expanded.has(brokerId) ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                      <HealthDot state={broker.status === 'connected' ? 'ok' : 'critical'} />
+                      {/* UI-1: this is the FIXTURE broker model's own status — it is
+                          not MT5 connectivity and not the execution node. Real
+                          node/bridge state lives in the Connection panel. */}
+                      <HealthDot
+                        state={broker.status === 'connected' ? 'ok' : 'critical'}
+                        title={`Fixture broker record: ${broker.status}. Not MT5 connectivity — see System → Connection for live node and bridge state.`}
+                      />
                       <span className="ml-1 truncate">{broker.venue}</span>
                     </button>
                     {expanded.has(brokerId) && (
