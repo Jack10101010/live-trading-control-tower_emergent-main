@@ -593,6 +593,18 @@ class _SnapshotGateway(MT5Gateway):
         return True, {"ticket": 999}
 
 
+def _arm_runtime():
+    """A pre-validated ArmRuntime (LX-1 Slice 8) matching the doubles' identity —
+    the same typed object startup arming installs after all prerequisites pass."""
+    import time as _t
+    from live.arming import AccountFingerprint, ArmContext, ArmRuntime
+    fp = AccountFingerprint(login=1_000_001, server="Broker-Demo", currency="EUR",
+                            trade_mode="demo")
+    return ArmRuntime(ArmContext(fingerprint=fp, expiry_monotonic=_t.monotonic() + 900,
+                                 probation_max_opens=1,
+                                 request_expires_at="2099-01-01T00:00:00+00:00"))
+
+
 class _RaisingOpenGateway(MT5Gateway):
     """Live gateway whose open_position raises AFTER the SENT record is durable —
     simulates a crash during order_send. snapshot() later reveals the position."""
@@ -600,6 +612,12 @@ class _RaisingOpenGateway(MT5Gateway):
         super().__init__(cfg, sdk=None)
         self._positions_after = positions_after or []
         self.order_ops = 0
+
+    def account_identity(self):
+        # LX-1 Slice 8 runtime continuity: matches _arm_runtime()'s fingerprint
+        from live.account_identity import AccountIdentity
+        return AccountIdentity(login=1_000_001, server="Broker-Demo", currency="EUR",
+                               trade_mode="demo", balance=10_000.0, equity=10_000.0)
 
     def snapshot(self):
         return True, {"account": None, "positions": self._positions_after, "orders": []}
@@ -659,7 +677,8 @@ def test_lr1_sent_crash_during_order_send_restores_ledger_and_mirror(tmp_path):
     # drive the real production _execute; crash (raise) during order_send
     crash_gw = _RaisingOpenGateway(cfg)
     with pytest.raises(RuntimeError):
-        Executor(cfg, RunnerState(cfg.state_dir), crash_gw).apply([it], today="2026-07-17")
+        Executor(cfg, RunnerState(cfg.state_dir), crash_gw,
+                 arm_runtime=_arm_runtime()).apply([it], today="2026-07-17")
     assert crash_gw.order_ops == 1                                  # order_send was attempted
     # the fix: SENT is durable WITH the payload, so the trade_id survives the crash
     after = RunnerState(cfg.state_dir)

@@ -206,7 +206,8 @@ def _exec(tmp_path, tick, *, mode="live", positions=None, order_result=...):
     gw = MT5Gateway(cfg, sdk=fake)
     ok, _ = gw.connect(); assert ok                        # connected in both modes for these tests
     st = RunnerState(cfg.state_dir)
-    return fake, st, gw, Executor(cfg, st, gw)
+    arm = F.make_arm_runtime() if mode == "live" else None
+    return fake, st, gw, Executor(cfg, st, gw, arm_runtime=arm)
 
 
 def test_sampled_once_for_multiple_opens(tmp_path):

@@ -35,6 +35,18 @@ def _pos_float(name: str, default: str) -> float:
     return v
 
 
+def _strict_bool(name: str, default: str) -> bool:
+    """Strictly parse an env-overridable boolean. Fails safely at startup
+    (SystemExit) on any value that is not an explicit true/false token — an
+    ambiguous submission-control flag must never be guessed."""
+    raw = os.environ.get(name, default).strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    raise SystemExit(f"REFUSED: invalid {name}={raw!r} (expected true/false)")
+
+
 @dataclass
 class LiveConfig:
     # paths
@@ -77,6 +89,18 @@ class LiveConfig:
     # connected mode), never at construction (dry-run/tests unaffected) and never
     # silently disabling the floor.
     min_equity_raw: str = field(default_factory=lambda: _env("LIVE_MIN_EQUITY", ""))
+
+    # controlled live arming (LX-1 Slice 8). LIVE_MODE=live alone NEVER arms: a
+    # short-lived, single-use arm request file under <state_dir>/arm is also
+    # required. TTL/skew/probation are stored raw and strictly validated in
+    # arm_policy() (fail closed, never at construction). LIVE_SUBMIT_DISABLED is a
+    # hard, independent rehearsal guard: when true the armed live OPEN path runs to
+    # the submission boundary but the broker is never called.
+    arm_file_raw: str = field(default_factory=lambda: _env("LIVE_ARM_FILE", ""))
+    arm_ttl_raw: str = field(default_factory=lambda: _env("LIVE_ARM_TTL_S", "900"))
+    arm_clock_skew_raw: str = field(default_factory=lambda: _env("LIVE_ARM_CLOCK_SKEW_S", "5"))
+    probation_max_opens_raw: str = field(default_factory=lambda: _env("LIVE_PROBATION_MAX_OPENS", "1"))
+    submit_disabled: bool = field(default_factory=lambda: _strict_bool("LIVE_SUBMIT_DISABLED", "false"))
 
     # MT5 (used only on the VPS; gateway degrades gracefully elsewhere)
     mt5_login: str = field(default_factory=lambda: _env("MT5_LOGIN", ""))
@@ -135,6 +159,63 @@ class LiveConfig:
         from live.account_identity import normalize_currency
         return HealthPolicy(min_equity=parse_min_equity(self.min_equity_raw),
                             expected_currency=normalize_currency(self.expected_currency))
+
+    # ── controlled live arming (LX-1 Slice 8) ────────────────────────────────
+    @property
+    def arm_dir(self) -> Path:
+        """The ONLY directory an arm request may live in (never auto-populated)."""
+        return self.state_dir / "arm"
+
+    @property
+    def arm_consumed_dir(self) -> Path:
+        return self.arm_dir / "consumed"
+
+    def arm_file_path(self) -> Path:
+        """Resolve the arm-request path, which MUST stay inside <state_dir>/arm.
+        Rejects ``..`` traversal and any path escaping the arm directory. Performs
+        no file I/O and never creates the request."""
+        from live.arming import ArmConfigError
+        raw = (self.arm_file_raw or "").strip()
+        arm_dir = self.arm_dir
+        if not raw:
+            return arm_dir / "arm_request.json"
+        if ".." in Path(raw).parts:
+            raise ArmConfigError("arm file path may not contain '..'")
+        p = Path(raw)
+        if not p.is_absolute():
+            p = arm_dir / p
+        norm = Path(os.path.normpath(str(p)))
+        try:
+            norm.relative_to(arm_dir)
+        except ValueError:
+            raise ArmConfigError("arm file path must stay inside <state_dir>/arm")
+        return norm
+
+    def arm_policy(self):
+        """Build the arming policy (LX-1 Slice 8), STRICTLY parsing the TTL, clock
+        skew and probation limit. Raises ``ArmConfigError`` on any malformed or
+        out-of-range value so arming fails closed (never permissive)."""
+        from live.arming import ArmConfigError, ArmPolicy
+
+        def _num(raw, name, lo, hi):
+            try:
+                v = float(str(raw).strip())
+            except (TypeError, ValueError):
+                raise ArmConfigError(f"invalid {name}")
+            if not math.isfinite(v) or v < lo or v > hi:
+                raise ArmConfigError(f"invalid {name}")
+            return v
+
+        ttl = _num(self.arm_ttl_raw, "LIVE_ARM_TTL_S", 0.001, 3600)
+        skew = _num(self.arm_clock_skew_raw, "LIVE_ARM_CLOCK_SKEW_S", 0, 30)
+        raw_probation = str(self.probation_max_opens_raw).strip()
+        if not raw_probation.isdigit():
+            raise ArmConfigError("invalid LIVE_PROBATION_MAX_OPENS")
+        probation = int(raw_probation)
+        if probation != 1:      # Slice 8 first-live capstone: exactly one attempt
+            raise ArmConfigError("LIVE_PROBATION_MAX_OPENS must be exactly 1")
+        return ArmPolicy(max_ttl_seconds=ttl, clock_skew_seconds=skew,
+                         probation_max_opens=probation)
 
     def ensure_dirs(self) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)

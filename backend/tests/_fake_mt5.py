@@ -90,6 +90,24 @@ def make_position(ticket: int, type: int, volume: float, *, symbol: str = "EURUS
                            magic=magic, profit=profit)
 
 
+def make_arm_runtime(*, login: int = 1_000_001, server: str = "Broker-Demo",
+                     currency: str = "EUR", trade_mode: str = "demo",
+                     ttl_s: float = 900.0, max_opens: int = 1):
+    """A pre-validated ArmRuntime for tests that must exercise the ARMED live-OPEN
+    path (LX-1 Slice 8). Mirrors exactly what live.arming.verify_and_arm builds
+    after every startup prerequisite passed — tests never bypass the runtime gate,
+    they supply the same typed object startup would. Defaults match make_account().
+    """
+    import time as _t
+    from live.arming import AccountFingerprint, ArmContext, ArmRuntime
+    fp = AccountFingerprint(login=login, server=server, currency=currency,
+                            trade_mode=trade_mode)
+    ctx = ArmContext(fingerprint=fp, expiry_monotonic=_t.monotonic() + ttl_s,
+                     probation_max_opens=max_opens,
+                     request_expires_at="2099-01-01T00:00:00+00:00")
+    return ArmRuntime(ctx)
+
+
 def make_result(retcode: int = TRADE_RETCODE_DONE, *, order: int = 0, deal: int = 0,
                 price: float = 0.0, volume: float = 0.0, bid: float = 0.0, ask: float = 0.0,
                 comment: str = "", request_id: int = 0,

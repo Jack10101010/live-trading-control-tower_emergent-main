@@ -162,14 +162,24 @@ class MT5Gateway:
 
     def _normalize_trade_mode(self, raw):
         """MT5 account trade_mode int -> {demo, contest, real}, read via sdk
-        constants (like build_retcode_map); unknown/bool/None -> None (fail closed)."""
+        constants (like build_retcode_map); unknown/bool/None -> None (fail closed).
+
+        S6-F1 hardening: the three constants must be distinct integers. A broken or
+        aliased SDK whose constants collide would otherwise let a value silently
+        last-win onto the wrong mode label, so ANY duplicate or non-integer
+        constant fails closed (None) rather than guessing."""
         if isinstance(raw, bool) or not isinstance(raw, int):
             return None
         s = self.sdk
-        known = {getattr(s, "ACCOUNT_TRADE_MODE_DEMO", 0): "demo",
-                 getattr(s, "ACCOUNT_TRADE_MODE_CONTEST", 1): "contest",
-                 getattr(s, "ACCOUNT_TRADE_MODE_REAL", 2): "real"}
-        return known.get(raw)
+        pairs = ((getattr(s, "ACCOUNT_TRADE_MODE_DEMO", 0), "demo"),
+                 (getattr(s, "ACCOUNT_TRADE_MODE_CONTEST", 1), "contest"),
+                 (getattr(s, "ACCOUNT_TRADE_MODE_REAL", 2), "real"))
+        values = [v for v, _ in pairs]
+        if any(isinstance(v, bool) or not isinstance(v, int) for v in values):
+            return None                       # malformed constant type
+        if len(set(values)) != len(values):
+            return None                       # aliased/duplicated constants -> ambiguous
+        return dict(pairs).get(raw)
 
     def _read_account_identity(self):
         acct = self.sdk.account_info()

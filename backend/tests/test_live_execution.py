@@ -58,7 +58,11 @@ def _run(tmp_path, *, order_result=..., order_exc=None, positions=None, mode="li
         ok, _ = gw.connect()
         assert ok
     state = RunnerState(cfg.state_dir)
-    ex = Executor(cfg, state, gw)
+    # LX-1 Slice 8: live OPENs are blocked unless ARMED. These tests exercise the
+    # armed live path, so they supply the same typed ArmRuntime that startup
+    # arming builds (fingerprint matches F.make_account()).
+    arm = F.make_arm_runtime() if mode == "live" else None
+    ex = Executor(cfg, state, gw, arm_runtime=arm)
     return fake, state, ex
 
 
@@ -216,6 +220,12 @@ class _StubGateway:
         from live.account_health import AccountHealth
         return AccountHealth("EUR", 10_000.0, 10_000.0, 10_000.0, True, True)
 
+    def account_identity(self):
+        # matches F.make_arm_runtime()'s fingerprint (LX-1 Slice 8 continuity check)
+        from live.account_identity import AccountIdentity
+        return AccountIdentity(login=1_000_001, server="Broker-Demo", currency="EUR",
+                               trade_mode="demo", balance=10_000.0, equity=10_000.0)
+
     def open_position(self, *a, **k):
         return self._result
 
@@ -225,7 +235,7 @@ def test_defensive_guard_filled_without_ticket_downgrades(tmp_path):
     # record CONFIRMED or call mirror_set(None) — the guard downgrades it.
     cfg = _cfg(tmp_path, "live")
     st = RunnerState(cfg.state_dir)
-    ex = Executor(cfg, st, _StubGateway(
+    ex = Executor(cfg, st, arm_runtime=F.make_arm_runtime(), gateway=_StubGateway(
         MT5SubmitResult(disposition=_D.FILLED, broker_order_ticket=None, filled_volume=0.02)))
     res = ex.apply([_intent()])
     assert res["frozen"] is True
@@ -236,7 +246,7 @@ def test_defensive_guard_filled_without_ticket_downgrades(tmp_path):
 def test_defensive_guard_partial_with_zero_ticket_downgrades(tmp_path):
     cfg = _cfg(tmp_path, "live")
     st = RunnerState(cfg.state_dir)
-    ex = Executor(cfg, st, _StubGateway(
+    ex = Executor(cfg, st, arm_runtime=F.make_arm_runtime(), gateway=_StubGateway(
         MT5SubmitResult(disposition=_D.PARTIALLY_FILLED, broker_order_ticket=0, filled_volume=0.007)))
     res = ex.apply([_intent()])
     assert res["frozen"] is True
@@ -260,7 +270,7 @@ def test_defensive_guard_success_with_bad_volume_downgrades(tmp_path, disp, bad_
     # valid ticket but insufficient volume -> must NOT record CONFIRMED/PARTIAL
     cfg = _cfg(tmp_path, "live")
     st = RunnerState(cfg.state_dir)
-    ex = Executor(cfg, st, _StubGateway(
+    ex = Executor(cfg, st, arm_runtime=F.make_arm_runtime(), gateway=_StubGateway(
         MT5SubmitResult(disposition=disp, broker_order_ticket=555, filled_volume=bad_vol)))
     res = ex.apply([_intent()])
     assert res["frozen"] is True
@@ -275,7 +285,7 @@ def test_defensive_guard_success_with_bad_volume_downgrades(tmp_path, disp, bad_
 def test_defensive_guard_valid_success_unchanged(tmp_path, disp, vol, expect):
     cfg = _cfg(tmp_path, "live")
     st = RunnerState(cfg.state_dir)
-    ex = Executor(cfg, st, _StubGateway(
+    ex = Executor(cfg, st, arm_runtime=F.make_arm_runtime(), gateway=_StubGateway(
         MT5SubmitResult(disposition=disp, broker_order_ticket=555, filled_volume=vol)))
     ex.apply([_intent()])
     assert st.ledger_status("ex1") == expect and st.mirror_ticket("T1") == 555

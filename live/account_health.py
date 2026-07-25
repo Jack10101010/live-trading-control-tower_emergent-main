@@ -94,11 +94,33 @@ def parse_min_equity(raw) -> float:
     return v
 
 
+def _policy_invalid(policy) -> bool:
+    """S7-F1 hardening: boundary validation of the policy itself. The production
+    path (``LiveConfig.health_policy()``) already validates, but this evaluator is
+    composed for real money by the live-arming capstone — a forged policy with a
+    NaN/zero/negative/bool ``min_equity`` would otherwise silently disable the
+    equity floor (``equity < NaN`` is False), so it must fail closed here."""
+    if not isinstance(policy, HealthPolicy):
+        return True
+    m = policy.min_equity
+    if isinstance(m, bool) or not isinstance(m, (int, float)) \
+            or not math.isfinite(m) or m <= 0:
+        return True
+    cur = policy.expected_currency
+    if not isinstance(cur, str) or not cur.strip() or len(cur) > _MAX_CURRENCY_LEN \
+            or not cur.isalpha() or cur != cur.upper():
+        return True
+    return False
+
+
 def evaluate_health(health, policy: HealthPolicy) -> HealthVerdict:
     """Deterministic, fail-closed capital & permission evaluation. Reason codes are
     appended in a FIXED order; an unavailable (None) or non-``AccountHealth`` value
-    never passes. Equity equality at the floor is allowed (``equity >= min``).
-    Evidence is bounded and JSON-safe."""
+    never passes, and a malformed/forged policy fails closed as
+    ``health_policy_invalid``. Equity equality at the floor is allowed
+    (``equity >= min``). Evidence is bounded and JSON-safe."""
+    if _policy_invalid(policy):
+        return HealthVerdict(False, ("health_policy_invalid",), {})
     if not isinstance(health, AccountHealth):
         return HealthVerdict(False, ("account_health_unavailable",), {})
     reasons = []

@@ -3,8 +3,11 @@
 Usage (Windows VPS, repo root on PYTHONPATH):
     python -m live.main
 
-P1 SHADOW GUARD: LIVE_MODE=live is refused at startup. Promotion to P2 is an
-explicit operator decision recorded in PROJECT_STATE.md, not an env var flip.
+LIVE ARMING (LX-1 Slice 8): LIVE_MODE=live may start and RECONCILE / CLOSE / MODIFY,
+but every live OPEN is blocked unless a deliberate, short-lived, single-use arm
+request is validated at startup and bound to the exact expected MT5 account. The
+executor is default-unarmed, so recovery can never submit an OPEN. Arming permits
+exactly one live OPEN attempt; a restart or crash requires a fresh arm request.
 
 Every cycle is logged to <state_dir>/ops/cycles.jsonl (+ heartbeat.json):
 start/end, duration, boundary, bar timestamps, intent counts, reconcile
@@ -20,6 +23,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from live import arming
 from live.config import LiveConfig
 from live.executor import Executor
 from live.liveness import Liveness
@@ -172,11 +176,6 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops, liveness=No
 
 
 def main() -> None:  # pragma: no cover - VPS loop
-    config = LiveConfig()
-    if config.mode == "live":
-        raise SystemExit(
-            "REFUSED: LIVE_MODE=live is not permitted in M3 P1 shadow. "
-            "Promotion to P2 is an explicit operator decision.")
     config, gateway, bridge, runner, executor, publisher, ops = build()
     # Mid-cycle liveness beacon (C1-B): a daemon worker that keeps advancing while
     # the cycle thread is blocked in long compute. Fail-open; never trading-critical.
@@ -187,6 +186,8 @@ def main() -> None:  # pragma: no cover - VPS loop
     if not ok:
         raise SystemExit("MT5 gateway unavailable — refusing to start")
     # Startup recovery before the loop: drain any intents durably reserved pre-crash.
+    # LX-1 Slice 8: the executor is DEFAULT-UNARMED, so this drain can never submit a
+    # live OPEN — the arm gate is already active and closed before recovery runs.
     startup = executor.drain_pending()
     if startup.get("frozen"):
         print(f"[{datetime.now(timezone.utc).isoformat()}] STARTUP FREEZE — unresolved "
@@ -194,6 +195,24 @@ def main() -> None:  # pragma: no cover - VPS loop
     elif startup.get("drained"):
         print(f"[{datetime.now(timezone.utc).isoformat()}] startup drained "
               f"{len(startup['drained'])} pending intent(s)")
+    # LX-1 Slice 8 — controlled live arming. LIVE_MODE=live alone NEVER arms: a
+    # fresh, single-use arm request plus verified identity, allowed health, clean
+    # reconciliation and wired market rails are all required. Failure leaves the
+    # process running UNARMED (reconciliation and CLOSE/MODIFY recovery stay
+    # available) with every live OPEN blocked. No half-armed context is installed.
+    if config.mode == "live":
+        verdict, arm_runtime = arming.verify_and_arm(config, gateway, executor)
+        stamp = datetime.now(timezone.utc).isoformat()
+        if arm_runtime is not None:
+            executor.attach_arm(arm_runtime)
+            fp = arm_runtime.context.fingerprint
+            print(f"[{stamp}] ARMED — {arm_runtime.context.probation_max_opens} live OPEN "
+                  f"attempt on {fp.login}@{fp.server} ({fp.currency}/{fp.trade_mode}); "
+                  f"request expires {arm_runtime.context.request_expires_at}; "
+                  f"submit_disabled={config.submit_disabled}")
+        else:
+            print(f"[{stamp}] NOT ARMED — live OPENs blocked "
+                  f"({','.join(verdict.reasons)}); recovery/CLOSE/MODIFY remain available")
     consecutive_errors = 0
     # C5: loop-local cadence state — the ONLY scheduler state, never persisted
     # and never passed downstream. First cycle runs immediately (sleep follows).

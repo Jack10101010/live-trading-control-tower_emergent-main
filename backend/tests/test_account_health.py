@@ -263,7 +263,8 @@ def _exec(tmp_path, account, *, order_result=..., mode="live", positions=None):
                      order_result=order_result, positions=positions or [])
     gw = MT5Gateway(cfg, sdk=fake); ok, _ = gw.connect(); assert ok
     st = RunnerState(cfg.state_dir)
-    return fake, st, gw, Executor(cfg, st, gw)
+    arm = F.make_arm_runtime() if mode == "live" else None
+    return fake, st, gw, Executor(cfg, st, gw, arm_runtime=arm)
 
 
 def _open(iid="o1", tid="T1"):

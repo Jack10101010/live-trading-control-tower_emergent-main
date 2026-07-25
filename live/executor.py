@@ -8,15 +8,17 @@ safety rails. `dry_run` (default) performs every step except the broker call.
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 
+from live import arming
 from live.intents import (CLOSE_POSITION, MODIFY_STOP, OPEN_POSITION, SKIP_INTRA_WINDOW,
                           OrderIntent)
 from live.mt5_results import MT5SubmitDisposition, usable_ticket, _finite_positive_volume
 from live.reconciliation import (ReconOutcome, ReconFinding, ReconciliationReport,
                                  classify_fill, classify_matched, match_candidates,
                                  normalize_snapshot)
-from live.safety import HEALTH_NOT_EVALUATED, MARKET_NOT_EVALUATED, SafetyRails
+from live.safety import HEALTH_NOT_EVALUATED, MARKET_NOT_EVALUATED, RailVerdict, SafetyRails
 from live.state import (LEDGER_CONFIRMED, LEDGER_FAILED, LEDGER_PARTIAL, LEDGER_PENDING,
                         LEDGER_SENT, LEDGER_SIMULATED)
 from live.config import SYMBOL
@@ -47,11 +49,21 @@ def reconstruct_intent(detail: dict) -> OrderIntent:
 
 
 class Executor:
-    def __init__(self, config, state, gateway):
+    def __init__(self, config, state, gateway, arm_runtime=None):
         self.config = config
         self.state = state
         self.gateway = gateway
         self.rails = SafetyRails(config, state)
+        # LX-1 Slice 8: DEFAULT UNARMED. Any caller that constructs an Executor
+        # without an ArmRuntime (rehearsal, drain, tests, future entrypoints)
+        # cannot submit a live OPEN — the arm gate below fails closed.
+        self.arm_runtime = arm_runtime
+
+    def attach_arm(self, arm_runtime) -> None:
+        """Install a validated ArmRuntime (startup arming only). Never called with
+        a partially-built context: verify_and_arm returns None unless every
+        prerequisite passed and the request was atomically consumed."""
+        self.arm_runtime = arm_runtime
 
     # ── reconciliation ───────────────────────────────────────────────────────
     def reconcile(self) -> ReconciliationReport:
@@ -257,6 +269,20 @@ class Executor:
             except Exception:   # noqa: BLE001
                 market = None
 
+        # LX-1 Slice 8 runtime identity continuity: sampled ONCE per live cycle that
+        # contains an OPEN and reused for every OPEN in the batch. A mid-session
+        # account switch (even same-currency) fails the fingerprint comparison.
+        # Deliberately NOT gated on gateway.connected: a not-connected live gateway
+        # returns no identity, so the arm gate blocks (fail-closed) instead of
+        # silently skipping the continuity check.
+        arm_fingerprint = None
+        if self.config.mode == "live" and any(i.action == OPEN_POSITION for i in intents):
+            try:
+                arm_fingerprint = arming.fingerprint_from_identity(
+                    self.gateway.account_identity())
+            except Exception:   # noqa: BLE001
+                arm_fingerprint = None
+
         for intent in intents:
             if intent.action == SKIP_INTRA_WINDOW:
                 self.state.ledger_set(intent.intent_id, LEDGER_SIMULATED,
@@ -268,6 +294,30 @@ class Executor:
                 self.rails.record_block(intent, verdict)
                 blocked.append({**intent.to_dict(), "rail": verdict.rail, "detail": verdict.detail})
                 continue
+            # ── live-OPEN arm gate (LX-1 Slice 8) ────────────────────────────
+            # Runs only AFTER every existing rail passed, so a safety/duplicate/
+            # health/market-blocked intent NEVER consumes the probation allowance.
+            # CLOSE/MODIFY and dry-run never reach this gate.
+            if intent.action == OPEN_POSITION and self.config.mode == "live":
+                av = self._authorize_live_open(arm_fingerprint)
+                if not av.allowed:
+                    v = RailVerdict(False, av.reasons[0], "live OPEN not authorized")
+                    self.rails.record_block(intent, v)
+                    blocked.append({**intent.to_dict(), "rail": v.rail, "detail": v.detail})
+                    continue
+                # Consume conservatively BEFORE the submission path: a rejection,
+                # NOT_SUBMITTED, UNKNOWN, or exception can never restore it, and a
+                # crash loses the whole in-memory arm (re-arm required).
+                self.arm_runtime.consume_attempt()
+                if self.config.submit_disabled:
+                    # Independent hard rehearsal guard: the armed path was fully
+                    # exercised, the allowance is spent, and the broker is NEVER
+                    # called (no SENT record, no open_position, no order_send).
+                    v = RailVerdict(False, arming.SUBMISSION_DISABLED,
+                                    "submission disabled (armed rehearsal; broker not called)")
+                    self.rails.record_block(intent, v)
+                    blocked.append({**intent.to_dict(), "rail": v.rail, "detail": v.detail})
+                    continue
             result = self._execute(intent)
             applied.append({**intent.to_dict(), **result})
             # A partial fill, or an ambiguous/exception OPEN outcome, freezes the
@@ -281,6 +331,24 @@ class Executor:
         self.state.save()
         return {"frozen": False, "reconcile": report.to_dict(),
                 "applied": applied, "blocked": blocked, "skipped": skipped}
+
+    def _authorize_live_open(self, arm_fingerprint):
+        """Authorize ONE live OPEN against the installed ArmRuntime. Fail-closed:
+        no runtime -> ``arm_context_missing``. A runtime identity mismatch also
+        PERMANENTLY disarms the session (a mid-session account change is critical);
+        an unavailable identity blocks without disarming. Never consumes."""
+        if self.arm_runtime is None:
+            return arming.ArmVerdict(False, (arming.ARM_CONTEXT_MISSING,), {})
+        av = self.arm_runtime.authorize_open(arm_fingerprint, self._monotonic())
+        if arming.RUNTIME_IDENTITY_MISMATCH in av.reasons:
+            self.arm_runtime.disarm()
+        return av
+
+    @staticmethod
+    def _monotonic() -> float:
+        """Monotonic clock for arm expiry — immune to wall-clock rollback. Patched
+        by tests (never a real sleep)."""
+        return time.monotonic()
 
     # ── crash recovery: drain durably-reserved intents (LR-1) ────────────────
     def drain_pending(self, today: str | None = None) -> dict:

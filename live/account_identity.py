@@ -151,10 +151,44 @@ def finite_nonneg(x):
 
 # ── pure verifier ───────────────────────────────────────────────────────────────
 
+def _policy_invalid(policy) -> bool:
+    """S6-F2 hardening: boundary validation of the policy itself. The production
+    path (``LiveConfig.identity_policy()``) already validates, but this evaluator is
+    composed for real money by the live-arming capstone, so a forged/malformed
+    policy must fail closed here instead of silently weakening a check."""
+    if not isinstance(policy, IdentityPolicy):
+        return True
+    logins, servers = policy.allowed_logins, policy.allowed_servers
+    modes = policy.allowed_trade_modes
+    for s in (logins, servers, modes):
+        if not isinstance(s, (frozenset, set)) or not s:
+            return True                      # empty/malformed allowlist is never permissive
+    if any(isinstance(v, bool) or not isinstance(v, int) or v <= 0 for v in logins):
+        return True
+    if any(not isinstance(v, str) or not v.strip() or len(v) > _MAX_SERVER_LEN for v in servers):
+        return True
+    if any(m not in TRADE_MODES for m in modes):
+        return True
+    cur = policy.expected_currency
+    if not isinstance(cur, str) or not cur.strip() or len(cur) > _MAX_CURRENCY_LEN \
+            or not cur.isalpha() or cur != cur.upper():
+        return True
+    ceilings = [policy.max_balance] if policy.max_equity is None else \
+               [policy.max_balance, policy.max_equity]
+    for c in ceilings:
+        if isinstance(c, bool) or not isinstance(c, (int, float)) \
+                or not math.isfinite(c) or c <= 0:
+            return True
+    return False
+
+
 def verify_account_identity(identity, policy: IdentityPolicy) -> AccountIdentityVerdict:
     """Deterministic, fail-closed verification of a sampled identity against the
     policy. Reason codes are appended in a FIXED order; an unavailable (None) or
-    non-``AccountIdentity`` value never passes. Evidence is bounded/JSON-safe."""
+    non-``AccountIdentity`` value never passes, and a malformed/forged policy fails
+    closed as ``identity_policy_invalid``. Evidence is bounded/JSON-safe."""
+    if _policy_invalid(policy):
+        return AccountIdentityVerdict(False, ("identity_policy_invalid",), {})
     if identity is None:
         return AccountIdentityVerdict(False, ("identity_unavailable",), {})
     if not isinstance(identity, AccountIdentity):
