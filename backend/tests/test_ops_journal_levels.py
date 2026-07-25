@@ -81,7 +81,7 @@ def pj(tmp_path):
     holder = {"m": model()}
     proj = ops_journal.OpsJournalProjector(
         cycles_path=tmp_path / "cycles.jsonl", checkpoint_path=tmp_path / "ck.json",
-        append_event=store.append, package_hash=lambda: "hash",
+        append_event=store.append,
         interval_s=0.05, logger=logging.getLogger("l2b_test"),
         level_provider=lambda now: holder["m"])
     return SimpleNamespace(p=proj, store=store, holder=holder,

@@ -2336,7 +2336,9 @@ _ops_journal = ops_journal_layer.OpsJournalProjector(
     cycles_path=OPS_STATE_DIR / "ops" / "cycles.jsonl",
     checkpoint_path=OPS_JOURNAL_CHECKPOINT,
     append_event=lambda ev, key: _append_event(ev, key),
-    package_hash=lambda: _active_package_hash(),
+    # No package_hash: the projector narrates NODE-derived events only and stamps
+    # packageHash null. Passing the fixture world's active package here was
+    # fabricated provenance — the projector no longer accepts a provider at all.
     logger=logger,
     # L2-B: canonical level classifications, consumed verbatim through the
     # frozen L1A public API — no thresholds or file inspection in the projector.

@@ -103,21 +103,31 @@ def env_flag(value: str | None) -> bool:
 class OpsJournalProjector:
     """Single-instance sequence-transition projector (one per backend process).
 
-    Dependency-injected: paths, append callable, package-hash provider,
-    interval and logger all come from the caller, so tests run entirely
-    against temporary directories. The constructor performs NO I/O.
+    Dependency-injected: paths, append callable, interval and logger all come
+    from the caller, so tests run entirely against temporary directories. The
+    constructor performs NO I/O.
+
+    NO PACKAGE-HASH PROVIDER, deliberately. Every code in this projector's
+    vocabulary is NODE-derived — L2-A reads edges in the node's own
+    `cycles.jsonl`, L2-B reads confirmed edges in L1A classifications built from
+    node files — so `packageHash` is emitted as `null` (see the emission sites).
+    The dependency is absent rather than defaulted so no future wiring can
+    reintroduce a fixture-world package hash by configuration.
+
+    One transitional note: a checkpoint written before that change may hold a
+    PENDING entry whose payload was frozen with the old hash. It drains verbatim
+    exactly once, because a frozen pending payload is never regenerated — that is
+    the idempotency contract, not a leak. Subsequent emissions carry null.
     """
 
     def __init__(self, cycles_path: Path, checkpoint_path: Path,
                  append_event: Callable[[dict, str], tuple],
-                 package_hash: Callable[[], str] = lambda: "",
                  interval_s: float = 10.0,
                  logger: logging.Logger | None = None,
                  level_provider: Callable[[Any], dict] | None = None):
         self.cycles_path = Path(cycles_path)
         self.checkpoint_path = Path(checkpoint_path)
         self._append = append_event
-        self._package_hash = package_hash
         self.interval_s = interval_s
         self.log = logger or logging.getLogger(__name__)
         # L2-B: injected canonical-status provider (now_utc -> the frozen L1A
@@ -348,7 +358,12 @@ class OpsJournalProjector:
                 "code": code,
                 "humanExplanation": text,
                 "scenarioKey": None,
-                "packageHash": self._package_hash(),
+                # NULL, never the backend's active fixture package: this event
+                # describes a cycle the LIVE NODE ran under the Lux strategy
+                # core, which the fixture world's package does not identify.
+                # Stamping it attributed a node transition to a package the node
+                # never ran (same defect UI-2 removed from /live/ingest).
+                "packageHash": None,
                 "who": "system",
                 "causedBy": f"l2_projector:{identity}",
                 "before": before,
@@ -469,7 +484,7 @@ class OpsJournalProjector:
             "code": code,
             "humanExplanation": explanations[code],
             "scenarioKey": None,
-            "packageHash": self._package_hash(),
+            "packageHash": None,   # node-derived; see the sequence site above
             "who": "system",
             "causedBy": f"l2_projector:level:{kind}",
             "before": {kind: old},

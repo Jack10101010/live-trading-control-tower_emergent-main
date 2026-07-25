@@ -22,7 +22,7 @@ import re
 import sqlite3
 import sys
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -88,7 +88,7 @@ def pj(tmp_path):
     src = tmp_path / "cycles.jsonl"
     proj = ops_journal.OpsJournalProjector(
         cycles_path=src, checkpoint_path=tmp_path / "ckpt.json",
-        append_event=store.append, package_hash=lambda: "hash",
+        append_event=store.append,
         interval_s=0.05, logger=logging.getLogger("ops_journal_test"))
     return SimpleNamespace(p=proj, store=store, src=src,
                            ckpt=tmp_path / "ckpt.json", tmp=tmp_path)
@@ -256,7 +256,13 @@ def test_envelope_complete_at_from_source_and_now_independent(pj):
     assert set(ev.keys()) == ENVELOPE_FIELDS
     assert ev["category"] == "operational" and ev["code"] in CODES
     assert ev["at"] == rec(2)["cycle_end"]          # source record time, not NOW
-    assert ev["who"] == "system" and ev["packageHash"] == "hash"
+    # CONTRACT CHANGE: packageHash is null, not the backend's active package.
+    # Every code this projector emits is NODE-derived, and the node runs the Lux
+    # strategy core — the fixture world's package never ran there, so stamping it
+    # attributed a node transition to a package that had nothing to do with it
+    # (the same fabricated provenance UI-2 removed from POST /api/live/ingest).
+    # The projector no longer accepts a package_hash provider at all.
+    assert ev["who"] == "system" and ev["packageHash"] is None
     assert ev["causedBy"].startswith("l2_projector:")
     assert ev["before"] == {"error_present": False}
     assert ev["after"]["error_present"] is True and "source_identity" in ev["after"]
@@ -432,6 +438,11 @@ def test_real_store_shared_seq_and_retention(tmp_path, real_store, monkeypatch):
     conn.close()
     assert [r["code"] for r in rows] == ["CMD", "CYCLE_ERROR"]
     assert rows[1]["seq"] == rows[0]["seq"] + 1     # shared monotonic sequence
+    # Mixed provenance in one store: a hand-built non-node producer keeps its
+    # genuine package hash; the node-derived projection carries null. Removing
+    # fabricated node provenance must not strip real provenance from others.
+    assert rows[0]["packageHash"] == "h"            # command event: real package
+    assert rows[1]["packageHash"] is None           # node-derived: no package
     # crash replay through the REAL store dedups
     stale = proj._fresh_state()
     stale["cursor"] = json.loads((tmp_path / "ck.json").read_text())["cursor"] - (
@@ -462,3 +473,135 @@ def test_exactly_four_append_event_production_call_sites():
         "expected exactly 4 production _append_event call sites "
         "(command, broker-sync, LIVE_STATUS, L2 projector wiring); "
         f"found {len(calls)}")
+
+# ── Node-derived provenance: no fixture package hash ─────────────────────────
+# The projector narrates the LIVE NODE only. Attributing a node transition to the
+# backend's active FIXTURE package was fabricated provenance — the node runs the
+# Lux strategy core, which that package does not identify. These tests pin the
+# corrected contract for both emission classes and make the absence structural.
+
+def test_sequence_events_carry_no_package_hash(pj):
+    """L2-A: every edge in the node's own cycles.jsonl."""
+    pj.p.tick_once(NOW)
+    write(pj.src, rec(1))
+    pj.p.tick_once(NOW)
+    write(pj.src, rec(2, error="E"), rec(3, frozen=True), rec(4, delivered=False))
+    pj.p.tick_once(NOW)
+    assert pj.store.events, "expected sequence narration"
+    for ev in pj.store.events:
+        assert "packageHash" in ev, "the envelope field stays mandatory"
+        assert ev["packageHash"] is None, f"{ev['code']} carried a package hash"
+
+
+def test_level_events_carry_no_package_hash(tmp_path):
+    """L2-B: confirmed edges in L1A classifications, themselves node-derived."""
+    store = Store()
+    holder = {"m": None}
+
+    def model(kill=False):
+        return {"attention": {"kill_file_present": kill},
+                "aliveness": {"beacon": "ALIVE"},
+                "cycle": {"cycle_freshness": "FRESH", "polling_healthy": True},
+                "sources_available": {k: True for k in
+                                      ("liveness", "cycle_heartbeat", "cycles",
+                                       "feed_heartbeat", "runner_state",
+                                       "publish_payload", "kill_file")}}
+
+    holder["m"] = model()
+    proj = ops_journal.OpsJournalProjector(
+        cycles_path=tmp_path / "cycles.jsonl", checkpoint_path=tmp_path / "c.json",
+        append_event=store.append, interval_s=0.05,
+        logger=logging.getLogger("ops_journal_test"),
+        level_provider=lambda now: holder["m"])
+    base = datetime(2026, 7, 22, 12, 0, 0, tzinfo=timezone.utc)
+    proj.tick_once(base)
+    proj.tick_once(base + timedelta(seconds=10))          # seed
+    holder["m"] = model(kill=True)                        # kill file confirms at once
+    proj.tick_once(base + timedelta(seconds=20))
+    kill_events = [e for e in store.events if e["code"] == "KILL_FILE_ENGAGED"]
+    assert kill_events, "expected KILL_FILE_ENGAGED"
+    for ev in kill_events:
+        assert ev["packageHash"] is None
+
+
+def test_projector_accepts_no_package_hash_provider(tmp_path):
+    """Structural, not configuration-dependent: there is no parameter through
+    which a fixture package hash could be reintroduced by future wiring."""
+    import inspect
+    params = inspect.signature(ops_journal.OpsJournalProjector.__init__).parameters
+    assert "package_hash" not in params
+    assert not hasattr(ops_journal.OpsJournalProjector, "_package_hash")
+    with pytest.raises(TypeError):
+        ops_journal.OpsJournalProjector(
+            cycles_path=tmp_path / "c.jsonl", checkpoint_path=tmp_path / "k.json",
+            append_event=lambda ev, key: (ev, False),
+            package_hash=lambda: "sha256:fixture-package")
+
+
+def test_module_never_references_a_package_hash_source():
+    """A grep-level guard: the projector must not reach for one indirectly."""
+    source = (BACKEND_DIR / "ops_journal.py").read_text()
+    assert "_package_hash" not in source
+    assert "_active_package_hash" not in source
+    assert source.count('"packageHash": None') == 2, \
+        "both emission sites must stamp null explicitly"
+
+
+def test_server_wiring_passes_no_package_hash():
+    """The one production call site must not resupply what was removed."""
+    source = (BACKEND_DIR / "server.py").read_text()
+    start = source.index("OpsJournalProjector(")
+    block = source[start:source.index("\n)", start)]
+    # Comment lines are excluded on purpose: the block carries a comment naming
+    # `package_hash` to explain WHY it is absent, and that explanation should not
+    # have to be reworded to satisfy this guard.
+    code = [ln for ln in block.splitlines() if not ln.strip().startswith("#")]
+    assert "package_hash" not in "\n".join(code), \
+        "server re-wired a package hash into L2"
+
+
+def test_pre_change_pending_payload_drains_verbatim_and_once(pj):
+    """A checkpoint written before this correction can hold a PENDING entry whose
+    payload was frozen with the old fixture hash. It must drain byte-for-byte and
+    exactly once: a frozen pending payload is never regenerated (regenerating it
+    would mint a different payload for an unchanged idempotency key). No migration
+    is performed, and nothing rewrites the stored hash."""
+    legacy = {
+        "eventId": "ev_LEGACYPENDING0000000001", "seq": 0, "category": "operational",
+        "code": "CYCLE_ERROR", "humanExplanation": "pre-change frozen payload",
+        "scenarioKey": None, "packageHash": "sha256:fixture-package-v7",
+        "who": "system", "causedBy": "l2_projector:0|s|e",
+        "before": {"error_present": False}, "after": {"error_present": True},
+        "at": "2026-07-22T10:00:00+00:00",
+    }
+    state = pj.p._fresh_state()
+    state["pending"] = [{"event": dict(legacy), "idempotency_key": "l2|CYCLE_ERROR|0|s|e",
+                         "source_identity": "0|s|e"}]
+    pj.ckpt.write_text(json.dumps(state))
+    pj.p._state = None                              # force a load from disk
+
+    pj.p.tick_once(NOW)
+    assert pj.store.events, "the pre-change pending entry did not drain"
+    drained = pj.store.events[0]
+    assert drained["packageHash"] == "sha256:fixture-package-v7", \
+        "a frozen pending payload must not be rewritten by the new contract"
+    assert {k: v for k, v in drained.items() if k != "seq"} == \
+        {k: v for k, v in legacy.items() if k != "seq"}, "payload was not verbatim"
+    assert pj.store.keys == ["l2|CYCLE_ERROR|0|s|e"]
+
+    # Exactly once: further ticks neither re-drain nor re-emit.
+    before = len(pj.store.events)
+    pj.p.tick_once(NOW)
+    pj.p.tick_once(NOW)
+    assert len(pj.store.events) == before
+    assert json.loads(pj.ckpt.read_text())["pending"] == []
+
+    # And the NEXT genuine node event carries null — the fix is not disabled by
+    # having drained a legacy payload.
+    write(pj.src, rec(1))
+    pj.p.tick_once(NOW)
+    write(pj.src, rec(2, error="fresh"))
+    pj.p.tick_once(NOW)
+    fresh = [e for e in pj.store.events if e["eventId"] != legacy["eventId"]]
+    assert fresh, "expected a freshly projected node event"
+    assert all(e["packageHash"] is None for e in fresh)

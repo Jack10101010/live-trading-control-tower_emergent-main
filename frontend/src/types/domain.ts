@@ -333,7 +333,11 @@ export interface EventEntry {
   code: string;
   humanExplanation: string;
   scenarioKey: string | null;
-  packageHash: string;
+  // Nullable: events describing the LIVE NODE carry no package hash. The node
+  // runs the Lux strategy core, which the fixture world's package does not
+  // identify — live-ingest narration (UI-2) and the operational-transition
+  // projector both emit null rather than a package the node never ran.
+  packageHash: string | null;
   who: string;
   causedBy: string;
   before: Record<string, unknown> | null;
