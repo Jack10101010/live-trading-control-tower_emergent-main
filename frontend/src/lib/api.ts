@@ -488,6 +488,21 @@ export interface LiveStatus {
  * what it is set to. `active` is always false — UI-9 introduces no connectivity. */
 export type SecurityVarStatus = 'configured' | 'missing' | 'invalid';
 
+/* UI-10: the CORS browser boundary, described the same value-free way — counts and
+ * classifications, never origin strings. `wildcardEnabled` is structurally false. */
+export interface CorsPolicyStatus {
+  policyActive: boolean;
+  source: 'safe_default' | 'explicit' | 'invalid_fallback';
+  originCount: number;
+  credentialsEnabled: boolean;
+  allowedMethods: string[];
+  allowedHeaders: string[];
+  localOnly: boolean;
+  wildcardEnabled: boolean;
+  valid: boolean;
+  issueCodes: string[];
+}
+
 export interface SecurityConfigStatus {
   active: boolean;
   activeReason: string;
@@ -495,6 +510,7 @@ export interface SecurityConfigStatus {
   variables: Record<string, { status: SecurityVarStatus; secret: boolean; path: boolean }>;
   findings: Array<{ severity: 'error' | 'warning'; variable: string | null; message: string }>;
   hasErrors: boolean;
+  cors?: CorsPolicyStatus;
 }
 
 export const api = {

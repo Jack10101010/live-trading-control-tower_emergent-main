@@ -175,3 +175,38 @@ describe('read-only boundary', () => {
     expect(source).toContain('ct.node-telemetry.v1');   // referenced, never redefined
   });
 });
+
+/* ── UI-10: the API client must keep working with credentials disabled ────────*/
+
+describe('UI-10 client regression', () => {
+  it('no fetch call opts into credentials', () => {
+    const source = read('lib/api.ts');
+    expect(source).not.toContain("credentials: 'include'");
+    expect(source).not.toContain('credentials: "include"');
+    expect(source).not.toContain('withCredentials');
+  });
+
+  it('no authentication header is sent', () => {
+    const source = read('lib/api.ts');
+    expect(source).not.toContain('Authorization');
+    expect(source).not.toContain('Bearer ');
+    expect(source).not.toContain('X-Api-Key');
+  });
+
+  it('no cookie or session dependency exists', () => {
+    const source = read('lib/api.ts');
+    expect(source).not.toContain('document.cookie');
+    expect(source).not.toContain('sessionStorage');
+  });
+
+  it('only the request headers the backend policy allows are sent', () => {
+    // The backend now allows exactly Accept, Content-Type and Idempotency-Key.
+    // A new request header here would be blocked by preflight, so it must be a
+    // deliberate change to both sides.
+    const source = read('lib/api.ts');
+    const headers = [...source.matchAll(/'?([A-Za-z][A-Za-z-]+)'?:\s*(?:'[^']*'|idempotencyKey\(\))/g)]
+      .map((m) => m[1])
+      .filter((name) => /^(Accept|Content-Type|Idempotency-Key|Authorization|Cookie|X-[A-Za-z-]+)$/.test(name));
+    expect(new Set(headers)).toEqual(new Set(['Accept', 'Content-Type', 'Idempotency-Key']));
+  });
+});

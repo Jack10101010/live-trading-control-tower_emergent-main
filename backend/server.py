@@ -35,6 +35,7 @@ import portfolio as portfolio_layer
 # object for L1A in the process (no dual identity via a package-form import).
 import connection_state as connection_layer
 import live_telemetry
+import cors_policy
 import ops_status as ops_status_layer
 import security_config
 import ops_journal as ops_journal_layer
@@ -2359,8 +2360,11 @@ def security_config_status():
     """
     try:
         config = security_config.load_config()
-        return JSONResponse(content=security_config.describe_config(config),
-                            headers={"Cache-Control": "no-store"})
+        body = security_config.describe_config(config)
+        # UI-10: the browser boundary, described the same value-free way —
+        # classifications and counts, never origin strings.
+        body["cors"] = cors_policy.describe(_CORS_POLICY)
+        return JSONResponse(content=body, headers={"Cache-Control": "no-store"})
     except Exception:               # diagnostics must never 500 the app
         logger.exception("security configuration description failed")
         raise HTTPException(status_code=500, detail="security configuration unavailable")
@@ -2392,18 +2396,30 @@ def notifier_status_endpoint(limit: int = Query(50, ge=1, le=200)):
 
 app.include_router(api_router)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# UI-10 — the local API browser boundary. Previously this was
+# `allow_origins=["*"]` + `allow_credentials=True` + all methods + all headers,
+# which answered EVERY origin with `Access-Control-Allow-Origin: *` and approved a
+# DELETE preflight from an arbitrary remote site: any page the operator visited
+# could read this entire API. Origins, methods and headers are now explicit,
+# validated and loopback-only by default; wildcard is unsupported, so a
+# credentialed wildcard is impossible rather than merely guarded.
+#
+# CORS is a BROWSER boundary, not authentication and not a network boundary: it
+# does nothing about curl or any non-browser client, and requests with no Origin
+# header are unaffected by design.
+_CORS_POLICY = cors_policy.load_policy()
+app.add_middleware(CORSMiddleware, **cors_policy.middleware_kwargs(_CORS_POLICY))
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+
+# UI-10: one startup line so the effective boundary is visible without guessing.
+# Counts and classifications only — a log file must not disclose the origin list.
+logger.info("%s", cors_policy.summarise_for_log(_CORS_POLICY))
+for _issue in _CORS_POLICY.issues:
+    logger.warning("CORS configuration issue: %s", _issue.code)
 
 
 # ── L2-A: Operational Transition Log projector wiring (additive) ─────────────

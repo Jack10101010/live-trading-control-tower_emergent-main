@@ -30,8 +30,24 @@ function payload(over: Partial<SecurityConfigStatus> = {}): SecurityConfigStatus
     },
     findings: [],
     hasErrors: false,
+    cors: {
+      policyActive: true,
+      source: 'safe_default',
+      originCount: 3,
+      credentialsEnabled: false,
+      allowedMethods: ['GET', 'HEAD', 'OPTIONS', 'POST', 'PUT'],
+      allowedHeaders: ['Accept', 'Content-Type', 'Idempotency-Key'],
+      localOnly: true,
+      wildcardEnabled: false,
+      valid: true,
+      issueCodes: [],
+    },
     ...over,
   };
+}
+
+function cors(over: Partial<NonNullable<SecurityConfigStatus['cors']>> = {}) {
+  return payload({ cors: { ...payload().cors!, ...over } });
 }
 
 function mount() {
@@ -160,5 +176,93 @@ describe('read-only boundary', () => {
     expect(panel.querySelectorAll('input')).toHaveLength(0);
     expect(panel.querySelectorAll('form')).toHaveLength(0);
     expect(panel.querySelectorAll('a[href]')).toHaveLength(0);
+  });
+});
+
+// ══ UI-10: browser origin policy ═════════════════════════════════════════════
+
+describe('CORS policy status', () => {
+  it('renders the safe local default', async () => {
+    vi.spyOn(api, 'securityConfig').mockResolvedValue(payload());
+    mount();
+    await waitFor(() => expect(screen.getByTestId('cors-policy')).toBeTruthy());
+    expect(screen.getByTestId('cors-source').textContent).toBe('safe_default');
+    expect(screen.getByTestId('cors-scope').textContent).toBe('local only');
+    expect(screen.getByTestId('cors-origin-count').textContent).toBe('3');
+    expect(screen.getByTestId('cors-validation').textContent).toBe('valid');
+  });
+
+  it('shows wildcard disabled and credentials disabled', async () => {
+    vi.spyOn(api, 'securityConfig').mockResolvedValue(payload());
+    mount();
+    await waitFor(() => expect(screen.getByTestId('cors-policy')).toBeTruthy());
+    expect(screen.getByTestId('cors-wildcard').textContent).toBe('disabled');
+    expect(screen.getByTestId('cors-credentials').textContent).toBe('disabled');
+  });
+
+  it('classifies an explicitly configured external policy', async () => {
+    vi.spyOn(api, 'securityConfig').mockResolvedValue(
+      cors({ source: 'explicit', localOnly: false, originCount: 1 })
+    );
+    mount();
+    await waitFor(() => expect(screen.getByTestId('cors-source').textContent).toBe('explicit'));
+    expect(screen.getByTestId('cors-scope').textContent).toBe('externally configured');
+  });
+
+  it('warns explicitly on an invalid fallback without implying broader access', async () => {
+    vi.spyOn(api, 'securityConfig').mockResolvedValue(
+      cors({ source: 'invalid_fallback', valid: false,
+             issueCodes: ['origin_wildcard_unsupported'] })
+    );
+    mount();
+    expect(await screen.findByText(/no entry was usable/i)).toBeTruthy();
+    expect(screen.getByText(/access was not broadened/i)).toBeTruthy();
+  });
+
+  it('lists issue codes verbatim', async () => {
+    vi.spyOn(api, 'securityConfig').mockResolvedValue(
+      cors({ valid: false, issueCodes: ['origin_contains_path', 'credentials_flag_invalid'] })
+    );
+    mount();
+    await waitFor(() => expect(screen.getByTestId('cors-issues')).toBeTruthy());
+    const text = screen.getByTestId('cors-issues').textContent ?? '';
+    expect(text).toContain('origin_contains_path');
+    expect(text).toContain('credentials_flag_invalid');
+  });
+
+  it('states that CORS is not authentication', async () => {
+    vi.spyOn(api, 'securityConfig').mockResolvedValue(payload());
+    mount();
+    expect(await screen.findByText(/not authentication/i)).toBeTruthy();
+  });
+
+  it('renders no origin editor and no action control', async () => {
+    vi.spyOn(api, 'securityConfig').mockResolvedValue(payload());
+    mount();
+    await waitFor(() => expect(screen.getByTestId('cors-policy')).toBeTruthy());
+    const section = screen.getByTestId('cors-policy');
+    expect(section.querySelectorAll('button')).toHaveLength(0);
+    expect(section.querySelectorAll('input')).toHaveLength(0);
+    expect(section.querySelectorAll('select')).toHaveLength(0);
+    expect(section.querySelectorAll('textarea')).toHaveLength(0);
+  });
+
+  it('cannot render an origin string even if the payload smuggles one', async () => {
+    vi.spyOn(api, 'securityConfig').mockResolvedValue({
+      ...payload(),
+      cors: { ...payload().cors!, origins: ['https://secret.internal.example'] } as never,
+    });
+    mount();
+    await waitFor(() => expect(screen.getByTestId('cors-policy')).toBeTruthy());
+    expect(screen.getByTestId('security-baseline-panel').innerHTML)
+      .not.toContain('secret.internal.example');
+  });
+
+  it('omits the section entirely when the backend sends no cors block', async () => {
+    const { cors: _omitted, ...withoutCors } = payload();
+    vi.spyOn(api, 'securityConfig').mockResolvedValue(withoutCors as SecurityConfigStatus);
+    mount();
+    await waitFor(() => expect(screen.getByTestId('security-variables')).toBeTruthy());
+    expect(screen.queryByTestId('cors-policy')).toBeNull();
   });
 });

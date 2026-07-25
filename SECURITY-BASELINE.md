@@ -142,12 +142,11 @@ Before any connectivity slice (UI-11) may proceed:
    and the tower verifying it against a pinned CA.
 3. **Authentication** — mutual, with credentials supplied through
    `AuthenticationProvider` and never placed in a URL.
-4. **CORS review** — `CORS_ORIGINS` currently defaults to `*` alongside
-   `allow_credentials=True` in `backend/server.py`. UI-9 deliberately did **not**
-   change it (CORS hardening is explicitly out of scope for this slice), but a
-   permissive wildcard must be replaced with an explicit origin list before the
-   backend is reachable from anywhere but localhost. **This is a blocking
-   prerequisite, recorded here so it is not forgotten.**
+4. **CORS review — RESOLVED in UI-10.** The wildcard-plus-credentials default is
+   gone: origins are explicit, validated and loopback-only by default, wildcard is
+   unsupported, and credentials are off. See *Browser origin policy* below. Note
+   this closes the **browser** boundary only; remote exposure still requires items
+   1–3 and 5–7.
 5. **Secrets at rest** — a real secrets mechanism. Environment variables on a
    single operator machine are acceptable for local development only.
 6. **Fail-closed gate** — `ConnectionPolicy` implemented and consulted before the
@@ -162,3 +161,140 @@ No execution, node, telemetry, arming or reconciliation behaviour. No command
 route. No HTTP client, retry, polling or WebSocket. No certificate or secret
 generation. No deployment, proxy, container or infrastructure change. The frontend
 remains read-only.
+
+---
+
+# Browser Origin Policy — CORS (UI-10)
+
+## Threat boundary
+
+| Boundary | Closed by | Status |
+| --- | --- | --- |
+| A web page the operator visits reading this API with their browser | **CORS (UI-10)** | **Closed** |
+| A direct client (curl, script, another process) reaching the API | Network reachability + future authenticated transport | Loopback-only today |
+| Anything off this machine | VPN/TLS/auth — UI-11 | Not built |
+
+### What CORS does
+
+Stops a browser on another origin from *reading* responses from this API. That
+mattered urgently: before UI-10 the backend answered **every** origin with
+`Access-Control-Allow-Origin: *` **and** `Access-Control-Allow-Credentials: true`,
+and approved a `DELETE` preflight from an arbitrary remote site. Any page the
+operator happened to visit could read the entire Control Tower API — telemetry,
+ops status, event log — for as long as the backend was reachable from that browser.
+
+### What CORS does **not** do
+
+- It is **not authentication.** It identifies no one and authorises nothing.
+- It is **not a network boundary.** It does nothing about curl, scripts, or any
+  client that does not implement it. A request with **no `Origin` header is not a
+  CORS failure** — it is simply not a browser request, and it is unaffected.
+- It is **not sufficient for VPS exposure.** A remote attacker does not need a
+  browser. CORS closes one specific hole and leaves the rest of the security model
+  exactly where UI-9 left it.
+
+## Safe local default
+
+With neither variable set, exactly three origins are trusted:
+
+```
+http://localhost:3000
+http://127.0.0.1:3000
+http://[::1]:3000
+```
+
+Derived from `frontend/package.json` (`vite --host 0.0.0.0 --port 3000`), not
+guessed, and pinned by a test that reads that file.
+
+`localhost`, `127.0.0.1` and `::1` are **distinct origins** to a browser and are
+listed separately. Loopback does **not** imply "any port on loopback": trusting
+`http://localhost:3000` does not trust `:3001`.
+
+In the ordinary local workflow CORS is not even exercised — with
+`REACT_APP_BACKEND_URL` unset, Vite proxies `/api` to the backend server-side, so
+requests are same-origin. These origins matter only when the browser is pointed
+straight at the backend, which is also why tightening this broke nothing.
+
+## Explicit-origin model
+
+`CORS_ORIGINS` is a comma-separated list of exact origins: `scheme://host[:port]`.
+Whitespace trimmed, exact duplicates collapsed, first-seen order preserved.
+
+Rejected, each with a stable issue code: wildcard in any position, `null`,
+`file://`, non-http(s) schemes, paths, query strings, fragments, embedded
+credentials, invalid ports, unparseable input (including malformed IPv6 literals).
+Validation **never raises**.
+
+**Wildcard is unsupported, not merely discouraged** — `*` is rejected as an invalid
+entry, which is what makes a credentialed wildcard impossible to configure rather
+than something to guard against.
+
+## Credentials policy
+
+`CORS_ALLOW_CREDENTIALS` defaults to **false**, and stays false because the
+frontend genuinely does not need it: no cookies, no sessions, no `Authorization`
+header, no `credentials: 'include'` anywhere. `allow_credentials=True` was not
+preserved for compatibility with behaviour that is not used.
+
+Credentials can only be enabled **alongside an explicit origin list** — enabling
+them against the safe default would attach credential semantics to origins the
+operator never wrote down. An unrecognised boolean is reported as an issue and
+leaves credentials disabled.
+
+## Methods and headers
+
+Evidence-based, from `frontend/src/lib/api.ts`:
+
+- **Methods:** `GET`, `HEAD`, `OPTIONS`, `POST`, `PUT`. `DELETE` and `PATCH` are
+  absent — no frontend path uses them.
+- **Headers:** `Accept`, `Content-Type`, `Idempotency-Key`.
+
+Permitting `POST`/`PUT` reflects routes the backend **already** serves; UI-10 adds
+and exposes no route.
+
+## Invalid-configuration fallback
+
+One deterministic rule: if `CORS_ORIGINS` is set but **no** entry survives
+validation, the policy falls back whole to the safe local default, reports
+`source: invalid_fallback`, and lists the issue codes. It never falls back to
+wildcard and never blocks startup — a CORS typo must not take down local dry-run
+work. If *some* entries are valid, those are used and the rejected ones are still
+reported.
+
+## Browser preflight behaviour
+
+| Situation | Result |
+| --- | --- |
+| Allowed origin, allowed method | `200`, `Access-Control-Allow-Origin` echoes the **exact** origin |
+| Disallowed origin | `200` server-side, **no** allow-origin header — the browser blocks it |
+| No `Origin` header | Normal response; direct clients unaffected |
+| Disallowed method (`DELETE`) | Preflight `400` |
+| Disallowed header (`Authorization`, `Cookie`) | Preflight `400` |
+| Any origin | `Access-Control-Allow-Origin` is never `*`; no `Allow-Credentials` by default |
+
+## Backend bind assumptions
+
+`uvicorn` defaults to host `127.0.0.1`, and no tracked launch command overrides it
+(`README.md`: `uvicorn server:app --reload`). The API is therefore **loopback-only
+unless an operator passes `--host` deliberately**. UI-10 preserves this and adds no
+remote bind option; a test pins both facts.
+
+(The *frontend* dev server does bind `0.0.0.0` via `vite --host`. That serves static
+assets, not the API, and is pre-existing — but it means the UI, not the API, is
+reachable on the LAN during development.)
+
+## Diagnostics
+
+`GET /api/security/config` gained a `cors` block reporting policy source, origin
+**count**, credentials flag, allowed methods/headers, local-only classification,
+`wildcardEnabled` (structurally `false`), validation status and issue codes.
+
+**No origin string is ever returned** — not even a loopback one. An origin list is
+deployment intelligence, and one uniform rule is easier to keep honest than one
+with a local-only exception. The startup log line follows the same rule.
+
+## Activation prerequisites for remote access (unchanged)
+
+CORS hardening does **not** unlock remote access. Items 1–3 and 5–7 of the UI-9
+list still apply: authenticated transport, encrypted transport, explicit origin
+configuration, explicit bind policy, credential handling and a threat review.
