@@ -113,3 +113,15 @@ golden/run-001/reference/candles.csv
 # Live-slice runtime state (ledger, ops logs, bar segments, reports)
 live_state/
 rehearsal_out/
+
+# UI-9 security baseline: certificate/key material must never be committed.
+# (.env, .env.*, *.env, *.pem, *.key and credentials.json are already covered
+# above; these close the remaining formats. No sample secret exists anywhere.)
+*.p12
+*.pfx
+*.crt
+*.cer
+*.csr
+*.jks
+secrets/
+certs/

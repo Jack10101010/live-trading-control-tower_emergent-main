@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { ConnectionPanel } from '@/components/domain/ConnectionPanel';
+import { SecurityBaselinePanel } from '@/components/domain/SecurityBaselinePanel';
 import { useFleet, usePackages, useFeatureFlags, useRuntimeHealth, useBrokerReconciliation, useStrategyEvaluation, useSchedulerStatus, useMarketSnapshot, useRiskLimits, useActivePackage, useBackendHealth } from '@/hooks/useRepository';
 import { api, QK } from '@/lib/api';
 import { queryClient } from '@/lib/queryClient';
@@ -101,6 +102,11 @@ export function SystemView() {
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-12 lg:col-span-6">
           <ConnectionPanel />
+        </div>
+        {/* UI-9 — security configuration status. Value-free by construction: the
+            backend reports configured/missing/invalid and never a value. */}
+        <div className="col-span-12 lg:col-span-6">
+          <SecurityBaselinePanel />
         </div>
       </div>
 

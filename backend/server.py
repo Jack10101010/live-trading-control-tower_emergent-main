@@ -36,6 +36,7 @@ import portfolio as portfolio_layer
 import connection_state as connection_layer
 import live_telemetry
 import ops_status as ops_status_layer
+import security_config
 import ops_journal as ops_journal_layer
 import ops_notifier as ops_notifier_layer
 
@@ -66,7 +67,10 @@ if mongo_url:
         db = client[os.environ.get('DB_NAME', 'control_tower')]
         logger.info("MongoDB connected.")
     except Exception as exc:  # pragma: no cover - depends on local env
-        logger.warning("MongoDB unavailable (%s); running fixture-only.", exc)
+        # UI-9: redacted. A driver exception can echo the connection URI, and a
+        # Mongo URI embeds credentials (mongodb://user:pass@host).
+        logger.warning("MongoDB unavailable (%s); running fixture-only.",
+                       security_config.redact_text(exc))
 else:
     logger.info("No MONGO_URL set; running fixture-only (no database).")
 
@@ -1924,7 +1928,12 @@ async def run_command(name: str, request: Request) -> dict[str, Any]:
     }
     event, deduplicated = _append_event(event, request.headers.get("Idempotency-Key"))
     if not deduplicated:
-        logger.info("Command %s: %s %s → event %s seq=%s", result.status, name, payload, event["eventId"], event["seq"])
+        # UI-9: payload redacted. No command carries a credential today, but this
+        # line would log one verbatim if any ever did — keys matching the secret
+        # hints are masked while the structure stays diagnosable.
+        logger.info("Command %s: %s %s → event %s seq=%s", result.status, name,
+                    security_config.redact_mapping(payload), event["eventId"],
+                    event["seq"])
     return {
         "ok": True,
         "commandId": event["causedBy"] if deduplicated else command_id,
@@ -2333,6 +2342,28 @@ def live_connection():
         content=connection_layer.build_connection_state(
             records, now, beacon=_node_beacon()),
         headers={"Cache-Control": "no-store"})
+
+
+@api_router.get("/security/config")
+def security_config_status():
+    """UI-9 — VALUE-FREE security configuration status (read-only diagnostics).
+
+    Reports, per variable, only `configured` / `missing` / `invalid`, plus
+    validation findings. It NEVER returns a value — not a token, not a certificate
+    path, not an endpoint — because an endpoint or path is still deployment
+    intelligence even though it is not a credential.
+
+    `active` is always false: UI-9 is preparation only. There is no transport, no
+    authentication, no TLS and no connectivity to report on, and this route opens
+    nothing. It is a mirror held up to the environment, not a control.
+    """
+    try:
+        config = security_config.load_config()
+        return JSONResponse(content=security_config.describe_config(config),
+                            headers={"Cache-Control": "no-store"})
+    except Exception:               # diagnostics must never 500 the app
+        logger.exception("security configuration description failed")
+        raise HTTPException(status_code=500, detail="security configuration unavailable")
 
 
 @api_router.get("/notifier/status")

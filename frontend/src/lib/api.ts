@@ -482,8 +482,24 @@ export interface LiveStatus {
   emptyState: string | null;
 }
 
+/* ── UI-9: security configuration STATUS (value-free) ────────────────────────
+ * Mirrors backend/security_config.py's describe_config. There is deliberately no
+ * value field of any kind: the backend reports whether a variable is set, never
+ * what it is set to. `active` is always false — UI-9 introduces no connectivity. */
+export type SecurityVarStatus = 'configured' | 'missing' | 'invalid';
+
+export interface SecurityConfigStatus {
+  active: boolean;
+  activeReason: string;
+  mode: SecurityVarStatus;
+  variables: Record<string, { status: SecurityVarStatus; secret: boolean; path: boolean }>;
+  findings: Array<{ severity: 'error' | 'warning'; variable: string | null; message: string }>;
+  hasErrors: boolean;
+}
+
 export const api = {
   world: () => apiFetch<WorldFixture>('/world'),
+  securityConfig: () => apiFetch<SecurityConfigStatus>('/security/config'),
   liveConnection: () => apiFetch<ConnectionState>('/live/connection'),
   liveStatus: () => apiFetch<LiveStatus>('/live/status'),
   fleet: () =>
