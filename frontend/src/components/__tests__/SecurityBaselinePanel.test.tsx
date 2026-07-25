@@ -30,6 +30,24 @@ function payload(over: Partial<SecurityConfigStatus> = {}): SecurityConfigStatus
     },
     findings: [],
     hasErrors: false,
+    auth: {
+      active: false,
+      configured: false,
+      defaultState: 'disabled',
+      scheme: 'bearer',
+      valid: true,
+      misconfigured: false,
+      tokenPresent: false,
+      tokenLengthOk: false,
+      minTokenLength: 32,
+      protectedRouteCount: 68,
+      publicRouteCount: 1,
+      publicRoutes: ['/api/health'],
+      docsPolicy: 'protected',
+      openapiPolicy: 'protected',
+      issueCodes: [],
+      remoteActivation: 'not_active',
+    },
     cors: {
       policyActive: true,
       source: 'safe_default',
@@ -48,6 +66,10 @@ function payload(over: Partial<SecurityConfigStatus> = {}): SecurityConfigStatus
 
 function cors(over: Partial<NonNullable<SecurityConfigStatus['cors']>> = {}) {
   return payload({ cors: { ...payload().cors!, ...over } });
+}
+
+function auth(over: Partial<NonNullable<SecurityConfigStatus['auth']>> = {}) {
+  return payload({ auth: { ...payload().auth!, ...over } });
 }
 
 function mount() {
@@ -264,5 +286,99 @@ describe('CORS policy status', () => {
     mount();
     await waitFor(() => expect(screen.getByTestId('security-variables')).toBeTruthy());
     expect(screen.queryByTestId('cors-policy')).toBeNull();
+  });
+});
+
+// ══ UI-11: request authentication ════════════════════════════════════════════
+
+describe('authentication diagnostics', () => {
+  it('renders and reports NOT ACTIVE by default', async () => {
+    vi.spyOn(api, 'securityConfig').mockResolvedValue(payload());
+    mount();
+    await waitFor(() => expect(screen.getByTestId('auth-policy')).toBeTruthy());
+    expect(screen.getByTestId('auth-active').textContent).toBe('NOT ACTIVE');
+    expect(screen.getByTestId('auth-default').textContent).toBe('disabled');
+    expect(screen.getByTestId('auth-configured').textContent).toBe('no');
+  });
+
+  it('shows the bearer scheme and route counts', async () => {
+    vi.spyOn(api, 'securityConfig').mockResolvedValue(payload());
+    mount();
+    await waitFor(() => expect(screen.getByTestId('auth-policy')).toBeTruthy());
+    expect(screen.getByTestId('auth-scheme').textContent).toBe('bearer');
+    expect(screen.getByTestId('auth-protected-count').textContent).toBe('68');
+    expect(screen.getByTestId('auth-public-count').textContent).toBe('1');
+    expect(screen.getByTestId('auth-docs-policy').textContent).toBe('protected / protected');
+  });
+
+  it('reports a configured but inactive policy', async () => {
+    vi.spyOn(api, 'securityConfig').mockResolvedValue(
+      auth({ configured: true, tokenPresent: true, tokenLengthOk: true, active: false })
+    );
+    mount();
+    await waitFor(() => expect(screen.getByTestId('auth-configured').textContent).toBe('yes'));
+    expect(screen.getByTestId('auth-active').textContent).toBe('NOT ACTIVE');
+    expect(screen.getByTestId('auth-token-present').textContent).toBe('present');
+  });
+
+  it('warns on a misconfigured policy and says access was not reopened', async () => {
+    vi.spyOn(api, 'securityConfig').mockResolvedValue(
+      auth({ configured: true, misconfigured: true, valid: false,
+             issueCodes: ['auth_token_missing'] })
+    );
+    mount();
+    expect(await screen.findByText(/failing closed/i)).toBeTruthy();
+    expect(screen.getByText(/not silently reopened/i)).toBeTruthy();
+    expect(screen.getByTestId('auth-issues').textContent).toContain('auth_token_missing');
+  });
+
+  it('indicates a too-short token without revealing its length', async () => {
+    vi.spyOn(api, 'securityConfig').mockResolvedValue(
+      auth({ tokenPresent: true, tokenLengthOk: false })
+    );
+    mount();
+    await waitFor(() =>
+      expect(screen.getByTestId('auth-token-present').textContent).toBe('present · too short')
+    );
+  });
+
+  it('states that authentication is not encryption', async () => {
+    vi.spyOn(api, 'securityConfig').mockResolvedValue(payload());
+    mount();
+    expect(await screen.findByText(/not encryption/i)).toBeTruthy();
+  });
+
+  it('cannot render a token even if the payload smuggles one', async () => {
+    const SECRET_TOKEN = 'tok_MUST_NEVER_RENDER_0123456789';
+    vi.spyOn(api, 'securityConfig').mockResolvedValue({
+      ...payload(),
+      auth: { ...payload().auth!, token: SECRET_TOKEN, tokenValue: SECRET_TOKEN,
+              tokenLength: 31 } as never,
+    });
+    mount();
+    await waitFor(() => expect(screen.getByTestId('auth-policy')).toBeTruthy());
+    const html = screen.getByTestId('security-baseline-panel').innerHTML;
+    expect(html).not.toContain(SECRET_TOKEN);
+    expect(html).not.toContain('tok_');
+  });
+
+  it('renders no login form, token field, storage control or action button', async () => {
+    vi.spyOn(api, 'securityConfig').mockResolvedValue(payload());
+    mount();
+    await waitFor(() => expect(screen.getByTestId('auth-policy')).toBeTruthy());
+    const section = screen.getByTestId('auth-policy');
+    expect(section.querySelectorAll('form')).toHaveLength(0);
+    expect(section.querySelectorAll('input')).toHaveLength(0);
+    expect(section.querySelectorAll('button')).toHaveLength(0);
+    expect(section.querySelectorAll('select')).toHaveLength(0);
+    expect(section.querySelectorAll('[type="password"]')).toHaveLength(0);
+  });
+
+  it('omits the section when the backend sends no auth block', async () => {
+    const { auth: _omitted, ...withoutAuth } = payload();
+    vi.spyOn(api, 'securityConfig').mockResolvedValue(withoutAuth as SecurityConfigStatus);
+    mount();
+    await waitFor(() => expect(screen.getByTestId('security-variables')).toBeTruthy());
+    expect(screen.queryByTestId('auth-policy')).toBeNull();
   });
 });

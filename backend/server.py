@@ -35,6 +35,7 @@ import portfolio as portfolio_layer
 # object for L1A in the process (no dual identity via a package-form import).
 import connection_state as connection_layer
 import live_telemetry
+import auth_policy
 import cors_policy
 import ops_status as ops_status_layer
 import security_config
@@ -2364,6 +2365,9 @@ def security_config_status():
         # UI-10: the browser boundary, described the same value-free way —
         # classifications and counts, never origin strings.
         body["cors"] = cors_policy.describe(_CORS_POLICY)
+        # UI-11: authentication STATE only — no token value, prefix, suffix, hash
+        # or length. The policy object holds no field a future edit could render.
+        body["auth"] = auth_policy.describe(_AUTH_POLICY, app.routes)
         return JSONResponse(content=body, headers={"Cache-Control": "no-store"})
     except Exception:               # diagnostics must never 500 the app
         logger.exception("security configuration description failed")
@@ -2408,6 +2412,57 @@ app.include_router(api_router)
 # does nothing about curl or any non-browser client, and requests with no Origin
 # header are unaffected by design.
 _CORS_POLICY = cors_policy.load_policy()
+
+# UI-11 — the authenticated API boundary. DISABLED by default: while
+# CONTROL_TOWER_AUTH_ENABLED is unset every route behaves exactly as before, so the
+# local dry-run workflow is untouched. When deliberately enabled, every route
+# except the explicitly enumerated public set requires `Authorization: Bearer`.
+#
+# Authentication is NOT encryption and NOT CORS: a bearer token over plaintext http
+# is readable on the path, and this gate applies to curl as much as to a browser.
+# Remote exposure still requires the UI-9 transport prerequisites.
+_AUTH_POLICY = auth_policy.load_policy()
+
+
+@app.middleware("http")
+async def _authentication_boundary(request: Request, call_next):
+    """Deny-by-default request authentication.
+
+    Ordering matters: middleware added later is OUTERMOST, so this runs before the
+    CORS middleware and therefore sees the browser's credential-less `OPTIONS`
+    preflight. Preflight is allowed through unauthenticated — a browser cannot
+    attach credentials to it by specification, and blocking it would break the
+    UI-10 browser boundary. The preflight response carries no data.
+    """
+    if not _AUTH_POLICY.enabled:
+        return await call_next(request)                     # untouched behaviour
+    if request.method in auth_policy.PREAUTH_METHODS:
+        return await call_next(request)
+    if not auth_policy.is_protected(request.url.path):
+        return await call_next(request)                     # explicitly public
+
+    if _AUTH_POLICY.misconfigured:
+        # Enabled but unusable. Fail CLOSED — never silently revert to open — and
+        # say it is a server fault so the caller does not hunt for a credential.
+        logger.warning("authentication enabled but misconfigured; protected routes "
+                       "are failing closed (issues: %s)",
+                       ",".join(_AUTH_POLICY.issues))
+        return JSONResponse(status_code=auth_policy.STATUS_MISCONFIGURED,
+                            content=auth_policy.MISCONFIGURED_BODY,
+                            headers={"Cache-Control": "no-store"})
+
+    if _AUTH_POLICY.verify(request.headers.get(auth_policy.AUTH_HEADER)):
+        return await call_next(request)
+
+    # One indistinguishable response for missing / malformed / wrong / empty. The
+    # log records the path and nothing about the credential — not its length, not
+    # its prefix, not which check failed.
+    logger.warning("unauthorized request to %s", request.url.path)
+    return JSONResponse(status_code=auth_policy.STATUS_UNAUTHORIZED,
+                        content=auth_policy.UNAUTHORIZED_BODY,
+                        headers=dict(auth_policy.UNAUTHORIZED_HEADERS))
+
+
 app.add_middleware(CORSMiddleware, **cors_policy.middleware_kwargs(_CORS_POLICY))
 
 logging.basicConfig(
@@ -2418,6 +2473,7 @@ logging.basicConfig(
 # UI-10: one startup line so the effective boundary is visible without guessing.
 # Counts and classifications only — a log file must not disclose the origin list.
 logger.info("%s", cors_policy.summarise_for_log(_CORS_POLICY))
+logger.info("%s", auth_policy.summarise_for_log(_AUTH_POLICY))
 for _issue in _CORS_POLICY.issues:
     logger.warning("CORS configuration issue: %s", _issue.code)
 

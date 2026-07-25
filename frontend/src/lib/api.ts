@@ -503,6 +503,28 @@ export interface CorsPolicyStatus {
   issueCodes: string[];
 }
 
+/* UI-11: authentication STATE only. There is deliberately no token field of any
+ * kind — no value, prefix, suffix, hash or length — so the frontend cannot render
+ * or store a credential even if the backend were changed to send one. */
+export interface AuthPolicyStatus {
+  active: boolean;
+  configured: boolean;
+  defaultState: 'disabled';
+  scheme: 'bearer';
+  valid: boolean;
+  misconfigured: boolean;
+  tokenPresent: boolean;
+  tokenLengthOk: boolean;
+  minTokenLength: number;
+  protectedRouteCount: number;
+  publicRouteCount: number;
+  publicRoutes: string[];
+  docsPolicy: string;
+  openapiPolicy: string;
+  issueCodes: string[];
+  remoteActivation: 'not_active';
+}
+
 export interface SecurityConfigStatus {
   active: boolean;
   activeReason: string;
@@ -511,6 +533,7 @@ export interface SecurityConfigStatus {
   findings: Array<{ severity: 'error' | 'warning'; variable: string | null; message: string }>;
   hasErrors: boolean;
   cors?: CorsPolicyStatus;
+  auth?: AuthPolicyStatus;
 }
 
 export const api = {

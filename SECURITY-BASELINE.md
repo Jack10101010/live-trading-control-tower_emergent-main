@@ -298,3 +298,163 @@ with a local-only exception. The startup log line follows the same rule.
 CORS hardening does **not** unlock remote access. Items 1–3 and 5–7 of the UI-9
 list still apply: authenticated transport, encrypted transport, explicit origin
 configuration, explicit bind policy, credential handling and a threat review.
+
+---
+
+# Request Authentication (UI-11) — local contract, **disabled by default**
+
+## Threat boundary
+
+| Boundary | Closed by | Status |
+| --- | --- | --- |
+| A web page reading the API with the operator's browser | CORS (UI-10) | Closed |
+| **Any client — curl, script, another process — reaching the API** | **Bearer authentication (UI-11)** | **Contract defined, disabled by default** |
+| Reading the token in transit | TLS | **Not built** |
+| Anything off this machine | VPN/TLS/auth together — future | Not built |
+
+Authentication and CORS are different boundaries. CORS restricts *browsers*;
+authentication restricts *every* client. Neither substitutes for the other, and
+**authentication is not encryption**: a bearer token over plaintext HTTP is
+readable by anything on the path. This is why UI-11 is a **local** contract and why
+enabling it does **not** authorise remote exposure.
+
+## Enabled / disabled semantics
+
+| Configuration | Result |
+| --- | --- |
+| Nothing set (default) | **Disabled.** Every route behaves exactly as before. |
+| `CONTROL_TOWER_AUTH_ENABLED` explicitly false/blank | Disabled. |
+| Unrecognised boolean (`ture`, `maybe`) | **Disabled** + issue code. Never enabled by accident. |
+| Explicitly true + valid token | Enforcing. |
+| Explicitly true + missing/blank/short/whitespace token | **Fails closed** (503). |
+
+The last row is the important one: authentication is **never silently switched back
+off** once an operator has explicitly enabled it. Silently reverting to open would
+be the worst possible outcome of a typo.
+
+## Token policy
+
+- Fixed scheme and header: `Authorization: Bearer <token>`. A configurable header
+  name was considered and rejected — it adds configuration surface and a
+  client/server divergence risk for no capability. *(Deviation from the prompt's
+  optional `CONTROL_TOWER_AUTH_HEADER`, deliberately.)*
+- Minimum length **32 characters**; no internal whitespace (it cannot survive the
+  header); blank means **absent**.
+- Comparison uses `hmac.compare_digest` — constant time. No hand-rolled equality:
+  an early-return `==` leaks the shared prefix length.
+- The value lives in a wrapper whose `repr`/`str` are masked and is **absent from
+  the policy dataclass**, so there is no field for a future edit to render. It is
+  never logged, never hashed into output, never echoed in an error, never returned
+  by diagnostics and never sent to the frontend.
+- This repository does **not** generate, store or rotate tokens, and ships no
+  example value.
+
+## Route classification — deny by default
+
+**Public (exactly one):** `/api/health`.
+
+It is the readiness/bootstrap probe the frontend calls before anything else, and a
+liveness probe that requires a credential cannot report that the credential is
+misconfigured.
+
+**Protected (everything else),** verified against the live route table: `/api/`
+bootstrap metadata, `/api/security/*`, `/api/live/*` (including `ingest`),
+`/api/events*`, `/api/ops/status`, `/api/world`, all 10 mutation/command routes,
+and `/docs`, `/redoc`, `/openapi.json`, `/docs/oauth2-redirect`.
+
+Docs and OpenAPI are **protected rather than disabled** so local development keeps
+them while authentication is off.
+
+Matching is **exact, never prefix-based**: a prefix rule would make a future
+`/api/health/secrets` public by inheritance. `OPTIONS` is the only method that
+bypasses authentication — a browser cannot attach credentials to a CORS preflight
+by specification, and the preflight response carries no data.
+
+### Maintenance rule
+
+A route added tomorrow is protected automatically. A structural test enumerates the
+**live app** and asserts every registered path is classified, that every
+mutation/command route is protected, and that the public set is exactly
+`{/api/health}`. **If you add a route that must be public, you must add it to
+`PUBLIC_ROUTES` and the test will make you justify it.** Forgetting the allowlist
+can never make something public.
+
+## Unauthorized response contract
+
+One externally indistinguishable response for missing, malformed, wrong-scheme,
+empty and incorrect credentials:
+
+```
+401  { "error": "unauthorized", "code": "unauthorized", "message": "..." }
+     WWW-Authenticate: Bearer
+     Cache-Control: no-store
+```
+
+Nothing reveals which check failed or how close the credential was — anything else
+is an oracle. The credential is never echoed, and no stack trace or request header
+appears in the body.
+
+Server-side misconfiguration is different and says so:
+
+```
+503  { "error": "unavailable", "code": "authentication_misconfigured", ... }
+```
+
+401 would send the caller hunting for a credential they cannot fix.
+
+## CORS interaction
+
+`Authorization` was added to the UI-10 allow-header list so that **if**
+authentication is ever enabled, a browser client can preflight it successfully.
+This changes nothing else: authentication stays disabled, the frontend sends no
+Authorization header, credentials remain disabled, wildcard remains unsupported,
+and preflight for `Authorization` still succeeds **only** from an already-trusted
+origin (verified from both an allowed and a disallowed origin).
+
+## Logging and redaction
+
+The audit found **no request-header logging anywhere** — only `Idempotency-Key` and
+`content-length` are read, neither logged. The existing UI-9 redaction helpers were
+**extended** rather than duplicated:
+
+- `Authorization: Bearer <token>` masked in free text, scheme preserved so the log
+  still says what kind of credential was involved
+- `?token=` / `api_key=` / `password=` / `secret=` / `auth=` masked in query strings
+  **and** in bare `name=value` form (exception messages)
+- `key`, `session`, `cookie` added to the secret-key hints for mapping redaction
+- `redact_text` never raises — a logging call must not be the thing that fails
+
+Authentication failures log the path and nothing about the credential: not its
+length, not its prefix, not which check failed.
+
+## Why the frontend has no token storage
+
+Deliberately excluded: no login form, no token input, no `localStorage`,
+`sessionStorage` or cookie, no `credentials: 'include'`, no Authorization
+injection. A token in browser storage is readable by any script that reaches the
+page, and this slice defines the **backend contract** only. The frontend shows
+value-free diagnostics and nothing else.
+
+## Local development while disabled
+
+Unchanged. No credential, no header, no configuration. `1530` backend tests passed
+before this slice and every route still responds identically with authentication
+off.
+
+## Future activation prerequisites
+
+Enabling authentication locally is **not** remote authorisation. Before any remote
+access:
+
+1. **TLS** — without it the bearer token is plaintext on the wire. Non-negotiable.
+2. **Private network path** — VPN or equivalent; the API must never face the
+   public internet.
+3. **Explicit origin + bind policy** — `CORS_ORIGINS` and an explicit `--host`.
+4. **Credential handling** — a real secrets mechanism, not an environment variable
+   on one machine; plus rotation, which this slice does not implement.
+5. **Threat review** — token scope, revocation, and what a leaked token grants.
+6. **Node autonomy preserved** — invariant I-10: the node keeps trading and
+   protecting the account when the Control Tower is unreachable.
+
+**Status: authentication preparation is complete at the CONTRACT level only.**
+Remote authenticated transport is **not active** and no transport adapter exists.

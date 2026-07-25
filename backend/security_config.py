@@ -100,12 +100,29 @@ _SECRET_KEY_HINTS = (
     "password", "passwd", "secret", "token", "apikey", "api_key", "authorization",
     "auth", "bearer", "credential", "private", "client_key", "signature", "nonce",
     "digest",
+    # UI-11 additions: the query-parameter names a credential is most often
+    # smuggled through, plus the generic "key". A credential in a query string ends
+    # up in access logs and referrers, so it must be masked wherever it appears.
+    "key", "session", "cookie",
 )
 
 #: `scheme://user:pass@host` — credentials embedded in a URI. Found during the
 #: audit: a Mongo connection failure logs the exception, and a driver exception
 #: can echo the URI it was given.
 _URI_CREDENTIALS = re.compile(r"(?P<scheme>[a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]+:[^/@\s]+@")
+
+#: UI-11: `Authorization: Bearer <token>` anywhere in free text — an exception
+#: message, a repr, a traceback line. The scheme survives so the log still says
+#: what kind of credential was involved.
+_BEARER_TOKEN = re.compile(r"(?i)\b(bearer)\s+\S+")
+
+#: UI-11: `?token=...` / `&api_key=...` in a URL or log line. Credentials in query
+#: strings leak into access logs and referrer headers.
+#: The `[?&]` form covers a real query string; the bare `name=value` form covers an
+#: exception message or log line that names the credential without a URL around it
+#: ("failed with api_key=..."). Over-masking is the safe direction.
+_QUERY_CREDENTIAL = re.compile(
+    r"(?i)((?:[?&]|\b)(?:token|api_key|apikey|secret|password|auth)=)[^&\s]+")
 
 
 def is_secret_key(key: Any) -> bool:
@@ -114,10 +131,16 @@ def is_secret_key(key: Any) -> bool:
 
 
 def redact_text(text: Any) -> str:
-    """Mask credentials embedded in free text (URIs, exception messages).
+    """Mask credentials embedded in free text (URIs, headers, exception messages).
 
-    Used at logging boundaries where the payload is not a structured mapping."""
-    return _URI_CREDENTIALS.sub(r"\g<scheme>" + REDACTED + "@", str(text))
+    Used at logging boundaries where the payload is not a structured mapping.
+    Never raises: a logging call must not be the thing that fails."""
+    try:
+        out = _URI_CREDENTIALS.sub(r"\g<scheme>" + REDACTED + "@", str(text))
+        out = _BEARER_TOKEN.sub(r"\1 " + REDACTED, out)
+        return _QUERY_CREDENTIAL.sub(r"\1" + REDACTED, out)
+    except Exception:
+        return REDACTED
 
 
 def redact_mapping(data: Any, _depth: int = 0) -> Any:

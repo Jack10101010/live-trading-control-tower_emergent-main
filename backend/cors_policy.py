@@ -69,8 +69,16 @@ SAFE_LOCAL_ORIGINS: tuple[str, ...] = (
 ALLOWED_METHODS: tuple[str, ...] = ("GET", "HEAD", "OPTIONS", "POST", "PUT")
 
 # Request headers observed in the same file: Accept, Content-Type and
-# Idempotency-Key (the command retry key). Nothing else is sent.
-ALLOWED_HEADERS: tuple[str, ...] = ("Accept", "Content-Type", "Idempotency-Key")
+# Idempotency-Key (the command retry key). Nothing else is sent today.
+#
+# UI-11 adds `Authorization` so that IF authentication is ever enabled, a browser
+# client can preflight the header successfully from an allowed origin. Listing it
+# here neither enables authentication nor makes the current frontend send it — the
+# frontend has no token, no storage and no injection point, by design. Preflight
+# for this header still succeeds only from an already-trusted origin.
+ALLOWED_HEADERS: tuple[str, ...] = (
+    "Accept", "Content-Type", "Idempotency-Key", "Authorization",
+)
 
 SUPPORTED_SCHEMES = ("http", "https")
 

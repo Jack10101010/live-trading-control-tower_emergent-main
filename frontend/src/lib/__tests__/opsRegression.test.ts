@@ -210,3 +210,48 @@ describe('UI-10 client regression', () => {
     expect(new Set(headers)).toEqual(new Set(['Accept', 'Content-Type', 'Idempotency-Key']));
   });
 });
+
+/* ── UI-11: the frontend must remain credential-free ─────────────────────────*/
+
+describe('UI-11 client regression', () => {
+  it('never injects an Authorization header', () => {
+    const source = read('lib/api.ts');
+    // The TYPE name may appear (AuthPolicyStatus); an actual header must not.
+    expect(source).not.toContain("'Authorization':");
+    expect(source).not.toContain('Authorization:');
+    expect(source).not.toContain('Bearer ');
+  });
+
+  it('stores no token anywhere', () => {
+    for (const rel of ['lib/api.ts', 'components/domain/SecurityBaselinePanel.tsx']) {
+      const source = read(rel);
+      for (const forbidden of ['localStorage', 'sessionStorage', 'document.cookie',
+                               'indexedDB']) {
+        expect(source, `${rel} must not use ${forbidden}`).not.toContain(forbidden);
+      }
+    }
+  });
+
+  it('has no login form or token input', () => {
+    const panel = read('components/domain/SecurityBaselinePanel.tsx');
+    for (const forbidden of ['<form', '<input', 'type="password"', 'onSubmit']) {
+      expect(panel).not.toContain(forbidden);
+    }
+  });
+
+  it('still opts out of credentials', () => {
+    const source = read('lib/api.ts');
+    expect(source).not.toContain("credentials: 'include'");
+    expect(source).not.toContain('withCredentials');
+  });
+
+  it('exposes no token field in the auth diagnostics type', () => {
+    const source = read('lib/api.ts');
+    const block = source.slice(source.indexOf('export interface AuthPolicyStatus'),
+                               source.indexOf('export interface SecurityConfigStatus'));
+    expect(block).toContain('tokenPresent');
+    expect(block).not.toContain('tokenValue');
+    expect(block).not.toMatch(/\btoken:\s/);
+    expect(block).not.toMatch(/tokenLength:\s/);
+  });
+});

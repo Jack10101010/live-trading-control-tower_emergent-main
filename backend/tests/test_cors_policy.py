@@ -396,11 +396,29 @@ def test_allowed_request_header_passes_preflight():
 
 
 def test_disallowed_request_header_fails_preflight():
-    for header in ("Authorization", "X-Api-Key", "Cookie"):
+    """CONTRACT CHANGE (UI-11): `Authorization` moved to the ALLOWED list so that if
+    request authentication is ever enabled, a browser can preflight the header from
+    an already-trusted origin. That neither enables authentication nor makes the
+    frontend send the header. Everything else still fails."""
+    for header in ("X-Api-Key", "Cookie", "X-Forwarded-For"):
         response = client.options("/api/health", headers={
             "Origin": LOCAL, "Access-Control-Request-Method": "POST",
             "Access-Control-Request-Headers": header})
         assert response.status_code == 400, header
+
+
+def test_authorization_header_is_allowed_only_from_a_trusted_origin():
+    """UI-11: allowing the header must not weaken the ORIGIN boundary."""
+    allowed = client.options("/api/health", headers={
+        "Origin": LOCAL, "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Headers": "Authorization"})
+    assert allowed.status_code == 200
+    refused = client.options("/api/health", headers={
+        "Origin": REMOTE, "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Headers": "Authorization"})
+    assert refused.status_code == 400
+    # And credentials stay off: allowing the header is not enabling cookies.
+    assert acac(client.get("/api/health", headers={"Origin": LOCAL})) is None
 
 
 def test_allowed_methods_advertised_are_exactly_the_policy():

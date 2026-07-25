@@ -54,6 +54,70 @@ export function SecurityBaselinePanel() {
 
       {isLoading && <div className="text-2xs text-text-muted">Reading configuration…</div>}
 
+      {data?.auth && (
+        /* UI-11 — the request-authentication boundary. STATE only: there is no
+           token field in the payload, no input, no storage and no Authorization
+           injection anywhere in the frontend, by design. */
+        <div
+          className="mt-1 pt-1 border-t border-[color:var(--border)] text-2xs"
+          data-testid="auth-policy"
+        >
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-text-2">Request authentication</span>
+            <span className="mono" data-testid="auth-active">
+              {data.auth.active ? 'ENFORCING' : 'NOT ACTIVE'}
+            </span>
+          </div>
+          <dl className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 mt-0.5 text-text-muted">
+            <dt>Default state</dt>
+            <dd className="mono" data-testid="auth-default">{data.auth.defaultState}</dd>
+            <dt>Configured</dt>
+            <dd className="mono" data-testid="auth-configured">
+              {data.auth.configured ? 'yes' : 'no'}
+            </dd>
+            <dt>Scheme</dt>
+            <dd className="mono" data-testid="auth-scheme">{data.auth.scheme}</dd>
+            <dt>Token</dt>
+            <dd className="mono" data-testid="auth-token-present">
+              {data.auth.tokenPresent
+                ? (data.auth.tokenLengthOk ? 'present' : 'present · too short')
+                : 'absent'}
+            </dd>
+            <dt>Protected routes</dt>
+            <dd className="mono" data-testid="auth-protected-count">
+              {data.auth.protectedRouteCount}
+            </dd>
+            <dt>Public routes</dt>
+            <dd className="mono" data-testid="auth-public-count">
+              {data.auth.publicRouteCount}
+            </dd>
+            <dt>Docs / OpenAPI</dt>
+            <dd className="mono" data-testid="auth-docs-policy">
+              {`${data.auth.docsPolicy} / ${data.auth.openapiPolicy}`}
+            </dd>
+            <dt>Remote activation</dt>
+            <dd className="mono">{data.auth.remoteActivation}</dd>
+          </dl>
+          {data.auth.misconfigured && (
+            <div className="mt-1" style={{ color: 'var(--negative)' }}>
+              Authentication is ENABLED but not correctly configured. Protected
+              routes are failing closed; access was not silently reopened.
+            </div>
+          )}
+          {data.auth.issueCodes.length > 0 && (
+            <ul className="mt-0.5" data-testid="auth-issues">
+              {data.auth.issueCodes.map((code) => (
+                <li key={code} className="mono text-text-muted">{code}</li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-1 text-text-muted">
+            Authentication is not encryption: a bearer token over plaintext HTTP is
+            readable in transit. Remote access still requires TLS.
+          </p>
+        </div>
+      )}
+
       {data?.cors && (
         /* UI-10 — the browser boundary. Distinct from the transport section below:
            CORS is live and enforced TODAY, whereas remote transport is NOT ACTIVE.
