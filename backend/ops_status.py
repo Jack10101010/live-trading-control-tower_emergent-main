@@ -515,13 +515,69 @@ def collect_sources(state_dir, market_data_dir, kill_file) -> dict:
                                      "feed_heartbeat"),
         "runner_state": _read_json(state_dir / "runner_state.json", errors,
                                    "runner_state"),
-        "publish_payload": _read_json(state_dir / "publish_last.json", errors,
-                                      "publish_payload"),
+        # UI-2: normalized so a v1 telemetry snapshot yields the same facts the
+        # flat pre-UI-2 payload did (input adaptation only — see _flatten_v1_payload).
+        "publish_payload": _flatten_v1_payload(
+            _read_json(state_dir / "publish_last.json", errors, "publish_payload")),
         # Always a bool: the existence check itself cannot fail, so this source is
         # always "available" — presence is operational state, not availability.
         "kill_file": Path(kill_file).exists(),
         "_errors": errors,
     }
+
+
+# ── UI-2 publisher-payload compatibility (input normalization ONLY) ──────────
+# `publish_last.json` (S6) is written by `live/publisher.py`. UI-2 changed that file
+# from a flat dict into the nested `ct.node-telemetry.v1` snapshot, which silently
+# collapsed 13 S6-derived facts in this model to "unknown" — including
+# `identity.payload_age_s`, a freshness signal. This adapter restores the flat fact
+# shape the FROZEN projector below already reads.
+#
+# Scope discipline: this normalizes the INPUT only. `build_operational_status` is
+# untouched, no field is added/renamed/removed from the L1A output model, and no
+# fact is invented — anything the snapshot does not carry stays absent, so the
+# projector still resolves it to "unknown" exactly as before.
+_V1_SCHEMA_PREFIX = "ct.node-telemetry."
+
+
+def _flatten_v1_payload(payload):
+    """Map a v1 telemetry snapshot onto the flat S6 fact names. Non-v1 payloads
+    (including the pre-UI-2 flat shape) are returned unchanged."""
+    if not isinstance(payload, dict):
+        return payload
+    version = payload.get("schema_version")
+    if not isinstance(version, str) or not version.startswith(_V1_SCHEMA_PREFIX):
+        return payload
+    runtime = payload.get("runtime") if isinstance(payload.get("runtime"), dict) else {}
+    engine = payload.get("engine") if isinstance(payload.get("engine"), dict) else {}
+    cycle = payload.get("cycle") if isinstance(payload.get("cycle"), dict) else {}
+    execution = payload.get("execution") if isinstance(payload.get("execution"), dict) else {}
+    flat = dict(payload)
+    for key, value in (
+        ("symbol", engine.get("symbol")),
+        ("mode", runtime.get("mode")),
+        ("engine_version", engine.get("engine_version_actual")),
+        ("deployment_profile", engine.get("deployment_profile")),
+        ("data_seam", engine.get("data_seam")),
+        ("at", payload.get("published_at")),
+        ("intents", execution.get("cycle_intents")),
+    ):
+        if value is not None:
+            flat[key] = value
+    # `runner.boundary` and the execution outcome lists keep their S6 names; the v1
+    # snapshot renamed them (`cycle.last_boundary`, `attempts`, `blocks`) and reports
+    # skipped as a count only, so `skipped` stays absent rather than being faked.
+    if cycle.get("last_boundary") is not None:
+        runner = dict(flat.get("runner") or {})
+        runner.setdefault("boundary", cycle["last_boundary"])
+        flat["runner"] = runner
+    ex_out = dict(flat.get("execution") or {})
+    for legacy_key, v1_key in (("applied", "attempts"), ("blocked", "blocks")):
+        if isinstance(execution.get(v1_key), list):
+            ex_out.setdefault(legacy_key, execution[v1_key])
+    if ex_out:
+        flat["execution"] = ex_out
+    return flat
 
 
 def operational_status(state_dir, market_data_dir, kill_file,

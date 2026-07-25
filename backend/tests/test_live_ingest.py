@@ -76,9 +76,14 @@ def stored_rows(db_path: Path) -> list[dict]:
 
 @pytest.fixture()
 def iso(tmp_path, monkeypatch):
-    """Isolated events DB + fresh gate/state, restored after each test."""
+    """Isolated events DB + fresh gate/state, restored after each test.
+
+    UI-2 made a valid ingest also write a durable snapshot, so RUNTIME_DB_PATH is
+    redirected too — otherwise this suite would mutate the repository's real
+    `backend/runtime.db` and leak `live_snapshot` rows into later runs."""
     db = tmp_path / "events.db"
     monkeypatch.setattr(server, "EVENTS_DB_PATH", db)
+    monkeypatch.setattr(server, "RUNTIME_DB_PATH", tmp_path / "runtime.db")
     monkeypatch.setattr(server, "_LIVE_STATUS", {})
     monkeypatch.setattr(server, "_LIVE_GATE", {})
     return db
@@ -93,7 +98,10 @@ def assert_envelope(ev: dict):
     assert ev["causedBy"].startswith("live_ingest:")
     assert isinstance(ev["seq"], int) and ev["seq"] > 0
     assert isinstance(ev["humanExplanation"], str) and ev["humanExplanation"]
-    assert isinstance(ev["packageHash"], str)
+    # UI-2: deliberately None. The node runs the Lux strategy core, not a fixture
+    # package, so stamping the backend's active package hash on a node transition
+    # was a fabricated attribution. Engine lineage now lives in the snapshot.
+    assert ev["packageHash"] is None
     assert isinstance(ev["before"], dict) and isinstance(ev["after"], dict)
 
 
@@ -115,7 +123,10 @@ def test_steady_state_appends_zero_events(iso):
         r = client.post("/api/live/ingest", json=p)
         assert r.status_code == 200
         assert r.json() == {"ok": True, "seq": None, "deduplicated": None}
-        assert server._LIVE_STATUS["lux-eurusd-01"]["at"] == p["at"]  # state updated
+        # UI-2: _LIVE_STATUS now holds a validated snapshot record; the producer
+        # timestamp lives at snapshot.published_at (legacy `at` is adapted into it).
+        assert (server._LIVE_STATUS["lux-eurusd-01"]["snapshot"]["published_at"]
+                == p["at"])  # state updated
     assert stored_rows(iso) == []
 
 
@@ -271,7 +282,8 @@ def test_partial_failure_keeps_gate_then_retry_completes(iso, monkeypatch):
     assert r.status_code == 200
     assert len(stored_rows(iso)) == 1                       # mode landed, config didn't
     assert server._LIVE_GATE["lux-eurusd-01"] == prior_gate  # gate NOT advanced
-    assert server._LIVE_STATUS["lux-eurusd-01"]["at"] == flip["at"]  # state updated
+    assert (server._LIVE_STATUS["lux-eurusd-01"]["snapshot"]["published_at"]
+            == flip["at"])                                      # state updated (UI-2 shape)
 
     monkeypatch.setattr(server, "_append_event", real)
     retry = payload(mode="live", engine_version="deadbeef",

@@ -147,11 +147,22 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops, liveness=No
             if liveness is not None:
                 liveness.set_phase("publish")
             _t = clock()
+            # UI-2: publish the full node snapshot. `state`/`arm_runtime`/`observed`
+            # are the node's own live objects — the snapshot only PROJECTS safe
+            # fields out of them (no broker read, no recomputation). This is what
+            # fixes positions defaulting to empty: the mirror is passed through
+            # `state` instead of an omitted argument.
             payload = publisher.build_payload(
                 runner_result, executor_result,
                 engine_version=runner.session.engine_version if (runner and runner.session) else "n/a",
-                mode=config.mode)
-            payload["bridge"] = bridge_result
+                mode=config.mode,
+                state=getattr(runner, "state", None),
+                arm_runtime=getattr(executor, "arm_runtime", None),
+                observed=getattr(executor, "observed", None),
+                bridge=bridge_result)
+            # `cycle.sequence` publishes as null: the ops cycle record carries no
+            # monotonic counter today, and inventing one here would be a fabricated
+            # ordering guarantee. A real per-cycle seq belongs in ops_log, not here.
             delivery = publisher.publish(payload)
             stage_timings["publish_s"] = round(clock() - _t, 6)
         except Exception as exc:  # logged, loop continues; supervisor handles repeats

@@ -24,6 +24,7 @@ from live.intents import (CLOSE_POSITION, MODIFY_STOP, OPEN_POSITION,          #
                           SKIP_INTRA_WINDOW, diff_frontier)
 from live.mt5_bridge import MT5BarBridge                  # noqa: E402
 from live.mt5_gateway import MT5Gateway                   # noqa: E402
+from live import telemetry
 from live.publisher import CTPublisher                    # noqa: E402
 from live.runner import LiveRunner, assemble_candles, latest_closed_boundary   # noqa: E402
 from live.state import LEDGER_SIMULATED, RunnerState      # noqa: E402
@@ -304,11 +305,17 @@ def test_publisher_payload_and_fallback(tmp_path):
     payload = pub.build_payload({"status": "ok", "boundary": "B", "intents": [_intent()],
                                  "trades_rows": 3}, {"frozen": False, "reconcile": {"findings": []}},
                                 engine_version="5bb6372c", mode="dry_run")
-    assert payload["instance_id"] and payload["deployment_profile"] == "GOLDEN_COMPATIBLE"
-    assert payload["intents"][0]["action"] == OPEN_POSITION
+    # UI-2: the payload is now the versioned snapshot; lineage moved under `engine`
+    # and pending intents under `execution`, but delivery stays fail-soft and the
+    # fallback file is still written BEFORE any network attempt.
+    assert payload["schema_version"] == telemetry.SCHEMA_VERSION
+    assert payload["instance_id"]
+    assert payload["engine"]["deployment_profile"] == "GOLDEN_COMPATIBLE"
+    assert payload["execution"]["cycle_intents"][0]["action"] == OPEN_POSITION
     result = pub.publish(payload, timeout=0.5)
     assert result["delivered"] is False                            # network down ≠ crash
-    assert json.loads(Path(result["fallback"]).read_text())["symbol"] == "EURUSD"
+    fallback = json.loads(Path(result["fallback"]).read_text())
+    assert fallback["engine"]["symbol"] == "EURUSD"
 
 
 # ── P1 shadow: ops log + shadow report ──────────────────────────────────────────

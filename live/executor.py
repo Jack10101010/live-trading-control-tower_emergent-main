@@ -58,6 +58,16 @@ class Executor:
         # without an ArmRuntime (rehearsal, drain, tests, future entrypoints)
         # cannot submit a live OPEN — the arm gate below fails closed.
         self.arm_runtime = arm_runtime
+        # UI-2 telemetry OBSERVATION ONLY: the most recent samples this executor
+        # already took for the Slice 5/7/8 rails, recorded verbatim so the node can
+        # publish what it observed. Never read by any rail, never a decision input,
+        # and never populated by an extra broker call.
+        # `health_verdict` is intentionally never written by this class: telemetry
+        # publishes it as null rather than re-deciding health. The key exists so a
+        # future slice can hand in the RAIL'S OWN verdict without changing callers.
+        self.observed: dict = {"identity": None, "health": None, "health_verdict": None,
+                               "market": None, "fingerprint_matches": None,
+                               "observed_at": None, "reconciled_at": None}
 
     def attach_arm(self, arm_runtime) -> None:
         """Install a validated ArmRuntime (startup arming only). Never called with
@@ -237,6 +247,7 @@ class Executor:
     def apply(self, intents: list, today: str | None = None) -> dict:
         today = today or datetime.now(timezone.utc).strftime("%Y-%m-%d")
         report = self.reconcile()
+        self.observed["reconciled_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         applied, blocked, skipped = [], [], []
 
         if report.frozen:
@@ -268,6 +279,14 @@ class Executor:
                 market = self.gateway.market_condition()   # MarketCondition | None (None -> block)
             except Exception:   # noqa: BLE001
                 market = None
+            # UI-2 telemetry: record the SAMPLES verbatim (observation only). The
+            # health/market VERDICTS are deliberately NOT recomputed here — the
+            # authoritative evaluation is self.rails.evaluate() below, and a second
+            # evaluation could disagree with the rail that actually decided. What
+            # blocked an OPEN is published from the rail's own outcome instead.
+            self.observed["health"] = health if health is not HEALTH_NOT_EVALUATED else None
+            self.observed["market"] = market if market is not MARKET_NOT_EVALUATED else None
+            self.observed["observed_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
         # LX-1 Slice 8 runtime identity continuity: sampled ONCE per live cycle that
         # contains an OPEN and reused for every OPEN in the batch. A mid-session
@@ -282,6 +301,13 @@ class Executor:
                     self.gateway.account_identity())
             except Exception:   # noqa: BLE001
                 arm_fingerprint = None
+            # UI-2: record the identity actually observed and whether it still
+            # matches the armed binding (the comparison itself is the arm gate's).
+            self.observed["identity"] = arm_fingerprint
+            armed_fp = getattr(getattr(self.arm_runtime, "context", None), "fingerprint", None)
+            self.observed["fingerprint_matches"] = (
+                None if (arm_fingerprint is None or armed_fp is None)
+                else bool(arm_fingerprint == armed_fp))
 
         for intent in intents:
             if intent.action == SKIP_INTRA_WINDOW:

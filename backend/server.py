@@ -33,6 +33,7 @@ import portfolio as portfolio_layer
 # L1A frozen Operational Status Model. Flat import matching every sibling above —
 # the app runs as `uvicorn server:app` from backend/, so this is the ONE module
 # object for L1A in the process (no dual identity via a package-form import).
+import live_telemetry
 import ops_status as ops_status_layer
 import ops_journal as ops_journal_layer
 import ops_notifier as ops_notifier_layer
@@ -453,6 +454,52 @@ def _put_overlay(kind: str, entity_id: str, overlay: dict) -> None:
             conn.commit()
         finally:
             conn.close()
+
+
+# ── UI-2: durable latest node-telemetry snapshot store ───────────────────────
+# Deliberately NOT `_put_overlay`: that helper honours the `_DRY_RUN` contextvar
+# and silently skips writes, which is correct for simulated broker effects and
+# wrong for observed node facts — a dry-run execution must never make real
+# telemetry vanish. Same table, dedicated kind, its own read/write pair.
+_LIVE_SNAPSHOT_KIND = "live_snapshot"
+
+
+def _put_live_snapshot(instance_id: str, record: dict) -> bool:
+    """Persist the latest VALID snapshot for an instance. Returns False if the
+    write failed — persistence is best-effort and must never fail an ingest."""
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    try:
+        with _runtime_lock:
+            conn = _runtime_db()
+            try:
+                conn.execute(
+                    "INSERT INTO runtime_overlay (kind, entity_id, overlay, updated_at) "
+                    "VALUES (?, ?, ?, ?) ON CONFLICT(kind, entity_id) DO UPDATE SET "
+                    "overlay = excluded.overlay, updated_at = excluded.updated_at",
+                    (_LIVE_SNAPSHOT_KIND, instance_id, json.dumps(record), now),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        return True
+    except Exception:
+        logger.exception("live snapshot persist failed for %s", instance_id)
+        return False
+
+
+def _load_live_snapshots() -> dict[str, dict]:
+    """Every persisted snapshot record, keyed by instance id. Unreadable or
+    non-conforming rows are skipped rather than surfaced as fake state."""
+    try:
+        rows = _load_overlays(_LIVE_SNAPSHOT_KIND)
+    except Exception:
+        logger.exception("live snapshot load failed")
+        return {}
+    out: dict[str, dict] = {}
+    for instance_id, record in rows.items():
+        if isinstance(record, dict) and isinstance(record.get("snapshot"), dict):
+            out[instance_id] = record
+    return out
 
 
 def _visible(overlay: dict) -> dict:
@@ -1960,19 +2007,109 @@ _LIVE_GATE: dict[str, tuple[tuple, Any]] = {}
 _LIVE_SIGNATURE_FIELDS = ("mode", "engine_version", "deployment_profile", "data_seam")
 _LIVE_CONFIG_FIELDS = ("engine_version", "deployment_profile", "data_seam")
 
+_LIVE_MAX_INGEST_BYTES = live_telemetry.MAX_SNAPSHOT_BYTES
+
+
+def _held_snapshot(instance_id: str) -> dict | None:
+    """The record currently held for an instance: hot cache first, then the store."""
+    held = _LIVE_STATUS.get(instance_id)
+    if isinstance(held, dict) and isinstance(held.get("snapshot"), dict):
+        return held
+    return _load_live_snapshots().get(instance_id)
+
+
+def _snapshot_is_stale(instance_id: str, incoming: dict) -> bool:
+    """Is `incoming` strictly older than what is already held for this instance?
+
+    Unparseable timestamps on either side answer False — validation already
+    guarantees the incoming one parses, and refusing to store on an unreadable
+    HELD value would strand the instance forever."""
+    held = _held_snapshot(instance_id)
+    if held is None:
+        return False
+    new_at = live_telemetry.parse_iso(incoming.get("published_at"))
+    old_at = live_telemetry.parse_iso((held.get("snapshot") or {}).get("published_at"))
+    if new_at is None or old_at is None:
+        return False
+    return new_at < old_at
+
+
+def _live_signature(snapshot: dict) -> tuple:
+    """The operational-identity tuple, read from the v1 snapshot.
+
+    v1 nests what the pre-UI-2 payload kept flat, so each field is read from its
+    v1 home. The legacy adapter fills those same homes, which is why the existing
+    transition-narration contract survives the schema change unchanged."""
+    runtime = snapshot.get("runtime") or {}
+    engine = snapshot.get("engine") or {}
+    return (
+        runtime.get("mode"),
+        engine.get("engine_version_actual"),
+        engine.get("deployment_profile"),
+        engine.get("data_seam"),
+    )
+
 
 @api_router.post("/live/ingest")
 async def live_ingest(request: Request):
-    payload = await request.json()
-    if not isinstance(payload, dict) or "instance_id" not in payload:
-        raise HTTPException(status_code=400, detail="payload must include instance_id")
-    instance_id = payload["instance_id"]
-    # Runtime state updates on EVERY valid ingest, before and independently of
-    # narration — a narration failure never prevents or rolls back this update.
-    _LIVE_STATUS[instance_id] = payload
+    """UI-2 — accept ONE validated node telemetry snapshot.
 
-    incoming = tuple(payload.get(f) for f in _LIVE_SIGNATURE_FIELDS)
-    payload_at = payload.get("at")
+    The node is authoritative (I-7): everything here is transport, validation and
+    storage. Nothing is recomputed, defaulted from the fixture world, or invented.
+    A malformed or unsupported payload is rejected with 4xx and CANNOT overwrite
+    the last valid snapshot — a broken publisher must degrade to visible staleness,
+    never to plausible-looking wrong state.
+    """
+    # Declared length first: refusing before `body()` means an oversized POST is
+    # never fully buffered. The post-read check still stands for chunked bodies
+    # that declare no length.
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > _LIVE_MAX_INGEST_BYTES:
+        raise HTTPException(status_code=413, detail="telemetry snapshot too large")
+    raw = await request.body()
+    if len(raw) > _LIVE_MAX_INGEST_BYTES:
+        raise HTTPException(status_code=413, detail="telemetry snapshot too large")
+    try:
+        payload = json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="telemetry rejected: malformed_json")
+    try:
+        snapshot, was_legacy = live_telemetry.coerce_snapshot(payload)
+    except live_telemetry.TelemetryError as exc:
+        detail = f"telemetry rejected: {exc.reason}"
+        if exc.detail:
+            detail = f"{detail} ({exc.detail})"
+        raise HTTPException(status_code=400, detail=detail)
+
+    instance_id = snapshot["instance_id"]
+    received_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    record = {"snapshot": snapshot, "received_at": received_at,
+              "legacy_source": was_legacy}
+    # Latest-state semantics are by the NODE's own `published_at`, not by arrival
+    # order. A delayed or retried publish must never replace a newer snapshot: doing
+    # so can discard state the node has already reported — including a reconciliation
+    # FREEZE — and make the tower show a resolved system that is actually halted.
+    # Equal timestamps DO replace, so an idempotent retry is still absorbed.
+    # Both the hot cache and the durable store obey the same rule, so a read can
+    # never see one going backwards relative to the other.
+    superseded = _snapshot_is_stale(instance_id, snapshot)
+    persisted = None
+    if superseded:
+        logger.warning("live snapshot for %s ignored: published_at %s is older than "
+                       "the snapshot already held", instance_id,
+                       snapshot.get("published_at"))
+        # A snapshot we refuse to store must not drive narration either: letting it
+        # through would narrate a transition BACKWARDS out of stale data and advance
+        # the gate, so the next genuine snapshot would narrate the same change again.
+        return {"ok": True, "seq": None, "deduplicated": None}
+    else:
+        # Runtime state updates on EVERY accepted ingest, before and independently
+        # of narration — a narration failure never prevents or rolls back this.
+        _LIVE_STATUS[instance_id] = record
+        persisted = _put_live_snapshot(instance_id, record)
+
+    incoming = _live_signature(snapshot)
+    payload_at = snapshot.get("published_at")
     prior = _LIVE_GATE.get(instance_id)
     if prior is None:
         # Silent first observation / restart re-seed: no event, steady response.
@@ -1983,10 +2120,12 @@ async def live_ingest(request: Request):
         # Steady state: no transition, no append attempted.
         return {"ok": True, "seq": None, "deduplicated": None}
 
+    if persisted is False:
+        logger.warning("live snapshot for %s held in memory only", instance_id)
     prior_map = dict(zip(_LIVE_SIGNATURE_FIELDS, prior_sig))
     new_map = dict(zip(_LIVE_SIGNATURE_FIELDS, incoming))
-    runner = payload.get("runner")
-    boundary = runner.get("boundary") if isinstance(runner, dict) else None
+    cycle = snapshot.get("cycle")
+    boundary = cycle.get("last_boundary") if isinstance(cycle, dict) else None
     grounding = {"instance_id": instance_id, "at": payload_at, "boundary": boundary}
     event_at = payload_at if payload_at else (
         datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
@@ -2005,7 +2144,12 @@ async def live_ingest(request: Request):
                     f"Live instance {instance_id} changed mode from "
                     f"{prior_map['mode']} to {new_map['mode']}."),
                 "scenarioKey": None,
-                "packageHash": _active_package_hash(),
+                # UI-2: NO packageHash. The live node runs the Lux strategy core;
+                # the fixture world's active package is unrelated to it, and
+                # stamping it here attributed a node transition to a package the
+                # node never ran. Engine lineage now travels in the snapshot's
+                # `engine` section, sourced from the node itself.
+                "packageHash": None,
                 "who": "system",
                 "causedBy": f"live_ingest:{instance_id}",
                 "before": {"mode": prior_map["mode"]},
@@ -2033,7 +2177,7 @@ async def live_ingest(request: Request):
                     f"Live instance {instance_id} configuration changed: "
                     f"{changes_txt}."),
                 "scenarioKey": None,
-                "packageHash": _active_package_hash(),
+                "packageHash": None,   # see LIVE_MODE_CHANGED above
                 "who": "system",
                 "causedBy": f"live_ingest:{instance_id}",
                 "before": {f: prior_map[f] for f in changed_cfg},
@@ -2093,14 +2237,50 @@ def ops_status_endpoint():
     return JSONResponse(content=model, headers={"Cache-Control": "no-store"})
 
 
+def _live_status_entry(instance_id: str, record: dict, now: datetime) -> dict:
+    """Wrap one stored record in the read-side observation envelope."""
+    entry = live_telemetry.observation(record["snapshot"], now=now)
+    entry["received_at"] = record.get("received_at")
+    entry["source"] = "node"
+    return entry
+
+
 @api_router.get("/live/status")
-async def live_status(instance_id: str | None = None):
+def live_status(instance_id: str | None = None):
+    """UI-2 — the validated snapshots this backend actually received.
+
+    Every field originates in a node snapshot that passed `live_telemetry`
+    validation. Nothing is augmented from the fixture world, no package hash is
+    fabricated, and an absent node yields an explicit empty state rather than
+    zeros or placeholder values that would read as a quiet, healthy system.
+    Freshness is computed here from the node's own `published_at` and reported
+    alongside the server's observation time — the tower can only ever claim to
+    know what it last observed, not what is true right now.
+
+    Sync def so the blocking SQLite read runs in the threadpool rather than on the
+    event loop (same reason as `/ops/status`). Reads only: no snapshot is mutated.
+    """
+    now = datetime.now(timezone.utc)
+    # Memory is the hot path; the durable store makes a backend restart
+    # non-destructive. Memory wins on conflict: it is at least as recent.
+    records = _load_live_snapshots()
+    records.update({k: v for k, v in _LIVE_STATUS.items()
+                    if isinstance(v, dict) and isinstance(v.get("snapshot"), dict)})
     if instance_id:
-        payload = _LIVE_STATUS.get(instance_id)
-        if payload is None:
-            raise HTTPException(status_code=404, detail=f"no status for {instance_id}")
-        return payload
-    return {"instances": sorted(_LIVE_STATUS), "statuses": _LIVE_STATUS}
+        record = records.get(instance_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"no telemetry for {instance_id}")
+        return _live_status_entry(instance_id, record, now)
+    instances = sorted(records)
+    return {
+        "schemaVersion": live_telemetry.SCHEMA_VERSION,
+        "observedAt": now.isoformat().replace("+00:00", "Z"),
+        "connected": bool(instances),
+        "instances": instances,
+        "statuses": {iid: _live_status_entry(iid, records[iid], now) for iid in instances},
+        "emptyState": None if instances else
+        "No live node has published telemetry to this Control Tower.",
+    }
 
 
 @api_router.get("/notifier/status")
