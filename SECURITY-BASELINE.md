@@ -651,3 +651,103 @@ without TLS remains **local-test-only**; a real remote endpoint requires TLS and
 other UI-9 activation prerequisites. The default configuration is disabled, and the
 running Control Tower opens no remote connection unless an operator deliberately
 enables and validly configures one.
+
+# Command Channel Contract (UI-15) — architecture only, sends nothing
+
+`backend/command_channel.py` defines the canonical shape of a **future** operator
+command so that when a command path is one day built it is validated, bounded,
+auditable, idempotent and redaction-safe **by construction**. UI-15 builds the
+*contract and a disabled null implementation only*. Nothing in this slice sends,
+dispatches, acknowledges from a node, executes, persists, or reaches the transport
+or network. It is the command mirror of UI-12: the interface exists before the wire.
+
+## What is defined
+
+A versioned envelope (`schema_version = "ct.command.v1"`) with immutable, frozen
+value objects: `CommandEnvelope` (command id, type, idempotency key, requested-at,
+expires-at, optional target and operator reference, bounded JSON payload),
+`Acknowledgement`, `Outcome`, and the `CommandRecord` that ties them together with
+timestamps. Command ids are collision-resistant (`cmd_` + `uuid4().hex`).
+
+The command **vocabulary is read-only only** — `noop`, `request_health`,
+`request_telemetry`. There is deliberately **no** `pause`, `resume`, `arm`,
+`close`, `order`, `kill` or any other state-changing verb; an unknown or mutating
+type is rejected. This keeps the contract observational (I-7) even in shape.
+
+## Lifecycle and states
+
+Stable, distinguished states — `pending`, `accepted`, `rejected`, `expired`,
+`completed`, `failed` — with `rejected`, `expired`, `completed`, `failed` terminal.
+The legal transitions are:
+
+```
+submit            -> pending
+acknowledge(ok)   -> accepted        (pending only)
+acknowledge(deny) -> rejected        (pending only, terminal)
+record_outcome    -> completed|failed (accepted only)
+[lazy, at read]   -> expired         (pending past its expiry window)
+```
+
+Any other transition — completing a `pending` command, acknowledging twice,
+acknowledging an already-expired or terminal command — is refused with the stable
+`invalid_transition` reason code. Rejections and errors always carry a stable
+machine reason code (`unknown_command_type`, `expiry_required`, `expiry_invalid`,
+`already_expired`, `timestamp_invalid`, `idempotency_required`, `payload_too_large`,
+`payload_secret`, `duplicate_command_id`, `channel_disabled`, `invalid_transition`,
+`not_found`, …), never a free-text-only failure.
+
+## Acknowledgement vs completion (distinct by design)
+
+**Acknowledgement is not completion.** `acknowledge` records only that the command
+was *received and accepted for consideration* (`accepted`) or *refused up front*
+(`rejected`). It never implies the command was carried out. **Completion** is a
+separate, later transition (`record_outcome` → `completed`/`failed`) that is only
+legal from `accepted`. A record therefore carries an `Acknowledgement` and an
+`Outcome` as independent fields; a consumer can never mistake "the node heard us"
+for "the node did it".
+
+## Idempotency and duplicate handling (deterministic)
+
+An **idempotency key is required** on every envelope. Re-submitting the same key
+returns the *same* existing record — a replay, never a second command. Separately,
+reusing a **command id** with a *different* idempotency key is a deterministic
+`duplicate_command_id` rejection, not a silent overwrite. Both rules are pure and
+clock-independent, so retries and at-least-once delivery are safe by contract.
+
+## Payload bounds, JSON safety, and secret rejection
+
+The payload must be a JSON object, must serialise as JSON (`payload_not_json`
+otherwise), and is size-bounded (`MAX_PAYLOAD_BYTES`, `payload_too_large` otherwise).
+String fields are length-bounded. **Secrets are refused, not stored:** the payload
+is recursively scanned with the UI-9 `security_config.is_secret_key` predicate and a
+secret-bearing key is rejected with `payload_secret`. Expiry is **required** and
+bounded (`MAX_TTL_S`); a future-dated `requested_at` beyond a small clock-skew
+tolerance is rejected.
+
+## Audit and redaction-safe diagnostics
+
+`safe_view(record)` produces the **immutable, value-free audit representation**: ids,
+type, state, the acknowledged/completed booleans, timestamps, and a payload passed
+through `security_config.redact_mapping`. As defence-in-depth the view redacts even a
+secret that somehow reached a record, so no diagnostic, log line, or audit entry can
+leak a credential.
+
+## Disabled default — no transport, network, execution or persistence
+
+`default_command_channel()` returns a `NullCommandChannel` with `enabled = False`.
+Its store is a **bounded in-memory ring** (`MAX_RECENT`) that exists only to make the
+contract testable; a fresh channel is empty, nothing is written to disk, and nothing
+survives the process. The module imports **no** transport, `rest_transport`,
+`node_client`, `socket`, `urllib`, `requests` or `httpx`, calls
+`default_transport()` nowhere, and exposes no order/arm/kill surface — enforced by
+test. Exercising the entire surface opens no socket (a monkeypatched `socket.socket`
+that raises proves it).
+
+## Explicit exclusions
+
+No command is sent, dispatched, acknowledged by a node, or executed. No transport is
+touched, no HTTP request made, no node state mutated, no execution/pause/resume/order
+control exists, nothing is persisted, and there are **no frontend controls** — this
+slice adds no UI. Activating a real command path would be a separate, deliberate,
+individually-audited future slice subject to all UI-9 activation prerequisites; until
+then the channel is disabled and inert.
