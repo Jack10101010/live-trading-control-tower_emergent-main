@@ -198,13 +198,44 @@ def test_no_vps_or_endpoint_string_is_embedded():
 
 # ── no behaviour regression: transport is imported by no existing caller ──────
 
-def test_nothing_in_the_repo_yet_depends_on_a_concrete_transport():
-    """UI-12 adds the seam without wiring it into any live path, so default
-    behaviour is unchanged. The only references to `transport` are the module,
-    its tests, and (in future) a single selection point."""
+def test_transport_selection_stays_centralized_and_default_safe():
+    """The invariant UI-12 established and UI-14 must preserve.
+
+    UI-12's original guard asserted that NO production module imported `transport`
+    yet. UI-14 legitimately supersedes that premise: `node_client.py` is the
+    approved read-only integration seam and imports the abstract `Transport`
+    contract. What must still hold is the underlying SAFETY property, enforced here:
+
+      1. the default/disabled path resolves to NullTransport (no networking);
+      2. an invalid enabled configuration also resolves to NullTransport;
+      3. transport SELECTION stays centralized — no production module constructs a
+         concrete transport directly; a real transport is built ONLY inside
+         `rest_transport.select_rest_transport`, reached ONLY via
+         `default_transport()`;
+      4. the approved seam (`node_client`) selects through `default_transport()`
+         and never imports the concrete adapter or builds one itself.
+    """
+    # 1 + 2: default and invalid-enabled both yield NullTransport.
+    assert isinstance(t.default_transport(env={}), t.NullTransport)
+    assert isinstance(t.default_transport(env={t.VAR_TRANSPORT_ENABLED: "1"}),
+                      t.NullTransport)                      # enabled but no config
+
+    # 3: a concrete transport is constructed in exactly one place.
     import subprocess
-    hits = subprocess.run(
-        ["git", "grep", "-l", "import transport", "--", "backend/", "live/"],
+    ctor_hits = subprocess.run(
+        ["git", "grep", "-l", "RestTransport(", "--", "backend/"],
         cwd=REPO_ROOT, capture_output=True, text=True).stdout.split()
-    # Only the test file references it today; no production module imports it yet.
-    assert all("test" in h for h in hits), f"unexpected production import: {hits}"
+    non_test = [h for h in ctor_hits if "test" not in h]
+    assert non_test == ["backend/rest_transport.py"], f"stray construction: {non_test}"
+
+    # 4: node_client is the approved seam — it goes through default_transport() and
+    #    neither imports the concrete adapter nor constructs a transport itself.
+    node_client_src = (BACKEND_DIR / "node_client.py").read_text()
+    assert "default_transport(" in node_client_src
+    assert "import rest_transport" not in node_client_src
+    assert "RestTransport(" not in node_client_src
+
+    # And server.py wires no transport directly — it only reaches it via node_client.
+    server_src = (BACKEND_DIR / "server.py").read_text()
+    assert "RestTransport(" not in server_src
+    assert "select_rest_transport" not in server_src
