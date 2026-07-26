@@ -922,3 +922,73 @@ Only health, telemetry and no-op are representable. No trading, no order/cancel,
 pause/resume/arm/kill, no node or VPS mutation, no execution path, no BotEvent, no
 reuse of the fixture command route, no retries, no token in the browser, and no
 optimistic success. The default is disabled, and the panel truthfully reports it.
+
+# Execution-Control Safety Boundary (UI-18) — the contract before any command may trade
+
+`backend/execution_safety.py` defines the safety contract that MUST be satisfied
+before any operator command could ever affect trading, plus a single **pure,
+deny-by-default, fail-closed** policy evaluator. It is contract-first and inert: it
+executes nothing, contacts no broker, opens no socket, persists nothing, and is wired
+into no route. Enforcement — actually consulting this evaluator on a command path — is
+a separate, later, individually-audited slice. Classifying a command here does **not**
+make it submit-able: UI-15's `ALLOWED_TYPES` remains the read-only trio and UI-16/17
+still transmit only those.
+
+## The immutable contracts
+
+Frozen value objects, every default the safe one:
+
+- **System execution mode** — `observe` (default; observation only), `active`
+  (execution *may* be permitted), `suspended` (deliberately halted). Only `active`
+  even opens the door to a non-read-only command.
+- **Arming state** — disarmed by default; arming is **time-bounded and expires
+  automatically** (`is_active(now)` is false once past `expires_at`, and a missing
+  expiry is never active).
+- **Operator authorization** — an operator reference (identity) and an explicit
+  `confirmed` flag; both absent by default.
+- **Command risk class** — `read_only`, `operational`, `execution_affecting`,
+  `emergency`, via a classification registry. The read-only entries mirror the UI-15
+  vocabulary exactly; the rest are declared **for future use** and are not submit-able.
+- **Command request** — the command type, id, its own `expires_at`, and a
+  caller-supplied `duplicate` flag (the evaluator holds no history — it stays pure).
+- **Safety decision** — the immutable, redaction-safe audit record of one evaluation
+  (`allowed`, stable `reason`, risk class, mode, armed, node state, timestamp, and a
+  `redact_text`-scrubbed detail via `safe_view()`).
+
+## The policy evaluator and its invariants
+
+`evaluate(request, context, *, now)` returns a `SafetyDecision` and **never raises** —
+any unexpected fault is caught and converted to a `policy_evaluation_error` **deny**.
+The checks, deny-first:
+
+1. **Default is disarmed / observe** — the default context denies every non-read-only
+   command.
+2. **Unknown commands are denied** — an unclassified command has no rules and is
+   refused (`unknown_command`).
+3. **Expired commands are denied for every class** (`command_expired`) — a stale
+   instruction is never safe to act on.
+4. **Read-only commands remain allowed under existing rules** — no arming, identity,
+   confirmation, mode or node-health requirement is added to them (an idempotent
+   duplicate read is fine).
+5. **Execution-relevant commands require ACTIVE mode**, then are denied on
+   **duplicate**, then require **operator identity** and **explicit confirmation**.
+6. **Node health gate** — a `stale`, `degraded`, `disconnected`, `unreachable`,
+   `unauthorized`, `disabled`, `unknown` or unrecognised node state **denies
+   execution**, each with its own reason. Only `healthy` passes.
+7. **Execution-affecting commands require arming** — disarmed denies (`system_disarmed`);
+   armed-but-expired denies (`arming_expired`). An **emergency** STOP is exempt from
+   arming (you must be able to halt without first arming) but still requires identity,
+   confirmation, active mode and a healthy node.
+8. **Fail closed** — allow is returned only when every precondition for the class is
+   explicitly met; no malformed input, exception or unrecognised state falls through
+   to allow. Only `allow` / `allow_read_only` ever accompany `allowed = true`.
+
+Decisions are immutable (frozen) and redaction-safe: `safe_view()` is value-free and
+masks any secret-shaped detail; no operator reference, token or arming secret leaks.
+
+## Explicit exclusions
+
+No broker integration, no order placement, no pause/resume buttons, no arm/disarm UI,
+no live node mutation, no REST execution endpoints, no credential handling, no
+persistence, no transport, no network. No trade or node mutation can occur — the
+module decides, it never acts, and it is wired into nothing in this slice.
