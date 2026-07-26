@@ -2428,11 +2428,23 @@ _AUTH_POLICY = auth_policy.load_policy()
 async def _authentication_boundary(request: Request, call_next):
     """Deny-by-default request authentication.
 
-    Ordering matters: middleware added later is OUTERMOST, so this runs before the
-    CORS middleware and therefore sees the browser's credential-less `OPTIONS`
-    preflight. Preflight is allowed through unauthenticated — a browser cannot
-    attach credentials to it by specification, and blocking it would break the
-    UI-10 browser boundary. The preflight response carries no data.
+    Middleware ORDER (verified at runtime, not assumed): Starlette inserts each
+    added middleware at the outside, so the LAST one added is outermost. CORS is
+    added after this block, so the actual wrap order is
+    request -> CORSMiddleware -> this auth middleware -> handler. That is the
+    correct order and needs no change:
+
+      * A browser preflight `OPTIONS` is answered by the outer CORS middleware and
+        (for an allowed origin) short-circuits before auth is even reached, so
+        preflight keeps working while auth is enabled.
+      * A real request passes through CORS to this guard; an auth 401/503 travels
+        back out through CORS, which still attaches the `Access-Control-Allow-Origin`
+        header (confirmed: 401 and 503 responses carry it).
+
+    Belt and braces: this guard ALSO lets `OPTIONS` through unauthenticated
+    (`PREAUTH_METHODS`), so even if it were reached first a preflight could never be
+    blocked — a browser cannot attach credentials to a preflight by specification,
+    and blocking it would break the UI-10 browser boundary.
     """
     if not _AUTH_POLICY.enabled:
         return await call_next(request)                     # untouched behaviour

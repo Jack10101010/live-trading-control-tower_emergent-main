@@ -339,5 +339,48 @@ def test_ui2_telemetry_contract_is_unchanged(iso_store):
     assert client.get("/api/live/status?instance_id=ui1-node").status_code == 200
 
 
+# ── AUDIT: future / clock-skew timestamps must not read as fresh ──────────────
+
+def test_small_future_skew_within_the_window_still_reads_fresh():
+    """A node a few seconds ahead of the tower is normal; clamping it to fresh is
+    correct. The window is symmetric around zero."""
+    ahead = (NOW + timedelta(seconds=cs.DEFAULT_STALE_AFTER_S - 1)).isoformat().replace("+00:00", "Z")
+    state = cs.build_connection_state({"n": record(ahead)}, NOW)
+    assert state["telemetry"] == cs.TELEMETRY_FRESH
+    assert state["node"] == cs.NODE_CONNECTED
+
+
+def test_implausible_future_timestamp_is_not_fresh_and_not_connected():
+    """AUDIT: a snapshot dated beyond the window in the FUTURE (clock skew or a
+    malformed node clock) must NOT create a false healthy state."""
+    for offset in (timedelta(hours=1), timedelta(days=365 * 100)):
+        far = (NOW + offset).isoformat().replace("+00:00", "Z")
+        state = cs.build_connection_state({"n": record(far)}, NOW)
+        assert state["telemetry"] == cs.TELEMETRY_STALE, offset
+        assert state["node"] == cs.NODE_UNKNOWN, offset
+        assert state["node"] != cs.NODE_CONNECTED, offset
+        # Displayed age stays clamped at >= 0 (never a negative "ago").
+        assert state["instances"][0]["ageSeconds"] >= 0.0
+
+
+def test_freshness_bound_is_symmetric_around_zero():
+    from connection_state import telemetry_state as ts
+    thr = cs.DEFAULT_STALE_AFTER_S
+    assert ts(0.0, thr) == cs.TELEMETRY_FRESH
+    assert ts(thr, thr) == cs.TELEMETRY_FRESH          # exactly old boundary
+    assert ts(-thr, thr) == cs.TELEMETRY_FRESH         # exactly future boundary
+    assert ts(thr + 1, thr) == cs.TELEMETRY_STALE      # just too old
+    assert ts(-(thr + 1), thr) == cs.TELEMETRY_STALE   # just too future
+    assert ts(None, thr) == cs.TELEMETRY_NEVER
+
+
+def test_ui2_observation_flags_an_implausible_future_snapshot_stale():
+    """The UI-2 /api/live/status read envelope shares the same rule."""
+    far = (NOW + timedelta(hours=2)).isoformat().replace("+00:00", "Z")
+    obs = lt.observation(snapshot(far), now=NOW)
+    assert obs["stale"] is True
+    assert obs["age_seconds"] >= 0.0
+
+
 def test_connection_state_shares_one_freshness_definition_with_ui2():
     assert cs.DEFAULT_STALE_AFTER_S == lt.DEFAULT_STALE_AFTER_S

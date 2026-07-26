@@ -300,8 +300,15 @@ def is_protected(path: str) -> bool:
 
 
 def classify_app_routes(routes: Iterable) -> dict[str, str]:
-    """Classify every route object of a live app. Used by the structural test that
-    guarantees no route escapes classification."""
+    """Classify a live app's routes, keyed by UNIQUE PATH.
+
+    Authorization is per PATH, not per route object: a path is protected-or-public
+    regardless of how many HTTP methods it exposes, so `/api/broker/faults`
+    (registered as separate GET and POST route objects) is one entry here. The
+    diagnostics counts derived from this dict therefore count unique paths, which is
+    the meaningful number for an auth policy — and a reconciliation test asserts
+    those counts match an independent enumeration of the same live app.
+    """
     out: dict[str, str] = {}
     for route in routes:
         path = getattr(route, "path", None)

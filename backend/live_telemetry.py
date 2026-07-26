@@ -341,7 +341,18 @@ def observation(snapshot: dict, *, now: datetime | None = None,
     """Read-side freshness envelope. Pure; adds no node claims."""
     now = now or datetime.now(timezone.utc)
     published = parse_iso(snapshot.get("published_at"))
-    age = None if published is None else max((now - published).total_seconds(), 0.0)
+    if published is None:
+        age: float | None = None
+        stale = True
+    else:
+        delta = (now - published).total_seconds()
+        # Displayed age is never negative. Freshness, however, is judged on the
+        # SIGNED delta: a snapshot dated implausibly in the FUTURE (beyond the stale
+        # window, e.g. from clock skew or a malformed node clock) is not a current
+        # observation and must not read as maximally fresh. Small skew within the
+        # window still clamps to fresh — symmetric tolerance, one threshold.
+        age = max(delta, 0.0)
+        stale = abs(delta) > stale_after_s
     return {
         "instance_id": snapshot.get("instance_id"),
         "schema_version": snapshot.get("schema_version"),
@@ -349,7 +360,7 @@ def observation(snapshot: dict, *, now: datetime | None = None,
         "published_at": snapshot.get("published_at"),
         "observed_at": now.isoformat().replace("+00:00", "Z"),
         "age_seconds": None if age is None else round(age, 3),
-        "stale": True if age is None else age > stale_after_s,
+        "stale": stale,
         "stale_after_seconds": stale_after_s,
         "snapshot": snapshot,
     }

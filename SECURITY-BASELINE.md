@@ -324,6 +324,7 @@ enabling it does **not** authorise remote exposure.
 | --- | --- |
 | Nothing set (default) | **Disabled.** Every route behaves exactly as before. |
 | `CONTROL_TOWER_AUTH_ENABLED` explicitly false/blank | Disabled. |
+| `CONTROL_TOWER_AUTH_ENABLED=true` + `CONTROL_TOWER_API_TOKEN` set (≥32 chars) | Enforcing. |
 | Unrecognised boolean (`ture`, `maybe`) | **Disabled** + issue code. Never enabled by accident. |
 | Explicitly true + valid token | Enforcing. |
 | Explicitly true + missing/blank/short/whitespace token | **Fails closed** (503). |
@@ -437,9 +438,10 @@ value-free diagnostics and nothing else.
 
 ## Local development while disabled
 
-Unchanged. No credential, no header, no configuration. `1530` backend tests passed
-before this slice and every route still responds identically with authentication
-off.
+Unchanged. No credential, no header, no configuration: while authentication is
+disabled every route responds exactly as it did before this slice, and the full
+backend regression suite passes with only the two known environmental collection
+errors (`REACT_APP_BACKEND_URL is not set`).
 
 ## Future activation prerequisites
 

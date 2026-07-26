@@ -89,10 +89,15 @@ def _classify_problem(error: live_telemetry.TelemetryError) -> str:
     return PROBLEM_MALFORMED
 
 
-def telemetry_state(age_seconds: float | None, stale_after_s: float) -> str:
-    if age_seconds is None:
+def telemetry_state(signed_age_s: float | None, stale_after_s: float) -> str:
+    """Classify freshness from the SIGNED age delta (now - published).
+
+    A value beyond the window in EITHER direction is not current: a future-dated
+    snapshot (negative delta, from clock skew) must not read as fresh, exactly as a
+    too-old one does not. Symmetric tolerance around zero, one threshold."""
+    if signed_age_s is None:
         return TELEMETRY_NEVER
-    return TELEMETRY_FRESH if age_seconds <= stale_after_s else TELEMETRY_STALE
+    return TELEMETRY_FRESH if abs(signed_age_s) <= stale_after_s else TELEMETRY_STALE
 
 
 def node_state(telemetry: str, beacon: Any) -> tuple[str, str]:
@@ -177,14 +182,17 @@ def instance_view(instance_id: str, record: dict, now: datetime,
     else:
         published = live_telemetry.parse_iso(snapshot.get("published_at"))
         published_at = snapshot.get("published_at")
-        age = None if published is None else max((now - published).total_seconds(), 0.0)
-        if age is None:
+        # Signed delta drives freshness (so a future timestamp cannot read fresh);
+        # displayed age stays clamped at >= 0.
+        delta = None if published is None else (now - published).total_seconds()
+        age = None if delta is None else max(delta, 0.0)
+        if delta is None:
             # Validation guarantees a parseable timestamp, so this is unreachable
             # in practice; treated as unusable rather than silently "fresh".
             telemetry = TELEMETRY_UNAVAILABLE
             problem = PROBLEM_MALFORMED
         else:
-            telemetry = telemetry_state(age, stale_after_s)
+            telemetry = telemetry_state(delta, stale_after_s)
         schema_version = snapshot.get("schema_version")
 
     node, node_evidence = node_state(telemetry, beacon)

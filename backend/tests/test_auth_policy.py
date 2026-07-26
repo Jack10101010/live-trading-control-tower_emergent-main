@@ -499,10 +499,27 @@ def test_security_diagnostics_include_the_auth_block_value_free():
     assert auth["scheme"] == "bearer"
     assert auth["remoteActivation"] == "not_active"
     assert auth["docsPolicy"] == ap.CLASS_PROTECTED
-    assert auth["protectedRouteCount"] > 50
+    assert auth["protectedRouteCount"] >= 1
     assert auth["publicRouteCount"] == 1
     assert "token" not in str(auth).replace("tokenPresent", "").replace("tokenLengthOk", "") \
         .replace("minTokenLength", "")
+
+
+def test_diagnostics_route_counts_reconcile_with_the_live_app():
+    """AUDIT: the published route counts must be reproducible against an
+    independent enumeration of the SAME live app, not merely 'more than 50'.
+
+    Both sides count UNIQUE PATHS (authorization is per path, not per route object;
+    see auth_policy.classify_app_routes), so `/api/broker/faults` GET+POST is one
+    protected path on both sides."""
+    unique_paths = {r.path for r in server.app.routes if isinstance(getattr(r, "path", None), str)}
+    live_public = {p for p in unique_paths if ap.classify_route(p) == ap.CLASS_PUBLIC}
+    live_protected = {p for p in unique_paths if ap.classify_route(p) == ap.CLASS_PROTECTED}
+    diag = ap.describe(policy(), server.app.routes)
+    assert diag["publicRouteCount"] == len(live_public) == 1
+    assert diag["protectedRouteCount"] == len(live_protected)
+    assert diag["protectedRouteCount"] + diag["publicRouteCount"] == len(unique_paths)
+    assert live_public == set(ap.PUBLIC_ROUTES)
 
 
 def test_cors_allows_authorization_only_from_a_trusted_origin():
