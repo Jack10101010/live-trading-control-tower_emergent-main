@@ -130,7 +130,10 @@ Four Protocols are **declared, not implemented**, in `security_config.py`:
 | `CertificateProvider` | Resolves TLS material; paths only, contents never cross the boundary |
 | `ConnectionPolicy` | The fail-closed gate a future slice must consult **before** any socket opens |
 
-Nothing implements or instantiates them, and nothing calls them.
+`AuthenticationProvider`, `CertificateProvider` and `ConnectionPolicy` remain
+declared-but-unimplemented. `TransportAdapter` has been given its canonical
+expansion by **UI-12** (below); `NullTransport` satisfies the original Protocol, so
+these references stay valid.
 
 ## Activation prerequisites
 
@@ -459,4 +462,73 @@ access:
    protecting the account when the Control Tower is unreachable.
 
 **Status: authentication preparation is complete at the CONTRACT level only.**
-Remote authenticated transport is **not active** and no transport adapter exists.
+Remote authenticated transport is **not active**. The only transport that exists is
+`NullTransport` (UI-12), which never communicates; no networking transport exists.
+
+---
+
+# Remote Transport Contract (UI-12) — architecture only
+
+`backend/transport.py` defines the **canonical interface** a future
+Control-Tower -> node transport must implement, and ships the default that stands
+in until one is built. **It contains no networking and none is reachable from it:**
+no socket, no HTTP client, no WebSocket, no polling, no retry, no authentication,
+no TLS, no VPS address. A test proves the entire surface can be exercised while any
+real socket call is rigged to blow up.
+
+## Why the interface exists before the wire
+
+The Control Tower is observational (**I-7**) and the node stays autonomous when the
+tower is unreachable (**I-10**). Remote connectivity is a later, separately-audited
+slice gated by the *Activation prerequisites* above. Defining the shape now lets
+every future caller depend on **one stable seam** instead of an ad-hoc client, and
+lets review see the intended shape before any wire code exists.
+
+## The contract
+
+`Transport` is an abstract base whose operations are all **total and
+non-raising** — failures are returned as typed results, never exceptions, so an
+observability surface can never be taken down by transport state.
+
+| Operation | Meaning |
+| --- | --- |
+| `connect()` | Establish the transport → `ConnectionResult` |
+| `disconnect()` | Tear down; idempotent |
+| `health()` | Can it currently carry traffic? → `TransportResult` (observation only) |
+| `request(operation, payload)` | One request/response → `TransportResult` |
+| `close()` | Release resources; idempotent, safe after `disconnect()` |
+| `describe()` / `status()` | Value-free identification for diagnostics |
+
+Results distinguish `available` (is a transport present at all) from `ok` (did the
+operation succeed), so a caller can tell *"no transport"* from *"transport present
+but the request failed."* No result field ever carries a credential or a raw wire
+payload.
+
+**`stream()` is deliberately omitted.** The node publishes periodic snapshots (a
+request/response shape), not a continuous stream, so a streaming operation would be
+speculative surface today. It can be added alongside the implementation that
+justifies it.
+
+## NullTransport — the default everywhere
+
+`NullTransport` is the default and the only implementation today. Every operation
+returns `transport_unavailable` without touching a socket. It is the **correct
+behaviour**, not a stub: there is no remote transport, so reporting exactly that is
+the truthful answer, and callers always hold a real object with a predictable
+result instead of scattering `None` checks.
+
+`default_transport(config=None)` is the **single wiring point**. It returns
+`NullTransport` unconditionally in UI-12 (no real transport exists and
+`is_active()` is hard-disabled), and accepts `config` so a future slice selects a
+concrete transport in exactly one place — never inline. That is what makes
+"the default is NullTransport everywhere" a guarantee.
+
+## Future implementations (not built)
+
+A later slice would add, behind this same interface, e.g. an `https` transport
+(authenticated request/response over TLS) or a `websocket` transport (if a genuine
+streaming need appears). Each must consult `ConnectionPolicy` before opening a
+socket, obtain credentials via `AuthenticationProvider`, resolve TLS material via
+`CertificateProvider`, and be selected inside `default_transport()`. None of that
+exists yet, and UI-12 adds no caller that depends on a concrete transport, so
+default behaviour is unchanged.
