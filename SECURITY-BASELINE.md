@@ -751,3 +751,86 @@ control exists, nothing is persisted, and there are **no frontend controls** —
 slice adds no UI. Activating a real command path would be a separate, deliberate,
 individually-audited future slice subject to all UI-9 activation prerequisites; until
 then the channel is disabled and inert.
+
+# Read-Only Command Transport (UI-16) — disabled by default, sends only reads
+
+`backend/command_transport.py` is the first slice where a command may actually leave
+the Control Tower — but only a **read-only** one. It composes the UI-15 command
+contract (`command_channel`) with the UI-13 authenticated `Transport` so the three
+read-only command types — `noop`, `request_health`, `request_telemetry` — can be
+transmitted to the node and their responses mapped back into the UI-15 lifecycle. It
+adds **no command model** (UI-15's envelope/acknowledgement/outcome/record are
+reused), **no execution authority**, and **no operator control**.
+
+## What it may transmit
+
+Only the UI-15 read-only vocabulary. Each type maps to a bounded GET against a node
+read endpoint — and the transport itself is **GET-only** (UI-13), so a mutating
+request is not merely disallowed, it is *unrepresentable*:
+
+| Command type | Node read endpoint | Transport call |
+| --- | --- | --- |
+| `noop` | `/health` | `transport.health()` |
+| `request_health` | `/health` | `transport.health()` |
+| `request_telemetry` | `/telemetry` | `transport.request("/telemetry")` |
+
+There is no dispatch entry for any other type. `_HEALTH_TYPES ∪ _TELEMETRY_TYPES ==
+command_channel.ALLOWED_TYPES` is asserted by test, so the map can never grow a
+mutating verb silently.
+
+## Lifecycle mapping (one round-trip, no retry)
+
+A submission is validated and de-duplicated by the UI-15 contract, enrolled as
+`pending`, then dispatched **exactly once**. The single `TransportResult` maps onto
+the canonical lifecycle:
+
+| Transport result | Acknowledgement | Outcome | Final state |
+| --- | --- | --- | --- |
+| `ok` (2xx + valid JSON) | accepted | completed | `completed` |
+| `http_status` (non-2xx, incl. 401/403) | rejected | — | `rejected` |
+| `unexpected_content_type` / `malformed_response` / `response_too_large` / `invalid_operation` | accepted | failed | `failed` |
+| `timeout` / `connection_error` / unavailable | — (none) | — | `pending` |
+
+**Acknowledgement is distinct from completion.** A usable answer is *acknowledged*
+(the node replied) and then, separately, *completed* (the reply was usable) — two
+distinct records with distinct timestamps. A malformed answer is acknowledged yet
+**not** completed (its completion fails), which is precisely what proves the two are
+not the same thing. An **unreachable node never acknowledged**, so the command is
+neither accepted, rejected nor completed — it stays `pending` and lazily expires.
+Nothing is ever fabricated as success.
+
+## Enforced properties
+
+- **Disabled by default.** `default_command_transport()` uses
+  `transport.default_transport()`, which is `NullTransport` unless an operator has
+  explicitly enabled and validly configured a real transport (UI-13). A disabled
+  service records for audit but **transmits nothing** (`command_transport_disabled`).
+- **Read-only allowlist**, enforced twice — by `validate_envelope` and again before
+  dispatch. Unknown/mutating types are rejected and never transmitted.
+- **Expiry before send** (a command already expired is rejected; nothing is sent),
+  **idempotency key required**, **deterministic duplicate handling** (idempotent
+  replay returns the same record and is *not* re-sent; a colliding command id is a
+  deterministic rejection), **no secret-bearing payloads**, **no retry**
+  (one attempt), **redaction-safe failures** (`redact_text` on every surfaced detail).
+- **No new API route.** This slice adds none — the service is a backend module,
+  wired-ready but not exposed. Should a future slice add a route, it must be
+  authenticated by UI-11, remain backend-only, expose no frontend control, and reject
+  mutating types. The bearer credential lives only inside the UI-13 transport.
+
+## Activation rules
+
+The service is inert until an operator *deliberately* enables the underlying
+transport: `CONTROL_TOWER_TRANSPORT_ENABLED` truthy **and** a valid
+`NODE_TRANSPORT=https` endpoint + `NODE_API_TOKEN` that pass UI-9 validation. Even
+then it can only issue read-only GETs. HTTP without TLS remains local-test-only; a
+real remote endpoint requires TLS and the other UI-9 prerequisites. Every network
+test runs against an in-process fake transport or a loopback server on `127.0.0.1`.
+
+## Explicit exclusions
+
+No `pause`, `resume`, `arm`, `order`, `cancel` or `kill` command exists or can be
+expressed. No mutation, no execution path, no VPS mutation, no node-state change, no
+streaming, no WebSocket, no cookies, no sessions, no retries. No frontend changes and
+no operator controls. The default remains disabled, and the running Control Tower
+transmits no command unless an operator deliberately enables and validly configures a
+real transport — and even then, only reads.
