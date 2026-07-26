@@ -37,8 +37,18 @@ RELATION TO UI-9
 from __future__ import annotations
 
 import abc
+import os
 from dataclasses import dataclass, field
 from typing import Any
+
+# ── explicit activation (UI-13) ──────────────────────────────────────────────
+# The ONLY switch that permits selecting a real transport. Absent/blank/malformed
+# leaves the default NullTransport. This is deliberately separate from UI-9's
+# security-baseline `is_active()` (which stays hard-disabled): this flag governs
+# adapter SELECTION, and even when set, a real transport is chosen only if the
+# security configuration also validates (see rest_transport.select_rest_transport).
+VAR_TRANSPORT_ENABLED = "CONTROL_TOWER_TRANSPORT_ENABLED"
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 # ── stable reason codes (safe to display; never a value or a secret) ──────────
 REASON_UNAVAILABLE = "transport_unavailable"
@@ -176,17 +186,34 @@ class NullTransport(Transport):
         return "NullTransport — no networking; every operation reports transport unavailable"
 
 
-def default_transport(config: Any = None) -> Transport:
+def default_transport(config: Any = None, env: dict | None = None) -> Transport:
     """The single wiring point for a Control-Tower -> node transport.
 
-    Returns `NullTransport` unconditionally in UI-12: no real transport exists and
-    connectivity is hard-disabled. `config` is accepted (and ignored) so a future
-    slice can select a concrete transport HERE — from the UI-9 security
-    configuration — without changing any caller's signature. Keeping selection in
-    one function is what makes "the default is NullTransport everywhere" a
-    guarantee rather than a hope.
+    Returns `NullTransport` unless ALL of the following hold, in which case it
+    returns the real `RestTransport` (UI-13):
+
+      1. `CONTROL_TOWER_TRANSPORT_ENABLED` is explicitly truthy, AND
+      2. the UI-9 security configuration validates with no errors, `NODE_TRANSPORT`
+         is `https`, and a `NODE_ENDPOINT` + `NODE_API_TOKEN` are present.
+
+    Missing, invalid or disabled configuration returns `NullTransport`. There is no
+    implicit localhost or remote fallback: absence yields the null default, never a
+    guessed endpoint. Keeping selection in this one function is what makes "the
+    default is NullTransport everywhere" a guarantee.
+
+    `rest_transport` is imported LAZILY so this module (and every default caller)
+    stays free of any networking import until a real transport is deliberately
+    requested. Never raises.
     """
-    return NullTransport()
+    source = os.environ if env is None else env
+    raw = source.get(VAR_TRANSPORT_ENABLED)
+    if not (isinstance(raw, str) and raw.strip().lower() in _TRUTHY):
+        return NullTransport()
+    try:
+        from rest_transport import select_rest_transport
+        return select_rest_transport(source, config) or NullTransport()
+    except Exception:                     # selection must never break startup
+        return NullTransport()
 
 
 #: The default instance callers can share. Stateless, so a singleton is safe.

@@ -532,3 +532,66 @@ socket, obtain credentials via `AuthenticationProvider`, resolve TLS material vi
 `CertificateProvider`, and be selected inside `default_transport()`. None of that
 exists yet, and UI-12 adds no caller that depends on a concrete transport, so
 default behaviour is unchanged.
+
+---
+
+# REST Transport (UI-13) — the first real adapter, **disabled by default**
+
+`backend/rest_transport.py` implements the UI-12 `Transport` contract over HTTP with
+bearer authentication. It is the first *real* adapter, and it is off unless
+deliberately switched on: **the running Control Tower wires no transport**, and
+`default_transport()` returns `NullTransport` in every default configuration.
+
+## Disabled-by-default wiring
+
+`default_transport()` returns `RestTransport` **only** when all of these hold, and
+`NullTransport` otherwise (there is no implicit localhost or remote fallback):
+
+1. `CONTROL_TOWER_TRANSPORT_ENABLED` is explicitly truthy (`1/true/yes/on`).
+2. The UI-9 security configuration **validates with no errors**.
+3. `NODE_TRANSPORT=https` (the only real adapter).
+4. `NODE_ENDPOINT` is present.
+5. `NODE_API_TOKEN` is present (a bearer transport needs a credential).
+
+This flag is deliberately **separate from UI-9's `is_active()`**, which stays
+hard-disabled: `is_active()` is the security-baseline posture indicator, whereas
+this flag governs adapter *selection*, and even when set a real transport is chosen
+only if the configuration also validates. `rest_transport` is imported lazily, so
+no default caller pulls in a networking import.
+
+## Bearer authentication
+
+Every request carries `Authorization: Bearer <token>`. The token is read from the
+canonical `NODE_API_TOKEN` (never from `SecurityConfig`, which drops the value by
+design), held in a repr-masked `_Secret`, placed only on the outbound header, and
+**never** logged, returned in a result, embedded in a URL or query string, or
+persisted. No cookies, no sessions. Every response/error string that could reach a
+result is passed through the UI-9 `redact_text` masker.
+
+## HTTP safety
+
+Read-only and single-attempt: **GET only**, no POST/PUT/DELETE, no mutation or
+command support. Bounded connect/read timeouts, a bounded response-size limit,
+`application/json` content-type validation, safe JSON parsing, and a stable reason
+map (`timeout`, `connection_error`, `http_status`, `unexpected_content_type`,
+`malformed_response`, `response_too_large`, `invalid_operation`). Redirects are
+**not followed** (a 3xx surfaces as `http_status`, never a silent cross-host follow
+that could carry the token). Failures are **returned as results, never raised**.
+
+**No retries** in this slice. No streaming. No WebSockets.
+
+## HTTP without TLS is local-test-only
+
+Integration tests run against an in-process fake server bound to `127.0.0.1` — never
+the VPS, the internet or any external service. A plaintext bearer token is readable
+on the wire, so **a real remote endpoint requires TLS**. `RestTransport` accepts an
+`http://localhost` endpoint only because `ALLOW_INSECURE_LOCALHOST` permits it for
+local testing; it is never a remote posture.
+
+## Remote activation prerequisites (unchanged, still excluded)
+
+Selecting `RestTransport` locally is **not** remote authorisation. Before any remote
+use: TLS end to end, a private network path (VPN), an explicit origin/bind policy,
+a real secrets mechanism with rotation, retry/backoff design (out of scope here),
+and a threat review — the full UI-9 activation list. **This slice adds no VPS
+address, no retry logic and opens no remote connection.**
