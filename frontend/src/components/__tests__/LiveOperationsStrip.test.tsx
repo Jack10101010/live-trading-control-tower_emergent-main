@@ -93,9 +93,20 @@ function mount() {
   );
 }
 
-function stub(conn: ConnectionState, st?: LiveStatus) {
+function remoteStatus(over: Partial<import('@/lib/api').RemoteNodeStatus> = {}):
+    import('@/lib/api').RemoteNodeStatus {
+  return {
+    enabled: false, state: 'disabled', provenance: 'remote-node',
+    observedAt: '2026-07-26T12:00:00Z', reason: 'transport_disabled', detail: null,
+    health: null, telemetry: null, ...over,
+  };
+}
+
+function stub(conn: ConnectionState, st?: LiveStatus,
+             remote?: import('@/lib/api').RemoteNodeStatus) {
   vi.spyOn(api, 'liveConnection').mockResolvedValue(conn);
   vi.spyOn(api, 'liveStatus').mockResolvedValue(st ?? status([]));
+  vi.spyOn(api, 'liveRemote').mockResolvedValue(remote ?? remoteStatus());
 }
 
 beforeEach(() => vi.restoreAllMocks());
@@ -200,6 +211,7 @@ describe('backend unavailable', () => {
   it('degrades to unknown and says the node keeps running', async () => {
     vi.spyOn(api, 'liveConnection').mockRejectedValue(new Error('failed to fetch'));
     vi.spyOn(api, 'liveStatus').mockRejectedValue(new Error('failed to fetch'));
+    vi.spyOn(api, 'liveRemote').mockRejectedValue(new Error('failed to fetch'));
     mount();
     await waitFor(() =>
       expect(screen.getByTestId('ops-chip-backend').textContent).toContain('unavailable')
@@ -331,5 +343,69 @@ describe('read-only boundary', () => {
     const html = screen.getByTestId('live-operations-strip').innerHTML;
     expect(html).not.toContain('ct-pulse-dot');
     expect(html).not.toContain('animate-');
+  });
+});
+
+// ══ UI-14: read-only remote node chip ════════════════════════════════════════
+
+describe('remote node integration chip', () => {
+  it('shows disabled by default and stays read-only', async () => {
+    stub(connection(), status([entry()]));
+    mount();
+    await waitFor(() =>
+      expect(screen.getByTestId('ops-chip-remote').textContent).toContain('disabled'));
+    // No control anywhere in the strip.
+    const strip = screen.getByTestId('live-operations-strip');
+    expect(strip.querySelectorAll('button')).toHaveLength(0);
+    expect(strip.querySelectorAll('form')).toHaveLength(0);
+  });
+
+  it('shows healthy with remote-node provenance when the node answers', async () => {
+    stub(connection(), status([entry()]), remoteStatus({
+      enabled: true, state: 'healthy', reason: null,
+      telemetry: { available: true, instanceId: 'n1', schemaVersion: 'ct.node-telemetry.v1',
+        publishedAt: '2026-07-26T12:00:00Z', ageSeconds: 3, staleAfterSeconds: 120,
+        stale: false, problem: null },
+    }));
+    mount();
+    await waitFor(() =>
+      expect(screen.getByTestId('ops-chip-remote').textContent).toContain('healthy'));
+    expect(screen.getByTestId('ops-chip-remote').getAttribute('data-severity')).toBe('healthy');
+  });
+
+  it('shows unauthorized as critical', async () => {
+    stub(connection(), status([entry()]), remoteStatus({
+      enabled: true, state: 'unauthorized', reason: 'http_status' }));
+    mount();
+    await waitFor(() =>
+      expect(screen.getByTestId('ops-chip-remote').textContent).toContain('unauthorized'));
+    expect(screen.getByTestId('ops-chip-remote').getAttribute('data-severity')).toBe('critical');
+  });
+
+  it('shows stale telemetry as a warning, never healthy', async () => {
+    stub(connection(), status([entry()]), remoteStatus({
+      enabled: true, state: 'stale',
+      telemetry: { available: true, instanceId: 'n1', schemaVersion: 'ct.node-telemetry.v1',
+        publishedAt: '2026-07-26T06:00:00Z', ageSeconds: 21600, staleAfterSeconds: 120,
+        stale: true, problem: null } }));
+    mount();
+    await waitFor(() =>
+      expect(screen.getByTestId('ops-chip-remote').textContent).toContain('stale'));
+    const sev = screen.getByTestId('ops-chip-remote').getAttribute('data-severity');
+    expect(sev).toBe('warning');
+    expect(sev).not.toBe('healthy');
+  });
+
+  it('never renders a token or endpoint even if a hostile payload includes one', async () => {
+    stub(connection(), status([entry()]), {
+      ...remoteStatus({ enabled: true, state: 'degraded', reason: 'malformed_telemetry' }),
+      // fields the type does not allow — the chip reads only known fields
+      token: 'tok_SECRET_MUST_NOT_RENDER', endpoint: 'vps.internal.example',
+    } as never);
+    mount();
+    await waitFor(() => expect(screen.getByTestId('ops-chip-remote')).toBeTruthy());
+    const html = screen.getByTestId('live-operations-strip').innerHTML;
+    expect(html).not.toContain('tok_SECRET_MUST_NOT_RENDER');
+    expect(html).not.toContain('vps.internal.example');
   });
 });

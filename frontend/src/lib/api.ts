@@ -536,11 +536,40 @@ export interface SecurityConfigStatus {
   auth?: AuthPolicyStatus;
 }
 
+/* UI-14: read-only Control-Tower -> node integration status. Value-free: no
+ * endpoint, no token, only a state classification + the freshness envelope UI-2
+ * already exposes. Provenance is always `remote-node`; a failure is a state, never
+ * a fixture fallback. */
+export type RemoteNodeState =
+  | 'disabled' | 'connecting' | 'healthy' | 'degraded' | 'stale'
+  | 'unauthorized' | 'unreachable';
+
+export interface RemoteNodeStatus {
+  enabled: boolean;
+  state: RemoteNodeState;
+  provenance: 'remote-node';
+  observedAt: string;
+  reason: string | null;
+  detail: string | null;
+  health: { ok: boolean; reason: string } | null;
+  telemetry: {
+    available: boolean;
+    instanceId: string | null;
+    schemaVersion: string | null;
+    publishedAt: string | null;
+    ageSeconds: number | null;
+    staleAfterSeconds: number | null;
+    stale: boolean;
+    problem: string | null;
+  } | null;
+}
+
 export const api = {
   world: () => apiFetch<WorldFixture>('/world'),
   securityConfig: () => apiFetch<SecurityConfigStatus>('/security/config'),
   liveConnection: () => apiFetch<ConnectionState>('/live/connection'),
   liveStatus: () => apiFetch<LiveStatus>('/live/status'),
+  liveRemote: () => apiFetch<RemoteNodeStatus>('/live/remote'),
   fleet: () =>
     apiFetch<{ deployments: Deployment[]; brokers: Broker[]; accounts: Account[]; asOf: string }>('/fleet'),
   health: () => apiFetch<BackendHealth>('/health'),

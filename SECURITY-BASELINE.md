@@ -595,3 +595,59 @@ use: TLS end to end, a private network path (VPN), an explicit origin/bind polic
 a real secrets mechanism with rotation, retry/backoff design (out of scope here),
 and a threat review — the full UI-9 activation list. **This slice adds no VPS
 address, no retry logic and opens no remote connection.**
+
+---
+
+# Read-Only Remote Node Integration (UI-14)
+
+`backend/node_client.py` is the first *pull*: the Control Tower reads **health and a
+telemetry snapshot FROM the node** through the UI-13 transport, surfaced at
+`GET /api/live/remote` and on the operations strip. It is the mirror image of UI-2
+(the node PUSHING to `/api/live/ingest`) and is **disabled by default** — with no
+operator transport configuration the default transport is `NullTransport`, the
+integration reports `disabled`, and no connection is opened.
+
+## Read-only, no command path
+
+The client requests only two read paths — `/health` and `/telemetry` — via GET.
+There is **no mutation, no command, no execution control and no acknowledgement**.
+The module contains no POST/PUT/DELETE and no order/arm/kill/submit surface.
+
+## State and provenance model
+
+Every result carries provenance **`remote-node`** — remote data is never relabelled
+local or fixture, and a failed request is a *state*, never a silent fixture
+substitution. States are distinguished, not collapsed:
+
+| State | Meaning |
+| --- | --- |
+| `disabled` | No real transport selected (the default). Nothing was contacted. |
+| `connecting` | Frontend-only, shown while the read is in flight. |
+| `healthy` | Reachable, authenticated, telemetry validated **and fresh**. |
+| `degraded` | Reachable + authenticated, but telemetry unusable (non-2xx, wrong content-type, malformed, or fails the UI-2 schema). |
+| `stale` | Reachable, but `published_at` is old **or implausibly future** (shared UI-2 freshness rule — clock skew is not health). |
+| `unauthorized` | The node rejected the credential (401/403). |
+| `unreachable` | Timeout or connection error. |
+
+Freshness reuses `live_telemetry.observation`; the payload is validated with the
+existing `live_telemetry.validate_snapshot`. **No telemetry model is duplicated** —
+the result surfaces only the value-free freshness envelope (instance id, schema
+version, `published_at`, age, stale), never the raw snapshot, an endpoint, or a
+token.
+
+## Failure behaviour
+
+A failure never falls back to fixtures. `telemetry` is `null` in every non-healthy
+state, provenance stays `remote-node`, and the frontend shows the failure state
+truthfully (`unauthorized`/`unreachable` are critical, `degraded`/`stale` are
+warnings). Errors are redaction-safe: the bearer token lives only inside the
+transport, and every surfaced detail passes through `redact_text`.
+
+## Explicit exclusions
+
+No command or execution path, no acknowledgement, no VPS mutation, no service
+restart, no retries (single attempt, UI-13), no streaming, no WebSocket. HTTP
+without TLS remains **local-test-only**; a real remote endpoint requires TLS and the
+other UI-9 activation prerequisites. The default configuration is disabled, and the
+running Control Tower opens no remote connection unless an operator deliberately
+enables and validly configures one.

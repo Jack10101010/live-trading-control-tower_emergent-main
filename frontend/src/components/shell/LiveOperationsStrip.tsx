@@ -19,7 +19,7 @@
  */
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, type RemoteNodeState } from '@/lib/api';
 import { deriveBackendState } from '@/lib/connectionState';
 import {
   deriveLiveOperations,
@@ -69,6 +69,49 @@ export function useLiveOperations() {
   const backend = deriveBackendState(connectionQuery.isLoading, connectionQuery.isError);
   return deriveLiveOperations(backend, connectionQuery.data, statusQuery.data);
 }
+
+/** UI-14 — read-only remote node integration. Separate from the pushed
+ *  connection/status so a slow or disabled remote pull never blocks the strip.
+ *  `connecting` is the transient loading state; every terminal state comes from
+ *  the backend, which is the sole authority for remote truth. */
+function useRemoteNode(): { state: RemoteNodeState; provenance: string;
+                            publishedAt: string | null; ageSeconds: number | null;
+                            reason: string | null } {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['live-remote'],
+    queryFn: () => api.liveRemote(),
+    refetchInterval: 10_000,
+    staleTime: 5_000,
+    retry: false,
+  });
+  if (isError) {
+    // The backend itself is unreachable — that is a CONNECTION fact (shown by the
+    // Backend chip), so the remote pull is simply unknown, never healthy.
+    return { state: 'unreachable', provenance: 'remote-node', publishedAt: null,
+             ageSeconds: null, reason: 'backend_unreachable' };
+  }
+  if (isLoading || !data) {
+    return { state: 'connecting', provenance: 'remote-node', publishedAt: null,
+             ageSeconds: null, reason: null };
+  }
+  return {
+    state: data.state,
+    provenance: data.provenance,
+    publishedAt: data.telemetry?.publishedAt ?? null,
+    ageSeconds: data.telemetry?.ageSeconds ?? null,
+    reason: data.reason,
+  };
+}
+
+const REMOTE_SEVERITY: Record<RemoteNodeState, Severity> = {
+  disabled: 'unknown',
+  connecting: 'unknown',
+  healthy: 'healthy',
+  degraded: 'warning',
+  stale: 'warning',
+  unauthorized: 'critical',
+  unreachable: 'critical',
+};
 
 function Chip({ chip }: { chip: OpsChip }) {
   return (
@@ -157,6 +200,7 @@ function InstanceDetails({ instance }: { instance: InstanceOps }) {
 
 export function LiveOperationsStrip() {
   const ops = useLiveOperations();
+  const remote = useRemoteNode();
   const [selected, setSelected] = useState<string | null>(null);
   const ordered = orderInstanceOps(ops.instances);
   const multiple = ordered.length > 1;
@@ -207,6 +251,16 @@ export function LiveOperationsStrip() {
                         : ops.bridge === 'degraded' ? 'warning' : 'unknown',
                       detail: 'MT5 bridge state as the node itself reported it.' }} />
 
+        {/* UI-14 — read-only remote node pull. Distinct from Node/Bridge (which
+            derive from PUSHED telemetry): this is what the tower reads FROM the
+            node. Disabled by default; provenance is always remote-node. */}
+        <Chip chip={{ key: 'remote', label: 'Remote node', value: remote.state,
+                      severity: REMOTE_SEVERITY[remote.state],
+                      detail: remote.state === 'disabled'
+                        ? 'Remote node integration is disabled (no transport configured).'
+                        : `Remote read (provenance: ${remote.provenance})`
+                          + (remote.publishedAt ? ` · last update ${remote.publishedAt}` : '')
+                          + (remote.reason ? ` · ${remote.reason}` : '') }} />
         {primary?.chips.map((chip) => <Chip key={chip.key} chip={chip} />)}
       </div>
 

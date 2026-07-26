@@ -37,6 +37,7 @@ import connection_state as connection_layer
 import live_telemetry
 import auth_policy
 import cors_policy
+import node_client
 import ops_status as ops_status_layer
 import security_config
 import ops_journal as ops_journal_layer
@@ -2344,6 +2345,29 @@ def live_connection():
         content=connection_layer.build_connection_state(
             records, now, beacon=_node_beacon()),
         headers={"Cache-Control": "no-store"})
+
+
+@api_router.get("/live/remote")
+def live_remote():
+    """UI-14 — read-only Control-Tower -> node integration status.
+
+    A PULL: the tower reads health + a telemetry snapshot FROM the node through the
+    UI-13 transport, distinct from UI-2's node-pushed `/live/status`. DISABLED by
+    default (the default transport is NullTransport), so with no explicit operator
+    configuration this returns `state: disabled` and opens no connection.
+
+    Remote data is always provenance `remote-node`; a failure is a failure state,
+    never a silent fixture fallback. No secret is returned — the bearer token lives
+    only inside the transport, and every detail is redaction-safe.
+
+    Sync def so any (bounded) blocking transport I/O runs in the threadpool.
+    """
+    try:
+        content = node_client.poll_node()
+    except Exception:                    # a read-only diagnostic must never 500 the app
+        logger.exception("remote node poll failed")
+        raise HTTPException(status_code=500, detail="remote node status unavailable")
+    return JSONResponse(content=content, headers={"Cache-Control": "no-store"})
 
 
 @api_router.get("/security/config")
