@@ -38,6 +38,8 @@ import live_telemetry
 import auth_policy
 import cors_policy
 import node_client
+import command_channel
+import command_transport
 import ops_status as ops_status_layer
 import security_config
 import ops_journal as ops_journal_layer
@@ -2368,6 +2370,115 @@ def live_remote():
         logger.exception("remote node poll failed")
         raise HTTPException(status_code=500, detail="remote node status unavailable")
     return JSONResponse(content=content, headers={"Cache-Control": "no-store"})
+
+
+# ── UI-17: authenticated read-only operator command surface ───────────────────
+# The single service instance. DISABLED by default: `default_command_transport()`
+# uses `transport.default_transport()`, which is NullTransport unless an operator has
+# explicitly enabled and validly configured a real transport (UI-13). This surface
+# transmits ONLY the read-only command vocabulary (noop / request_health /
+# request_telemetry) and never reuses the fixture-world `/api/commands/{name}` path,
+# the execution orchestrator, or any mutation/arming/order machinery.
+_COMMAND_TRANSPORT = command_transport.default_command_transport()
+
+#: Default and maximum time-to-live (seconds) the server stamps on an operator
+#: command. Expiry is REQUIRED by the UI-15 contract; the route always supplies one
+#: so a caller cannot submit a command with no expiry.
+_OPERATOR_CMD_DEFAULT_TTL_S = 30.0
+_OPERATOR_CMD_MAX_TTL_S = 300.0
+_OPERATOR_CMD_MAX_RECENT = 50
+
+
+def _operator_command_error(exc: "command_channel.CommandError") -> JSONResponse:
+    """Map a UI-15 CommandError onto a stable, redaction-safe 422. The reason code
+    is a fixed machine string; the detail is passed through the UI-9 redactor."""
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": "rejected",
+            "code": exc.reason,
+            "detail": security_config.redact_text(exc.detail) if exc.detail else None,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@api_router.post("/operator/commands")
+async def operator_submit_command(request: Request) -> Any:
+    """UI-17 — submit ONE permitted read-only command to the node.
+
+    Body: `{ "commandType": <noop|request_health|request_telemetry>,
+             "idempotencyKey": <str, REQUIRED>, "ttlSeconds"?: <number>,
+             "operatorRef"?: <str>, "payload"?: <object> }`.
+
+    The server stamps `requested_at` and a bounded `expires_at`, then hands a full
+    UI-15 envelope to the UI-16 service, which validates (strict read-only allowlist,
+    required idempotency, no secrets), de-duplicates, and dispatches at most once.
+    NO mutation, arming, order, pause/resume/cancel/kill is representable here. The
+    response is the value-free, redaction-safe lifecycle view; a contract violation
+    is a stable 422, never a 500.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    now = datetime.now(timezone.utc)
+    try:
+        ttl = float(body.get("ttlSeconds") or _OPERATOR_CMD_DEFAULT_TTL_S)
+    except (TypeError, ValueError):
+        ttl = _OPERATOR_CMD_DEFAULT_TTL_S
+    ttl = max(1.0, min(ttl, _OPERATOR_CMD_MAX_TTL_S))
+    expires = now.timestamp() + ttl
+
+    def _iso(ts: float) -> str:
+        return datetime.fromtimestamp(ts, timezone.utc).isoformat().replace("+00:00", "Z")
+
+    payload = body.get("payload")
+    envelope = {
+        "schema_version": command_channel.SCHEMA_VERSION,
+        "command_type": body.get("commandType"),
+        # Idempotency is REQUIRED by contract; a missing key is rejected (422), not
+        # silently generated — the CLIENT owns idempotency (a fresh key per action).
+        "idempotency_key": body.get("idempotencyKey"),
+        "requested_at": now.isoformat().replace("+00:00", "Z"),
+        "expires_at": _iso(expires),
+        "operator_ref": body.get("operatorRef"),
+        "payload": payload if isinstance(payload, dict) else {},
+    }
+
+    try:
+        record = _COMMAND_TRANSPORT.submit(envelope, now=now)
+    except command_channel.CommandError as exc:
+        return _operator_command_error(exc)
+    except Exception:                    # a read-only surface must never 500 the app
+        logger.exception("operator command submission failed")
+        raise HTTPException(status_code=500, detail="operator command unavailable")
+
+    view = _COMMAND_TRANSPORT.view(record.envelope.command_id)
+    return JSONResponse(content=view, headers={"Cache-Control": "no-store"})
+
+
+@api_router.get("/operator/commands/{command_id}")
+def operator_command_status(command_id: str) -> Any:
+    """UI-17 — the lifecycle status of a previously submitted command, or 404."""
+    view = _COMMAND_TRANSPORT.view(command_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="command not found")
+    return JSONResponse(content=view, headers={"Cache-Control": "no-store"})
+
+
+@api_router.get("/operator/commands")
+def operator_recent_commands() -> Any:
+    """UI-17 — a bounded, newest-first list of recent command records (read-only)."""
+    records = _COMMAND_TRANSPORT.recent(_OPERATOR_CMD_MAX_RECENT)
+    commands = [_COMMAND_TRANSPORT.view(r.envelope.command_id) for r in records]
+    return JSONResponse(
+        content={"enabled": _COMMAND_TRANSPORT.enabled, "commands": commands},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @api_router.get("/security/config")

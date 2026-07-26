@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { ConnectionPanel } from '@/components/domain/ConnectionPanel';
 import { SecurityBaselinePanel } from '@/components/domain/SecurityBaselinePanel';
+import { OperatorCommandPanel } from '@/components/domain/OperatorCommandPanel';
 import { useFleet, usePackages, useFeatureFlags, useRuntimeHealth, useBrokerReconciliation, useStrategyEvaluation, useSchedulerStatus, useMarketSnapshot, useRiskLimits, useActivePackage, useBackendHealth } from '@/hooks/useRepository';
 import { api, QK } from '@/lib/api';
 import { queryClient } from '@/lib/queryClient';
@@ -107,6 +108,11 @@ export function SystemView() {
             backend reports configured/missing/invalid and never a value. */}
         <div className="col-span-12 lg:col-span-6">
           <SecurityBaselinePanel />
+        </div>
+        {/* UI-17 — read-only operator controls. Three read-only diagnostics only;
+            no execution control, disabled by default, no token in the browser. */}
+        <div className="col-span-12 lg:col-span-6">
+          <OperatorCommandPanel />
         </div>
       </div>
 

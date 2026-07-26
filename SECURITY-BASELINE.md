@@ -834,3 +834,91 @@ streaming, no WebSocket, no cookies, no sessions, no retries. No frontend change
 no operator controls. The default remains disabled, and the running Control Tower
 transmits no command unless an operator deliberately enables and validly configures a
 real transport — and even then, only reads.
+
+# Operator-Facing Read-Only Command Flow (UI-17) — authenticated routes + a UI panel
+
+UI-17 is the first slice where the operator can *originate* a command from the
+Control Tower. It exposes the UI-16 read-only transport through authenticated backend
+routes and a small frontend panel. Only the three read-only command types —
+`noop`, `request_health`, `request_telemetry` — are representable end to end. There
+is no execution, arming, order, or node-state change anywhere in the flow, and the
+whole surface is disabled and inert by default.
+
+## Backend routes (deny-by-default protected, UI-11)
+
+A single disabled service instance (`server._COMMAND_TRANSPORT =
+command_transport.default_command_transport()`) backs three routes under a **distinct**
+namespace — never the fixture-world `/api/commands/{name}` execution path, the
+orchestrator, or any BotEvent write:
+
+| Method + path | Purpose |
+| --- | --- |
+| `POST /api/operator/commands` | Submit one permitted read-only command |
+| `GET /api/operator/commands/{command_id}` | Query one command's lifecycle status |
+| `GET /api/operator/commands` | List recent command records (newest-first, bounded) |
+
+All three are **protected by the UI-11 boundary**: they are not in the one-entry
+`PUBLIC_ROUTES` allowlist, so when authentication is enabled every call requires
+`Authorization: Bearer <token>` and an unauthenticated or wrong-token request gets the
+single stable `401` — verified by test. The server never reuses `KNOWN_COMMANDS`, the
+execution orchestrator, or the event store; a submit appends **no** BotEvent.
+
+Submission builds a full UI-15 envelope from a minimal body
+(`{commandType, idempotencyKey, ttlSeconds?, operatorRef?, payload?}`): the server
+stamps `requested_at = now` and a **bounded, always-present** `expires_at`
+(`now + ttl`, default 30 s, capped), so **expiry is required** by construction.
+**Idempotency is required and client-owned** — a missing `idempotencyKey` is rejected,
+not silently generated. The envelope goes to `CommandTransportService.submit`, which
+strictly validates (read-only allowlist, no secrets, JSON-bounded payload),
+de-duplicates, and dispatches at most once (no retry). A contract violation is a
+**stable, redaction-safe `422`** carrying a fixed machine `code` (e.g.
+`unknown_command_type`, `idempotency_key_required`, `already_expired`,
+`payload_contains_secret`) and a `redact_text`-scrubbed detail — never a `500`, never a
+value. Responses are the value-free `command_channel.safe_view` plus transport-step
+metadata and an `enabled` flag; the bearer token never appears in any response.
+
+## Lifecycle mapping surfaced to the operator
+
+The routes surface exactly the UI-15 lifecycle the UI-16 service produces: `pending`,
+`accepted`, `rejected`, `expired`, `completed`, `failed`, with **acknowledgement
+distinct from completion**. A **disabled** transport records the command and returns
+`pending` with `transport.reason = command_transport_disabled` and `enabled: false`
+— truthful, never a fabricated success. An **unreachable** node returns `pending`
+(`node_timeout` / `node_unreachable`); a **remote refusal** returns `rejected`; a
+**usable answer** returns `completed`.
+
+## Frontend panel (read-only, no optimistic success)
+
+`OperatorCommandPanel` (System view) offers exactly three buttons — request health,
+request telemetry, and an optional no-op diagnostic. It honours:
+
+- **No optimistic success.** Nothing is shown as accepted/completed until the backend
+  returns the mapped lifecycle state; a disabled/unreachable transport is shown as
+  exactly that.
+- **No duplicate submissions.** Every button is disabled and `aria-busy` while a
+  submission is in flight, so a double-click cannot fire two actions.
+- **A fresh idempotency key per intentional action** (generated in the API layer), so
+  a genuine retry de-duplicates while a new action is distinct.
+- **No token handling in the browser.** The panel sends no credential and stores none;
+  the payload never contains one (secrets are rejected server-side).
+- **No execution controls** — the only representable actions are the three read-only
+  types.
+- **Accessible loading and error states** — `role=status` live region for progress and
+  results, `role=alert` for a rejection (with its stable code) or a failure.
+
+## Activation rules
+
+The routes exist and are protected regardless of state, but they can only *do*
+anything once an operator deliberately enables the underlying transport
+(`CONTROL_TOWER_TRANSPORT_ENABLED` + a valid `NODE_TRANSPORT=https` endpoint +
+`NODE_API_TOKEN`, all passing UI-9 validation) — and authentication should be enabled
+(`CONTROL_TOWER_AUTH_ENABLED` + a valid token) before any non-local exposure. Until
+then the panel and routes are live but inert: every submission is recorded as
+`pending` / disabled and nothing leaves the tower.
+
+## Explicit exclusions
+
+Only health, telemetry and no-op are representable. No trading, no order/cancel, no
+pause/resume/arm/kill, no node or VPS mutation, no execution path, no BotEvent, no
+reuse of the fixture command route, no retries, no token in the browser, and no
+optimistic success. The default is disabled, and the panel truthfully reports it.

@@ -564,12 +564,90 @@ export interface RemoteNodeStatus {
   } | null;
 }
 
+/* ── UI-17: authenticated read-only operator command surface ─────────────────
+ * The three permitted read-only command types, and the value-free lifecycle view
+ * the backend returns (`command_channel.safe_view` + transport-step metadata). There
+ * is deliberately NO token, endpoint or raw-payload field: the browser never handles
+ * a credential, and the payload is redacted server-side. `state` is the canonical
+ * UI-15 lifecycle; `transport` explains a command that was not acknowledged
+ * (disabled / unreachable / timeout). */
+export type OperatorCommandType = 'noop' | 'request_health' | 'request_telemetry';
+export type OperatorCommandState =
+  | 'pending' | 'accepted' | 'rejected' | 'expired' | 'completed' | 'failed';
+
+export interface OperatorCommandView {
+  schemaVersion: string;
+  commandId: string;
+  commandType: string;
+  idempotencyKey: string;
+  target: string | null;
+  operatorRef: string | null;
+  requestedAt: string;
+  expiresAt: string;
+  state: OperatorCommandState;
+  createdAt: string;
+  updatedAt: string;
+  acknowledged: boolean;
+  accepted: boolean | null;
+  completed: boolean;
+  outcomeState: string | null;
+  payload: Record<string, unknown>;
+  transport: { reason: string; detail: string | null } | null;
+  enabled: boolean;
+}
+
+/** A stable rejection (HTTP 422): the backend maps a UI-15 CommandError to a fixed
+ *  `code` and a redaction-safe `detail`. Thrown by `operatorSubmitCommand` on 422. */
+export interface OperatorCommandRejection {
+  error: 'rejected';
+  code: string;
+  detail: string | null;
+}
+
+export class OperatorCommandError extends Error {
+  constructor(public readonly code: string, public readonly detail: string | null) {
+    super(code);
+    this.name = 'OperatorCommandError';
+  }
+}
+
 export const api = {
   world: () => apiFetch<WorldFixture>('/world'),
   securityConfig: () => apiFetch<SecurityConfigStatus>('/security/config'),
   liveConnection: () => apiFetch<ConnectionState>('/live/connection'),
   liveStatus: () => apiFetch<LiveStatus>('/live/status'),
   liveRemote: () => apiFetch<RemoteNodeStatus>('/live/remote'),
+  /* UI-17 — submit ONE permitted read-only operator command. A FRESH idempotency
+   * key is generated per call (i.e. per intentional operator action), so a retry of
+   * the SAME action de-duplicates while a new action is distinct. No token handling:
+   * the browser sends none. A 422 rejection surfaces as `OperatorCommandError(code)`. */
+  operatorSubmitCommand: async (
+    commandType: OperatorCommandType,
+    opts: { ttlSeconds?: number } = {}
+  ): Promise<OperatorCommandView> => {
+    const res = await fetch(apiUrl('/operator/commands'), {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        commandType,
+        idempotencyKey: idempotencyKey(),
+        ...(opts.ttlSeconds ? { ttlSeconds: opts.ttlSeconds } : {}),
+      }),
+    });
+    if (res.status === 422) {
+      const body = (await res.json().catch(() => null)) as OperatorCommandRejection | null;
+      throw new OperatorCommandError(body?.code ?? 'rejected', body?.detail ?? null);
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`API ${res.status} /operator/commands: ${body.slice(0, 200)}`);
+    }
+    return (await res.json()) as OperatorCommandView;
+  },
+  operatorCommandStatus: (commandId: string) =>
+    apiFetch<OperatorCommandView>(`/operator/commands/${encodeURIComponent(commandId)}`),
+  operatorRecentCommands: () =>
+    apiFetch<{ enabled: boolean; commands: OperatorCommandView[] }>('/operator/commands'),
   fleet: () =>
     apiFetch<{ deployments: Deployment[]; brokers: Broker[]; accounts: Account[]; asOf: string }>('/fleet'),
   health: () => apiFetch<BackendHealth>('/health'),
