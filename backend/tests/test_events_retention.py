@@ -423,7 +423,10 @@ def test_exactly_eight_append_event_production_call_sites():
     calls = [m for m in re.finditer(r"_append_event\(", src)
              if not src[max(0, m.start() - 4):m.start()].endswith("def ")]
     # LIVE-2/3: + market-order and entity-operation denial/result events.
-    assert len(calls) == 8  # command, broker-sync, LIVE_STATUS, L2 projector, MO denial, MO result
+    # LIVE-4E added a NINTH reviewed producer: the operator decision journal
+    # entry (RECOMMENDATION_ACCEPT/REJECT/EXPIRE) — a best-effort MIRROR of a
+    # decision already committed to its own append-only history.
+    assert len(calls) == 9  # + entity-op denial/result, recommendation decision
 
 
 def test_no_stray_events_db_in_repo():

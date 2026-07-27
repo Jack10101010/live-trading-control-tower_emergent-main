@@ -16,10 +16,12 @@ import { useMemo, useState, type CSSProperties } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   api,
-  type RecommendationDecisionView,
-  type RecommendationEventView,
   type RecommendationOperationalView,
 } from '@/lib/api';
+import {
+  DECISION_NOTICE,
+  RecommendationDetail,
+} from '@/components/domain/RecommendationDetail';
 
 const BADGE = 'text-2xs mono px-1.5 py-0.5 rounded-sm border';
 const C = {
@@ -86,97 +88,7 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Detail({ item, decisions, history }: {
-  item: RecommendationOperationalView;
-  decisions: RecommendationDecisionView[];
-  history: RecommendationEventView[];
-}) {
-  return (
-    <div className="space-y-2 pt-2 border-t" style={{ borderColor: 'var(--border-subtle)' }}
-         data-testid="recommendation-detail">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1">
-        <div className="space-y-1" data-testid="recommendation-terms">
-          <div className="text-2xs uppercase tracking-wider text-text-muted">
-            Proposal terms
-          </div>
-          <Row label="Order type" value={txt(item.executionTermsAvailability === 'unavailable' ? null : 'see terms')} />
-          <Row label="Proposed entry" value={price(item.proposedEntry)} />
-          <Row label="Stop loss" value={price(item.stopLoss)} />
-          <Row label="Take profit" value={price(item.takeProfit)} />
-          <Row label="Quantity" value={num(item.quantity)} />
-          <Row label="Risk amount" value={num(item.riskAmount)} />
-          <Row label="Risk percent" value={num(item.riskPercent, 2, '%')} />
-          <Row label="Planned R" value={item.plannedR === null ? '—' : `${item.plannedR}R`} />
-          <Row label="Confidence" value={num(item.confidence, 2)} />
-          <Row label="Execution terms" value={txt(item.executionTermsAvailability)} />
-          <Row label="Risk terms" value={txt(item.riskTermsAvailability)} />
-          <Row label="Rationale" value={txt(item.rationale)} />
-        </div>
-        <div className="space-y-1" data-testid="recommendation-lineage">
-          <div className="text-2xs uppercase tracking-wider text-text-muted">Lineage</div>
-          <Row label="Recommendation" value={txt(item.recommendationId)} />
-          <Row label="Scenario" value={txt(item.scenarioId)} />
-          <Row label="Node" value={txt(item.nodeId)} />
-          <Row label="Account" value={txt(item.accountFingerprintMasked)} />
-          <Row label="Source" value={txt(item.source)} />
-          <Row label="Outcome" value={txt(item.outcome)} />
-          <Row label="Linked intents"
-               value={item.linkedIntentIds.length ? item.linkedIntentIds.join(', ') : '—'} />
-          <Row label="Supersedes" value={txt(item.supersedes)} />
-          <Row label="Superseded by" value={txt(item.supersededBy)} />
-          <Row label="Expires" value={txt(item.expiresAt)} />
-        </div>
-      </div>
-
-      <div data-testid="recommendation-decisions">
-        <div className="text-2xs uppercase tracking-wider text-text-muted">
-          Decision history
-        </div>
-        {decisions.length === 0 ? (
-          <div className="text-2xs text-text-muted">No decisions recorded.</div>
-        ) : (
-          <ul className="space-y-0.5">
-            {decisions.map((d) => (
-              <li key={d.decisionId} className="text-2xs mono text-text-2">
-                #{d.sequence} {d.decisionType} · {txt(d.actorType)} · {txt(d.actor)} ·{' '}
-                {txt(d.occurredAt)}{d.reason ? ` — ${d.reason}` : ''}
-                {d.authorizationReference ? ` [auth ${d.authorizationReference}]` : ''}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-      {item.warnings.length > 0 && (
-        <div data-testid="recommendation-warnings">
-          <div className="text-2xs uppercase tracking-wider text-text-muted">
-            Warnings
-          </div>
-          <ul className="space-y-0.5">
-            {item.warnings.map((w) => (
-              <li key={w} className="text-2xs" style={{ color: 'var(--negative)' }}>⚠ {w}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <div data-testid="recommendation-history">
-        <div className="text-2xs uppercase tracking-wider text-text-muted">
-          Lifecycle events
-        </div>
-        <ul className="space-y-0.5">
-          {history.map((e) => (
-            <li key={e.eventId} className="text-2xs mono text-text-2">
-              #{e.sequence} {e.eventType} · {e.occurredAt}
-            </li>
-          ))}
-        </ul>
-      </div>
-    </div>
-  );
-}
-
-export function RecommendationPanel() {
+export function RecommendationPanel({ operatorId }: { operatorId?: string } = {}) {
   const [statusFilter, setStatusFilter] = useState('');
   const [instrumentFilter, setInstrumentFilter] = useState('');
   const [directionFilter, setDirectionFilter] = useState('');
@@ -191,13 +103,6 @@ export function RecommendationPanel() {
     staleTime: 5_000,
     retry: false,
   });
-  const { data: detail } = useQuery({
-    queryKey: ['trade-recommendation', selected],
-    queryFn: () => api.tradeRecommendation(selected as string),
-    enabled: Boolean(selected),
-    retry: false,
-  });
-
   const items = data?.recommendations ?? [];
   const filtered = useMemo(
     () => items.filter((r) =>
@@ -329,18 +234,20 @@ export function RecommendationPanel() {
           )}
 
           {selected && filtered.some((r) => r.recommendationId === selected) && (
-            <Detail item={filtered.find((r) => r.recommendationId === selected)!}
-                    decisions={detail?.decisions ?? []}
-                    history={detail?.history ?? []} />
+            /* LIVE-4E: the detail view owns the decision surface. The LIST
+               above stays free of controls — a decision is only reachable
+               after an operator opens and reviews the proposal. */
+            <RecommendationDetail
+              item={filtered.find((r) => r.recommendationId === selected)!}
+              actorId={operatorId} />
           )}
         </>
       )}
 
       <p className="text-2xs text-text-muted mt-2">
         A Recommendation is a proposal to act on a Scenario — not an order, not an
-        execution intent, and not proof a trade occurred. Accepting one records a
-        decision and nothing more: execution still requires authorization,
-        execution mode and the safety gates. This view is read-only.
+        execution intent, and not proof a trade occurred. {DECISION_NOTICE} Execution
+        still requires authorization, execution mode and the safety gates.
       </p>
     </section>
   );

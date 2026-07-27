@@ -609,6 +609,13 @@ class RecommendationDecisionView:
     reason: str | None = None
     authorization_reference: str | None = None
     execution_mode: str | None = None
+    #: LIVE-4E audit fields. `identity_assurance` states how much the recorded
+    #: actor is worth — the UI shows it so nobody reads an asserted identity as
+    #: an authenticated one.
+    note: str | None = None
+    against_version: int | None = None
+    correlation_id: str | None = None
+    identity_assurance: str = "unknown"
 
     def as_dict(self) -> dict:
         return _sorted({
@@ -617,7 +624,10 @@ class RecommendationDecisionView:
             "occurredAt": self.occurred_at, "sequence": self.sequence,
             "reason": self.reason,
             "authorizationReference": self.authorization_reference,
-            "executionMode": self.execution_mode,
+            "executionMode": self.execution_mode, "note": self.note,
+            "againstVersion": self.against_version,
+            "correlationId": self.correlation_id,
+            "identityAssurance": self.identity_assurance,
         })
 
 
@@ -654,6 +664,11 @@ class RecommendationOperationalView:
     account_fingerprint_masked: str | None = None
     execution_terms_availability: str | None = None
     risk_terms_availability: str | None = None
+    #: LIVE-4E: the optimistic-concurrency version an operator must decide
+    #: against, plus whether a decision is possible at all and why not.
+    version: int = 0
+    decidable: bool = False
+    undecidable_reason: str | None = None
     warnings: tuple = field(default_factory=tuple)
     tags: tuple = field(default_factory=tuple)
     provenance: str = PROV_ABSENT
@@ -682,6 +697,8 @@ class RecommendationOperationalView:
             "accountFingerprintMasked": self.account_fingerprint_masked,
             "executionTermsAvailability": self.execution_terms_availability,
             "riskTermsAvailability": self.risk_terms_availability,
+            "version": self.version, "decidable": self.decidable,
+            "undecidableReason": self.undecidable_reason,
             "warnings": list(self.warnings), "tags": list(self.tags),
             "provenance": self.provenance,
             "freshness": self.freshness.as_dict() if self.freshness else None,
@@ -746,7 +763,11 @@ def build_recommendations(recommendations=None, *, now: str,
                     occurred_at=view["occurredAt"], sequence=view["sequence"],
                     reason=view["reason"],
                     authorization_reference=view["authorizationReference"],
-                    execution_mode=view["executionMode"])
+                    execution_mode=view["executionMode"],
+                    note=view.get("note"),
+                    against_version=view.get("againstVersion"),
+                    correlation_id=view.get("correlationId"),
+                    identity_assurance=view.get("identityAssurance", "unknown"))
             terms = item.terms
             out.append(RecommendationOperationalView(
                 recommendation_id=item.recommendation_id,
@@ -759,6 +780,8 @@ def build_recommendations(recommendations=None, *, now: str,
                 quantity=terms.execution.quantity,
                 risk_amount=terms.risk.risk_amount,
                 risk_percent=terms.risk.risk_percent,
+                version=item.version, decidable=item.decidable,
+                undecidable_reason=item.undecidable_reason,
                 planned_r=terms.risk.planned_r, rationale=terms.rationale,
                 confidence=terms.confidence,
                 linked_intent_count=len(item.linked_intent_ids),

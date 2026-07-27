@@ -13,9 +13,17 @@ OWNERSHIP
 RULES
   * `recommendation_events` and `recommendation_decisions` are APPEND-ONLY:
     no update or delete surface, and no generic mutable CRUD.
-  * Writes are atomic (event + snapshot in one transaction).
+  * Writes are atomic. LIVE-4E: a DECISION, its event and the snapshot commit
+    in ONE transaction — before LIVE-4E the decision row committed separately,
+    so a crash in between left a committed decision that history and the
+    rebuild path could not see.
   * Writes are IDEMPOTENT on `(recommendation_id, sequence)`; replaying the
-    same decision or event appends nothing.
+    same decision or event appends nothing. LIVE-4E: a DIFFERENT decision at
+    the same sequence is a CONFLICT, not a silent no-op — before LIVE-4E a
+    losing concurrent writer was told it had succeeded.
+  * LIVE-4E: `version` is the sequence of the last applied event. Operator
+    writes take it as an optimistic-concurrency precondition under
+    BEGIN IMMEDIATE, so exactly one of two racing decisions can win.
   * Nothing is created automatically — every call records a caller-supplied
     fact. There is no strategy logic anywhere in this module.
   * An unsupported newer schema FAILS CLOSED.
@@ -25,12 +33,22 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import recommendation_domain as rd
 
-SCHEMA_VERSION = 1
+#: How long a writer waits for the write lock before reporting contention,
+#: rather than failing instantly under a concurrent decision.
+_WRITE_LOCK_TIMEOUT_S = 5.0
+
+SCHEMA_VERSION = 2
+#: Schema history — every step is additive and fails closed on anything newer.
+#:   1 -> 2 (LIVE-4E): `recommendations.version`; decision `note`,
+#:   `against_version`, `correlation_id`, `identity_assurance`; and a UNIQUE
+#:   index on (recommendation_id, sequence) for decisions so two racing
+#:   operators cannot both write at the same ordinal.
 
 
 class RecommendationStoreError(RuntimeError):
@@ -69,6 +87,14 @@ class RecommendationStore:
             raise RecommendationStoreError(
                 "unsupported_schema_version",
                 f"recommendation schema {row['value']} > supported {SCHEMA_VERSION}")
+        else:
+            found = int(row["value"])
+            if found not in (1, SCHEMA_VERSION):
+                raise RecommendationStoreError(
+                    "unsupported_schema_version",
+                    f"recommendation schema {found} cannot be migrated")
+            if found < SCHEMA_VERSION:
+                self._migrate(conn, found)
         conn.execute(
             """CREATE TABLE IF NOT EXISTS recommendations (
                 recommendation_id TEXT PRIMARY KEY,
@@ -80,7 +106,8 @@ class RecommendationStore:
                 superseded_by TEXT, supersedes TEXT,
                 linked_intent_ids TEXT NOT NULL DEFAULT '[]',
                 source_reference TEXT, provenance TEXT NOT NULL DEFAULT 'operator',
-                terms_json TEXT NOT NULL DEFAULT '{}'
+                terms_json TEXT NOT NULL DEFAULT '{}',
+                version INTEGER NOT NULL DEFAULT 0
             )""")
         conn.execute(
             """CREATE TABLE IF NOT EXISTS recommendation_events (
@@ -106,8 +133,44 @@ class RecommendationStore:
                 occurred_at TEXT NOT NULL, reason TEXT,
                 authorization_reference TEXT, execution_mode TEXT,
                 provenance TEXT NOT NULL DEFAULT 'operator',
-                metadata_json TEXT NOT NULL DEFAULT '{}'
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                note TEXT, against_version INTEGER, correlation_id TEXT,
+                identity_assurance TEXT NOT NULL DEFAULT 'unknown'
             )""")
+        # LIVE-4E: the write-time guarantee that one ordinal holds one decision.
+        # `rd.conflicting_decisions()` remains as a defensive READ-side check for
+        # records assembled outside this store.
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS "
+                     "idx_recommendation_decision_sequence "
+                     "ON recommendation_decisions (recommendation_id, sequence)")
+        conn.commit()
+
+    def _migrate(self, conn: sqlite3.Connection, found: int) -> None:
+        """Additive, fail-closed migration. Each ALTER is guarded by a probe of
+        the live table, so a partially-migrated database converges."""
+        existing = {r["name"] for r in conn.execute("PRAGMA table_info(recommendations)")}
+        if "version" not in existing:
+            conn.execute("ALTER TABLE recommendations ADD COLUMN "
+                         "version INTEGER NOT NULL DEFAULT 0")
+        # Backfill from the append-only log, which is the real authority. This
+        # runs for EVERY v1 database, not only when the ALTER was needed: a
+        # partially-migrated file already has the column but no values, and
+        # leaving those at 0 would make every optimistic write conflict forever.
+        conn.execute(
+            """UPDATE recommendations SET version = COALESCE((
+                   SELECT MAX(sequence) FROM recommendation_events e
+                   WHERE e.recommendation_id = recommendations.recommendation_id
+               ), 0)""")
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(recommendation_decisions)")}
+        for name, ddl in (("note", "note TEXT"),
+                          ("against_version", "against_version INTEGER"),
+                          ("correlation_id", "correlation_id TEXT"),
+                          ("identity_assurance",
+                           "identity_assurance TEXT NOT NULL DEFAULT 'unknown'")):
+            if name not in cols:
+                conn.execute(f"ALTER TABLE recommendation_decisions ADD COLUMN {ddl}")
+        conn.execute("UPDATE recommendation_meta SET value=? WHERE key='schema_version'",
+                     (str(SCHEMA_VERSION),))
         conn.commit()
 
     def schema_version(self) -> int:
@@ -134,7 +197,8 @@ class RecommendationStore:
                 superseded_by=row["superseded_by"], supersedes=row["supersedes"],
                 linked_intent_ids=tuple(json.loads(row["linked_intent_ids"])),
                 source_reference=row["source_reference"],
-                provenance=row["provenance"])
+                provenance=row["provenance"],
+                version=int(row["version"] or 0))
         except (ValueError, TypeError, KeyError, rd.RecommendationError) as exc:
             raise RecommendationStoreError("corrupt_recommendation_row",
                                            type(exc).__name__) from exc
@@ -163,7 +227,11 @@ class RecommendationStore:
                 sequence=row["sequence"], reason=row["reason"],
                 authorization_reference=row["authorization_reference"],
                 execution_mode=row["execution_mode"], provenance=row["provenance"],
-                metadata=json.loads(row["metadata_json"]))
+                metadata=json.loads(row["metadata_json"]),
+                note=row["note"], against_version=row["against_version"],
+                correlation_id=row["correlation_id"],
+                identity_assurance=(row["identity_assurance"]
+                                    or rd.IDENTITY_UNKNOWN))
         except (ValueError, TypeError, KeyError, rd.RecommendationError) as exc:
             raise RecommendationStoreError("corrupt_recommendation_decision",
                                            type(exc).__name__) from exc
@@ -181,15 +249,17 @@ class RecommendationStore:
                 instrument, direction, source, status, node_id,
                 account_fingerprint, created_at, updated_at, decided_at,
                 withdrawn_at, expired_at, expiry_at, superseded_by, supersedes,
-                linked_intent_ids, source_reference, provenance, terms_json)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                linked_intent_ids, source_reference, provenance, terms_json,
+                version)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(recommendation_id) DO UPDATE SET
                  status=excluded.status, updated_at=excluded.updated_at,
                  decided_at=excluded.decided_at, withdrawn_at=excluded.withdrawn_at,
                  expired_at=excluded.expired_at,
                  superseded_by=excluded.superseded_by,
                  supersedes=excluded.supersedes,
-                 linked_intent_ids=excluded.linked_intent_ids""",
+                 linked_intent_ids=excluded.linked_intent_ids,
+                 version=excluded.version""",
             (recommendation.recommendation_id, recommendation.scenario_id,
              recommendation.instrument, recommendation.direction,
              recommendation.source, recommendation.status, recommendation.node_id,
@@ -200,41 +270,101 @@ class RecommendationStore:
              recommendation.supersedes,
              json.dumps(list(recommendation.linked_intent_ids)),
              recommendation.source_reference, recommendation.provenance,
-             self._terms_payload(recommendation)))
+             self._terms_payload(recommendation), recommendation.version))
+
+    def _write_conn(self) -> sqlite3.Connection:
+        """A connection with MANUAL transaction control (`isolation_level=None`).
+
+        LIVE-4E: the operator decision path issues `BEGIN IMMEDIATE` so the
+        write lock is taken before the version is read. Without manual control
+        pysqlite would manage transactions implicitly and the compare-and-set
+        would not be serialized against a concurrent writer."""
+        conn = sqlite3.connect(self._path, timeout=_WRITE_LOCK_TIMEOUT_S,
+                               isolation_level=None)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def current_version(self, recommendation_id: str) -> int:
+        """The sequence of the last applied event — the value an operator must
+        write against. 0 when the recommendation does not exist."""
+        with self._conn() as conn:
+            return self._version(conn, recommendation_id)
+
+    @staticmethod
+    def _version(conn, recommendation_id: str) -> int:
+        row = conn.execute("SELECT MAX(sequence) AS s FROM recommendation_events "
+                           "WHERE recommendation_id=?", (recommendation_id,)).fetchone()
+        return int(row["s"] or 0)
 
     def _next_sequence(self, conn, recommendation_id: str) -> int:
         row = conn.execute("SELECT MAX(sequence) AS s FROM recommendation_events "
                            "WHERE recommendation_id=?", (recommendation_id,)).fetchone()
         return int(row["s"] or 0) + 1
 
+    @staticmethod
+    def _insert_event(conn, *, recommendation_id: str, sequence: int,
+                      event_type: str, occurred_at: str, payload: dict,
+                      provenance: str) -> None:
+        """Validate then insert ONE event. The caller owns the transaction."""
+        event_id = rd.new_event_id(recommendation_id, sequence)
+        rd.RecommendationEvent(                               # validate first
+            event_id=event_id, recommendation_id=recommendation_id,
+            sequence=sequence, event_type=event_type, occurred_at=occurred_at,
+            recorded_at=occurred_at, payload=payload, provenance=provenance)
+        conn.execute(
+            """INSERT INTO recommendation_events (event_id,
+                recommendation_id, sequence, event_type, occurred_at,
+                recorded_at, payload_json, provenance, schema_version)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (event_id, recommendation_id, sequence, event_type, occurred_at,
+             occurred_at, json.dumps(payload), provenance, rd.SCHEMA_VERSION))
+
     def _append(self, *, recommendation: rd.Recommendation, event_type: str,
-                occurred_at: str, payload: dict,
-                provenance: str) -> rd.Recommendation:
+                occurred_at: str, payload: dict, provenance: str,
+                decision: rd.RecommendationDecision | None = None
+                ) -> rd.Recommendation:
+        """Append one event (and OPTIONALLY the decision that caused it) plus the
+        snapshot, in ONE transaction.
+
+        LIVE-4E: passing `decision` here is what makes a decision atomic. When it
+        was inserted by a separate transaction, a failure in between committed a
+        decision that no event recorded and no rebuild could see."""
         rid = recommendation.recommendation_id
         try:
             with self._conn() as conn:
                 sequence = self._next_sequence(conn, rid)
-                event_id = rd.new_event_id(rid, sequence)
-                rd.RecommendationEvent(                       # validate first
-                    event_id=event_id, recommendation_id=rid, sequence=sequence,
-                    event_type=event_type, occurred_at=occurred_at,
-                    recorded_at=occurred_at, payload=payload, provenance=provenance)
+                versioned = replace(recommendation, version=sequence)
                 conn.execute("BEGIN")
-                conn.execute(
-                    """INSERT INTO recommendation_events (event_id,
-                        recommendation_id, sequence, event_type, occurred_at,
-                        recorded_at, payload_json, provenance, schema_version)
-                       VALUES (?,?,?,?,?,?,?,?,?)""",
-                    (event_id, rid, sequence, event_type, occurred_at, occurred_at,
-                     json.dumps(payload), provenance, rd.SCHEMA_VERSION))
-                self._write(conn, recommendation)
+                if decision is not None:
+                    self._insert_decision(conn, decision)
+                self._insert_event(conn, recommendation_id=rid, sequence=sequence,
+                                   event_type=event_type, occurred_at=occurred_at,
+                                   payload=payload, provenance=provenance)
+                self._write(conn, versioned)
                 conn.commit()
         except sqlite3.IntegrityError:
             return self.get_recommendation(rid) or recommendation   # idempotent
         except sqlite3.Error as exc:
             raise RecommendationStoreError("store_write_failed",
                                            type(exc).__name__) from exc
-        return recommendation
+        return versioned
+
+    @staticmethod
+    def _insert_decision(conn, decision: rd.RecommendationDecision) -> None:
+        conn.execute(
+            """INSERT INTO recommendation_decisions (decision_id,
+                recommendation_id, sequence, decision_type, actor_type,
+                actor_id, occurred_at, reason, authorization_reference,
+                execution_mode, provenance, metadata_json, note,
+                against_version, correlation_id, identity_assurance)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (decision.decision_id, decision.recommendation_id, decision.sequence,
+             decision.decision_type, decision.actor_type, decision.actor_id,
+             decision.occurred_at, decision.reason,
+             decision.authorization_reference, decision.execution_mode,
+             decision.provenance, json.dumps(decision.metadata), decision.note,
+             decision.against_version, decision.correlation_id,
+             decision.identity_assurance))
 
     # ── writes (explicit only) ───────────────────────────────────────────────
     def create_recommendation(self, recommendation: rd.Recommendation, *,
@@ -257,35 +387,25 @@ class RecommendationStore:
                         decision: rd.RecommendationDecision,
                         to_status: str | None, at: str) -> rd.Recommendation:
         """Append ONE immutable decision and apply its lifecycle effect.
-        Idempotent on the decision id; an illegal transition writes NOTHING."""
+
+        Idempotent on the decision id; an illegal transition writes NOTHING.
+
+        LIVE-4E: the decision, its event and the snapshot now commit in ONE
+        transaction (see `_append`), and a DIFFERENT decision replaying at an
+        occupied sequence raises `decision_sequence_conflict` instead of being
+        swallowed as an idempotent no-op."""
         current = self.get_recommendation(recommendation_id)
         if current is None:
             raise RecommendationStoreError("recommendation_not_found",
                                            recommendation_id)
+        existing = self.get_decision(decision.decision_id)
+        if existing is not None:
+            return current                                    # true replay
+        self._assert_sequence_free(recommendation_id, decision)
         updated = current
         if to_status is not None and to_status != current.status:
             updated = rd.transition(current, to_status, at=at,
                                     reason=decision.reason or "decision")
-        try:
-            with self._conn() as conn:
-                conn.execute("BEGIN")
-                conn.execute(
-                    """INSERT INTO recommendation_decisions (decision_id,
-                        recommendation_id, sequence, decision_type, actor_type,
-                        actor_id, occurred_at, reason, authorization_reference,
-                        execution_mode, provenance, metadata_json)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (decision.decision_id, recommendation_id, decision.sequence,
-                     decision.decision_type, decision.actor_type, decision.actor_id,
-                     decision.occurred_at, decision.reason,
-                     decision.authorization_reference, decision.execution_mode,
-                     decision.provenance, json.dumps(decision.metadata)))
-                conn.commit()
-        except sqlite3.IntegrityError:
-            return self.get_recommendation(recommendation_id) or current
-        except sqlite3.Error as exc:
-            raise RecommendationStoreError("store_write_failed",
-                                           type(exc).__name__) from exc
         event_type = (rd.STATUS_EVENT.get(to_status)
                       if to_status else rd.RecommendationEventType.DECISION_RECORDED)
         return self._append(
@@ -296,7 +416,149 @@ class RecommendationStore:
                      "decisionType": decision.decision_type,
                      "actorType": decision.actor_type,
                      "status": to_status, "reason": decision.reason},
-            provenance=decision.provenance)
+            provenance=decision.provenance,
+            decision=decision)
+
+    def _assert_sequence_free(self, recommendation_id: str,
+                              decision: rd.RecommendationDecision) -> None:
+        """Refuse a CONTRADICTORY decision at an already-occupied ordinal.
+
+        Two operators deciding concurrently is the case this exists for: before
+        LIVE-4E the loser's write hit the decision-id unique constraint, was
+        treated as a replay, and the loser was told it had succeeded — while its
+        decision left no trace at all."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT decision_id, decision_type FROM recommendation_decisions "
+                "WHERE recommendation_id=? AND sequence=?",
+                (recommendation_id, decision.sequence)).fetchone()
+        if row is not None and row["decision_id"] != decision.decision_id:
+            raise RecommendationStoreError(
+                "decision_sequence_conflict",
+                f"sequence {decision.sequence} already holds "
+                f"{row['decision_type']}")
+
+    def find_decision_by_idempotency_key(self, recommendation_id: str,
+                                         key: str) -> rd.RecommendationDecision | None:
+        """The decision a previous request with this key already recorded.
+
+        A retry after a SUCCESSFUL commit must replay that result rather than be
+        judged against the new state — by then the proposal is terminal, and a
+        naive re-check would tell the caller its own successful decision was
+        illegal."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM recommendation_decisions WHERE recommendation_id=? "
+                "AND json_extract(metadata_json, '$.idempotencyKey')=?",
+                (recommendation_id, key)).fetchone()
+        return self._row_to_decision(row) if row else None
+
+    def get_decision(self, decision_id: str) -> rd.RecommendationDecision | None:
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM recommendation_decisions "
+                               "WHERE decision_id=?", (decision_id,)).fetchone()
+        return self._row_to_decision(row) if row else None
+
+    # ── LIVE-4E: the atomic operator decision path ───────────────────────────
+    def record_operator_decision(self, recommendation_id: str, *,
+                                 decision_type: str, to_status: str,
+                                 actor_type: str, actor_id: str | None,
+                                 reason: str, at: str,
+                                 expected_version: int | None = None,
+                                 note: str | None = None,
+                                 correlation_id: str | None = None,
+                                 identity_assurance: str = rd.IDENTITY_UNKNOWN,
+                                 execution_mode: str | None = None,
+                                 idempotency_key: str | None = None,
+                                 ) -> tuple[rd.Recommendation, rd.RecommendationDecision]:
+        """Record ONE operator decision under optimistic concurrency, atomically.
+
+        The whole read-check-write runs inside `BEGIN IMMEDIATE`, so the write
+        lock is held BEFORE the version is read. Two operators racing therefore
+        serialize: the first commits, the second re-reads a version that no
+        longer matches its precondition and receives `version_conflict`. Exactly
+        one decision wins, the state stays valid, and BOTH outcomes are truthful
+        — the loser is never told it succeeded.
+
+        `idempotency_key` makes a retried request safe: the same key replaying
+        against the same recommendation returns the ORIGINAL decision instead of
+        recording a second one.
+        """
+        conn = self._write_conn()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT * FROM recommendations WHERE "
+                               "recommendation_id=?", (recommendation_id,)).fetchone()
+            if row is None:
+                raise RecommendationStoreError("recommendation_not_found",
+                                               recommendation_id)
+            current = self._row_to_recommendation(row)
+            if idempotency_key:
+                prior = conn.execute(
+                    "SELECT * FROM recommendation_decisions WHERE "
+                    "recommendation_id=? AND json_extract(metadata_json, "
+                    "'$.idempotencyKey')=?",
+                    (recommendation_id, idempotency_key)).fetchone()
+                if prior is not None:
+                    replayed = self._row_to_decision(prior)
+                    if replayed.decision_type != decision_type:
+                        raise RecommendationStoreError(
+                            "idempotency_key_reused",
+                            f"key already recorded {replayed.decision_type}")
+                    conn.execute("ROLLBACK")
+                    return current, replayed
+            version = self._version(conn, recommendation_id)
+            if expected_version is not None and int(expected_version) != version:
+                raise RecommendationStoreError(
+                    "version_conflict",
+                    f"expected version {expected_version}, stored {version}")
+            if not rd.operator_can_transition(current.status, to_status):
+                raise RecommendationStoreError(
+                    "invalid_transition", f"{current.status} -> {to_status}")
+
+            sequence = version + 1
+            decision = rd.RecommendationDecision(
+                decision_id=rd.new_decision_id(recommendation_id, sequence),
+                recommendation_id=recommendation_id, decision_type=decision_type,
+                actor_type=actor_type, actor_id=actor_id, occurred_at=at,
+                sequence=sequence, reason=reason, execution_mode=execution_mode,
+                provenance=actor_type.lower(), note=note,
+                against_version=version, correlation_id=correlation_id,
+                identity_assurance=identity_assurance,
+                metadata={"idempotencyKey": idempotency_key} if idempotency_key else {})
+            updated = replace(
+                rd.transition(current, to_status, at=at, reason=reason),
+                version=sequence)
+            self._insert_decision(conn, decision)
+            self._insert_event(
+                conn, recommendation_id=recommendation_id, sequence=sequence,
+                event_type=(rd.STATUS_EVENT.get(to_status)
+                            or rd.RecommendationEventType.DECISION_RECORDED),
+                occurred_at=at,
+                payload={"decisionId": decision.decision_id,
+                         "decisionType": decision_type, "actorType": actor_type,
+                         "status": to_status, "reason": reason, "note": note,
+                         "againstVersion": version,
+                         "identityAssurance": identity_assurance,
+                         "correlationId": correlation_id},
+                provenance=decision.provenance)
+            self._write(conn, updated)
+            conn.execute("COMMIT")
+            return updated, decision
+        except (RecommendationStoreError, rd.RecommendationError):
+            conn.execute("ROLLBACK")
+            raise
+        except sqlite3.IntegrityError as exc:
+            conn.execute("ROLLBACK")
+            # The unique index is the backstop if two writers ever reach here.
+            raise RecommendationStoreError("decision_sequence_conflict",
+                                           type(exc).__name__) from exc
+        except sqlite3.Error as exc:
+            conn.execute("ROLLBACK")
+            raise RecommendationStoreError("store_write_failed",
+                                           type(exc).__name__) from exc
+        finally:
+            conn.close()
 
     def link_intent(self, recommendation_id: str, intent_id: str, *,
                     at: str, advance: bool = True) -> rd.Recommendation:

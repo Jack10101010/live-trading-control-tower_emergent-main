@@ -28,7 +28,8 @@ function decision(
     decisionId: 'dec_1', decisionType: 'ACCEPT', actorType: 'OPERATOR',
     actor: 'actor_9f2a1b7c4d5e', occurredAt: '2026-07-27T12:02:00Z', sequence: 2,
     reason: 'conditions met', authorizationReference: 'auth_ref_1',
-    executionMode: 'observe', ...over,
+    executionMode: 'observe', note: null, againstVersion: 1,
+    correlationId: null, identityAssurance: 'asserted', ...over,
   };
 }
 
@@ -46,6 +47,7 @@ function rec(
     expiresAt: '2026-07-27T18:00:00Z', ageSeconds: 3600, pastDue: false,
     active: true, nodeId: 'node-1', accountFingerprintMasked: 'acct…fp_1',
     executionTermsAvailability: 'ok', riskTermsAvailability: 'ok',
+    version: 2, decidable: false, undecidableReason: 'already_accepted',
     warnings: [], tags: [], provenance: 'durable-store', freshness: null, ...over,
   };
 }
@@ -181,16 +183,16 @@ describe('RecommendationPanel', () => {
     await waitFor(() => screen.getByTestId('recommendation-row'));
     fireEvent.click(screen.getByTestId('recommendation-row'));
     await waitFor(() => expect(
-      screen.getByTestId('recommendation-decisions').textContent).toContain('DEFER'));
+      screen.getByTestId('decision-history').textContent).toContain('DEFER'));
     const lineage = screen.getByTestId('recommendation-lineage').textContent ?? '';
     expect(lineage).toContain('scn_bbbbbbbbbbbbbbbb');
     expect(lineage).toContain('intent_1');
     expect(lineage).toContain('acct…fp_1');
-    const decisions = screen.getByTestId('recommendation-decisions').textContent ?? '';
+    const decisions = screen.getByTestId('decision-history').textContent ?? '';
     expect(decisions).toContain('DEFER');
     expect(decisions).toContain('ACCEPT');
     expect(decisions).toContain('awaiting session open');
-    const history = screen.getByTestId('recommendation-history').textContent ?? '';
+    const history = screen.getByTestId('recommendation-events').textContent ?? '';
     expect(history).toContain('CREATED');
   });
 
@@ -203,7 +205,7 @@ describe('RecommendationPanel', () => {
     await waitFor(() => screen.getByTestId('recommendation-row'));
     fireEvent.click(screen.getByTestId('recommendation-row'));
     await waitFor(() => expect(
-      screen.getByTestId('recommendation-decisions').textContent)
+      screen.getByTestId('decision-history').textContent)
         .toContain('actor_9f2a1b7c4d5e'));
     const text = container.textContent ?? '';
     expect(text).not.toContain('op_1');
@@ -246,13 +248,13 @@ describe('RecommendationPanel', () => {
     expect(err).toContain('not a claim that no proposals exist');
   });
 
-  it('offers no decision, execution or edit controls', async () => {
+  it('keeps the LIST itself free of controls', async () => {
     vi.spyOn(api, 'tradeRecommendations').mockResolvedValue(view());
     const { container } = mount();
     await waitFor(() => screen.getByTestId('recommendation-table'));
-    // Read-only means no control affordances. The word "ACCEPTED" is legitimate
-    // status vocabulary, so this asserts the absence of CONTROLS and of any
-    // client-side write capability — not the absence of the vocabulary.
+    // LIVE-4E evolved this pin. Decisions exist now, but ONLY inside the detail
+    // view an operator has explicitly opened: the list has no control
+    // affordances, so no decision is reachable without reviewing the proposal.
     expect(container.querySelectorAll('button')).toHaveLength(0);
     expect(container.querySelectorAll('form')).toHaveLength(0);
     expect(container.querySelectorAll('input')).toHaveLength(0);
@@ -260,10 +262,14 @@ describe('RecommendationPanel', () => {
     // The only interactive elements are the read-only filter selects.
     expect(container.querySelectorAll('select').length)
       .toBe(screen.getByTestId('recommendation-filters').querySelectorAll('select').length);
-    for (const write of ['acceptTradeRecommendation', 'rejectTradeRecommendation',
-                         'withdrawTradeRecommendation', 'createTradeRecommendation',
-                         'decideTradeRecommendation']) {
-      expect((api as unknown as Record<string, unknown>)[write]).toBeUndefined();
+    // Exactly ONE write capability exists on the client, and it is the decision
+    // recorder. There is still no create, update, delete or withdraw.
+    expect(typeof (api as unknown as Record<string, unknown>)
+      .decideTradeRecommendation).toBe('function');
+    for (const absent of ['createTradeRecommendation', 'updateTradeRecommendation',
+                          'deleteTradeRecommendation', 'withdrawTradeRecommendation',
+                          'executeTradeRecommendation']) {
+      expect((api as unknown as Record<string, unknown>)[absent]).toBeUndefined();
     }
   });
 });

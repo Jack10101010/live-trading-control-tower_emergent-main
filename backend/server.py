@@ -57,6 +57,8 @@ import broker_history as broker_history_layer
 import trade_ledger_domain as ledger_domain
 import trade_ledger_store as ledger_store_layer
 import trade_reconstruction as reconstruction_layer
+import recommendation_authorization as recommendation_auth_layer
+import recommendation_decision_service as recommendation_decision_layer
 import recommendation_domain as recommendation_layer
 import recommendation_service as recommendation_service_layer
 import recommendation_store as recommendation_store_layer
@@ -3073,10 +3075,11 @@ def ledger_trade_history(trade_id: str, limit: int = 200):
 # canonical TRADE recommendation domain gets its own namespace and the existing
 # fixture surface is left exactly as it was.
 #
-# There is deliberately NO public write route: the operator command vocabulary
-# contains no decision verb, so decisions enter through `_RECOMMENDATION_SERVICE`
-# behind the existing authenticated boundary. Accepting a Recommendation never
-# submits an order — there is no browser-to-broker path here.
+# LIVE-4E adds the MINIMUM write surface: accept, reject and expire. There is no
+# delete, no update and no generic patch, and the operator command vocabulary
+# still contains no decision verb. **Accepting a Recommendation records a
+# decision and nothing else** — no order is submitted, modified or executed, and
+# there remains no browser-to-broker path anywhere in this file.
 
 MAX_RECOMMENDATION_PAGE = 200
 
@@ -3231,6 +3234,152 @@ def recommendation_decisions_route(recommendation_id: str):
     except Exception:
         logger.exception("recommendation decisions failed")
         return _recommendation_unavailable("recommendation_decisions_failed")
+
+
+# ── LIVE-4E: the operator decision write surface ─────────────────────────────
+#
+# THE ONLY three mutations in the Recommendation domain. Each one records an
+# operator decision in the append-only history and changes nothing else. There
+# is no DELETE, no PUT and no PATCH, and no route here can reach the broker, the
+# execution pipeline, the authorization plane or the ledger.
+
+_DECISION_SERVICE = recommendation_decision_layer.RecommendationDecisionService(
+    store_fn=_recommendation_store, now_iso_fn=_now_iso,
+    execution_mode_fn=lambda: _EXECUTION_MODE.current_mode(),
+    audit_fn=lambda event: _append_event(
+        {**event, "eventId": f"ev_{uuid.uuid4().hex[:26].upper()}", "seq": 0,
+         "at": _now_iso()}, None))
+
+#: Which HTTP status each refusal maps to. Anything unlisted is a 422 — a
+#: well-formed request that the domain refused.
+_DECISION_STATUS_CODES = {
+    recommendation_decision_layer.REJECT_NOT_FOUND: 404,
+    "recommendation_store_unavailable": 503,
+}
+
+
+def _decision_principal(request: Request):
+    """Resolve WHO is acting, reusing the existing authentication boundary.
+
+    The audit established there is no per-operator identity in this system: the
+    auth boundary is a single shared token and `_operator_id()` is a fixture
+    display value. So the caller must ASSERT an operator id, and the decision
+    records how much that assertion is worth — `authenticated` when the boundary
+    is enforcing, `asserted` when it is not. An anonymous request is refused
+    outright, regardless of whether the global gate is switched on.
+    """
+    return recommendation_auth_layer.resolve_principal(
+        asserted_actor=(request.headers.get(recommendation_auth_layer.ACTOR_HEADER)
+                        or (request.query_params.get("actorId") or "")),
+        boundary_authenticated=recommendation_auth_layer.boundary_is_authenticating(),
+        correlation_id=request.headers.get(
+            recommendation_auth_layer.CORRELATION_HEADER))
+
+
+async def _decision_body(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except Exception:                                       # noqa: BLE001
+        body = {}
+    return body if isinstance(body, dict) else {}
+
+
+def _decision_response(recommendation, decision, *, replayed: bool):
+    """The decision outcome, stated so it cannot be mistaken for an execution."""
+    return _projection_response({
+        "recorded": True, "replayed": replayed,
+        "recommendationId": recommendation.recommendation_id,
+        "status": recommendation.status, "version": recommendation.version,
+        "outcome": recommendation.outcome,
+        "decision": decision.safe_view(),
+        "executed": False,
+        "notice": ("This records an operator decision only. No order was "
+                   "submitted, modified or executed."),
+        "projectionTimestamp": _now_iso()})
+
+
+async def _record_decision_route(request: Request, recommendation_id: str,
+                                 decision_type: str):
+    """Shared handler: resolve principal -> validate -> record atomically."""
+    body = await _decision_body(request)
+    try:
+        principal = _decision_principal(request)
+    except recommendation_auth_layer.DecisionAuthorizationError as exc:
+        return _projection_response(
+            {"error": "forbidden", "code": exc.reason, "detail": exc.detail}, 403)
+
+    raw_version = body.get("expectedVersion")
+    expected_version = None
+    if raw_version is not None:
+        try:
+            expected_version = int(raw_version)
+        except (TypeError, ValueError):
+            return _projection_response(
+                {"error": "invalid", "code": "invalid_expected_version",
+                 "detail": "expectedVersion must be an integer"}, 422)
+
+    idem = (request.headers.get("Idempotency-Key") or "").strip() or None
+    try:
+        recommendation, decision = _DECISION_SERVICE.decide(
+            recommendation_id, decision_type=decision_type, principal=principal,
+            reason=body.get("reason") or "", note=body.get("note"),
+            expected_version=expected_version, idempotency_key=idem)
+    except recommendation_auth_layer.DecisionAuthorizationError as exc:
+        return _projection_response(
+            {"error": "forbidden", "code": exc.reason, "detail": exc.detail}, 403)
+    except recommendation_decision_layer.DecisionServiceError as exc:
+        status = 409 if exc.conflict else _DECISION_STATUS_CODES.get(exc.reason, 422)
+        current = None
+        try:
+            store = _recommendation_store()
+            current = store.get_recommendation(recommendation_id) if store else None
+        except Exception:                                   # noqa: BLE001
+            current = None
+        return _projection_response({
+            "error": "conflict" if exc.conflict else "rejected",
+            "code": exc.reason, "detail": exc.detail, "executed": False,
+            # A conflicted caller needs the CURRENT truth to retry against.
+            "currentStatus": current.status if current else None,
+            "currentVersion": current.version if current else None}, status)
+    except Exception:                                       # noqa: BLE001
+        logger.exception("recommendation decision failed")
+        return _recommendation_unavailable("recommendation_decision_failed")
+
+    replayed = bool(idem and decision.metadata.get("idempotencyKey") == idem
+                    and decision.occurred_at != _now_iso())
+    return _decision_response(recommendation, decision, replayed=replayed)
+
+
+@api_router.post("/trade-recommendations/{recommendation_id}/accept")
+async def accept_recommendation_route(request: Request, recommendation_id: str):
+    """Record an operator ACCEPT.
+
+    ACCEPTANCE IS NOT EXECUTION. This moves the proposal to ACCEPTED and writes
+    one immutable decision. It submits no order, creates no intent, grants no
+    authorization and changes no execution mode. Moving to INTENT_CREATED
+    remains the execution boundary's job, because only it knows an intent
+    exists."""
+    return await _record_decision_route(
+        request, recommendation_id,
+        recommendation_layer.RecommendationDecisionType.ACCEPT)
+
+
+@api_router.post("/trade-recommendations/{recommendation_id}/reject")
+async def reject_recommendation_route(request: Request, recommendation_id: str):
+    """Record an operator REJECT. `reason` is required — a rejection without a
+    recorded reason is not auditable."""
+    return await _record_decision_route(
+        request, recommendation_id,
+        recommendation_layer.RecommendationDecisionType.REJECT)
+
+
+@api_router.post("/trade-recommendations/{recommendation_id}/expire")
+async def expire_recommendation_route(request: Request, recommendation_id: str):
+    """Record an operator EXPIRE — the proposal is stale and will not be acted
+    on. Cancels no broker order and invalidates no Scenario."""
+    return await _record_decision_route(
+        request, recommendation_id,
+        recommendation_layer.RecommendationDecisionType.EXPIRE)
 
 
 @api_router.get("/execution/health")

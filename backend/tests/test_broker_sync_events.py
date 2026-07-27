@@ -115,11 +115,14 @@ def test_exactly_eight_append_event_production_call_sites():
              if not src[max(0, m.start() - 4):m.start()].endswith("def ")]
     # LIVE-2 deliberately added two reviewed producers: the market-order route's
     # denial event and its result event.
-    assert len(calls) == 8, (
-        f"expected exactly 8 production _append_event call sites "
+    # LIVE-4E added a NINTH reviewed producer: the operator decision journal
+    # entry (RECOMMENDATION_ACCEPT/REJECT/EXPIRE) — a best-effort MIRROR of a
+    # decision already committed to its own append-only history.
+    assert len(calls) == 9, (
+        f"expected exactly 9 production _append_event call sites "
         f"(command, broker-sync, LIVE_STATUS, L2 projector wiring, market-order "
-        f"denial/result, entity-operation denial/result); found {len(calls)} — "
-        "a new producer must be reviewed before it ships")
+        f"denial/result, entity-operation denial/result, recommendation decision); "
+        f"found {len(calls)} — a new producer must be reviewed before it ships")
 
 
 # ── 2/3. Silent seeding ──────────────────────────────────────────────────────

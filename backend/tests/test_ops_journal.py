@@ -471,10 +471,16 @@ def test_exactly_eight_append_event_production_call_sites():
              if not src[max(0, m.start() - 4):m.start()].endswith("def ")]
     # LIVE-2 deliberately added two reviewed producers (market-order denial +
     # market-order result events).
-    assert len(calls) == 8, (
-        "expected exactly 8 production _append_event call sites "
+    # LIVE-4E deliberately added a NINTH reviewed producer: the operator
+    # decision journal entry (RECOMMENDATION_ACCEPT/REJECT/EXPIRE). It is a
+    # best-effort MIRROR of a decision already committed to its own
+    # append-only history — it can never lose a decision, and it records that
+    # no order was submitted.
+    assert len(calls) == 9, (
+        "expected exactly 9 production _append_event call sites "
         "(command, broker-sync, LIVE_STATUS, L2 projector wiring, "
-        "market-order denial/result, entity-operation denial/result); "
+        "market-order denial/result, entity-operation denial/result, "
+        "recommendation decision); "
         f"found {len(calls)}")
 
 # ── Node-derived provenance: no fixture package hash ─────────────────────────

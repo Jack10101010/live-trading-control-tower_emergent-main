@@ -65,6 +65,21 @@ MAX_RATIONALE_CHARS = 2000
 MAX_TAGS = 16
 MAX_TAG_CHARS = 48
 MAX_AUTHORIZATION_REF_CHARS = 128
+MAX_NOTE_CHARS = 1000                      # LIVE-4E: operator decision note
+MAX_CORRELATION_ID_CHARS = 64
+
+# ── LIVE-4E: how much the system actually knows about who acted ──────────────
+#: The API boundary authenticated the caller AND the caller asserted this id.
+IDENTITY_AUTHENTICATED = "authenticated"
+#: The caller asserted this id but the boundary could not authenticate it (the
+#: shared-token gate is not per-operator identity). Recorded honestly so an
+#: audit trail never claims more assurance than it has.
+IDENTITY_ASSERTED = "asserted"
+IDENTITY_UNKNOWN = "unknown"
+
+ALL_IDENTITY_ASSURANCES = frozenset({
+    IDENTITY_AUTHENTICATED, IDENTITY_ASSERTED, IDENTITY_UNKNOWN,
+})
 
 
 class RecommendationError(ValueError):
@@ -397,6 +412,78 @@ DECISION_STATUS = {
 }
 
 
+# ── LIVE-4E: the OPERATOR decision lifecycle ──────────────────────────────────
+#
+# `_FORWARD` above is the FULL lifecycle, including states only the execution
+# boundary can record. This second, strictly smaller table is the lifecycle an
+# OPERATOR can cause, and it is the ONLY one the write API may use:
+#
+#     decidable  ->  ACCEPTED | REJECTED | EXPIRED
+#
+# Three properties follow, each pinned by a test:
+#
+#   1. INTENT_CREATED, PARTIALLY_EXECUTED, EXECUTED and FAILED are NOT reachable
+#      by any operator decision. They are OBSERVATION states written only from
+#      execution evidence, so an operator cannot move a proposal into a state
+#      that asserts a trade happened.
+#   2. Accepting records a decision and nothing else — no order is submitted, no
+#      authorization is granted, no execution mode changes.
+#   3. SUPERSEDE and WITHDRAW are deliberately NOT operator-surface transitions.
+#      Supersession requires constructing a REPLACEMENT proposal, i.e. a
+#      creation surface this slice does not expose; both stay internal.
+
+#: The statuses on which an operator decision may be taken at all.
+DECIDABLE_STATUSES = frozenset({
+    RecommendationStatus.PROPOSED, RecommendationStatus.PENDING_DECISION,
+})
+
+#: The CLOSED set of operator decision types. Every other type in
+#: `ALL_DECISION_TYPES` is internal (DEFER, WITHDRAW, SUPERSEDE) or automated
+#: (AUTO_ACCEPT, AUTO_REJECT, SYSTEM_INVALIDATE) and the gate refuses it.
+OPERATOR_DECISION_TYPES = frozenset({
+    RecommendationDecisionType.ACCEPT, RecommendationDecisionType.REJECT,
+    RecommendationDecisionType.EXPIRE,
+})
+
+#: src -> the statuses an OPERATOR decision may move it to. Nothing else.
+OPERATOR_TRANSITIONS: dict[str, frozenset] = {
+    status: frozenset({RecommendationStatus.ACCEPTED,
+                       RecommendationStatus.REJECTED,
+                       RecommendationStatus.EXPIRED})
+    for status in DECIDABLE_STATUSES
+}
+
+#: Every status an operator decision can ever produce.
+OPERATOR_REACHABLE_STATUSES = frozenset(
+    dst for targets in OPERATOR_TRANSITIONS.values() for dst in targets)
+
+
+def operator_can_transition(src: str, dst: str) -> bool:
+    """True only when an OPERATOR may cause `src -> dst`. Strictly narrower than
+    `can_transition`: every operator transition is also a domain transition, but
+    not the reverse."""
+    return dst in OPERATOR_TRANSITIONS.get(src, frozenset())
+
+
+def undecidable_reason(status: str) -> str | None:
+    """Why this proposal cannot be decided, or None when it can be.
+
+    The UI renders this verbatim, so a disabled control always states its own
+    reason instead of silently doing nothing."""
+    if status in DECIDABLE_STATUSES:
+        return None
+    if status == RecommendationStatus.DRAFT:
+        return "not_yet_proposed"
+    if status == RecommendationStatus.ACCEPTED:
+        return "already_accepted"
+    if status in TERMINAL_STATUSES:
+        return f"already_terminal:{status}"
+    if status in (RecommendationStatus.INTENT_CREATED,
+                  RecommendationStatus.PARTIALLY_EXECUTED):
+        return f"execution_in_progress:{status}"
+    return f"not_decidable:{status}"
+
+
 class ActorType:
     OPERATOR = "OPERATOR"
     SYSTEM = "SYSTEM"
@@ -428,8 +515,40 @@ class RecommendationDecision:
     execution_mode: str | None = None
     provenance: str = "operator"
     metadata: dict = field(default_factory=dict)
+    #: LIVE-4E: the operator's free-text note. Distinct from `reason`: `reason`
+    #: is the REQUIRED justification (and, for a rejection, the rejection
+    #: reason); `note` is optional colour. Both are bounded and neither is ever
+    #: interpreted — they are recorded and displayed as text.
+    note: str | None = None
+    #: The version this decision was taken against — the event sequence the
+    #: deciding operator had actually read.
+    against_version: int | None = None
+    #: Correlation id threaded from the request, so a decision can be tied back
+    #: to the journal entry and the HTTP request that produced it.
+    correlation_id: str | None = None
+    #: Whether the acting identity was AUTHENTICATED by the API boundary or
+    #: merely ASSERTED by the caller. Never inferred — see
+    #: `recommendation_authorization`. History must not overclaim.
+    identity_assurance: str = "unknown"
 
     def __post_init__(self):
+        if self.note is not None and len(str(self.note)) > MAX_NOTE_CHARS:
+            raise RecommendationError("note_too_long")
+        if self.identity_assurance not in ALL_IDENTITY_ASSURANCES:
+            raise RecommendationError("unknown_identity_assurance",
+                                      str(self.identity_assurance))
+        if self.correlation_id is not None:
+            corr = str(self.correlation_id)
+            if len(corr) > MAX_CORRELATION_ID_CHARS:
+                raise RecommendationError("correlation_id_too_long")
+            if not re.fullmatch(r"[A-Za-z0-9_.:-]+", corr):
+                raise RecommendationError("invalid_correlation_id", corr)
+        if self.against_version is not None and (
+                isinstance(self.against_version, bool)
+                or not isinstance(self.against_version, int)
+                or self.against_version < 0):
+            raise RecommendationError("invalid_against_version",
+                                      str(self.against_version))
         if self.decision_type not in ALL_DECISION_TYPES:
             raise RecommendationError("unknown_decision_type", str(self.decision_type))
         if self.actor_type not in ALL_ACTOR_TYPES:
@@ -465,6 +584,10 @@ class RecommendationDecision:
             "executionMode": self.execution_mode,
             "provenance": self.provenance,
             "metadata": security_config.redact_mapping(self.metadata),
+            "note": self.note,
+            "againstVersion": self.against_version,
+            "correlationId": self.correlation_id,
+            "identityAssurance": self.identity_assurance,
         })
 
     def as_dict(self) -> dict:
@@ -597,6 +720,12 @@ class Recommendation:
     linked_intent_ids: tuple = field(default_factory=tuple)
     source_reference: str | None = None
     provenance: str = "operator"
+    #: LIVE-4E: the optimistic-concurrency version — the sequence of the LAST
+    #: event applied to this proposal. It is derived from the append-only event
+    #: log, never assigned independently, so it cannot drift from history. A
+    #: caller that read version N and writes against N is guaranteed nothing
+    #: else was recorded in between.
+    version: int = 0
 
     def __post_init__(self):
         if not re.fullmatch(rf"{RECOMMENDATION_PREFIX}[0-9a-f]{{16}}",
@@ -632,6 +761,16 @@ class Recommendation:
         return (expiry is not None and ref is not None and ref >= expiry
                 and self.status not in TERMINAL_STATUSES)
 
+    @property
+    def decidable(self) -> bool:
+        """LIVE-4E: whether an OPERATOR may take a decision on this proposal."""
+        return self.status in DECIDABLE_STATUSES
+
+    @property
+    def undecidable_reason(self) -> str | None:
+        """Why it is not decidable, or None. Rendered verbatim by the UI."""
+        return undecidable_reason(self.status)
+
     def lineage(self) -> RecommendationLineage:
         return RecommendationLineage(
             recommendation_id=self.recommendation_id, scenario_id=self.scenario_id,
@@ -657,6 +796,9 @@ class Recommendation:
             "linkedIntentIds": list(self.linked_intent_ids),
             "sourceReference": self.source_reference,
             "provenance": self.provenance, "schemaVersion": SCHEMA_VERSION,
+            "version": self.version,
+            "decidable": self.decidable,
+            "undecidableReason": self.undecidable_reason,
         })
 
 

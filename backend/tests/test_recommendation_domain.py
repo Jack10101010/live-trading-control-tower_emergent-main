@@ -362,7 +362,8 @@ def test_conflicting_decisions_are_visible():
 
 def test_store_creates_and_is_idempotent(tmp_path):
     store = _store(tmp_path)
-    assert store.schema_version() == 1
+    # LIVE-4E evolved this pin 1 -> 2 (version column + decision audit columns).
+    assert store.schema_version() == 2
     r = _rec()
     store.create_recommendation(r)
     store.create_recommendation(r)
@@ -914,17 +915,30 @@ def test_honest_404_and_unavailable(monkeypatch, tmp_path):
     assert r.json()["code"] == "recommendation_store_unavailable"
 
 
-def test_there_is_no_decision_write_route(monkeypatch, tmp_path):
-    """PART 14: no public write surface exists — decisions enter through the
-    internal service only."""
+def test_the_write_surface_stays_minimal(monkeypatch, tmp_path):
+    """LIVE-4E evolved this pin. LIVE-4D asserted NO write route existed at all;
+    LIVE-4E adds exactly three (accept / reject / expire) and nothing else.
+
+    What is still pinned: no create, no update, no delete, no generic patch, and
+    the decision routes are POST-only. The gate itself is proven in the LIVE-4E
+    suite — here we only assert the SHAPE of the surface."""
     _, r = _seed(monkeypatch, tmp_path)
     rid = r.recommendation_id
-    for path in (f"/api/trade-recommendations/{rid}/decisions",
-                 f"/api/trade-recommendations/{rid}/accept",
-                 f"/api/trade-recommendations/{rid}/reject",
-                 "/api/trade-recommendations"):
+    # No mutation verb anywhere except the three decision POSTs.
+    for path in (f"/api/trade-recommendations/{rid}",
+                 f"/api/trade-recommendations/{rid}/decisions",
+                 f"/api/trade-recommendations/{rid}/history",
+                 "/api/trade-recommendations",
+                 "/api/trade-recommendations/active"):
         for verb in (client.post, client.put, client.patch, client.delete):
             assert verb(path).status_code in (404, 405), path
+    # The three that DO exist reject every verb but POST.
+    for action in ("accept", "reject", "expire"):
+        path = f"/api/trade-recommendations/{rid}/{action}"
+        for verb in (client.put, client.patch, client.delete):
+            assert verb(path).status_code in (404, 405), path
+        # POST exists, and refuses an anonymous caller rather than 404ing.
+        assert client.post(path, json={"reason": "x"}).status_code == 403
 
 
 def test_the_pre_existing_fixture_route_is_untouched():

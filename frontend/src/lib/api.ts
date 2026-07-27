@@ -972,6 +972,11 @@ export interface RecommendationDecisionView {
   reason: string | null;
   authorizationReference: string | null;
   executionMode: string | null;
+  note: string | null;
+  againstVersion: number | null;
+  correlationId: string | null;
+  /** 'authenticated' | 'asserted' | 'unknown' — never inferred. */
+  identityAssurance: string;
 }
 
 export interface RecommendationOperationalView {
@@ -1006,6 +1011,12 @@ export interface RecommendationOperationalView {
   accountFingerprintMasked: string | null;
   executionTermsAvailability: string | null;
   riskTermsAvailability: string | null;
+  /** LIVE-4E: optimistic-concurrency version — the last applied event sequence. */
+  version: number;
+  /** Whether an operator may decide on this proposal right now. */
+  decidable: boolean;
+  /** Why not, when `decidable` is false. Rendered verbatim. */
+  undecidableReason: string | null;
   warnings: string[];
   tags: string[];
   provenance: string;
@@ -1035,6 +1046,49 @@ export interface RecommendationListView {
   offset?: number;
   error?: string;
   code?: string;
+}
+
+export interface RecommendationDecisionResult {
+  recorded: boolean;
+  replayed: boolean;
+  recommendationId: string;
+  status: string;
+  version: number;
+  outcome: string;
+  decision: RecommendationDecisionView;
+  /** Always false. A decision is never an execution. */
+  executed: boolean;
+  notice: string;
+}
+
+/** A refused decision. `conflict` responses carry the CURRENT truth to retry against. */
+export interface RecommendationDecisionRefusal {
+  error: string;
+  code: string;
+  detail?: string;
+  executed: boolean;
+  currentStatus?: string | null;
+  currentVersion?: number | null;
+}
+
+export class RecommendationDecisionError extends Error {
+  readonly code: string;
+  readonly detail: string;
+  readonly httpStatus: number;
+  readonly currentStatus: string | null;
+  readonly currentVersion: number | null;
+  constructor(body: RecommendationDecisionRefusal, httpStatus: number) {
+    super(body.detail || body.code);
+    this.code = body.code;
+    this.detail = body.detail ?? '';
+    this.httpStatus = httpStatus;
+    this.currentStatus = body.currentStatus ?? null;
+    this.currentVersion = body.currentVersion ?? null;
+  }
+  /** True when the proposal moved under the operator and the read must refresh. */
+  get isConflict(): boolean {
+    return this.httpStatus === 409;
+  }
 }
 
 export interface RecommendationEventView {
@@ -1214,6 +1268,39 @@ export const api = {
     apiFetch<RecommendationOperationalView & {
       decisions: RecommendationDecisionView[]; history: RecommendationEventView[];
     }>(`/trade-recommendations/${encodeURIComponent(id)}`),
+  /**
+   * LIVE-4E — record ONE operator decision. This records a decision ONLY: it
+   * submits, modifies and executes nothing. `expectedVersion` is the optimistic
+   * concurrency precondition; a 409 means another operator decided first.
+   */
+  decideTradeRecommendation: async (
+    id: string,
+    decision: 'accept' | 'reject' | 'expire',
+    body: { reason: string; note?: string; expectedVersion?: number },
+    opts: { actorId: string; idempotencyKey: string; correlationId?: string }
+  ): Promise<RecommendationDecisionResult> => {
+    const res = await fetch(
+      apiUrl(`/trade-recommendations/${encodeURIComponent(id)}/${decision}`), {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'X-Operator-Id': opts.actorId,
+          'Idempotency-Key': opts.idempotencyKey,
+          ...(opts.correlationId ? { 'X-Correlation-Id': opts.correlationId } : {}),
+          // ARCH-3: the Authorization header comes from the single owner. This
+          // method never builds one of its own.
+          ...authHeader(),
+        },
+        body: JSON.stringify(body),
+      });
+    const payload = await res.json().catch(() => ({ code: 'unreadable_response' }));
+    if (!res.ok) {
+      throw new RecommendationDecisionError(
+        payload as RecommendationDecisionRefusal, res.status);
+    }
+    return payload as RecommendationDecisionResult;
+  },
   tradeRecommendationDecisions: (id: string) =>
     apiFetch<{ decisions: RecommendationDecisionView[]; conflicts: string[] }>(
       `/trade-recommendations/${encodeURIComponent(id)}/decisions`),

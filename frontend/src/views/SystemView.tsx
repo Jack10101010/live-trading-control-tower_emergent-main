@@ -10,7 +10,7 @@ import { OperationalDashboard } from '@/components/domain/OperationalDashboard';
 import { ScenarioPanel } from '@/components/domain/ScenarioPanel';
 import { TradeLedgerPanel } from '@/components/domain/TradeLedgerPanel';
 import { RecommendationPanel } from '@/components/domain/RecommendationPanel';
-import { useFleet, usePackages, useFeatureFlags, useRuntimeHealth, useBrokerReconciliation, useStrategyEvaluation, useSchedulerStatus, useMarketSnapshot, useRiskLimits, useActivePackage, useBackendHealth } from '@/hooks/useRepository';
+import { useFleet, usePackages, useFeatureFlags, useRuntimeHealth, useBrokerReconciliation, useStrategyEvaluation, useSchedulerStatus, useMarketSnapshot, useRiskLimits, useActivePackage, useBackendHealth, useOperator } from '@/hooks/useRepository';
 import { api, QK } from '@/lib/api';
 import { queryClient } from '@/lib/queryClient';
 import { Panel } from '@/components/structures/Panel';
@@ -36,6 +36,11 @@ export function SystemView() {
   const riskLimits = useRiskLimits();
   const activePackage = useActivePackage();
   const { health } = useBackendHealth();
+  // LIVE-4E: the acting operator. This is an ASSERTED identity — the system has
+  // no per-operator authentication (see recommendation_authorization) — so the
+  // backend stamps every decision with how much the claim is worth.
+  const operatorId = (useOperator() as { operatorId?: string } | undefined)
+    ?.operatorId;
 
   // UI-0: real runtime-health values (or `undefined` = unknown). Never fabricated.
   const rt = runtime;
@@ -117,9 +122,12 @@ export function SystemView() {
       {/* LIVE-4C — the canonical Trade Ledger: the historical economic result
           of every closed trade. Read-only; no financial reconstruction here. */}
       {/* LIVE-4D — the canonical Recommendation domain: proposals to act on a
-          Scenario, with their decision history. Read-only; acceptance never
-          executes. */}
-      <RecommendationPanel />
+          Scenario, with their decision history.
+          LIVE-4E — opening a proposal reveals the operator decision surface.
+          The operator id is ASSERTED, not authenticated: this system has no
+          per-operator identity (the auth boundary is one shared token), so
+          every decision records how much its identity claim was worth. */}
+      <RecommendationPanel operatorId={operatorId} />
 
       <TradeLedgerPanel />
 
