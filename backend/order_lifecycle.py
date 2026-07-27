@@ -37,6 +37,10 @@ operations plus a future submit path):
     acknowledged           broker acknowledged the order (distinct from any fill)
     partially_filled       some quantity filled (distinct from filled)
     filled                 fully filled (terminal)
+    open                   LIVE-2: market-order submission complete — the broker
+                           acknowledged and the resulting position is open
+                           (terminal for the SUBMISSION intent; the open position
+                           itself is tracked by broker reads + reconciliation)
     modify_pending         modify requested, not yet confirmed
     modified               modify confirmed (terminal for a modify intent)
     cancel_pending         cancel requested, not yet confirmed
@@ -191,6 +195,7 @@ SUBMITTED = "submitted"
 ACKNOWLEDGED = "acknowledged"
 PARTIALLY_FILLED = "partially_filled"
 FILLED = "filled"
+OPEN = "open"          # LIVE-2: acknowledged market order -> position open (terminal)
 MODIFY_PENDING = "modify_pending"
 MODIFIED = "modified"
 CANCEL_PENDING = "cancel_pending"
@@ -206,13 +211,13 @@ FAILED = "failed"
 
 ALL_STATES = frozenset({
     CREATED, VALIDATED, SAFETY_DENIED, READY, SUBMITTING, SUBMITTED, ACKNOWLEDGED,
-    PARTIALLY_FILLED, FILLED, MODIFY_PENDING, MODIFIED, CANCEL_PENDING, CANCELLED,
+    PARTIALLY_FILLED, FILLED, OPEN, MODIFY_PENDING, MODIFIED, CANCEL_PENDING, CANCELLED,
     CLOSE_PENDING, CLOSED, REJECTED, EXPIRED, UNKNOWN, RECONCILIATION_REQUIRED,
     RECONCILED, FAILED,
 })
 
 TERMINAL_STATES = frozenset({
-    SAFETY_DENIED, FILLED, MODIFIED, CANCELLED, CLOSED, REJECTED, EXPIRED, FAILED,
+    SAFETY_DENIED, FILLED, OPEN, MODIFIED, CANCELLED, CLOSED, REJECTED, EXPIRED, FAILED,
 })
 
 #: The explicit allowed-transition table. A pair absent from this table is an
@@ -235,6 +240,8 @@ ALLOWED_TRANSITIONS: frozenset = frozenset({
     (ACKNOWLEDGED, PARTIALLY_FILLED), (ACKNOWLEDGED, FILLED), (ACKNOWLEDGED, MODIFY_PENDING),
     (ACKNOWLEDGED, CANCEL_PENDING), (ACKNOWLEDGED, CLOSE_PENDING), (ACKNOWLEDGED, EXPIRED),
     (ACKNOWLEDGED, UNKNOWN), (ACKNOWLEDGED, FAILED),
+    # LIVE-2: a broker-acknowledged market order whose position is confirmed open.
+    (ACKNOWLEDGED, OPEN), (PARTIALLY_FILLED, OPEN),
     (PARTIALLY_FILLED, PARTIALLY_FILLED), (PARTIALLY_FILLED, FILLED),
     (PARTIALLY_FILLED, CANCEL_PENDING), (PARTIALLY_FILLED, CLOSE_PENDING),
     (PARTIALLY_FILLED, UNKNOWN), (PARTIALLY_FILLED, FAILED),
@@ -245,6 +252,7 @@ ALLOWED_TRANSITIONS: frozenset = frozenset({
     (RECONCILIATION_REQUIRED, RECONCILED), (RECONCILIATION_REQUIRED, FAILED),
     # `reconciled` resolves onward ONLY with evidence (enforced in transition()).
     (RECONCILED, ACKNOWLEDGED), (RECONCILED, PARTIALLY_FILLED), (RECONCILED, FILLED),
+    (RECONCILED, OPEN),
     (RECONCILED, MODIFIED), (RECONCILED, CANCELLED), (RECONCILED, CLOSED), (RECONCILED, FAILED),
 })
 
@@ -260,7 +268,7 @@ PRE_DISPATCH_STATES = frozenset({CREATED, VALIDATED, READY})
 
 #: Healthy states reachable from `reconciled` — each requires explicit evidence.
 _EVIDENCE_REQUIRED_TARGETS = frozenset({
-    ACKNOWLEDGED, PARTIALLY_FILLED, FILLED, MODIFIED, CANCELLED, CLOSED,
+    ACKNOWLEDGED, PARTIALLY_FILLED, FILLED, OPEN, MODIFIED, CANCELLED, CLOSED,
 })
 
 

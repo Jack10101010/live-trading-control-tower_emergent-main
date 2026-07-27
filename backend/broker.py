@@ -21,6 +21,12 @@ from typing import Any, Callable
 # (MockBroker, the inert MT5Adapter) and re-exports the contract names so existing
 # importers keep working unchanged.
 from broker_adapter import (  # noqa: F401 — re-exported contract surface
+    ACK_COMMUNICATION_FAILED,
+    ACK_FILLED,
+    ACK_NOT_SUBMITTED,
+    ACK_PARTIAL,
+    ACK_REJECTED,
+    ACK_TIMEOUT,
     NOT_IMPLEMENTED,
     UNSUPPORTED,
     BrokerAccount,
@@ -35,6 +41,8 @@ from broker_adapter import (  # noqa: F401 — re-exported contract surface
     BrokerResult,
     BrokerSymbol,
     ConnectionState,
+    MarketOrderAck,
+    MarketOrderRequest,
     RESULT_NOT_CONNECTED,
     RESULT_UNAVAILABLE,
     UnknownAdapterError,
@@ -260,6 +268,30 @@ class MockBroker(Broker):
 
         return None, None
 
+    # ── LIVE-2: deterministic fixture market-order execution ─────────────────
+    def submit_market_order(self, request: MarketOrderRequest,
+                            ctx: BrokerContext) -> BrokerResult:
+        """Deterministic FIXTURE execution: same request -> same acknowledgement.
+        The ticket derives from the intent id (no randomness, no clock); no live
+        broker is touched and no market price is invented (price stays None —
+        the mock reports what it knows, which is no market)."""
+        import hashlib
+        ticket = "mockord_" + hashlib.sha256(request.intent_id.encode()).hexdigest()[:12]
+        ack = MarketOrderAck(
+            intent_id=request.intent_id,
+            status=ACK_FILLED,
+            broker_order_ticket=ticket,
+            broker_deal_ticket="mockdeal_" + ticket[-12:],
+            requested_volume=request.quantity,
+            filled_volume=request.quantity,
+            price=None,                     # the mock invents no market price
+            provenance="mock-fixture",
+            detail="mock fixture execution — no live broker action",
+            at=ctx.now,
+        )
+        return BrokerResult(ok=True, code="ok", detail="mock fixture market order",
+                            data=ack.as_dict(), broker_ref=ticket)
+
     def _order_command(self, name: str, ctx: BrokerContext) -> tuple[dict | None, dict | None]:
         payload, now, reason = ctx.payload, ctx.now, ctx.reason
         order_id = payload.get("orderId")
@@ -406,14 +438,16 @@ class MT5Adapter(Broker):
         return BrokerHealth(brokerId=self.broker_id, kind=self.kind, connection=state, detail=detail)
 
     def capabilities(self) -> BrokerCapability:
-        # Realistic MT5 placeholders (netting/hedging depend on account type; replay is N/A live).
+        # LIVE-2: the MT5 adapter supports EXACTLY ONE live write — market-order
+        # submission (`submit_market_order`). `supportsLiveWrite` and
+        # `supportsMarketExecution` are therefore True and EVERY other write
+        # capability remains False: pending orders, modification, partial close
+        # and all other mutations are structurally unavailable (their verbs stay
+        # inert and their capabilities absent).
         return BrokerCapability(
-            # LIVE-1: the MT5 adapter is STRUCTURALLY READ-ONLY. Every write
-            # capability is False, so capability checks (and execution safety)
-            # deny every execution command against it. supportsLiveWrite is False
-            # on every adapter in this repository.
-            supportsLiveWrite=False,
-            supportsMarketExecution=False, supportsPendingOrders=False, supportsModify=False,
+            supportsLiveWrite=True,
+            supportsMarketExecution=True,
+            supportsPendingOrders=False, supportsModify=False,
             supportsPartialClose=False, supportsHedging=False, supportsNetting=False,
             supportsReplay=False,
         )
@@ -538,6 +572,103 @@ class MT5Adapter(Broker):
                 "provenance": "live_mt5",
             })
         return self._guarded("reconcile_snapshot", read)
+
+    # ── LIVE-2: the ONE live write — market-order submission ─────────────────
+    def submit_market_order(self, request: MarketOrderRequest,
+                            ctx: BrokerContext) -> BrokerResult:
+        """Submit exactly one market order through the gateway's proven typed
+        write path (`open_position` -> `mt5_results` classification). Total:
+        every failure mode answers a canonical BrokerResult; the MT5 result
+        object never escapes; an exception in this path means the outcome is
+        UNKNOWABLE and maps to `communication_failed` (reconcile — never guess).
+
+        This is the ONLY write the adapter implements. Every other mutation
+        (pending orders, modify, cancel, close, flatten) remains inert."""
+        gw = self._gateway
+        if gw is None:
+            reason = getattr(self, "_policy_denied_reason", None)
+            if reason:
+                return BrokerResult(ok=False, code="connection_denied", detail=reason)
+            return BrokerResult(ok=False, code=RESULT_UNAVAILABLE,
+                                detail="MetaTrader5 package unavailable on this host")
+        if not gw.connected:
+            return BrokerResult(ok=False, code=RESULT_NOT_CONNECTED,
+                                detail="MT5 terminal not connected")
+        try:
+            result = gw.open_position(request.side, float(request.quantity),
+                                      request.stop_loss, request.take_profit,
+                                      request.intent_id)
+            return self._map_submit_result(request, result, ctx)
+        except Exception as exc:
+            # The gateway catches order_send exceptions itself (typed EXCEPTION
+            # disposition), so reaching here means the submission OUTCOME IS
+            # UNKNOWABLE — communication_failed, queued for reconciliation.
+            import logging
+            logging.getLogger("broker").warning(
+                "AUDIT mt5_submit_failed op=submit_market_order err=%s",
+                type(exc).__name__)
+            ack = MarketOrderAck(intent_id=request.intent_id,
+                                 status=ACK_COMMUNICATION_FAILED,
+                                 requested_volume=request.quantity,
+                                 reason="communication_failed",
+                                 detail=type(exc).__name__,
+                                 provenance="live_mt5", at=ctx.now)
+            return BrokerResult(ok=False, code="communication_failed",
+                                detail=type(exc).__name__, data=ack.as_dict())
+
+    def _map_submit_result(self, request: MarketOrderRequest, result,
+                           ctx: BrokerContext) -> BrokerResult:
+        """Map one typed MT5SubmitResult into the canonical acknowledgement.
+        Plain scalars only; the SDK evidence was already snapshotted by
+        `mt5_results` and no MT5 object crosses this boundary."""
+        from live import mt5_results as _mr
+        disp = result.disposition
+        order_ticket = (str(result.broker_order_ticket)
+                        if _mr.usable_ticket(result.broker_order_ticket) else None)
+        deal_ticket = (str(result.broker_deal_ticket)
+                       if _mr.usable_ticket(result.broker_deal_ticket) else None)
+        common = dict(intent_id=request.intent_id,
+                      broker_order_ticket=order_ticket,
+                      broker_deal_ticket=deal_ticket,
+                      requested_volume=result.requested_volume,
+                      filled_volume=result.filled_volume,
+                      price=result.price,
+                      provenance="live_mt5", at=ctx.now)
+        if disp == _mr.MT5SubmitDisposition.FILLED:
+            ack = MarketOrderAck(status=ACK_FILLED, **common)
+            return BrokerResult(ok=True, code="ok", detail="broker filled",
+                                data=ack.as_dict(), broker_ref=order_ticket or deal_ticket)
+        if disp == _mr.MT5SubmitDisposition.PARTIALLY_FILLED:
+            ack = MarketOrderAck(status=ACK_PARTIAL, **common)
+            return BrokerResult(ok=True, code="ok", detail="broker partially filled",
+                                data=ack.as_dict(), broker_ref=order_ticket or deal_ticket)
+        if disp == _mr.MT5SubmitDisposition.REJECTED:
+            ack = MarketOrderAck(status=ACK_REJECTED, reason="broker_rejected",
+                                 detail=result.diagnostic, **common)
+            return BrokerResult(ok=False, code="rejected", detail=result.diagnostic,
+                                data=ack.as_dict())
+        if disp == _mr.MT5SubmitDisposition.NOT_SUBMITTED:
+            ack = MarketOrderAck(status=ACK_NOT_SUBMITTED, reason="submission_failed",
+                                 detail=result.diagnostic, **common)
+            return BrokerResult(ok=False, code="not_submitted", detail=result.diagnostic,
+                                data=ack.as_dict())
+        if disp == _mr.MT5SubmitDisposition.EXCEPTION:
+            # The gateway's diagnostic preserves the exception MESSAGE as broker
+            # evidence; the canonical boundary carries only the exception TYPE
+            # (no message leakage past the adapter).
+            exc_type = (result.diagnostic or "").split(":", 1)[0] or "Exception"
+            ack = MarketOrderAck(status=ACK_COMMUNICATION_FAILED,
+                                 reason="communication_failed",
+                                 detail=exc_type, **common)
+            return BrokerResult(ok=False, code="communication_failed",
+                                detail=exc_type, data=ack.as_dict())
+        # AMBIGUOUS (timeout / connection / placed / unknown retcode): the order
+        # MAY exist at the broker — never guess; reconcile.
+        ack = MarketOrderAck(status=ACK_TIMEOUT, reason="timeout",
+                             detail=result.diagnostic, **common)
+        return BrokerResult(ok=False, code="timeout", detail=result.diagnostic,
+                            data=ack.as_dict(),
+                            broker_ref=order_ticket or deal_ticket)
 
     def _snapshot(self) -> dict | None:
         if self._gateway is None or not self._gateway.connected:

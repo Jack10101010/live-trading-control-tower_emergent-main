@@ -202,6 +202,27 @@ class ExecutionStore:
             row = conn.execute("SELECT * FROM intents WHERE intent_id=?", (intent_id,)).fetchone()
             return dict(row) if row else None
 
+    def intent_by_idempotency_key(self, key: str, *,
+                                  command_name: str | None = None) -> dict | None:
+        """LIVE-2 duplicate detection: the EARLIEST intent recorded under this
+        idempotency key (restart-safe — the store is durable, so a replayed
+        request after a process restart still finds the original submission).
+        Optionally narrowed to one command name."""
+        if not key:
+            return None
+        with self._conn() as conn:
+            if command_name:
+                row = conn.execute(
+                    "SELECT * FROM intents WHERE idempotency_key=? AND command_name=?"
+                    " ORDER BY created_at ASC, intent_id ASC LIMIT 1",
+                    (key, command_name)).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM intents WHERE idempotency_key=?"
+                    " ORDER BY created_at ASC, intent_id ASC LIMIT 1",
+                    (key,)).fetchone()
+            return dict(row) if row else None
+
     def transitions_of(self, intent_id: str, limit: int = 200) -> list[dict]:
         with self._conn() as conn:
             rows = conn.execute(

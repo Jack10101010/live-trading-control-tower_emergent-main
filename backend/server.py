@@ -929,6 +929,31 @@ def _apply_command_effects(name: str, payload: dict, now: str) -> tuple[dict | N
     runtime control-plane. Returns (before, after) for the audit event."""
     reason = payload.get("reason")
 
+    # LIVE-2: the ONE executable broker operation. Build the canonical immutable
+    # request from the orchestrator-threaded payload (the durable intent id
+    # arrived via `intentId`) and call the adapter's single write. The canonical
+    # BrokerResult crosses back as a plain view in `after`; the orchestrator's
+    # market-order lifecycle branch persists the outcome.
+    if name == "SubmitMarketOrder":
+        request = broker_layer.MarketOrderRequest(
+            intent_id=payload.get("intentId") or "",
+            instrument=payload.get("instrument") or "",
+            side=payload.get("side") or "",
+            quantity=payload.get("quantity"),
+            stop_loss=payload.get("stopLoss"),
+            take_profit=payload.get("takeProfit"),
+            comment=payload.get("comment"),
+            correlation_id=payload.get("commandId"),
+            idempotency_key=payload.get("idempotencyKey"),
+            execution_mode=("mock-fixture" if broker_layer.active_kind() == "mock"
+                            else "live"),
+        )
+        result = broker_layer.get_broker().submit_market_order(
+            request, _broker_context(payload, now))
+        return None, {"ok": result.ok, "code": result.code, "detail": result.detail,
+                      "brokerRef": result.broker_ref,
+                      "ack": result.data if isinstance(result.data, dict) else None}
+
     # Execution boundary: all trade/order operations go through the Broker interface
     # (MockBroker today — identical behaviour, zero live trading).
     if name in broker_layer.BROKER_COMMANDS:
@@ -1759,9 +1784,13 @@ def execution_state():
             "connection": brk.connection().state,
             "provenance": ("live_mt5" if broker_layer.active_kind() == "mt5"
                            else "mock-fixture"),
-            "readOnly": True,
+            # LIVE-2: the MT5 adapter carries EXACTLY ONE write capability
+            # (market-order submission); readOnly derives from that fact rather
+            # than being asserted. The mock remains live-write-incapable.
+            "readOnly": not bool(broker_layer.capability_dict(
+                brk.capabilities()).get("supportsLiveWrite")),
             "liveWriteCapable": bool(broker_layer.capability_dict(
-                brk.capabilities()).get("supportsLiveWrite")),   # always False (LIVE-1)
+                brk.capabilities()).get("supportsLiveWrite")),
             "account": ({"available": True, **acct_read.data}
                         if acct_read.ok and isinstance(acct_read.data, dict)
                         else {"available": False, "code": acct_read.code,
@@ -1778,6 +1807,10 @@ def execution_state():
             },
             "observedAt": _now_iso(),
         }
+        # LIVE-2: the market-order execution read model — DERIVED entirely from
+        # the durable store (provenance explicit; nothing invented; unavailable
+        # states explicit).
+        content["marketOrder"] = _market_order_telemetry(store)
         return JSONResponse(content=content, headers={"Cache-Control": "no-store"})
     except Exception:
         logger.exception("execution state read model failed")
@@ -1786,6 +1819,155 @@ def execution_state():
                                      "code": "execution_state_unavailable",
                                      "detail": None},
                             headers={"Cache-Control": "no-store"})
+
+
+def _market_order_telemetry(store) -> dict:
+    """LIVE-2 — the derived market-order read model. Every fact comes from the
+    durable execution store (provenance `durable-store`); a missing store or a
+    failed read is reported explicitly, never papered over with zeros."""
+    if store is None:
+        return {"available": False, "code": "execution_store_unavailable",
+                "provenance": "durable-store"}
+    try:
+        rows = [r for r in store.intents_by_state(limit=200)
+                if r.get("kind") == order_lifecycle_layer.KIND_SUBMIT]
+        pending = [r for r in rows if r.get("state") in
+                   (order_lifecycle_layer.SUBMITTING, order_lifecycle_layer.SUBMITTED)]
+        awaiting_recon = [r for r in rows if r.get("state") in
+                          (order_lifecycle_layer.UNKNOWN,
+                           order_lifecycle_layer.RECONCILIATION_REQUIRED)]
+        open_orders = [r for r in rows if r.get("state") == order_lifecycle_layer.OPEN]
+        failures = [r for r in rows if r.get("state") in
+                    (order_lifecycle_layer.REJECTED, order_lifecycle_layer.FAILED)]
+        last = rows[0] if rows else None      # intents_by_state orders newest first
+        last_view = None
+        if last is not None:
+            transitions = store.transitions_of(last["intent_id"])
+            final = transitions[-1] if transitions else {}
+            latency = None
+            ack_status = None
+            try:
+                evidence = json.loads(final.get("evidence") or "{}")
+                latency = evidence.get("brokerLatencyMs")
+                ack_status = (evidence.get("ack") or {}).get("status")
+            except (ValueError, TypeError):
+                pass                          # evidence absent/non-JSON -> explicit None
+            last_view = {
+                "intentId": last.get("intent_id"),
+                "instrument": last.get("instrument"),
+                "side": last.get("side"),
+                "quantity": last.get("quantity"),
+                "state": last.get("state"),
+                "brokerTicket": last.get("broker_ref"),
+                "ackStatus": ack_status,
+                "finalReason": final.get("reason"),
+                "latencyMs": latency,
+                "createdAt": last.get("created_at"),
+                "updatedAt": last.get("updated_at"),
+            }
+        return {
+            "available": True,
+            "pendingSubmissions": len(pending),
+            "awaitingReconciliation": len(awaiting_recon),
+            "activeMarketOrders": len(open_orders),
+            "submissionFailures": len(failures),
+            "lastSubmission": last_view,
+            "lastBrokerTicket": last_view.get("brokerTicket") if last_view else None,
+            "provenance": "durable-store",
+        }
+    except Exception as exc:
+        return {"available": False, "code": "market_order_read_failed",
+                "detail": type(exc).__name__, "provenance": "durable-store"}
+
+
+@api_router.post("/execution/market-order")
+async def submit_market_order(request: Request) -> dict[str, Any]:
+    """LIVE-2 — the ONLY submission surface for the ONE executable broker
+    operation. Flows exclusively through the canonical pipeline
+    (Validate -> Safety -> Resolve -> Durability -> Broker Dispatch -> Lifecycle
+    -> Audit); there is no other route to `submit_market_order` and the fixture
+    control plane rejects the command as unknown.
+
+    An Idempotency-Key header is REQUIRED: a duplicated submission returns the
+    original intent's durable outcome and never creates a second broker order.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+
+    idem_key = (request.headers.get("Idempotency-Key") or "").strip()
+    if not idem_key:
+        raise HTTPException(status_code=422, detail={
+            "status": "rejected", "stage": "received",
+            "reason": "an Idempotency-Key header is required for market orders",
+            "code": "idempotency_key_required"})
+
+    command_id = f"cmd_{uuid.uuid4().hex[:20]}"
+    now = _now_iso()
+    result = _ORCHESTRATOR.execute("SubmitMarketOrder", payload, now,
+                                   dry_run=False, command_id=command_id,
+                                   idempotency_key=idem_key)
+
+    intent_row = None
+    if result.intent_id:
+        store = _execution_store()
+        if store is not None:
+            try:
+                intent_row = store.get_intent(result.intent_id)
+            except Exception:
+                intent_row = None
+
+    if result.status in ("rejected", "denied"):
+        # A refused live submission is itself an auditable fact.
+        _append_event({
+            "eventId": f"ev_{uuid.uuid4().hex[:26].upper()}", "seq": 0,
+            "category": "order", "code": "SUBMIT_MARKET_ORDER_DENIED",
+            "humanExplanation": (f"Market-order submission refused at stage "
+                                 f"{result.stage}: {result.code}."),
+            "who": _operator_id(), "causedBy": command_id,
+            "before": None, "after": {"stage": result.stage, "code": result.code},
+            "at": now,
+        }, None)
+        raise HTTPException(status_code=422, detail={
+            "status": result.status, "stage": result.stage, "reason": result.reason,
+            "code": result.code, "timeline": result.timeline, "stages": result.stages,
+            "safety": result.safety,
+        })
+
+    ack = (result.after or {}).get("ack") if isinstance(result.after, dict) else None
+    state = intent_row.get("state") if intent_row else None
+    broker_ref = intent_row.get("broker_ref") if intent_row else None
+    if not result.deduplicated:
+        _append_event({
+            "eventId": f"ev_{uuid.uuid4().hex[:26].upper()}", "seq": 0,
+            "category": "order", "code": "SUBMIT_MARKET_ORDER_RESULT",
+            "humanExplanation": (
+                f"Market order {payload.get('side')} {payload.get('quantity')} "
+                f"{payload.get('instrument')} -> lifecycle {state or 'unrecorded'}"
+                f"{f' (ticket {broker_ref})' if broker_ref else ''}."),
+            "who": _operator_id(), "causedBy": command_id,
+            "before": None,
+            "after": {"intentId": result.intent_id, "state": state,
+                      "brokerRef": broker_ref},
+            "at": now,
+        }, idem_key)
+        logger.info("Market order %s: intent=%s state=%s ref=%s",
+                    result.status, result.intent_id, state, broker_ref)
+    return {
+        "ok": bool(state == order_lifecycle_layer.OPEN),
+        "commandId": command_id,
+        "intentId": result.intent_id,
+        "lifecycleState": state,
+        "brokerTicket": broker_ref,
+        "acknowledgement": ack,
+        "deduplicated": result.deduplicated,
+        "latencyMs": result.timeline.get("brokerMs"),
+        "timeline": result.timeline,
+        "acceptedAt": now,
+    }
 
 
 @api_router.get("/execution/health")

@@ -59,7 +59,11 @@ def test_live_mt5_telemetry_is_populated_and_provenanced(monkeypatch):
     assert body["account"]["login_masked"] == "mt5_****0001"
     assert body["account"]["equity"] == 10_000.0
     assert body["openPositions"] == 0 and body["openOrders"] == 0
-    assert body["liveWriteCapable"] is False           # still no write capability
+    # LIVE-2 (deliberate evolution): MT5 now carries EXACTLY ONE write
+    # capability (market-order submission); the broker block reports it and
+    # readOnly derives from it truthfully.
+    assert body["liveWriteCapable"] is True
+    assert body["readOnly"] is False
     # No invented values: reads report explicit codes.
     assert body["reads"]["accountSnapshot"] == "ok"
 

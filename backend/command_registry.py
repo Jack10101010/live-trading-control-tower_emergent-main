@@ -49,6 +49,9 @@ from execution_safety import (
 SURFACE_OPERATOR = "operator"   # UI-15/16/17 read-only operator channel
 SURFACE_FIXTURE = "fixture"     # the fixture-world control plane (/api/commands/{name})
 SURFACE_ABSTRACT = "abstract"   # classified for the safety vocabulary only; not submit-able
+SURFACE_EXECUTION = "execution"  # LIVE-2: the dedicated execution surface
+                                 # (POST /api/execution/market-order ONLY — the
+                                 # fixture route rejects these as unknown)
 
 
 @dataclass(frozen=True)
@@ -146,7 +149,17 @@ _FIXTURE: list[CommandSpec] = [
     CommandSpec("PausePair", RISK_EXECUTION_AFFECTING, SURFACE_FIXTURE, category="risk"),
 ]
 
-_ALL_SPECS: tuple[CommandSpec, ...] = tuple(_OPERATOR + _ABSTRACT + _FIXTURE)
+# LIVE-2: the execution surface — exactly ONE executable broker operation.
+# Submit-able ONLY through the dedicated execution route; the fixture control
+# plane (`/api/commands/{name}` = fixture_command_names()) rejects it as unknown,
+# so no legacy surface can reach the live write.
+_EXECUTION: list[CommandSpec] = [
+    CommandSpec("SubmitMarketOrder", RISK_EXECUTION_AFFECTING, SURFACE_EXECUTION,
+                category="order", broker_dispatched=True,
+                broker_capability="supportsMarketExecution", intent_kind="submit"),
+]
+
+_ALL_SPECS: tuple[CommandSpec, ...] = tuple(_OPERATOR + _ABSTRACT + _FIXTURE + _EXECUTION)
 
 
 def _build_index() -> tuple[dict, dict]:
@@ -247,6 +260,11 @@ def operator_command_names() -> frozenset:
 def broker_dispatched_names() -> frozenset:
     """Commands whose effect routes through the Broker (was `broker.BROKER_COMMANDS`)."""
     return frozenset(s.canonical for s in _ALL_SPECS if s.broker_dispatched)
+
+
+def execution_command_names() -> frozenset:
+    """LIVE-2: the dedicated execution-surface vocabulary — exactly one command."""
+    return _names_for_surface(SURFACE_EXECUTION)
 
 
 def fixture_categories() -> dict:

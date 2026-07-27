@@ -170,14 +170,17 @@ def run_reconciliation(*, tower_intents: list[dict], broker_orders: list[dict],
 
     # 3) Broker-reference integrity across tower intents that should carry one.
     #    An intent the tower believes reached the broker must have a broker_ref;
-    #    two intents sharing one broker_ref is a duplication fault.
+    #    two intents sharing one broker_ref is a duplication fault (a duplicated
+    #    broker acknowledgement). LIVE-2: OPEN market orders join this scan — an
+    #    open position without a broker ticket is an acknowledgement gone missing.
     seen_refs: dict[str, str] = {}
     open_tower = [i for i in tower_intents
                   if i.get("state") in ol.IN_FLIGHT_STATES or i.get("state") == ol.RECONCILIATION_REQUIRED]
-    for intent in open_tower:
+    open_market_orders = [i for i in tower_intents if i.get("state") == ol.OPEN]
+    for intent in open_tower + open_market_orders:
         ref = intent.get("broker_ref")
         state = intent.get("state")
-        if state in (ol.SUBMITTED, ol.ACKNOWLEDGED, ol.PARTIALLY_FILLED) and not ref:
+        if state in (ol.SUBMITTED, ol.ACKNOWLEDGED, ol.PARTIALLY_FILLED, ol.OPEN) and not ref:
             items.append(Discrepancy(MISSING_BROKER_REFERENCE, intent.get("intent_id"),
                                      f"intent in state {state} has no broker reference"))
         if ref:
@@ -223,10 +226,12 @@ def run_reconciliation(*, tower_intents: list[dict], broker_orders: list[dict],
                 items.append(Discrepancy(STATUS_MISMATCH, oid,
                                          f"tower state {tower_state} vs broker state {broker_state}"))
 
-    # 5) Positions: the tower (in ARCH-2) tracks no independent open-position book —
-    #    positions the broker reports without any tower lineage are broker-only.
-    #    Node telemetry, when supplied, is the cross-check for position counts.
-    tower_position_refs = tower_order_refs  # intents are the only tower-side lineage
+    # 5) Positions: intents are the tower-side lineage. LIVE-2: an OPEN market
+    #    order's broker ticket is position lineage (the broker order ceased to
+    #    exist when it filled; the position carries the ticket) — a broker
+    #    position matching an OPEN intent's ref is expected, not broker-only.
+    tower_position_refs = tower_order_refs | {
+        i["broker_ref"] for i in open_market_orders if i.get("broker_ref")}
     for p in broker_positions:
         pid = p.get("id") or p.get("positionId")
         if pid and pid not in tower_position_refs and not p.get("_fixture_lineage", True):

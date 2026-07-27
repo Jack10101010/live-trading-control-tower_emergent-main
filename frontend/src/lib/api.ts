@@ -663,16 +663,105 @@ export interface ExecutionBrokerState {
   observedAt: string;
 }
 
+export interface MarketOrderTelemetry {
+  available: boolean;
+  code?: string;
+  pendingSubmissions?: number;
+  awaitingReconciliation?: number;
+  activeMarketOrders?: number;
+  submissionFailures?: number;
+  lastSubmission?: {
+    intentId: string | null;
+    instrument: string | null;
+    side: string | null;
+    quantity: number | null;
+    state: string | null;
+    brokerTicket: string | null;
+    ackStatus: string | null;
+    finalReason: string | null;
+    latencyMs: number | null;
+    createdAt: string | null;
+    updatedAt: string | null;
+  } | null;
+  lastBrokerTicket?: string | null;
+  provenance: string;
+}
+
 export interface ExecutionStateView {
   schemaVersion: string;
   observedAt: string;
   broker?: ExecutionBrokerState;
+  marketOrder?: MarketOrderTelemetry;
   readiness: { tradingReady: boolean; gates: Record<string, boolean> };
+}
+
+export interface MarketOrderResponse {
+  ok: boolean;
+  commandId: string;
+  intentId: string | null;
+  lifecycleState: string | null;
+  brokerTicket: string | null;
+  acknowledgement: Record<string, unknown> | null;
+  deduplicated: boolean;
+  latencyMs: number | null;
+  timeline: Record<string, number>;
+  acceptedAt: string;
+}
+
+export interface MarketOrderDenial {
+  status: string;
+  stage: string;
+  reason: string;
+  code: string;
+}
+
+export class MarketOrderError extends Error {
+  constructor(
+    public readonly code: string,
+    public readonly stage: string,
+    public readonly reason: string
+  ) {
+    super(`market order ${code} at ${stage}`);
+    this.name = 'MarketOrderError';
+  }
 }
 
 export const api = {
   world: () => apiFetch<WorldFixture>('/world'),
   executionState: () => apiFetch<ExecutionStateView>('/execution/state'),
+  /* LIVE-2 — submit the ONE executable broker operation. A FRESH idempotency key
+   * per intentional operator action: a network retry of the SAME action returns
+   * the original durable outcome (never a second broker order); a new action is
+   * distinct. A 422 denial surfaces as `MarketOrderError(code, stage, reason)`. */
+  submitMarketOrder: async (order: {
+    instrument: string;
+    side: 'long' | 'short';
+    quantity: number;
+    stopLoss?: number;
+    takeProfit?: number;
+    comment?: string;
+  }): Promise<MarketOrderResponse> => {
+    const res = await fetch(apiUrl('/execution/market-order'), {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'Idempotency-Key': idempotencyKey(),
+        ...authHeader(),
+      },
+      body: JSON.stringify(order),
+    });
+    if (res.status === 422) {
+      const body = (await res.json().catch(() => null)) as { detail?: MarketOrderDenial } | null;
+      const d = body?.detail;
+      throw new MarketOrderError(d?.code ?? 'denied', d?.stage ?? 'unknown', d?.reason ?? '');
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`API ${res.status} /execution/market-order: ${text.slice(0, 200)}`);
+    }
+    return (await res.json()) as MarketOrderResponse;
+  },
   securityConfig: () => apiFetch<SecurityConfigStatus>('/security/config'),
   liveConnection: () => apiFetch<ConnectionState>('/live/connection'),
   liveStatus: () => apiFetch<LiveStatus>('/live/status'),

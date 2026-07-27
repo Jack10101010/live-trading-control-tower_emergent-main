@@ -465,13 +465,16 @@ def test_real_store_shared_seq_and_retention(tmp_path, real_store, monkeypatch):
     assert not (BACKEND_DIR / "events.db").exists() # no second/stray database
 
 
-def test_exactly_four_append_event_production_call_sites():
+def test_exactly_six_append_event_production_call_sites():
     src = (BACKEND_DIR / "server.py").read_text()
     calls = [m for m in re.finditer(r"_append_event\(", src)
              if not src[max(0, m.start() - 4):m.start()].endswith("def ")]
-    assert len(calls) == 4, (
-        "expected exactly 4 production _append_event call sites "
-        "(command, broker-sync, LIVE_STATUS, L2 projector wiring); "
+    # LIVE-2 deliberately added two reviewed producers (market-order denial +
+    # market-order result events).
+    assert len(calls) == 6, (
+        "expected exactly 6 production _append_event call sites "
+        "(command, broker-sync, LIVE_STATUS, L2 projector wiring, "
+        "market-order denial, market-order result); "
         f"found {len(calls)}")
 
 # ── Node-derived provenance: no fixture package hash ─────────────────────────

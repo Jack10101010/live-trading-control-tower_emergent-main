@@ -226,13 +226,16 @@ def test_every_write_operation_is_inert():
     assert mt5.close_position("1", _ctx()).code == ba.RESULT_UNAVAILABLE
 
 
-def test_no_adapter_advertises_a_live_write_capability():
-    for kind in ("mock", "mt5"):
-        caps = broker_layer.capability_dict(broker_layer.get_broker(kind).capabilities())
-        assert caps["supportsLiveWrite"] is False
-    # And the MT5 adapter advertises NO write capability at all.
+def test_write_capability_is_exactly_the_live2_market_order():
+    """LIVE-1 pinned every write capability False. LIVE-2 DELIBERATELY adds
+    exactly one: MT5 market-order submission. The mock still has no live-write
+    capability, and every OTHER MT5 mutation capability remains absent."""
+    mock_caps = broker_layer.capability_dict(broker_layer.get_broker("mock").capabilities())
+    assert mock_caps["supportsLiveWrite"] is False        # fixture, never a live writer
     mt5caps = broker_layer.capability_dict(broker_layer.get_broker("mt5").capabilities())
-    for w in ("supportsMarketExecution", "supportsPendingOrders", "supportsModify",
+    assert mt5caps["supportsLiveWrite"] is True           # LIVE-2: the ONE write
+    assert mt5caps["supportsMarketExecution"] is True
+    for w in ("supportsPendingOrders", "supportsModify",
               "supportsPartialClose", "supportsHedging", "supportsNetting"):
         assert mt5caps[w] is False
 

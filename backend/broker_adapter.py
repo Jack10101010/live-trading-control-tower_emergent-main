@@ -285,6 +285,17 @@ class BrokerAdapter(ABC):
         through `submit_command`)."""
         return inert_result("submit_order")
 
+    def submit_market_order(self, request: "MarketOrderRequest",
+                            ctx: BrokerContext) -> BrokerResult:
+        """LIVE-2 — the ONE executable broker operation. Submit exactly one
+        market order described by the canonical `MarketOrderRequest`; answer with
+        a canonical `BrokerResult` whose `data` is a `MarketOrderAck.as_dict()`
+        and whose `broker_ref` is the broker's order ticket when one exists.
+
+        Inert by default: an adapter that does not implement live market-order
+        submission answers `unavailable` and touches nothing."""
+        return inert_result("submit_market_order")
+
     def close_position(self, position_id: str, ctx: BrokerContext) -> BrokerResult:
         """Close a position by id. Inert by default."""
         return inert_result("close_position")
@@ -448,3 +459,104 @@ class TerminalInfo:
     def as_dict(self) -> dict:
         from dataclasses import asdict
         return dict(sorted(asdict(self).items()))
+
+
+# ── LIVE-2 canonical market-order models ──────────────────────────────────────
+# The ONE executable broker operation. Broker-neutral, immutable, deterministic
+# serialization. The request carries only evidence-supported fields (no strategy
+# fields); the acknowledgement carries only plain scalars the adapter mapped out
+# of the broker response — no broker-native object ever crosses this boundary.
+
+MARKET_ORDER_SIDES = frozenset({"long", "short"})
+
+#: Stable acknowledgement statuses (machine-readable; the lifecycle maps them).
+ACK_FILLED = "filled"                    # broker confirmed; position open
+ACK_PARTIAL = "partially_filled"
+ACK_REJECTED = "rejected"                # broker refused; nothing created
+ACK_NOT_SUBMITTED = "not_submitted"      # order_send was never called
+ACK_TIMEOUT = "timeout"                  # outcome unknowable — reconcile
+ACK_COMMUNICATION_FAILED = "communication_failed"   # outcome unknowable — reconcile
+KNOWN_ACK_STATUSES = frozenset({
+    ACK_FILLED, ACK_PARTIAL, ACK_REJECTED, ACK_NOT_SUBMITTED,
+    ACK_TIMEOUT, ACK_COMMUNICATION_FAILED,
+})
+#: Statuses where the broker MAY have acted but the outcome is not knowable —
+#: the lifecycle must go unknown -> reconciliation_required, never guess.
+AMBIGUOUS_ACK_STATUSES = frozenset({ACK_TIMEOUT, ACK_COMMUNICATION_FAILED})
+
+
+@dataclass(frozen=True)
+class MarketOrderRequest:
+    """The immutable, broker-neutral request for ONE market order.
+
+    Only evidence-supported fields: identity/lineage, instrument, side,
+    quantity, optional protective levels, optional comment, execution mode.
+    No strategy fields. Validated at construction — an invalid request can
+    never be instantiated, so nothing malformed reaches an adapter."""
+    intent_id: str
+    instrument: str                       # canonical symbol (e.g. EURUSD)
+    side: str                             # long | short
+    quantity: float                       # lots; finite and > 0
+    stop_loss: float | None = None
+    take_profit: float | None = None
+    comment: str | None = None
+    correlation_id: str | None = None
+    idempotency_key: str | None = None
+    execution_mode: str = "live"          # live | mock-fixture (provenance label)
+
+    def __post_init__(self):
+        import math
+        if not (isinstance(self.intent_id, str) and self.intent_id.startswith("intent_")):
+            raise ValueError("market order request requires a canonical intent_ id")
+        if not (isinstance(self.instrument, str) and self.instrument.strip()):
+            raise ValueError("market order request requires an instrument")
+        if self.side not in MARKET_ORDER_SIDES:
+            raise ValueError(f"unknown market order side: {self.side!r}")
+        if isinstance(self.quantity, bool) or not isinstance(self.quantity, (int, float)) \
+                or not math.isfinite(self.quantity) or self.quantity <= 0:
+            raise ValueError("market order quantity must be a finite positive number")
+        for name in ("stop_loss", "take_profit"):
+            v = getattr(self, name)
+            if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float))
+                                  or not math.isfinite(v) or v <= 0):
+                raise ValueError(f"market order {name} must be a finite positive price")
+        if self.comment is not None and len(str(self.comment)) > 64:
+            raise ValueError("market order comment exceeds 64 characters")
+
+    def as_dict(self) -> dict:
+        from dataclasses import asdict
+        return dict(sorted(asdict(self).items()))     # deterministic serialization
+
+
+@dataclass(frozen=True)
+class MarketOrderAck:
+    """The immutable, broker-neutral acknowledgement of ONE market-order
+    submission. Plain scalars only — the adapter maps the broker response into
+    this model and the broker-native object never escapes."""
+    intent_id: str
+    status: str                           # KNOWN_ACK_STATUSES
+    broker_order_ticket: str | None = None
+    broker_deal_ticket: str | None = None
+    requested_volume: float | None = None
+    filled_volume: float | None = None
+    price: float | None = None
+    reason: str | None = None             # machine-readable failure reason
+    detail: str | None = None             # redaction-safe human hint
+    provenance: str = "live_mt5"          # live_mt5 | mock-fixture
+    at: str | None = None
+
+    def __post_init__(self):
+        if self.status not in KNOWN_ACK_STATUSES:
+            raise ValueError(f"unknown acknowledgement status: {self.status!r}")
+
+    @property
+    def accepted(self) -> bool:
+        return self.status in (ACK_FILLED, ACK_PARTIAL)
+
+    @property
+    def ambiguous(self) -> bool:
+        return self.status in AMBIGUOUS_ACK_STATUSES
+
+    def as_dict(self) -> dict:
+        from dataclasses import asdict
+        return dict(sorted(asdict(self).items()))     # deterministic serialization

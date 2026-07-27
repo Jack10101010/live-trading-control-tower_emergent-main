@@ -111,8 +111,9 @@ export function BrokerReadPanel() {
       {data?.broker && <BrokerBody broker={data.broker} />}
 
       <p className="text-2xs text-text-muted mt-2">
-        Live broker reads only. No order can be submitted, modified or cancelled from the
-        Control Tower — execution is structurally impossible in this build.
+        This panel reads only — it can execute nothing. The single execution control
+        (one market order, LIVE-2) lives in the Market order panel; every other broker
+        mutation remains structurally unavailable.
       </p>
     </section>
   );

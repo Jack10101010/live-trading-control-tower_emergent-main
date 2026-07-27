@@ -76,6 +76,10 @@ class ExecutionResult:
     reason: str = ""
     code: str = ""
     safety: dict | None = None      # the redaction-safe SafetyDecision.safe_view()
+    # LIVE-2: idempotent replay — True when a duplicate submission returned the
+    # DURABLE outcome of the original intent instead of executing again.
+    deduplicated: bool = False
+    intent_id: str | None = None    # the durable intent this execution recorded
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +138,41 @@ def v_capability(cap: str) -> Callable[[dict, ExecutionEnv], ValidationResult]:
             return ValidationResult(True)
         return ValidationResult(False, f"missing_capability", f"broker lacks {cap}")
     return rule
+
+
+def v_market_order_payload(payload: dict, env: ExecutionEnv) -> ValidationResult:
+    """LIVE-2 structural validation of a market-order payload. Mirrors the
+    canonical `MarketOrderRequest` constraints so nothing malformed proceeds to
+    intent creation (the request model re-validates at construction — defence in
+    depth, single vocabulary)."""
+    import math
+    instrument = payload.get("instrument")
+    if not (isinstance(instrument, str) and instrument.strip()):
+        return ValidationResult(False, "invalid_instrument", "instrument is required")
+    if payload.get("side") not in ("long", "short"):
+        return ValidationResult(False, "invalid_side", "side must be long or short")
+    qty = payload.get("quantity")
+    if isinstance(qty, bool) or not isinstance(qty, (int, float)) \
+            or not math.isfinite(qty) or qty <= 0:
+        return ValidationResult(False, "invalid_quantity",
+                                "quantity must be a finite positive number")
+    for name in ("stopLoss", "takeProfit"):
+        v = payload.get(name)
+        if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float))
+                              or not math.isfinite(v) or v <= 0):
+            return ValidationResult(False, "invalid_protective_level",
+                                    f"{name} must be a finite positive price")
+    return ValidationResult(True)
+
+
+def v_approved_connection_profile(payload: dict, env: ExecutionEnv) -> ValidationResult:
+    """LIVE-2: a live submission requires the active operating profile to be an
+    APPROVED ConnectionPolicy profile. Unknown/unapproved profiles deny."""
+    import connection_policy
+    if connection_policy.active_profile() in connection_policy.APPROVED_PROFILES:
+        return ValidationResult(True)
+    return ValidationResult(False, "connection_profile_not_approved",
+                            "the active connection profile is not approved for execution")
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +277,14 @@ COMMAND_SPEC: dict[str, tuple[list, Policy | None]] = {
     "CancelOrder": ([v_order_exists], None),
     "ReduceOrderRisk": ([v_order_exists], CanModifyOrder()),
     "ConvertOrderToGhost": ([v_order_exists], None),
+    # LIVE-2: the ONE executable broker operation. Structural payload validation,
+    # broker connectivity, the explicit market-execution capability and an
+    # APPROVED connection profile are all required BEFORE the safety gate even
+    # sees the command; the safety gate then applies mode / identity /
+    # confirmation / node / account / reconciliation / authorization.
+    "SubmitMarketOrder": ([v_market_order_payload, v_broker_connected,
+                           v_capability("supportsMarketExecution"),
+                           v_approved_connection_profile], None),
 }
 
 # ARCH-1 uniqueness/derivation guard: every feasibility entry MUST name a command the
@@ -368,15 +415,24 @@ class ExecutionOrchestrator:
                       command_id: str | None, idempotency_key: str | None):
         """Create + persist the durable OrderIntent for a broker-dispatched
         command, through `created -> validated`. Raises on any store failure."""
+        kind = registry.intent_kind_of(name) or lifecycle.KIND_MODIFY
         intent = lifecycle.OrderIntent(
             intent_id=lifecycle.new_intent_id(),
             command_name=name,
-            kind=registry.intent_kind_of(name) or lifecycle.KIND_MODIFY,
+            kind=kind,
             command_id=command_id,
             correlation_id=command_id,     # lineage: the command groups the records
             idempotency_key=idempotency_key,
             deployment_id=payload.get("deploymentId"),
-            quantity=payload.get("size"),
+            # LIVE-2: a submit-kind intent persists the full canonical request
+            # facts (instrument/side/quantity/protective levels) — the durable
+            # record IS the request of record.
+            instrument=payload.get("instrument"),
+            side=payload.get("side"),
+            order_type="market" if kind == lifecycle.KIND_SUBMIT else None,
+            quantity=payload.get("quantity", payload.get("size")),
+            stop_loss=payload.get("stopLoss"),
+            take_profit=payload.get("takeProfit"),
             source="operator",
             created_at=now,
             metadata={"payload": dict(payload)},
@@ -407,6 +463,34 @@ class ExecutionOrchestrator:
         broker_dispatched = registry.is_broker_dispatched(name)
         store = None
         intent = None
+
+        # LIVE-2 IDEMPOTENCY: a duplicated broker-dispatched submission must
+        # NEVER create two broker orders. The durable store is the authority
+        # (restart-safe): if this idempotency key already produced an intent,
+        # return that intent's DURABLE outcome deterministically — no second
+        # dispatch, no re-validation of a decision already taken.
+        if broker_dispatched and not dry_run and idempotency_key:
+            dup_store = self._store_factory() if self._store_factory else None
+            existing = None
+            if dup_store is not None:
+                try:
+                    existing = dup_store.intent_by_idempotency_key(
+                        idempotency_key, command_name=name)
+                except Exception:
+                    existing = None          # store trouble -> normal path denies later
+            if existing is not None:
+                stages.append({"stage": STAGE_LIFECYCLE, "ok": True,
+                               "deduplicated": True,
+                               "intentId": existing.get("intent_id")})
+                stages.append({"stage": STAGE_COMPLETED, "ok": True})
+                return ExecutionResult(
+                    status="completed", stages=stages, timeline=timeline,
+                    dryRun=dry_run, deduplicated=True,
+                    intent_id=existing.get("intent_id"),
+                    after={"intentId": existing.get("intent_id"),
+                           "state": existing.get("state"),
+                           "brokerRef": existing.get("broker_ref"),
+                           "deduplicated": True})
 
         # 1) Validate
         t = time.perf_counter()
@@ -470,21 +554,36 @@ class ExecutionOrchestrator:
 
         # 4) Broker Dispatch  5) Broker Result  6) Lifecycle Persistence  7) Audit
         if intent is not None:
+            # LIVE-2: the safety stage above is what authorized this intent — the
+            # READY transition records that explicitly (`safety_allowed`).
             store.record_transition(intent.intent_id, lifecycle.READY, at=now,
-                                    reason="authorized_and_feasible")
+                                    reason="safety_allowed")
             pending = lifecycle.PENDING_STATE_BY_KIND[intent.kind]
             store.record_transition(intent.intent_id, pending, at=now,
                                     reason="dispatching_to_adapter")
         stages.append({"stage": STAGE_BROKER_DISPATCH, "ok": True, "dryRun": dry_run})
+        # LIVE-2: a submit-kind intent's canonical request needs the durable
+        # intent id — thread it through the payload copy the dispatcher receives
+        # (the dispatch signature stays unchanged; the original payload is not
+        # mutated).
+        dispatch_payload = payload
+        if intent is not None and intent.kind == lifecycle.KIND_SUBMIT:
+            dispatch_payload = {**payload, "intentId": intent.intent_id,
+                                "idempotencyKey": idempotency_key,
+                                "commandId": command_id}
         t = time.perf_counter()
-        before, after = self._dispatch(name, payload, now, dry_run)
+        before, after = self._dispatch(name, dispatch_payload, now, dry_run)
         timeline["brokerMs"] = round((time.perf_counter() - t) * 1000, 3)
         stages.append({"stage": STAGE_BROKER_RESULT, "ok": True})
         if intent is not None:
-            # The mock adapter completes synchronously: the confirmed state per
-            # intent kind, with the adapter result as evidence. A (None, None)
-            # result means the effect found nothing to act on -> failed, honestly.
-            if before is None and after is None:
+            if intent.kind == lifecycle.KIND_SUBMIT:
+                # LIVE-2: drive the market-order lifecycle from the canonical
+                # BrokerResult the adapter answered (threaded through `after`).
+                lifecycle_ok = self._market_order_lifecycle(
+                    store, intent, after, now, broker_ms=timeline["brokerMs"])
+            elif before is None and after is None:
+                # The mock adapter completes synchronously: a (None, None)
+                # result means the effect found nothing to act on -> failed.
                 store.record_transition(intent.intent_id, lifecycle.FAILED, at=now,
                                         reason="no_effect",
                                         evidence="adapter reported no before/after state")
@@ -503,6 +602,61 @@ class ExecutionOrchestrator:
 
         timeline["totalMs"] = round(sum(v for v in timeline.values()), 3)
         result = ExecutionResult(status="completed", stages=stages, timeline=timeline,
-                                 dryRun=dry_run, before=before, after=after, safety=safety_view)
+                                 dryRun=dry_run, before=before, after=after, safety=safety_view,
+                                 intent_id=intent.intent_id if intent is not None else None)
         self.metrics.record(name, result, now)
         return result
+
+    # ── LIVE-2: market-order lifecycle persistence ──────────────────────────────
+    def _market_order_lifecycle(self, store, intent, after: dict | None, now: str,
+                                *, broker_ms: float) -> bool:
+        """Record the deterministic lifecycle outcome of ONE market-order
+        dispatch from the canonical BrokerResult view in `after`:
+
+            ok (filled/partial)      -> submitted -> acknowledged -> open
+            rejected                 -> rejected            (broker refused; nothing created)
+            not_submitted /
+              unavailable /
+              not_connected /
+              connection_denied      -> failed              (order_send never ran)
+            timeout                  -> unknown -> reconciliation_required
+            communication_failed     -> unknown -> reconciliation_required
+
+        Evidence is the acknowledgement JSON (+ measured latency); the broker
+        ticket persists as broker_ref on the acknowledged/open transitions."""
+        import json as _json
+        view = after if isinstance(after, dict) else {}
+        code = view.get("code")
+        ack = view.get("ack") if isinstance(view.get("ack"), dict) else {}
+        ref = view.get("brokerRef") or ack.get("broker_order_ticket") \
+            or ack.get("broker_deal_ticket")
+        evidence = _json.dumps({"ack": dict(sorted(ack.items())),
+                                "brokerLatencyMs": broker_ms}, sort_keys=True)
+        iid = intent.intent_id
+        if view.get("ok") and code == "ok":
+            store.record_transition(iid, lifecycle.SUBMITTED, at=now,
+                                    reason="order_send_accepted", evidence=evidence)
+            store.record_transition(iid, lifecycle.ACKNOWLEDGED, at=now,
+                                    reason="broker_acknowledged", evidence=evidence,
+                                    broker_ref=ref)
+            store.record_transition(iid, lifecycle.OPEN, at=now,
+                                    reason="position_open", evidence=evidence,
+                                    broker_ref=ref)
+            return True
+        if code == "rejected":
+            store.record_transition(iid, lifecycle.REJECTED, at=now,
+                                    reason="broker_rejected", evidence=evidence)
+            return False
+        if code in ("timeout", "communication_failed"):
+            # The broker MAY have acted — never guess; queue for reconciliation.
+            store.record_transition(iid, lifecycle.UNKNOWN, at=now,
+                                    reason=code, evidence=evidence, broker_ref=ref)
+            store.record_transition(iid, lifecycle.RECONCILIATION_REQUIRED, at=now,
+                                    reason="ambiguous_submission_outcome",
+                                    evidence=evidence)
+            return False
+        # not_submitted / unavailable / not_connected / connection_denied /
+        # anything unrecognised: order_send never ran — deterministic failure.
+        store.record_transition(iid, lifecycle.FAILED, at=now,
+                                reason="submission_failed", evidence=evidence)
+        return False

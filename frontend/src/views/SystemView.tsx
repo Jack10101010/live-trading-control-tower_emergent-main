@@ -4,6 +4,7 @@ import { SecurityBaselinePanel } from '@/components/domain/SecurityBaselinePanel
 import { OperatorCommandPanel } from '@/components/domain/OperatorCommandPanel';
 import { AuthSessionPanel } from '@/components/domain/AuthSessionPanel';
 import { BrokerReadPanel } from '@/components/domain/BrokerReadPanel';
+import { MarketOrderPanel } from '@/components/domain/MarketOrderPanel';
 import { useFleet, usePackages, useFeatureFlags, useRuntimeHealth, useBrokerReconciliation, useStrategyEvaluation, useSchedulerStatus, useMarketSnapshot, useRiskLimits, useActivePackage, useBackendHealth } from '@/hooks/useRepository';
 import { api, QK } from '@/lib/api';
 import { queryClient } from '@/lib/queryClient';
@@ -123,6 +124,10 @@ export function SystemView() {
         {/* LIVE-1 — read-only broker state (live MT5 or mock). No execution. */}
         <div className="col-span-12 lg:col-span-6">
           <BrokerReadPanel />
+        </div>
+        {/* LIVE-2 — the ONE execution control (gate-disabled, confirmed). */}
+        <div className="col-span-12 lg:col-span-6">
+          <MarketOrderPanel />
         </div>
       </div>
 
