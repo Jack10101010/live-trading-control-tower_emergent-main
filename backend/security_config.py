@@ -461,10 +461,11 @@ def describe_config(config: SecurityConfig, env: dict | None = None) -> dict:
         }
     findings = validate_config(config)
     return {
-        # The headline fact of this whole slice.
-        "active": is_active(config),
-        "activeReason": "UI-9 is preparation only — no transport, no authentication, "
-                        "no TLS and no connectivity exist yet.",
+        # ARCH-3: the stale `active: false` constant and its "no transport, no
+        # authentication ... exist yet" reason are GONE. Connectivity/auth posture
+        # is reported truthfully by the route as explicit dimensions
+        # (`connectivity`, `auth`, `ingestAuth`, `cors`) — enabled, configured,
+        # approved and connected are distinct facts, never one boolean.
         "mode": STATUS_CONFIGURED if config.mode else STATUS_MISSING,
         "variables": variables,
         "findings": [

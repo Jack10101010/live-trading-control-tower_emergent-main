@@ -9,7 +9,10 @@
 >
 > | Capability | Built? | Default | Activation | Owner |
 > | --- | --- | --- | --- | --- |
-> | Request authentication | **Yes** (UI-11) | **Disabled** | `CONTROL_TOWER_AUTH_ENABLED` + `CONTROL_TOWER_API_TOKEN` | `auth_policy.py` |
+> | Operator authentication (SPA→tower) | **Yes** (UI-11/ARCH-3, usable client) | **Disabled** | `CONTROL_TOWER_AUTH_ENABLED` + `CONTROL_TOWER_API_TOKEN` | `auth_policy.py`, SPA `lib/authSession.ts` |
+> | Node-ingest authentication | **Yes** (ARCH-3) | **Disabled** | `CONTROL_TOWER_INGEST_AUTH_ENABLED` + `CONTROL_TOWER_INGEST_TOKEN` | `auth_policy.py` (ingest scope), `live/publisher.py` |
+> | Canonical ConnectionPolicy | **Yes** (ARCH-3) | Deny-by-default; consulted before every outbound socket | `CONTROL_TOWER_CONNECTION_PROFILE` (local_loopback only approved) | `connection_policy.py` |
+> | Operator command authorization | **Mock provider only** (ARCH-3) | Deny outside mock adapter | — | `command_authorization.py` |
 > | Browser origin policy (CORS) | **Yes** (UI-10) | Loopback-only | `CORS_ORIGINS` | `cors_policy.py` |
 > | Outbound REST transport | **Yes** (UI-13) | **Disabled** | `CONTROL_TOWER_TRANSPORT_ENABLED` + `NODE_TRANSPORT=https` + endpoint + token | `rest_transport.py`, selected via `transport.default_transport()` |
 > | Read-only node integration | **Yes** (UI-14) | Disabled with transport | — | `node_client.py` |
@@ -236,28 +239,63 @@ these references stay valid.
    mutating command, and the node keeps trading and protecting the account when the
    Control Tower is unreachable.
 
-### Ordered activation runbook
+### Ordered activation runbook (ARCH-3)
 
-Enable in **this order**. Enabling transport before authentication leaves the tower
-able to reach a node while its own API is unauthenticated.
+Enable in **this order**; every step has an observable pass condition, and no step
+weakens a previous one. Transport is NEVER enabled before its auth and policy
+prerequisites. **Rollback for any step: unset that step's variables and restart —
+each principal/flag is independent, and the default for everything is off/deny.**
 
-1. **Authentication first** — set `CONTROL_TOWER_AUTH_ENABLED=true` and
-   `CONTROL_TOWER_API_TOKEN` (≥32 chars, no whitespace). Verify a protected route
-   returns `401` without a credential and `200` with one.
-   *Note:* no in-repo client currently sends this header — see the open finding on
-   client credential support before relying on it.
-2. **TLS** — terminate TLS and set `NODE_ENDPOINT=https://…`. (Prerequisite 2 is NOT
-   MET; until it is, only `http://127.0.0.1` is approved.)
-3. **Transport config** — set `NODE_TRANSPORT=https` and `NODE_API_TOKEN`.
-4. **Verify before enabling** — `GET /api/security/config` must report
-   `hasErrors: false`. A validation error makes selection return `None` and the tower
-   silently falls back to `NullTransport`, which presents as "transport won't turn
-   on" with no direct signal.
-5. **Enable transport last** — `CONTROL_TOWER_TRANSPORT_ENABLED=1`.
-6. **Browser boundary** — set `CORS_ORIGINS` explicitly if the UI is served from a
-   non-default origin.
+1. **Configure and validate principals** — set `CONTROL_TOWER_API_TOKEN`,
+   `CONTROL_TOWER_INGEST_TOKEN`, `NODE_API_TOKEN` (each ≥32 chars, distinct).
+   *Pass:* `GET /api/security/config` shows all three token-presence facts true,
+   no issues.
+2. **Enable inbound operator authentication** — `CONTROL_TOWER_AUTH_ENABLED=true`.
+   *Pass:* a protected route 401s anonymously, 200s with the operator token;
+   `/api/health` anonymous body shrinks to `{status, scope, serverTime}`.
+3. **Verify SPA authenticated access** — enter the operator token in the System
+   view's *Operator authentication* panel (memory-only).
+   *Pass:* panels load; the connection strip does NOT claim the backend offline.
+4. **Enable ingest authentication** — `CONTROL_TOWER_INGEST_AUTH_ENABLED=true`.
+   *Pass:* `POST /api/live/ingest` 401s anonymously AND with the operator token;
+   the security surface shows `ingestAuth.enforcing: true`, `degraded: false`.
+5. **Verify node publishing** — set `CT_INGEST_TOKEN` on the node.
+   *Pass:* publisher result `delivered: true`; a 401 would report
+   `unauthorized: true` (distinct from network failure), and the node keeps
+   trading regardless.
+6. **Configure outbound node authentication** — `NODE_TRANSPORT=https`,
+   `NODE_ENDPOINT` (loopback only), `NODE_API_TOKEN`.
+   *Pass:* `GET /api/security/config` reports `hasErrors: false`.
+7. **Select the local-loopback profile** — leave/confirm
+   `CONTROL_TOWER_CONNECTION_PROFILE=local_loopback`.
+   *Pass:* `connectivity.profile == local_loopback`, `remoteApproved: false`.
+8. **Verify ConnectionPolicy approval** — *Pass:*
+   `connectivity.connectionPolicy.allowed: true` with reason
+   `allow_local_loopback` for the configured endpoint (deny reasons are explicit
+   machine codes otherwise).
+9. **Enable transport LAST and verify read-only node connectivity** —
+   `CONTROL_TOWER_TRANSPORT_ENABLED=1`. *Pass:* `/api/live/remote` reports a real
+   state (healthy/degraded/stale), not `disabled`; `connectivity.transport`
+   shows `enabled: true, misconfigured: false`.
+10. **Verify canonical telemetry freshness and account identity** — set
+    `NODE_EXPECTED_ACCOUNT_FINGERPRINT`. *Pass:* `/api/execution/state` gates show
+    `nodeHealthy: true` and `accountIdentityMatch: true` when telemetry is fresh
+    and the fingerprint matches.
+11. **Verify reconciliation posture** — *Pass:* `reconciliationClean: true` after
+    a sync cycle (unresolved critical discrepancies deny new risk-increasing
+    execution by design).
+12. **Verify mock-only execution context** — *Pass:* `/api/execution/state`
+    `context.provenance.tower == "mock-authorization"` and
+    `readiness.gates.liveAdapterActive == false`.
+13. **Confirm remote profiles still deny** — set
+    `CONTROL_TOWER_CONNECTION_PROFILE=remote_pre_live` in a scratch shell only.
+    *Pass:* every policy evaluation denies `profile_not_approved` with the missing
+    prerequisites named. Restore `local_loopback`.
 
-Do not proceed to a step until the previous step verifies.
+**Remote activation remains explicitly prohibited** — `remote_pre_live` and
+`remote_live` deny until TLS trust, a private network path, secrets management and
+an explicit audited activation attestation exist. Nothing in this runbook fakes
+those prerequisites.
 
 ## What UI-9 did not touch
 

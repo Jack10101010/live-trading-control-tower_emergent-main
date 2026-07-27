@@ -225,8 +225,36 @@ def default_transport(config: Any = None, env: dict | None = None) -> Transport:
     try:
         from rest_transport import select_rest_transport
         return select_rest_transport(source, config) or NullTransport()
-    except Exception:                     # selection must never break startup
+    except Exception:                     # selection must never break startup —
+        # but it is never SILENT either (ARCH-3): the failure is logged, and
+        # `selection_status()` reports enabled-but-misconfigured distinctly from
+        # disabled on the security surface.
+        import logging
+        logging.getLogger("transport").exception("transport selection failed; "
+                                                 "falling back to NullTransport")
         return NullTransport()
+
+
+def selection_status(env: dict | None = None) -> dict:
+    """ARCH-3: the truthful transport-selection posture for the security surface.
+    Distinguishes DISABLED (not requested) from ENABLED-BUT-MISCONFIGURED (requested,
+    but selection yielded no real transport) from SELECTED. Value-free."""
+    source = os.environ if env is None else env
+    raw = source.get(VAR_TRANSPORT_ENABLED)
+    enabled = isinstance(raw, str) and raw.strip().lower() in _TRUTHY
+    if not enabled:
+        return {"enabled": False, "selectedKind": KIND_NULL,
+                "misconfigured": False, "reason": "transport_not_enabled"}
+    try:
+        from rest_transport import select_rest_transport
+        selected = select_rest_transport(source, None)
+    except Exception:
+        selected = None
+    if selected is None:
+        return {"enabled": True, "selectedKind": KIND_NULL,
+                "misconfigured": True, "reason": "enabled_but_configuration_invalid"}
+    return {"enabled": True, "selectedKind": selected.kind,
+            "misconfigured": False, "reason": "selected"}
 
 
 #: The default instance callers can share. Stateless, so a singleton is safe.

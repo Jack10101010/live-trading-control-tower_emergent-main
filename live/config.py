@@ -110,6 +110,11 @@ class LiveConfig:
 
     # Control Tower
     ct_base_url: str = field(default_factory=lambda: _env("CT_BASE_URL", "http://127.0.0.1:8000/api"))
+    # ARCH-3: the DEDICATED ingest credential (Control Tower `CONTROL_TOWER_INGEST_TOKEN`).
+    # Blank = publish unauthenticated (the tower's ingest auth must then be disabled).
+    # This is deliberately NOT the operator API token: the node holds a credential
+    # that can do exactly one thing — append its own telemetry.
+    ct_ingest_token: str = field(default_factory=lambda: _env("CT_INGEST_TOKEN", ""))
 
     def __post_init__(self) -> None:
         # Resolve ALL paths to absolute at construction time (against the

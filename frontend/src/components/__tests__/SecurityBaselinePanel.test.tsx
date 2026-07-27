@@ -18,10 +18,22 @@ const HOSTNAME = 'vps.internal.example';
 
 function payload(over: Partial<SecurityConfigStatus> = {}): SecurityConfigStatus {
   return {
-    active: false,
-    activeReason:
-      'UI-9 is preparation only — no transport, no authentication, no TLS and no connectivity exist yet.',
     mode: 'missing',
+    ingestAuth: {
+      enabled: false, enforcing: false, misconfigured: false, tokenPresent: false,
+      issueCodes: [], routes: ['/api/live/ingest'],
+      legacyOperatorTokenAllowed: false, degraded: false,
+    },
+    connectivity: {
+      profile: 'local_loopback',
+      approvedProfiles: ['local_loopback'],
+      remoteApproved: false,
+      transport: { enabled: false, selectedKind: 'null', misconfigured: false, reason: 'transport_not_enabled' },
+      connectionPolicy: { allowed: false, reason: 'no_endpoint_configured', profile: 'local_loopback' },
+      outboundNodeAuth: { tokenPresent: false },
+      missingRemotePrerequisites: ['tls_trust_configured'],
+      localOnly: true,
+    },
     variables: {
       CONTROL_TOWER_MODE: { status: 'missing', secret: false, path: false },
       NODE_ENDPOINT: { status: 'missing', secret: false, path: false },
@@ -87,16 +99,29 @@ beforeEach(() => vi.restoreAllMocks());
 afterEach(() => cleanup());
 
 describe('activation state', () => {
-  it('reports NOT ACTIVE and explains why', async () => {
+  it('reports LOCAL-ONLY with a truthful connectivity summary', async () => {
     vi.spyOn(api, 'securityConfig').mockResolvedValue(payload());
     mount();
-    // The badge reads NOT ACTIVE while loading too — that is the safe default, so
-    // waiting on it would pass before the payload arrives. Wait on the reason.
-    expect(await screen.findByText(/preparation only/i)).toBeTruthy();
-    expect(screen.getByTestId('security-active-state').textContent).toBe('NOT ACTIVE');
+    const summary = await screen.findByTestId('connectivity-summary');
+    expect(summary.textContent).toContain('local_loopback');
+    expect(summary.textContent).toContain('transport disabled');
+    expect(summary.textContent).toContain('ingest auth disabled');
+    expect(screen.getByTestId('security-active-state').textContent).toBe('LOCAL-ONLY');
   });
 
-  it('never claims active when the backend says false, however much is configured', async () => {
+  it('reports enabled-but-misconfigured transport distinctly and degraded legacy compat', async () => {
+    const p = payload();
+    p.connectivity!.transport = { enabled: true, selectedKind: 'null', misconfigured: true, reason: 'enabled_but_configuration_invalid' };
+    p.ingestAuth!.legacyOperatorTokenAllowed = true;
+    p.ingestAuth!.degraded = true;
+    vi.spyOn(api, 'securityConfig').mockResolvedValue(p);
+    mount();
+    const summary = await screen.findByTestId('connectivity-summary');
+    expect(summary.textContent).toContain('enabled but misconfigured');
+    expect(summary.textContent).toContain('DEGRADED');
+  });
+
+  it('never claims remote approval, however much is configured', async () => {
     vi.spyOn(api, 'securityConfig').mockResolvedValue(
       payload({
         variables: {
@@ -108,7 +133,7 @@ describe('activation state', () => {
     );
     mount();
     await waitFor(() =>
-      expect(screen.getByTestId('security-active-state').textContent).toBe('NOT ACTIVE')
+      expect(screen.getByTestId('security-active-state').textContent).toBe('LOCAL-ONLY')
     );
   });
 });
@@ -184,7 +209,7 @@ describe('degradation', () => {
     mount();
     expect(await screen.findByText(/status unavailable/i)).toBeTruthy();
     // An unreachable backend must not read as ACTIVE.
-    expect(screen.getByTestId('security-active-state').textContent).toBe('NOT ACTIVE');
+    expect(screen.getByTestId('security-active-state').textContent).not.toBe('REMOTE APPROVED');
   });
 });
 

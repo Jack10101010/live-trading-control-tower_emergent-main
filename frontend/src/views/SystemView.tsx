@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { ConnectionPanel } from '@/components/domain/ConnectionPanel';
 import { SecurityBaselinePanel } from '@/components/domain/SecurityBaselinePanel';
 import { OperatorCommandPanel } from '@/components/domain/OperatorCommandPanel';
+import { AuthSessionPanel } from '@/components/domain/AuthSessionPanel';
 import { useFleet, usePackages, useFeatureFlags, useRuntimeHealth, useBrokerReconciliation, useStrategyEvaluation, useSchedulerStatus, useMarketSnapshot, useRiskLimits, useActivePackage, useBackendHealth } from '@/hooks/useRepository';
 import { api, QK } from '@/lib/api';
 import { queryClient } from '@/lib/queryClient';
@@ -110,9 +111,13 @@ export function SystemView() {
           <SecurityBaselinePanel />
         </div>
         {/* UI-17 — read-only operator controls. Three read-only diagnostics only;
-            no execution control, disabled by default, no token in the browser. */}
+            no execution control, disabled by default. */}
         <div className="col-span-12 lg:col-span-6">
           <OperatorCommandPanel />
+        </div>
+        {/* ARCH-3 — operator authentication session (memory-only token entry). */}
+        <div className="col-span-12 lg:col-span-6">
+          <AuthSessionPanel />
         </div>
       </div>
 

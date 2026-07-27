@@ -20,6 +20,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, type RemoteNodeState } from '@/lib/api';
+import { isAuthError } from '@/lib/authSession';
 import { deriveBackendState } from '@/lib/connectionState';
 import {
   deriveLiveOperations,
@@ -66,7 +67,8 @@ export function useLiveOperations() {
     // renders a correct (if less detailed) picture.
     enabled: !connectionQuery.isError,
   });
-  const backend = deriveBackendState(connectionQuery.isLoading, connectionQuery.isError);
+  const backend = deriveBackendState(connectionQuery.isLoading, connectionQuery.isError,
+    isAuthError(connectionQuery.error));
   return deriveLiveOperations(backend, connectionQuery.data, statusQuery.data);
 }
 

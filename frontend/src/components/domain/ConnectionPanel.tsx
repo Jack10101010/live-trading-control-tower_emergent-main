@@ -10,6 +10,7 @@
  * Read-only. No control affordance of any kind.
  */
 import { useQuery } from '@tanstack/react-query';
+import { isAuthError } from '@/lib/authSession';
 import { api, type ConnectionInstance, type ConnectionState } from '@/lib/api';
 import {
   deriveBackendState,
@@ -31,7 +32,7 @@ const TONE_COLOR: Record<Tone, string> = {
 };
 
 export function useConnectionState() {
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['live-connection'],
     queryFn: () => api.liveConnection(),
     // Telemetry ages continuously, so the panel re-reads rather than letting a
@@ -42,7 +43,7 @@ export function useConnectionState() {
   });
   return {
     connection: data,
-    backend: deriveBackendState(isLoading, isError),
+    backend: deriveBackendState(isLoading, isError, isAuthError(error)),
   };
 }
 

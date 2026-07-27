@@ -54,13 +54,30 @@ class CTPublisher:
         )
 
     def publish(self, payload: dict, timeout: float = 5.0) -> dict:
+        """Best-effort delivery. The durable fallback is ALWAYS written first, so no
+        tower state (unreachable, slow, unauthorized) can affect trading.
+
+        ARCH-3: the dedicated ingest bearer token is attached when configured, and
+        an HTTP rejection is DISTINCT from a network failure — `HTTPError` is a
+        subclass of `URLError`, so it is caught FIRST; a 401/403 yields an explicit
+        `unauthorized: True` result (status code only — no response body, no token,
+        nothing redaction-unsafe) instead of masquerading as a timeout. One attempt
+        per cycle, as before: bounded, non-aggressive, no retry loop."""
         self.fallback.parent.mkdir(parents=True, exist_ok=True)
         self.fallback.write_text(json.dumps(payload, indent=1, default=str))
         url = self.config.ct_base_url.rstrip("/") + "/live/ingest"
+        headers = {"Content-Type": "application/json"}
+        token = (getattr(self.config, "ct_ingest_token", "") or "").strip()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         req = urllib.request.Request(url, data=json.dumps(payload, default=str).encode(),
-                                     headers={"Content-Type": "application/json"}, method="POST")
+                                     headers=headers, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return {"delivered": True, "status": resp.status}
+        except urllib.error.HTTPError as exc:          # the tower ANSWERED — not a network fault
+            return {"delivered": False, "status": exc.code,
+                    "unauthorized": exc.code in (401, 403),
+                    "error": f"http {exc.code}", "fallback": str(self.fallback)}
         except (urllib.error.URLError, OSError) as exc:
             return {"delivered": False, "error": str(exc), "fallback": str(self.fallback)}

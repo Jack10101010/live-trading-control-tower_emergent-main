@@ -281,24 +281,31 @@ def test_every_registered_route_is_classified():
     paths = {getattr(r, "path", None) for r in server.app.routes}
     paths = {p for p in paths if isinstance(p, str)}
     assert set(classified) == paths
-    assert set(classified.values()) <= {ap.CLASS_PUBLIC, ap.CLASS_PROTECTED}
+    assert set(classified.values()) <= {ap.CLASS_PUBLIC, ap.CLASS_PROTECTED, ap.CLASS_INGEST}
     assert len(classified) >= 60          # the app really does have this many routes
 
 
 def test_all_mutation_and_command_routes_are_protected():
+    # ARCH-3: mutating routes are protected OR belong to the ingest principal —
+    # never public. The ingest route is governed by its own credential scope.
     for route in server.app.routes:
         methods = getattr(route, "methods", set()) or set()
         if methods & {"POST", "PUT", "PATCH", "DELETE"}:
-            assert ap.is_protected(route.path), f"{route.path} mutates but is public"
+            cls = ap.classify_route(route.path)
+            assert cls in (ap.CLASS_PROTECTED, ap.CLASS_INGEST), \
+                f"{route.path} mutates but is public"
 
 
 def test_sensitive_read_routes_are_protected():
     for path in ("/api/", "/api/security/config", "/api/live/status",
-                 "/api/live/connection", "/api/live/ingest", "/api/events",
+                 "/api/live/connection", "/api/events",
                  "/api/events/live", "/api/ops/status", "/api/world",
                  "/api/commands/{name}", "/api/runtime/reset",
                  "/api/operator/preferences"):
         assert ap.is_protected(path), path
+    # ARCH-3: the ingest route is not operator-protected — it belongs to its own
+    # principal and is never public.
+    assert ap.classify_route("/api/live/ingest") == ap.CLASS_INGEST
 
 
 def test_docs_and_openapi_are_protected_and_the_policy_is_explicit():
@@ -545,11 +552,14 @@ def test_diagnostics_route_counts_reconcile_with_the_live_app():
     unique_paths = {r.path for r in server.app.routes if isinstance(getattr(r, "path", None), str)}
     live_public = {p for p in unique_paths if ap.classify_route(p) == ap.CLASS_PUBLIC}
     live_protected = {p for p in unique_paths if ap.classify_route(p) == ap.CLASS_PROTECTED}
+    live_ingest = {p for p in unique_paths if ap.classify_route(p) == ap.CLASS_INGEST}
     diag = ap.describe(policy(), server.app.routes)
     assert diag["publicRouteCount"] == len(live_public) == 1
     assert diag["protectedRouteCount"] == len(live_protected)
-    assert diag["protectedRouteCount"] + diag["publicRouteCount"] == len(unique_paths)
+    assert diag["ingestRouteCount"] == len(live_ingest) == 1
+    assert diag["protectedRouteCount"] + diag["publicRouteCount"] + diag["ingestRouteCount"] == len(unique_paths)
     assert live_public == set(ap.PUBLIC_ROUTES)
+    assert live_ingest == set(ap.INGEST_ROUTES)
 
 
 def test_cors_allows_authorization_only_from_a_trusted_origin():

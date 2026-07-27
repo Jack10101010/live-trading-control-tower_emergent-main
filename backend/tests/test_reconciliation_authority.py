@@ -13,6 +13,7 @@ for p in (str(REPO_ROOT), str(BACKEND_DIR)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+import command_authorization as ca                                  # noqa: E402
 import execution_context as xc                                      # noqa: E402
 import execution_safety as es                                       # noqa: E402
 import execution_store as xs                                        # noqa: E402
@@ -179,32 +180,52 @@ def test_context_is_immutable_and_default_denies():
     assert decision.allowed is False
 
 
+def _grant(classes=("execution_affecting",), scopes=(ca.SCOPE_ANY,), **over):
+    kw = dict(authorization_id=ca.new_authorization_id(), operator_ref="op-7",
+              issued_at="2026-01-01T00:00:00Z", expires_at="2099-01-01T00:00:00Z",
+              allowed_risk_classes=frozenset(classes),
+              allowed_scopes=frozenset(scopes), confirmed=True, provider="test")
+    kw.update(over)
+    return ca.AuthorizationGrant(**kw)
+
+
 def test_context_missing_node_health_denies_execution():
     ctx = xc.ExecutionContext(
         execution_mode=es.MODE_ACTIVE,
         operator=es.OperatorAuthorization("op", True),
-        command_authorization=es.ArmingState(True, "op", "2099-01-01T00:00:00Z"),
-        node_health="",                                # missing → unknown → deny
+        authorization=_grant(),
+        account_identity_state=es.ACCOUNT_MATCH,
+        node=xc.NodeFacts(health=""),                  # missing → unknown → deny
     )
-    d = es.evaluate(es.CommandRequest(command_type="CloseTrade"), ctx.to_safety_context())
+    d = es.evaluate(es.CommandRequest(command_type="CloseTrade"),
+                    ctx.to_safety_context("CloseTrade"))
     assert d.allowed is False and d.reason == "node_unknown"
 
 
 def test_node_authority_and_tower_authority_cannot_be_confused():
-    # The tower-side window is COMMAND authorization; node facts live in node_*.
-    ctx = xc.ExecutionContext(
-        command_authorization=es.ArmingState(True, "op", "2099-01-01T00:00:00Z"))
+    # The tower-side fact is an operator COMMAND AUTHORIZATION grant; node facts
+    # live in the observed node group. No generic "armed" boolean exists on the
+    # tower side, and no top-level field is called "arming".
+    ctx = xc.ExecutionContext(authorization=_grant())
     view = ctx.safe_view()
-    assert "commandAuthorizationActive" in view
-    assert "nodeHealth" in view
-    assert "arming" not in view          # the ambiguous word does not appear as a key
+    assert view["authorization"]["provider"] == "test"
+    assert "node" in view and "armingStatus" in view["node"]   # node arming = observed fact
     fields = {f.name for f in __import__("dataclasses").fields(xc.ExecutionContext)}
     assert "arming" not in fields
-    assert "command_authorization" in fields and "node_health" in fields
+    assert "authorization" in fields and "node" in fields
+    # A tower grant NEVER populates the node arming facts, and vice versa.
+    assert ctx.node.arming_armed is None
+    # And node arming cannot substitute for tower authorization: armed node facts
+    # with NO grant still derive a disarmed safety window.
+    armed_node = xc.ExecutionContext(
+        node=xc.NodeFacts(arming_status="armed", arming_armed=True,
+                          provenance=xc.PROV_NODE_TELEMETRY))
+    assert armed_node.to_safety_context("CloseTrade").arming.armed is False
 
 
 def test_context_safe_view_is_redaction_safe():
-    ctx = xc.ExecutionContext(node_account_identity="login:1234567 password=P@SS")
+    ctx = xc.ExecutionContext(
+        node=xc.NodeFacts(account_fingerprint="login:1234567 password=P@SS"))
     view = ctx.safe_view()
     assert "P@SS" not in str(view)
 
@@ -220,8 +241,10 @@ def test_reconciliation_facts_flow_from_context_into_the_safety_gate():
     ctx = xc.ExecutionContext(
         execution_mode=es.MODE_ACTIVE,
         operator=es.OperatorAuthorization("op", True),
-        command_authorization=es.ArmingState(True, "op", "2099-01-01T00:00:00Z"),
-        node_health=es.NODE_HEALTHY,
+        authorization=_grant(),
+        account_identity_state=es.ACCOUNT_MATCH,
+        node=xc.NodeFacts(health=es.NODE_HEALTHY, stale=False),
         reconciliation=xc.ReconciliationFacts(critical_unresolved=True))
-    d = es.evaluate(es.CommandRequest(command_type="MoveTradeSL"), ctx.to_safety_context())
+    d = es.evaluate(es.CommandRequest(command_type="MoveTradeSL"),
+                    ctx.to_safety_context("MoveTradeSL"))
     assert d.reason == es.DENY_RECONCILIATION_REQUIRED

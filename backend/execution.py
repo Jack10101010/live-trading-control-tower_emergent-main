@@ -354,11 +354,12 @@ class ExecutionOrchestrator:
     # ── Safety (the authorization gate — always consulted) ───────────────────────
     def _safety(self, name, now: str) -> "safety.SafetyDecision":
         ctx = self._safety_context_factory()
-        # ARCH-2: the canonical ExecutionContext is assembled ONCE at the boundary;
-        # the safety gate consumes a view derived from that same context. A bare
-        # SafetyContext is accepted for unit-test harnesses.
+        # ARCH-2/3: the canonical ExecutionContext is assembled ONCE at the boundary;
+        # the safety gate consumes a view derived from that same context, including
+        # the per-command authorization window (grant coverage is command-scoped).
+        # A bare SafetyContext is accepted for unit-test harnesses.
         if hasattr(ctx, "to_safety_context"):
-            ctx = ctx.to_safety_context()
+            ctx = ctx.to_safety_context(command_type=name, now=_parse_now(now))
         request = safety.CommandRequest(command_type=name)
         return safety.evaluate(request, ctx, now=_parse_now(now))
 

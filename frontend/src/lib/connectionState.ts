@@ -38,7 +38,11 @@ export interface DimensionView {
   detail: string;
 }
 
-export function deriveBackendState(isLoading: boolean, failed: boolean): BackendState {
+export function deriveBackendState(isLoading: boolean, failed: boolean,
+                                   unauthorized = false): BackendState {
+  // ARCH-3: a 401/503-auth answer PROVES the backend is reachable — reporting it
+  // as offline would be untruthful. The auth panel owns explaining the 401.
+  if (unauthorized) return 'available';
   if (failed) return 'unavailable';
   return isLoading ? 'starting' : 'available';
 }

@@ -33,6 +33,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+import connection_policy
 import security_config
 from transport import (
     ConnectionResult,
@@ -59,6 +60,9 @@ REASON_UNEXPECTED_CONTENT_TYPE = "unexpected_content_type"
 REASON_MALFORMED_RESPONSE = "malformed_response"
 REASON_RESPONSE_TOO_LARGE = "response_too_large"
 REASON_INVALID_OPERATION = "invalid_operation"
+#: ARCH-3: the canonical ConnectionPolicy refused the connection. `detail` carries
+#: the policy's machine-readable reason code.
+REASON_CONNECTION_DENIED = "connection_denied"
 
 
 class _Secret:
@@ -112,8 +116,14 @@ class RestTransport(Transport):
     def __init__(self, endpoint: str, token: str, *,
                  connect_timeout: float = DEFAULT_CONNECT_TIMEOUT_S,
                  read_timeout: float = DEFAULT_READ_TIMEOUT_S,
-                 max_response_bytes: int = MAX_RESPONSE_BYTES) -> None:
+                 max_response_bytes: int = MAX_RESPONSE_BYTES,
+                 policy_env: dict | None = None) -> None:
+        # ARCH-3: `policy_env` is the environment the ConnectionPolicy judges on
+        # every request. The production selector passes the real environment; a
+        # directly-constructed transport (tests) is judged on endpoint anatomy,
+        # profile and structural token presence — never less than that.
         self._endpoint = endpoint.rstrip("/")
+        self._policy_env = policy_env
         self._token = _Secret(token)
         self._connect_timeout = float(connect_timeout)
         self._read_timeout = float(read_timeout)
@@ -161,6 +171,17 @@ class RestTransport(Transport):
     # ── the single I/O path ──────────────────────────────────────────────────
     def _get(self, path: str, *, timeout: float) -> TransportResult:
         url = self._endpoint + path
+        # ARCH-3: the canonical ConnectionPolicy is consulted IMMEDIATELY before
+        # every outbound socket operation. A deny opens nothing — the request is
+        # refused with the policy's machine-readable reason. There is no other
+        # socket path in this transport (this is the single I/O method).
+        decision = connection_policy.evaluate(
+            url, env=self._policy_env,
+            token_present=bool(self._token.reveal().strip()))
+        if not decision.allowed:
+            return TransportResult(ok=False, available=False,
+                                   reason=REASON_CONNECTION_DENIED,
+                                   detail=decision.reason)
         req = urllib.request.Request(url, method="GET")
         # The credential lives only here, on the outbound header. Never logged.
         req.add_header("Authorization", f"Bearer {self._token.reveal()}")
@@ -237,6 +258,7 @@ def select_rest_transport(env: dict, config: Any = None) -> Transport | None:
             endpoint, token,
             connect_timeout=cfg.connect_timeout or DEFAULT_CONNECT_TIMEOUT_S,
             read_timeout=cfg.read_timeout or DEFAULT_READ_TIMEOUT_S,
+            policy_env=dict(env),          # the policy judges the selecting environment
         )
     except Exception:                     # selection must never break startup
         return None

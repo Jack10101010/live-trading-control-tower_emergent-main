@@ -1,4 +1,4 @@
-"""ARCH-2 — the canonical execution context.
+"""ARCH-2/ARCH-3 — the canonical execution context.
 
 One immutable model of everything needed to evaluate and execute an intent,
 assembled ONCE at the execution boundary and consumed by BOTH the safety gate and
@@ -6,35 +6,40 @@ the orchestrator. No component downstream reconstructs safety state independentl
 and no arbitrary mutable dictionary crosses into the safety-critical core
 (capabilities travel as a frozenset of enabled capability names).
 
-AUTHORITY SEPARATION (resolves the tower/node arming ambiguity found in Audit A):
+AUTHORITY SEPARATION (ARCH-3):
 
   * NODE-AUTHORITATIVE facts — the node owns broker/account safety and live
-    arming (invariant I-7). The context carries them under `node_*` fields
-    (`node_health`, `node_account_identity`) exactly as observed, never recomputed.
-  * TOWER-DERIVED facts — the tower owns who is asking and whether the tower
-    itself authorizes the command. These are named precisely:
-      - `operator` — operator identity + explicit confirmation
-        (`execution_safety.OperatorAuthorization`)
-      - `command_authorization` — the tower-side, time-bounded authorization
-        window (`execution_safety.ArmingState`). This is COMMAND AUTHORIZATION,
-        not node arming: it never asserts anything about the node's arming
-        session, account fingerprint or broker-side safety, and it is never
-        populated from node telemetry as if it were the node's arming state.
-  * RECONCILIATION — tower-derived, from the canonical reconciliation authority.
-    Critical unresolved discrepancies deny new risk-increasing execution.
+    arming (invariant I-7). They arrive as OBSERVED telemetry in the `node` fact
+    group, never recomputed. The tower may derive *staleness* from timestamps but
+    never invents node health or arming.
+  * TOWER-DERIVED facts — operator identity (authenticated), the operator's
+    COMMAND AUTHORIZATION (an immutable, scoped, bounded
+    `command_authorization.AuthorizationGrant` — NOT a generic armed boolean and
+    NOT node arming), execution mode, and the durable reconciliation posture.
+  * BROKER-ADAPTER facts — active adapter kind, connection, capabilities.
+  * PROVENANCE — every fact group records where it came from
+    (`mock-synthetic` / `node-telemetry` / `durable-store` / `absent`), so a mock
+    context is explicitly labelled and can never masquerade as live truth.
 
-FAIL-CLOSED DEFAULTS: an unassembled/default context denies — observe mode,
-unauthorized, unknown node, no capabilities. Stale or missing required facts map
-to their denying representation (e.g. missing node health -> NODE_UNKNOWN).
+FAIL-CLOSED DEFAULTS: an unassembled/default context denies — observe mode, no
+grant, unknown node, account unknown, no capabilities.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
+import command_authorization as ca
 import execution_safety as safety
 import security_config
+
+# ── provenance labels ─────────────────────────────────────────────────────────
+PROV_MOCK = "mock-synthetic"
+PROV_NODE_TELEMETRY = "node-telemetry"
+PROV_DURABLE_STORE = "durable-store"
+PROV_ABSENT = "absent"
 
 
 @dataclass(frozen=True)
@@ -44,6 +49,23 @@ class ReconciliationFacts:
     stale: bool = False
     last_run_id: str | None = None
     last_run_at: str | None = None
+
+
+@dataclass(frozen=True)
+class NodeFacts:
+    """Node-authoritative facts, OBSERVED from canonical telemetry. Defaults are
+    the absent/deny representation. The tower derives `stale` from the node's own
+    published timestamp; everything else is carried verbatim."""
+    instance_id: str | None = None
+    health: str = safety.NODE_UNKNOWN            # node_client state vocabulary
+    published_at: str | None = None
+    age_seconds: float | None = None
+    stale: bool = True                           # absent telemetry is stale
+    arming_status: str | None = None             # node's own vocabulary, verbatim
+    arming_armed: bool | None = None
+    arming_expires_at: str | None = None
+    account_fingerprint: str | None = None
+    provenance: str = PROV_ABSENT
 
 
 @dataclass(frozen=True)
@@ -66,14 +88,16 @@ class ExecutionContext:
     execution_mode: str = safety.MODE_OBSERVE
     operator: safety.OperatorAuthorization = field(
         default_factory=safety.OperatorAuthorization)
-    #: Tower-side, time-bounded COMMAND authorization window. NOT node arming.
-    command_authorization: safety.ArmingState = field(
-        default_factory=safety.ArmingState)
+    #: Tower-side operator COMMAND AUTHORIZATION — an immutable, scoped, bounded
+    #: grant (None = unauthorized). NOT node arming, and not a bare boolean.
+    authorization: ca.AuthorizationGrant | None = None
     reconciliation: ReconciliationFacts = field(default_factory=ReconciliationFacts)
+    #: Account-identity evaluation the assembler performed
+    #: (execution_safety.ACCOUNT_* vocabulary). Default: evaluated-and-unknown.
+    account_identity_state: str = safety.ACCOUNT_UNKNOWN
 
     # -- node-authoritative facts (observed, never recomputed) -----------------
-    node_health: str = safety.NODE_UNKNOWN
-    node_account_identity: str | None = None
+    node: NodeFacts = field(default_factory=NodeFacts)
 
     # -- broker facts (adapter-reported) ---------------------------------------
     broker_kind: str | None = None
@@ -81,29 +105,57 @@ class ExecutionContext:
     #: Enabled capability names as an immutable set — no mutable dict in the core.
     broker_capabilities: frozenset = frozenset()
 
+    # -- provenance per fact group ---------------------------------------------
+    provenance: tuple = field(default_factory=tuple)   # (("tower", ...), ("node", ...))
+
     # -- time ------------------------------------------------------------------
     observed_at: str | None = None
     expires_at: str | None = None
 
-    def to_safety_context(self) -> safety.SafetyContext:
-        """Derive the safety-gate view of THIS context. The gate and the
-        orchestrator therefore evaluate identical facts — the context is the
-        single assembly point."""
+    def _authorization_window(self, command_type: str | None,
+                              now: datetime) -> safety.ArmingState:
+        """Derive the safety-gate authorization window for THIS command from the
+        grant: exact risk-class + scope matching, bounded lifetime, deny by
+        default. No grant (or no coverage) = disarmed."""
+        if self.authorization is None:
+            return safety.ArmingState()
+        risk_class = None
+        if command_type is not None:
+            risk_class = safety.classify(command_type)
+        # The window only matters for execution-affecting commands (the safety
+        # engine checks arming only there); derive coverage for that class.
+        target_class = risk_class or safety.RISK_EXECUTION_AFFECTING
+        scope = self.deployment_id or self.account_id
+        if self.authorization.authorizes(risk_class=target_class, scope=scope, now=now):
+            return safety.ArmingState(armed=True,
+                                      armed_by=self.authorization.provider,
+                                      expires_at=self.authorization.expires_at)
+        return safety.ArmingState()
+
+    def to_safety_context(self, command_type: str | None = None,
+                          now: datetime | None = None) -> safety.SafetyContext:
+        """Derive the safety-gate view of THIS context (the gate and the
+        orchestrator therefore evaluate identical facts). Stale node telemetry
+        maps to the STALE node state — stale facts can never authorize."""
+        clock = now or datetime.now(timezone.utc)
+        node_health = self.node.health or safety.NODE_UNKNOWN
+        if self.node.provenance == PROV_NODE_TELEMETRY and self.node.stale \
+                and node_health == safety.NODE_HEALTHY:
+            node_health = safety.NODE_STALE          # derived staleness, never invented health
         return safety.SafetyContext(
             mode=self.execution_mode,
-            arming=self.command_authorization,
-            node=safety.NodeSafety(self.node_health or safety.NODE_UNKNOWN),
+            arming=self._authorization_window(command_type, clock),
+            node=safety.NodeSafety(node_health),
             operator=self.operator,
             reconciliation=safety.ReconciliationSafety(
                 critical_unresolved=self.reconciliation.critical_unresolved,
                 stale=self.reconciliation.stale,
             ),
+            account=safety.AccountSafety(self.account_identity_state),
         )
 
     def safe_view(self) -> dict:
-        """Redaction-safe audit representation. Value-free where a value could be
-        sensitive; the operator reference is masked (identity is proven by the
-        authorization object, not displayed)."""
+        """Redaction-safe audit representation."""
         return {
             "commandId": self.command_id,
             "commandName": self.command_name,
@@ -116,19 +168,31 @@ class ExecutionContext:
             "executionMode": self.execution_mode,
             "operatorIdentified": self.operator.identified,
             "operatorConfirmed": self.operator.confirmed,
-            "commandAuthorizationActive": bool(self.command_authorization.armed),
+            "authorization": self.authorization.safe_view() if self.authorization else None,
+            "accountIdentityState": self.account_identity_state,
             "reconciliation": {
                 "criticalUnresolved": self.reconciliation.critical_unresolved,
                 "stale": self.reconciliation.stale,
                 "lastRunId": self.reconciliation.last_run_id,
                 "lastRunAt": self.reconciliation.last_run_at,
             },
-            "nodeHealth": self.node_health,
-            "nodeAccountIdentity": security_config.redact_text(
-                self.node_account_identity) if self.node_account_identity else None,
+            "node": {
+                "instanceId": self.node.instance_id,
+                "health": self.node.health,
+                "publishedAt": self.node.published_at,
+                "ageSeconds": self.node.age_seconds,
+                "stale": self.node.stale,
+                "armingStatus": self.node.arming_status,
+                "armingArmed": self.node.arming_armed,
+                "armingExpiresAt": self.node.arming_expires_at,
+                "accountFingerprint": security_config.redact_text(
+                    self.node.account_fingerprint) if self.node.account_fingerprint else None,
+                "provenance": self.node.provenance,
+            },
             "brokerKind": self.broker_kind,
             "brokerConnection": self.broker_connection,
             "brokerCapabilities": sorted(self.broker_capabilities),
+            "provenance": dict(self.provenance),
             "observedAt": self.observed_at,
             "expiresAt": self.expires_at,
         }

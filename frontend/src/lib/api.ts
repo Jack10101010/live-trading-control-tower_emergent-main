@@ -313,6 +313,8 @@ export interface OperatorPreferences {
   replaySpeed?: number;
 }
 
+import { ApiAuthError, authHeader } from '@/lib/authSession';
+
 const BACKEND_URL = (import.meta.env.REACT_APP_BACKEND_URL as string) || '';
 
 if (!BACKEND_URL) {
@@ -330,10 +332,17 @@ function idempotencyKey(): string {
 }
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  // ARCH-3: the operator session header is applied HERE, by the single owner.
+  // No component or hook builds its own Authorization header.
   const res = await fetch(apiUrl(path), {
     ...init,
-    headers: { Accept: 'application/json', ...(init?.headers ?? {}) },
+    headers: { Accept: 'application/json', ...authHeader(), ...(init?.headers ?? {}) },
   });
+  if (res.status === 401) throw new ApiAuthError(401, path);      // unauthorized ≠ offline
+  if (res.status === 503) {
+    const body = await res.clone().json().catch(() => null);
+    if (body && body.code === 'authentication_misconfigured') throw new ApiAuthError(503, path);
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`API ${res.status} ${path}: ${body.slice(0, 200)}`);
@@ -526,14 +535,29 @@ export interface AuthPolicyStatus {
 }
 
 export interface SecurityConfigStatus {
-  active: boolean;
-  activeReason: string;
   mode: SecurityVarStatus;
   variables: Record<string, { status: SecurityVarStatus; secret: boolean; path: boolean }>;
   findings: Array<{ severity: 'error' | 'warning'; variable: string | null; message: string }>;
   hasErrors: boolean;
   cors?: CorsPolicyStatus;
   auth?: AuthPolicyStatus;
+  /* ARCH-3: explicit truthful dimensions (replaces the removed `active` constant). */
+  ingestAuth?: {
+    enabled: boolean; enforcing: boolean; misconfigured: boolean;
+    tokenPresent: boolean; issueCodes: string[]; routes: string[];
+    legacyOperatorTokenAllowed: boolean; degraded: boolean;
+  };
+  connectivity?: {
+    profile: string;
+    approvedProfiles: string[];
+    remoteApproved: boolean;
+    transport: { enabled: boolean; selectedKind: string; misconfigured: boolean; reason: string };
+    connectionPolicy: { allowed: boolean; reason: string; profile: string;
+                        missingPrerequisites?: string[] };
+    outboundNodeAuth: { tokenPresent: boolean };
+    missingRemotePrerequisites: string[];
+    localOnly: boolean;
+  };
 }
 
 /* UI-14: read-only Control-Tower -> node integration status. Value-free: no
@@ -627,7 +651,7 @@ export const api = {
   ): Promise<OperatorCommandView> => {
     const res = await fetch(apiUrl('/operator/commands'), {
       method: 'POST',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...authHeader() },
       body: JSON.stringify({
         commandType,
         idempotencyKey: idempotencyKey(),

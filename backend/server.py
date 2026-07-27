@@ -41,6 +41,9 @@ import node_client
 import command_channel
 import command_transport
 import command_registry
+import command_authorization
+import connection_policy
+import transport as transport_layer
 import execution_safety
 import execution_context as execution_context_layer
 import execution_store as execution_store_layer
@@ -1122,21 +1125,84 @@ def _execution_store() -> execution_store_layer.ExecutionStore | None:
         return None
 
 
+# ARCH-3: the tower-owned mock authorization provider. EXPLICITLY MOCK — it
+# refuses to issue a grant for any non-mock adapter, so the permissive fixture
+# authorization structurally cannot survive adapter activation.
+_MOCK_AUTHORIZATION = command_authorization.MockAuthorizationProvider(
+    active_adapter_kind_fn=lambda: broker_layer.active_kind(),
+    operator_ref_fn=_operator_id,
+)
+
+#: The account fingerprint the tower EXPECTS the node to report (`acctfp_...`).
+#: Used to derive the account-identity match state for real node telemetry.
+VAR_EXPECTED_ACCOUNT = "NODE_EXPECTED_ACCOUNT_FINGERPRINT"
+
+
+def _node_facts() -> execution_context_layer.NodeFacts:
+    """Node-authoritative facts OBSERVED from the newest validated telemetry
+    snapshot (durable + hot cache). The tower derives staleness from the node's
+    own published timestamp; health/arming/account are carried verbatim. Absent
+    telemetry returns the absent/deny representation."""
+    now = datetime.now(timezone.utc)
+    records = _load_live_snapshots()
+    records.update({k: v for k, v in _LIVE_STATUS.items()
+                    if isinstance(v, dict) and isinstance(v.get("snapshot"), dict)})
+    if not records:
+        return execution_context_layer.NodeFacts()
+    entries = [_live_status_entry(iid, rec, now) for iid, rec in records.items()]
+    # Newest by the node's own publish time.
+    entry = max(entries, key=lambda e: e.get("published_at") or "")
+    snap = entry.get("snapshot") or {}
+    arming = snap.get("arming") or {}
+    account = snap.get("account") or {}
+    identity = (account.get("identity") or {})
+    stale = bool(entry.get("stale", True))
+    return execution_context_layer.NodeFacts(
+        instance_id=entry.get("instance_id"),
+        health=(execution_safety.NODE_HEALTHY if not stale else execution_safety.NODE_STALE),
+        published_at=entry.get("published_at"),
+        age_seconds=entry.get("age_seconds"),
+        stale=stale,
+        arming_status=arming.get("status"),
+        arming_armed=arming.get("armed"),
+        arming_expires_at=arming.get("expires_at"),
+        account_fingerprint=identity.get("fingerprint"),
+        provenance=execution_context_layer.PROV_NODE_TELEMETRY,
+    )
+
+
+def _account_identity_state(node: execution_context_layer.NodeFacts) -> str:
+    """Derive the account-identity match state. Mock world: the mock account is
+    its own expectation (labelled mock provenance). Real telemetry: compare the
+    node-reported fingerprint against the configured expectation; missing either
+    side is UNKNOWN (which denies risk-relevant execution); a difference is a
+    MISMATCH (which denies everything non-read-only)."""
+    if broker_layer.active_kind() == "mock" and node.provenance != execution_context_layer.PROV_NODE_TELEMETRY:
+        return execution_safety.ACCOUNT_MATCH        # mock-vs-mock, explicitly synthetic
+    expected = (os.environ.get(VAR_EXPECTED_ACCOUNT) or "").strip()
+    reported = node.account_fingerprint
+    if not expected or not reported:
+        return execution_safety.ACCOUNT_UNKNOWN
+    if node.stale:
+        return execution_safety.ACCOUNT_UNKNOWN     # stale facts cannot authorize
+    return (execution_safety.ACCOUNT_MATCH if reported == expected
+            else execution_safety.ACCOUNT_MISMATCH)
+
+
 def _execution_context() -> execution_context_layer.ExecutionContext:
     """The canonical ExecutionContext, assembled ONCE at the execution boundary.
     The safety gate and the orchestrator both consume this one assembly.
 
-    ARCH-1/ARCH-2 safety property: a PERMISSIVE context (which lets the fixture
-    control-plane keep working exactly as before) is built ONLY while the active
-    adapter is the mock. The mock is a fixture — no real orders, no real account —
-    so authorizing execution against it is safe, and every command still passes
-    through `execution_safety.evaluate()`. Against any NON-mock adapter this
-    returns fail-closed defaults (observe mode, unauthorized, unknown node), so a
-    real broker can never be dispatched to on the strength of the mock context.
+    ARCH-3: every fact group records its PROVENANCE. The mock world's context is
+    EXPLICITLY LABELLED mock: its operator authorization is a grant issued by the
+    MockAuthorizationProvider (which refuses non-mock adapters), and its synthetic
+    node health carries `mock-synthetic` provenance. Against any non-mock adapter
+    no grant exists and the context denies by default — the permissive fixture
+    context structurally cannot survive adapter activation.
 
-    Node-authoritative facts stay observed (node health here is the mock world's
-    synthetic healthy state, clearly tied to the mock adapter); the tower-side
-    authorization window is COMMAND authorization, never node arming.
+    Node-authoritative facts stay observed (I-7): when real telemetry exists it is
+    carried verbatim with derived staleness; the tower never invents node health
+    or arming.
     """
     brk = broker_layer.get_broker()
     caps = execution_context_layer.capabilities_from_mapping(
@@ -1145,29 +1211,50 @@ def _execution_context() -> execution_context_layer.ExecutionContext:
     recon_facts = execution_context_layer.ReconciliationFacts(
         critical_unresolved=recon["criticalUnresolved"], stale=recon["stale"],
         last_run_id=recon["lastRunId"], last_run_at=recon["lastRunAt"])
+    now = datetime.now(timezone.utc)
+    grant = _MOCK_AUTHORIZATION.current_grant(now)   # None for any non-mock adapter
+
+    real_node = _node_facts()
     if broker_layer.active_kind() != "mock":
         return execution_context_layer.ExecutionContext(
+            reconciliation=recon_facts,
+            account_identity_state=_account_identity_state(real_node),
+            node=real_node,
             broker_kind=broker_layer.active_kind(),
             broker_connection=brk.connection().state,
             broker_capabilities=caps,
-            reconciliation=recon_facts,
+            provenance=(("tower", "deny-default"),
+                        ("node", real_node.provenance),
+                        ("broker", broker_layer.active_kind()),
+                        ("reconciliation", execution_context_layer.PROV_DURABLE_STORE)),
             observed_at=_now_iso(),
-        )   # fail-closed defaults: observe / unauthorized / unknown node
-    now = datetime.now(timezone.utc)
-    expires = datetime.fromtimestamp(now.timestamp() + 3600.0,
-                                     timezone.utc).isoformat().replace("+00:00", "Z")
+        )   # fail-closed defaults: observe / no grant / account unknown
+
+    # Mock world: real telemetry is used when a node has actually published;
+    # otherwise the synthetic mock node facts are used and labelled as such.
+    node = real_node if real_node.provenance == execution_context_layer.PROV_NODE_TELEMETRY \
+        else execution_context_layer.NodeFacts(
+            instance_id="mock-fixture",
+            health=execution_safety.NODE_HEALTHY,
+            stale=False,
+            provenance=execution_context_layer.PROV_MOCK,
+        )
     return execution_context_layer.ExecutionContext(
         source="operator",
         execution_mode=execution_safety.MODE_ACTIVE,
         operator=execution_safety.OperatorAuthorization(operator_ref=_operator_id(),
                                                         confirmed=True),
-        command_authorization=execution_safety.ArmingState(
-            armed=True, armed_by="mock-fixture", expires_at=expires),
+        authorization=grant,
         reconciliation=recon_facts,
-        node_health=execution_safety.NODE_HEALTHY,   # mock world synthetic health
+        account_identity_state=_account_identity_state(node),
+        node=node,
         broker_kind="mock",
         broker_connection=brk.connection().state,
         broker_capabilities=caps,
+        provenance=(("tower", "mock-authorization"),
+                    ("node", node.provenance),
+                    ("broker", "mock-fixture"),
+                    ("reconciliation", execution_context_layer.PROV_DURABLE_STORE)),
         observed_at=_now_iso(),
     )
 
@@ -1400,7 +1487,7 @@ async def root():
 
 
 @api_router.get("/health")
-async def health():
+async def health(request: Request):
     """Truthful PROCESS health (UI-0) — deliberately NOT trading readiness.
 
     The old response returned the frozen fixture `meta.asOf` as `asOf`, which read
@@ -1410,6 +1497,14 @@ async def health():
     today) and must never be read as MT5 connectivity — `liveNodeConnected` is the
     only statement about a real execution node, and it is true only when a node has
     actually published telemetry to this process."""
+    # ARCH-3: /api/health is the ONLY public route. When operator authentication
+    # is enforcing and the caller presents no valid credential, the body shrinks to
+    # minimum safe liveness — no node instance ids, no broker kind, no fixture or
+    # contract versions, no telemetry hints. The rich body requires the credential
+    # (or a deliberately-unauthenticated local deployment, where auth is off).
+    if _AUTH_POLICY.enforcing and not _AUTH_POLICY.verify(
+            request.headers.get(auth_policy.AUTH_HEADER)):
+        return {"status": "ok", "scope": "process", "serverTime": _now_iso()}
     node_instances = sorted(_LIVE_STATUS)
     live_node_connected = bool(node_instances)
     broker_kind = broker_layer.active_kind()
@@ -1620,17 +1715,34 @@ def execution_state():
         store = _execution_store()
         brk = broker_layer.get_broker()
         identity = brk.account_identity()
+        ctx = _execution_context()
+        now_dt = datetime.now(timezone.utc)
         content = execution_telemetry_layer.build(
             store=store,
             adapter_kind=broker_layer.active_kind(),
             adapter_connection=brk.connection().state,
             adapter_provenance="mock-fixture" if broker_layer.active_kind() == "mock" else "live-capable",
             account_identity=identity.data if identity.ok else None,
-            execution_mode=_execution_context().execution_mode,
+            execution_mode=ctx.execution_mode,
             reconciliation_posture=reconciliation_layer.safety_posture(store),
             node_healthy=bool(_LIVE_STATUS),
             now=_now_iso(),
         )
+        # ARCH-3: the full explicit gate set — every gate independently named.
+        content["readiness"]["gates"].update({
+            "operatorAuthenticated": _AUTH_POLICY.enforcing,
+            "commandAuthorizationActive": bool(
+                ctx.authorization and ctx.authorization.is_active(now_dt)),
+            "accountIdentityMatch": ctx.account_identity_state == execution_safety.ACCOUNT_MATCH,
+            "nodeArmingObserved": bool(ctx.node.arming_armed),
+            "approvedConnectionProfile": connection_policy.active_profile()
+                in connection_policy.APPROVED_PROFILES,
+        })
+        content["readiness"]["tradingReady"] = execution_telemetry_layer.trading_ready(
+            content["readiness"]["gates"])
+        content["availability"]["denialReasons"] = [
+            name for name, ok in content["readiness"]["gates"].items() if not ok]
+        content["context"] = ctx.safe_view()
         return JSONResponse(content=content, headers={"Cache-Control": "no-store"})
     except Exception:
         logger.exception("execution state read model failed")
@@ -2669,6 +2781,41 @@ def security_config_status():
         # UI-11: authentication STATE only — no token value, prefix, suffix, hash
         # or length. The policy object holds no field a future edit could render.
         body["auth"] = auth_policy.describe(_AUTH_POLICY, app.routes)
+        # ARCH-3: the NODE-INGEST principal, reported distinctly (value-free).
+        body["ingestAuth"] = {
+            "enabled": _INGEST_POLICY.enabled,
+            "enforcing": _INGEST_POLICY.enforcing,
+            "misconfigured": _INGEST_POLICY.misconfigured,
+            "tokenPresent": _INGEST_POLICY.token_present,
+            "issueCodes": sorted(set(_INGEST_POLICY.issues)),
+            "routes": sorted(auth_policy.INGEST_ROUTES),
+            # DEPRECATED legacy compat: operator token accepted on ingest. When
+            # true the configuration is DEGRADED and reported as such.
+            "legacyOperatorTokenAllowed": auth_policy.ingest_allows_operator_token(),
+            "degraded": auth_policy.ingest_allows_operator_token(),
+        }
+        # ARCH-3: connectivity posture as EXPLICIT dimensions — enabled, configured,
+        # approved and connected are distinct facts. This replaces the removed
+        # `active: false` constant and its stale "nothing exists yet" reason.
+        endpoint = os.environ.get(security_config.VAR_NODE_ENDPOINT, "").strip()
+        policy_decision = (connection_policy.evaluate(endpoint, env=dict(os.environ))
+                           if endpoint else None)
+        body["connectivity"] = {
+            "profile": connection_policy.active_profile(),
+            "approvedProfiles": sorted(connection_policy.APPROVED_PROFILES),
+            "remoteApproved": False,
+            "transport": transport_layer.selection_status(),
+            "connectionPolicy": (policy_decision.safe_view() if policy_decision
+                                 else {"allowed": False,
+                                       "reason": "no_endpoint_configured",
+                                       "profile": connection_policy.active_profile()}),
+            "outboundNodeAuth": {
+                "tokenPresent": bool(os.environ.get(
+                    security_config.VAR_NODE_API_TOKEN, "").strip()),
+            },
+            "missingRemotePrerequisites": list(connection_policy.REMOTE_PREREQUISITES),
+            "localOnly": True,
+        }
         return JSONResponse(content=body, headers={"Cache-Control": "no-store"})
     except Exception:               # diagnostics must never 500 the app
         logger.exception("security configuration description failed")
@@ -2723,6 +2870,22 @@ _CORS_POLICY = cors_policy.load_policy()
 # is readable on the path, and this gate applies to curl as much as to a browser.
 # Remote exposure still requires the UI-9 transport prerequisites.
 _AUTH_POLICY = auth_policy.load_policy()
+# ARCH-3: the NODE-INGEST principal — a distinct credential, distinct policy object,
+# scoped solely to auth_policy.INGEST_ROUTES.
+_INGEST_POLICY = auth_policy.load_ingest_policy()
+
+
+@app.middleware("http")
+async def _no_store_boundary(request: Request, call_next):
+    """ARCH-3: uniform `Cache-Control: no-store` on every /api response that did
+    not set its own caching policy. Telemetry, readiness and security surfaces
+    must never be replayed from a cache (a cached snapshot renders a halted
+    system as running); applying the header centrally removes the per-route
+    lottery Audit A found."""
+    response = await call_next(request)
+    if request.url.path.startswith("/api") and "cache-control" not in response.headers:
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.middleware("http")
@@ -2747,6 +2910,36 @@ async def _authentication_boundary(request: Request, call_next):
     blocked — a browser cannot attach credentials to a preflight by specification,
     and blocking it would break the UI-10 browser boundary.
     """
+    # ── ARCH-3: the NODE-INGEST principal owns its routes exclusively ─────────
+    # Evaluated FIRST so the ingest scope can never fall through to (or be
+    # satisfied by) the operator principal. When ingest auth is disabled the
+    # route stays open exactly as before — enabling the operator principal alone
+    # deliberately does not change ingest behaviour (see the activation runbook).
+    if request.url.path in auth_policy.INGEST_ROUTES:
+        if request.method in auth_policy.PREAUTH_METHODS:
+            return await call_next(request)
+        if not _INGEST_POLICY.enabled:
+            return await call_next(request)
+        if _INGEST_POLICY.misconfigured:
+            logger.warning("ingest authentication enabled but misconfigured; "
+                           "failing closed (issues: %s)", ",".join(_INGEST_POLICY.issues))
+            return JSONResponse(status_code=auth_policy.STATUS_MISCONFIGURED,
+                                content=auth_policy.MISCONFIGURED_BODY,
+                                headers={"Cache-Control": "no-store"})
+        header = request.headers.get(auth_policy.AUTH_HEADER)
+        if _INGEST_POLICY.verify(header):
+            return await call_next(request)
+        # DEPRECATED legacy compatibility, explicitly enabled only: the operator
+        # credential may authenticate ingest. Reported as degraded elsewhere.
+        if auth_policy.ingest_allows_operator_token() and _AUTH_POLICY.verify(header):
+            logger.warning("ingest authenticated with the OPERATOR token via the "
+                           "deprecated legacy-compat flag — configuration is degraded")
+            return await call_next(request)
+        logger.warning("unauthorized ingest request")
+        return JSONResponse(status_code=auth_policy.STATUS_UNAUTHORIZED,
+                            content=auth_policy.UNAUTHORIZED_BODY,
+                            headers=dict(auth_policy.UNAUTHORIZED_HEADERS))
+
     if not _AUTH_POLICY.enabled:
         return await call_next(request)                     # untouched behaviour
     if request.method in auth_policy.PREAUTH_METHODS:

@@ -313,7 +313,9 @@ def test_describe_config_never_returns_a_value():
 def test_describe_config_reports_status_only():
     env = {sc.VAR_NODE_API_TOKEN: SECRET_TOKEN}
     described = sc.describe_config(sc.load_config(env), env=env)
-    assert described["active"] is False
+    # ARCH-3: the stale `active: false` constant is gone; posture is reported as
+    # explicit dimensions by the route (`connectivity`, `auth`, `ingestAuth`).
+    assert "active" not in described and "activeReason" not in described
     assert described["variables"][sc.VAR_NODE_API_TOKEN] == {
         "status": sc.STATUS_CONFIGURED, "secret": True, "path": False}
     assert described["variables"][sc.VAR_NODE_ENDPOINT]["status"] == sc.STATUS_MISSING
@@ -365,8 +367,7 @@ def test_no_secret_material_is_committed_in_the_example():
 
 def test_disabled_state_is_the_default_everywhere():
     described = sc.describe_config(cfg(), env={})
-    assert described["active"] is False
-    assert "preparation only" in described["activeReason"]
+    assert "active" not in described          # replaced by explicit dimensions (ARCH-3)
     assert all(v["status"] == sc.STATUS_MISSING for v in described["variables"].values())
 
 
@@ -401,12 +402,18 @@ def test_module_opens_no_connection():
 
 # ── API surface ──────────────────────────────────────────────────────────────
 
-def test_endpoint_reports_not_active_and_no_values():
+def test_endpoint_reports_truthful_dimensions_and_no_values():
     response = client.get("/api/security/config")
     assert response.status_code == 200
     body = response.json()
-    assert body["active"] is False
-    assert body["activeReason"]
+    # ARCH-3: no `active` constant; explicit truthful dimensions instead.
+    assert "active" not in body and "activeReason" not in body
+    conn = body["connectivity"]
+    assert conn["profile"] == "local_loopback"
+    assert conn["remoteApproved"] is False
+    assert conn["transport"]["enabled"] is False          # default: not enabled
+    assert conn["transport"]["misconfigured"] is False    # distinct from enabled-but-invalid
+    assert body["ingestAuth"]["enabled"] is False
     assert set(body["variables"]) == set(sc.ALL_VARS)
     for info in body["variables"].values():
         assert set(info) == {"status", "secret", "path"}      # no value field exists

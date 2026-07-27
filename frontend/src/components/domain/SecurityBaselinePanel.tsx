@@ -42,7 +42,9 @@ export function SecurityBaselinePanel() {
           style={{ borderColor: 'var(--text-muted)', color: 'var(--text-muted)' }}
           data-testid="security-active-state"
         >
-          {data?.active ? 'ACTIVE' : 'NOT ACTIVE'}
+          {data?.connectivity
+            ? (data.connectivity.remoteApproved ? 'REMOTE APPROVED' : 'LOCAL-ONLY')
+            : '—'}
         </span>
       </header>
 
@@ -176,7 +178,17 @@ export function SecurityBaselinePanel() {
 
       {data && (
         <>
-          <p className="text-2xs text-text-muted">{data.activeReason}</p>
+          <p className="text-2xs text-text-muted" data-testid="connectivity-summary">
+            {`Profile ${data.connectivity?.profile ?? 'unknown'} · transport ${
+              data.connectivity?.transport?.enabled
+                ? (data.connectivity.transport.misconfigured ? 'enabled but misconfigured' : 'enabled')
+                : 'disabled'
+            } · connection policy ${data.connectivity?.connectionPolicy?.allowed ? 'allows' : 'denies'} (${
+              data.connectivity?.connectionPolicy?.reason ?? 'unknown'
+            }) · ingest auth ${data.ingestAuth?.enforcing ? 'enforcing' : data.ingestAuth?.enabled ? 'misconfigured' : 'disabled'}${
+              data.ingestAuth?.degraded ? ' · DEGRADED: legacy operator-token compat enabled' : ''
+            }`}
+          </p>
           <dl
             className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 mt-2 text-2xs"
             data-testid="security-variables"

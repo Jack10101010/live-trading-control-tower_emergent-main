@@ -28,12 +28,12 @@ _ACTIVE_ORDER_STATES = tuple(sorted(ol.IN_FLIGHT_STATES))
 
 def readiness_gates(*, adapter_kind: str | None, adapter_connection: str | None,
                     reconciliation: dict | None, node_healthy: bool,
-                    store_available: bool) -> dict:
+                    store_available: bool, extra: dict | None = None) -> dict:
     """The explicit, named gates readiness derives from. Every gate is a fact
     with a truthful source; `tradingReady` is their conjunction and can never be
     a constant."""
     recon = reconciliation or {}
-    return {
+    gates = {
         "liveAdapterActive": bool(adapter_kind) and adapter_kind != "mock",
         "adapterConnected": adapter_connection == "Connected",
         "executionStoreAvailable": bool(store_available),
@@ -41,6 +41,12 @@ def readiness_gates(*, adapter_kind: str | None, adapter_connection: str | None,
                                and not recon.get("stale", True),
         "nodeHealthy": bool(node_healthy),
     }
+    # ARCH-3: additional named gates (operator auth, command authorization,
+    # account identity, connection profile, ...). Each is a named boolean; the
+    # conjunction stays the only readiness answer.
+    for name, value in (extra or {}).items():
+        gates[str(name)] = bool(value)
+    return gates
 
 
 def trading_ready(gates: dict) -> bool:

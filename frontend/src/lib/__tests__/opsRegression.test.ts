@@ -186,11 +186,26 @@ describe('UI-10 client regression', () => {
     expect(source).not.toContain('withCredentials');
   });
 
-  it('no authentication header is sent', () => {
+  it('authentication headers come only from the single session owner', () => {
+    // ARCH-3: the operator token exists, memory-only, owned by lib/authSession.
+    // api.ts may only MERGE authHeader(); it must never build a Bearer header or
+    // hold a token itself, and no other module may touch Authorization.
     const source = read('lib/api.ts');
-    expect(source).not.toContain('Authorization');
-    expect(source).not.toContain('Bearer ');
-    expect(source).not.toContain('X-Api-Key');
+    expect(source).toContain('authHeader()');
+    expect(source).not.toContain("Bearer ");
+    const session = read('lib/authSession.ts');
+    expect(session).toContain('Bearer');            // the ONE header builder
+    // CODE ONLY — the module docstring PROHIBITS these by name, which is prose;
+    // strip comment lines so the guard matches real code (see backend conftest
+    // code_only for the same discipline).
+    const sessionCode = session
+      .split('\n')
+      .filter((l) => !l.trim().startsWith('*') && !l.trim().startsWith('//') && !l.trim().startsWith('/*'))
+      .join('\n');
+    expect(sessionCode).not.toContain('localStorage');
+    expect(sessionCode).not.toContain('sessionStorage');
+    expect(sessionCode).not.toContain('document.cookie');
+    expect(sessionCode).not.toContain('indexedDB');
   });
 
   it('no cookie or session dependency exists', () => {
@@ -206,20 +221,23 @@ describe('UI-10 client regression', () => {
     const source = read('lib/api.ts');
     const headers = [...source.matchAll(/'?([A-Za-z][A-Za-z-]+)'?:\s*(?:'[^']*'|idempotencyKey\(\))/g)]
       .map((m) => m[1])
-      .filter((name) => /^(Accept|Content-Type|Idempotency-Key|Authorization|Cookie|X-[A-Za-z-]+)$/.test(name));
+      .filter((name) => /^(Accept|Content-Type|Idempotency-Key|Cookie|X-[A-Za-z-]+)$/.test(name));
+    // Authorization is merged from the session owner (spread), not a literal here.
     expect(new Set(headers)).toEqual(new Set(['Accept', 'Content-Type', 'Idempotency-Key']));
   });
 });
 
 /* ── UI-11: the frontend must remain credential-free ─────────────────────────*/
 
-describe('UI-11 client regression', () => {
-  it('never injects an Authorization header', () => {
+describe('UI-11/ARCH-3 client regression', () => {
+  it('api.ts never builds an Authorization header itself', () => {
+    // ARCH-3: the header exists but has EXACTLY ONE owner (lib/authSession).
+    // api.ts merges authHeader() and must contain no literal header of its own.
     const source = read('lib/api.ts');
-    // The TYPE name may appear (AuthPolicyStatus); an actual header must not.
     expect(source).not.toContain("'Authorization':");
     expect(source).not.toContain('Authorization:');
     expect(source).not.toContain('Bearer ');
+    expect(source).toContain('authHeader()');
   });
 
   it('stores no token anywhere', () => {

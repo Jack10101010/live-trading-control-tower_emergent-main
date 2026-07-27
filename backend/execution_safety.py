@@ -98,7 +98,18 @@ DENY_DISARMED = "system_disarmed"
 DENY_ARMING_EXPIRED = "arming_expired"
 DENY_NODE_NOT_HEALTHY = "node_not_healthy"
 DENY_RECONCILIATION_REQUIRED = "reconciliation_unresolved"
+DENY_ACCOUNT_MISMATCH = "account_identity_mismatch"
+DENY_ACCOUNT_UNKNOWN = "account_identity_unknown"
 DENY_POLICY_ERROR = "policy_evaluation_error"
+
+# ── ARCH-3: account-identity evaluation states ────────────────────────────────
+#: `not_evaluated` — no account evaluation was performed (pure-engine callers /
+#: legacy contexts). No account gate applies; every other gate still does.
+#: The PRODUCTION context assembler always supplies an evaluated state.
+ACCOUNT_NOT_EVALUATED = "not_evaluated"
+ACCOUNT_MATCH = "match"
+ACCOUNT_MISMATCH = "mismatch"
+ACCOUNT_UNKNOWN = "unknown"          # evaluated but indeterminate (missing facts)
 
 #: The specific node-state deny reason, so an operator sees WHY the node blocked it.
 _NODE_DENY_REASON: dict[str, str] = {
@@ -201,6 +212,15 @@ class ReconciliationSafety:
 
 
 @dataclass(frozen=True)
+class AccountSafety:
+    """ARCH-3: the account-identity evaluation the context assembler performed.
+    A MISMATCH denies every non-read-only command (a command aimed at the wrong
+    account is never safe, including an emergency stop); UNKNOWN denies
+    risk-relevant execution while still permitting a halt."""
+    state: str = ACCOUNT_NOT_EVALUATED
+
+
+@dataclass(frozen=True)
 class SafetyContext:
     """The environment a command is evaluated against. Every default is the safe one:
     observe mode, disarmed, unknown node, no operator."""
@@ -209,6 +229,7 @@ class SafetyContext:
     node: NodeSafety = field(default_factory=NodeSafety)
     operator: OperatorAuthorization = field(default_factory=OperatorAuthorization)
     reconciliation: ReconciliationSafety = field(default_factory=ReconciliationSafety)
+    account: AccountSafety = field(default_factory=AccountSafety)
 
 
 @dataclass(frozen=True)
@@ -333,6 +354,20 @@ def evaluate(request: CommandRequest, context: SafetyContext | None = None, *,
             reason = _NODE_DENY_REASON.get(ctx.node.state, DENY_NODE_NOT_HEALTHY)
             return _decision(request, ctx, risk_class, allowed=False,
                              reason=reason, now=clock)
+
+        # 8a) ARCH-3 account-identity gate. A MISMATCH means every command is
+        #     aimed at the wrong account — nothing non-read-only may proceed,
+        #     including an emergency stop (halting an innocent account is harm).
+        #     UNKNOWN (evaluated but indeterminate) denies execution-affecting
+        #     commands while still permitting operational work and a halt.
+        #     `not_evaluated` applies no gate (pure-engine callers); the production
+        #     context assembler always supplies an evaluated state.
+        if ctx.account.state == ACCOUNT_MISMATCH:
+            return _decision(request, ctx, risk_class, allowed=False,
+                             reason=DENY_ACCOUNT_MISMATCH, now=clock)
+        if ctx.account.state == ACCOUNT_UNKNOWN and risk_class == RISK_EXECUTION_AFFECTING:
+            return _decision(request, ctx, risk_class, allowed=False,
+                             reason=DENY_ACCOUNT_UNKNOWN, now=clock)
 
         # 8b) ARCH-2 reconciliation gate: unresolved CRITICAL reconciliation
         #     discrepancies deny NEW RISK-INCREASING execution. Risk-reducing

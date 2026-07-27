@@ -42,6 +42,16 @@ from typing import Iterable
 VAR_ENABLED = "CONTROL_TOWER_AUTH_ENABLED"
 VAR_TOKEN = "CONTROL_TOWER_API_TOKEN"
 
+# ARCH-3: the NODE-INGEST principal. A separate credential scoped to the single
+# telemetry ingest route, so the VPS node never holds the operator credential
+# (which would grant it every operator/administrative route).
+VAR_INGEST_ENABLED = "CONTROL_TOWER_INGEST_AUTH_ENABLED"
+VAR_INGEST_TOKEN = "CONTROL_TOWER_INGEST_TOKEN"
+#: DEPRECATED legacy compatibility: explicitly allow the OPERATOR token to
+#: authenticate ingest. Off by default; when on, the security surface reports the
+#: configuration as DEGRADED. Exists only to stage a migration, never as a design.
+VAR_INGEST_ALLOW_OPERATOR = "CONTROL_TOWER_INGEST_ALLOW_OPERATOR_TOKEN"
+
 #: Fixed scheme and header. A configurable header name was considered and rejected:
 #: it adds a configuration surface, a divergence risk between client and server,
 #: and no capability. One scheme, one header.
@@ -70,6 +80,14 @@ MIN_TOKEN_LENGTH = 32
 #                    development keeps them while auth is off
 #   every mutation and command route
 PUBLIC_ROUTES: frozenset[str] = frozenset({"/api/health"})
+
+# ARCH-3: routes owned by the NODE-INGEST principal. Exact paths, never prefixes.
+# These are governed SOLELY by the ingest policy: the operator credential does not
+# authorize them (unless the deprecated legacy flag is explicitly enabled), and the
+# ingest credential authorizes NOTHING else. Note the deliberate consequence:
+# enabling operator auth alone does NOT protect ingest — the activation runbook
+# enables both principals together.
+INGEST_ROUTES: frozenset[str] = frozenset({"/api/live/ingest"})
 
 #: Methods that bypass authentication regardless of route. ONLY the CORS preflight:
 #: a browser sends `OPTIONS` without credentials by specification, so demanding one
@@ -233,7 +251,8 @@ def extract_bearer_token(header_value: str | None) -> str | None:
     return credential
 
 
-def load_policy(env: dict | None = None) -> AuthPolicy:
+def load_policy(env: dict | None = None, *, enabled_var: str = VAR_ENABLED,
+                token_var: str = VAR_TOKEN) -> AuthPolicy:
     """Resolve the effective policy. Never raises; never blocks startup.
 
     Resolution:
@@ -242,16 +261,21 @@ def load_policy(env: dict | None = None) -> AuthPolicy:
       * explicitly true + valid token          -> enforcing
       * explicitly true + missing/short token  -> MISCONFIGURED (fails closed)
       * unrecognised boolean                   -> disabled + issue reported
+
+    ARCH-3: the same fail-closed resolution serves every principal — the OPERATOR
+    principal by default, the NODE-INGEST principal via `load_ingest_policy`. Each
+    principal has its own variables, its own policy object, its own scope; there is
+    no fallback from one principal's credential to another's.
     """
     import os
     source = os.environ if env is None else env
 
-    enabled, ok = _parse_bool(source.get(VAR_ENABLED))
+    enabled, ok = _parse_bool(source.get(enabled_var))
     issues: list[str] = []
     if not ok:
         issues.append(ISSUE_ENABLED_INVALID)
 
-    raw_token = source.get(VAR_TOKEN)
+    raw_token = source.get(token_var)
     token_value = raw_token.strip() if isinstance(raw_token, str) else ""
     token_present = bool(token_value)          # blank is ABSENT, not "empty but set"
     token_length_ok = len(token_value) >= MIN_TOKEN_LENGTH
@@ -279,10 +303,27 @@ def load_policy(env: dict | None = None) -> AuthPolicy:
     )
 
 
+def load_ingest_policy(env: dict | None = None) -> AuthPolicy:
+    """ARCH-3: the NODE-INGEST principal's policy — same fail-closed resolution,
+    its own variables, its own scope (`INGEST_ROUTES` only)."""
+    return load_policy(env, enabled_var=VAR_INGEST_ENABLED, token_var=VAR_INGEST_TOKEN)
+
+
+def ingest_allows_operator_token(env: dict | None = None) -> bool:
+    """DEPRECATED legacy compatibility, explicitly enabled only. When true, the
+    OPERATOR credential may also authenticate ingest; the security surface reports
+    this as a DEGRADED configuration. Default: off."""
+    import os
+    source = os.environ if env is None else env
+    raw = source.get(VAR_INGEST_ALLOW_OPERATOR)
+    return isinstance(raw, str) and raw.strip().lower() in _TRUTHY
+
+
 # ── route classification ─────────────────────────────────────────────────────
 
 CLASS_PUBLIC = "public"
 CLASS_PROTECTED = "protected"
+CLASS_INGEST = "ingest"          # ARCH-3: governed solely by the ingest principal
 
 
 def classify_route(path: str) -> str:
@@ -292,7 +333,11 @@ def classify_route(path: str) -> str:
     `/api/health/secrets` inherits public access from `/api/health`, which is
     precisely the accident rule 15 of this slice forbids.
     """
-    return CLASS_PUBLIC if path in PUBLIC_ROUTES else CLASS_PROTECTED
+    if path in PUBLIC_ROUTES:
+        return CLASS_PUBLIC
+    if path in INGEST_ROUTES:
+        return CLASS_INGEST
+    return CLASS_PROTECTED
 
 
 def is_protected(path: str) -> bool:
@@ -329,6 +374,7 @@ def describe(policy: AuthPolicy, app_routes: Iterable | None = None) -> dict:
     classified = classify_app_routes(app_routes or ())
     protected = sum(1 for c in classified.values() if c == CLASS_PROTECTED)
     public = sum(1 for c in classified.values() if c == CLASS_PUBLIC)
+    ingest = sum(1 for c in classified.values() if c == CLASS_INGEST)
     return {
         # The headline: enforcement is off unless deliberately switched on.
         "active": policy.enforcing,
@@ -342,7 +388,9 @@ def describe(policy: AuthPolicy, app_routes: Iterable | None = None) -> dict:
         "minTokenLength": MIN_TOKEN_LENGTH,
         "protectedRouteCount": protected,
         "publicRouteCount": public,
+        "ingestRouteCount": ingest,                 # ARCH-3: the ingest principal's scope
         "publicRoutes": sorted(PUBLIC_ROUTES),      # a policy decision, not a secret
+        "ingestRoutes": sorted(INGEST_ROUTES),
         "docsPolicy": CLASS_PROTECTED,
         "openapiPolicy": CLASS_PROTECTED,
         "issueCodes": sorted(set(policy.issues)),
