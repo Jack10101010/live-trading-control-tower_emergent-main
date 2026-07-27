@@ -130,3 +130,4 @@ secrets/
 certs/
 backend/scenario_state.db
 backend/trade_ledger.db
+backend/recommendation_state.db

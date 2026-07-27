@@ -9,6 +9,7 @@ import { ManualExecutionPanel } from '@/components/domain/ManualExecutionPanel';
 import { OperationalDashboard } from '@/components/domain/OperationalDashboard';
 import { ScenarioPanel } from '@/components/domain/ScenarioPanel';
 import { TradeLedgerPanel } from '@/components/domain/TradeLedgerPanel';
+import { RecommendationPanel } from '@/components/domain/RecommendationPanel';
 import { useFleet, usePackages, useFeatureFlags, useRuntimeHealth, useBrokerReconciliation, useStrategyEvaluation, useSchedulerStatus, useMarketSnapshot, useRiskLimits, useActivePackage, useBackendHealth } from '@/hooks/useRepository';
 import { api, QK } from '@/lib/api';
 import { queryClient } from '@/lib/queryClient';
@@ -115,6 +116,11 @@ export function SystemView() {
 
       {/* LIVE-4C — the canonical Trade Ledger: the historical economic result
           of every closed trade. Read-only; no financial reconstruction here. */}
+      {/* LIVE-4D — the canonical Recommendation domain: proposals to act on a
+          Scenario, with their decision history. Read-only; acceptance never
+          executes. */}
+      <RecommendationPanel />
+
       <TradeLedgerPanel />
 
       {/* UI-1 — the live relationship between this Control Tower, the execution

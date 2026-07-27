@@ -593,6 +593,218 @@ def build_trade_ledger(entries=None, totals=None, *, now: str,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# LIVE-4D — Recommendation read models. Derived only; NO performance metrics.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class RecommendationDecisionView:
+    """One decision as the operator sees it. The actor is already pseudonymized
+    by the domain — a raw operator id never reaches a read model."""
+    decision_id: str
+    decision_type: str
+    actor_type: str
+    actor: str | None = None
+    occurred_at: str | None = None
+    sequence: int = 1
+    reason: str | None = None
+    authorization_reference: str | None = None
+    execution_mode: str | None = None
+
+    def as_dict(self) -> dict:
+        return _sorted({
+            "decisionId": self.decision_id, "decisionType": self.decision_type,
+            "actorType": self.actor_type, "actor": self.actor,
+            "occurredAt": self.occurred_at, "sequence": self.sequence,
+            "reason": self.reason,
+            "authorizationReference": self.authorization_reference,
+            "executionMode": self.execution_mode,
+        })
+
+
+@dataclass(frozen=True)
+class RecommendationOperationalView:
+    recommendation_id: str
+    scenario_id: str
+    instrument: str | None = None
+    direction: str | None = None
+    source: str | None = None
+    status: str | None = None
+    outcome: str | None = None
+    latest_decision: RecommendationDecisionView | None = None
+    actor_type: str | None = None
+    proposed_entry: float | None = None
+    stop_loss: float | None = None
+    take_profit: float | None = None
+    quantity: float | None = None
+    risk_amount: float | None = None
+    risk_percent: float | None = None
+    planned_r: float | None = None
+    rationale: str | None = None
+    confidence: float | None = None
+    linked_intent_count: int = 0
+    linked_intent_ids: tuple = field(default_factory=tuple)
+    superseded_by: str | None = None
+    supersedes: str | None = None
+    created_at: str | None = None
+    expires_at: str | None = None
+    age_seconds: float | None = None
+    past_due: bool = False
+    active: bool = False
+    node_id: str | None = None
+    account_fingerprint_masked: str | None = None
+    execution_terms_availability: str | None = None
+    risk_terms_availability: str | None = None
+    warnings: tuple = field(default_factory=tuple)
+    tags: tuple = field(default_factory=tuple)
+    provenance: str = PROV_ABSENT
+    freshness: Freshness | None = None
+
+    def as_dict(self) -> dict:
+        return _sorted({
+            "recommendationId": self.recommendation_id,
+            "scenarioId": self.scenario_id, "instrument": self.instrument,
+            "direction": self.direction, "source": self.source,
+            "status": self.status, "outcome": self.outcome,
+            "latestDecision": self.latest_decision.as_dict()
+                              if self.latest_decision else None,
+            "actorType": self.actor_type,
+            "proposedEntry": self.proposed_entry, "stopLoss": self.stop_loss,
+            "takeProfit": self.take_profit, "quantity": self.quantity,
+            "riskAmount": self.risk_amount, "riskPercent": self.risk_percent,
+            "plannedR": self.planned_r, "rationale": self.rationale,
+            "confidence": self.confidence,
+            "linkedIntentCount": self.linked_intent_count,
+            "linkedIntentIds": list(self.linked_intent_ids),
+            "supersededBy": self.superseded_by, "supersedes": self.supersedes,
+            "createdAt": self.created_at, "expiresAt": self.expires_at,
+            "ageSeconds": self.age_seconds, "pastDue": self.past_due,
+            "active": self.active, "nodeId": self.node_id,
+            "accountFingerprintMasked": self.account_fingerprint_masked,
+            "executionTermsAvailability": self.execution_terms_availability,
+            "riskTermsAvailability": self.risk_terms_availability,
+            "warnings": list(self.warnings), "tags": list(self.tags),
+            "provenance": self.provenance,
+            "freshness": self.freshness.as_dict() if self.freshness else None,
+        })
+
+
+@dataclass(frozen=True)
+class RecommendationOperationalSummary:
+    active_count: int = 0
+    pending_decision_count: int = 0
+    accepted_count: int = 0
+    rejected_count: int = 0
+    expired_count: int = 0
+    withdrawn_count: int = 0
+    superseded_count: int = 0
+    execution_linked_count: int = 0
+    latest_created_at: str | None = None
+    availability: str = AVAILABILITY_UNAVAILABLE
+    provenance: str = PROV_ABSENT
+    freshness: Freshness | None = None
+
+    def as_dict(self) -> dict:
+        return _sorted({
+            "activeCount": self.active_count,
+            "pendingDecisionCount": self.pending_decision_count,
+            "acceptedCount": self.accepted_count,
+            "rejectedCount": self.rejected_count,
+            "expiredCount": self.expired_count,
+            "withdrawnCount": self.withdrawn_count,
+            "supersededCount": self.superseded_count,
+            "executionLinkedCount": self.execution_linked_count,
+            "latestCreatedAt": self.latest_created_at,
+            "availability": self.availability, "provenance": self.provenance,
+            "freshness": self.freshness.as_dict() if self.freshness else None,
+        })
+
+
+def build_recommendations(recommendations=None, *, now: str,
+                          decisions_for=None, warnings_for=None,
+                          stale_after_s: float = DEFAULT_STALE_AFTER_S) -> tuple:
+    """Project recommendations. `recommendations is None` means the store could
+    not be read — the caller reports that explicitly (an empty tuple never
+    claims 'no recommendations exist')."""
+    if recommendations is None:
+        return ()
+    decisions_lookup = decisions_for or (lambda _rid: [])
+    warnings_lookup = warnings_for or (lambda _r: ())
+    out = []
+    for item in recommendations:
+        try:
+            decisions = list(decisions_lookup(item.recommendation_id))
+            latest = None
+            if decisions:
+                newest = sorted(decisions,
+                                key=lambda d: (d.sequence, d.occurred_at,
+                                               d.decision_id))[-1]
+                view = newest.safe_view()
+                latest = RecommendationDecisionView(
+                    decision_id=view["decisionId"],
+                    decision_type=view["decisionType"],
+                    actor_type=view["actorType"], actor=view["actor"],
+                    occurred_at=view["occurredAt"], sequence=view["sequence"],
+                    reason=view["reason"],
+                    authorization_reference=view["authorizationReference"],
+                    execution_mode=view["executionMode"])
+            terms = item.terms
+            out.append(RecommendationOperationalView(
+                recommendation_id=item.recommendation_id,
+                scenario_id=item.scenario_id, instrument=item.instrument,
+                direction=item.direction, source=item.source, status=item.status,
+                outcome=item.outcome, latest_decision=latest,
+                actor_type=latest.actor_type if latest else None,
+                proposed_entry=terms.execution.requested_entry_price,
+                stop_loss=terms.risk.stop_loss, take_profit=terms.risk.take_profit,
+                quantity=terms.execution.quantity,
+                risk_amount=terms.risk.risk_amount,
+                risk_percent=terms.risk.risk_percent,
+                planned_r=terms.risk.planned_r, rationale=terms.rationale,
+                confidence=terms.confidence,
+                linked_intent_count=len(item.linked_intent_ids),
+                linked_intent_ids=tuple(item.linked_intent_ids),
+                superseded_by=item.superseded_by, supersedes=item.supersedes,
+                created_at=item.created_at, expires_at=item.expiry_at,
+                age_seconds=item.age_seconds(now), past_due=item.past_due(now),
+                active=item.active, node_id=item.node_id,
+                account_fingerprint_masked=_mask_fingerprint(item.account_fingerprint),
+                execution_terms_availability=terms.execution.availability,
+                risk_terms_availability=terms.risk.availability,
+                warnings=tuple(warnings_lookup(item)), tags=tuple(terms.tags),
+                provenance=PROV_DURABLE_STORE,
+                freshness=freshness(now=now, source_at=item.updated_at,
+                                    available=True, stale_after_s=stale_after_s)))
+        except Exception:
+            continue                     # a malformed row is skipped, never faked
+    out.sort(key=lambda v: (v.created_at or "", v.recommendation_id), reverse=True)
+    return tuple(out)
+
+
+def build_recommendation_summary(totals=None, *, now: str,
+                                 stale_after_s: float = DEFAULT_STALE_AFTER_S
+                                 ) -> RecommendationOperationalSummary:
+    """Counts only. No win rate, expectancy or any performance metric."""
+    if totals is None:
+        return RecommendationOperationalSummary(
+            availability=AVAILABILITY_UNAVAILABLE, provenance=PROV_ABSENT,
+            freshness=freshness(now=now, source_at=None, available=False,
+                                stale_after_s=stale_after_s,
+                                detail="recommendation store unavailable"))
+    t = totals.as_dict()
+    return RecommendationOperationalSummary(
+        active_count=t["activeCount"],
+        pending_decision_count=t["pendingDecisionCount"],
+        accepted_count=t["acceptedCount"], rejected_count=t["rejectedCount"],
+        expired_count=t["expiredCount"], withdrawn_count=t["withdrawnCount"],
+        superseded_count=t["supersededCount"],
+        execution_linked_count=t["executionLinkedCount"],
+        latest_created_at=t["latestCreatedAt"],
+        availability=AVAILABILITY_OK, provenance=PROV_DURABLE_STORE,
+        freshness=freshness(now=now, source_at=t["latestCreatedAt"],
+                            available=True, stale_after_s=stale_after_s))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Sources — the read-only bundle the builder derives from.
 # Every entry is a CALLABLE the runtime supplies, so this module imports no
 # server, no adapter and no store, and can be exercised with plain fakes.

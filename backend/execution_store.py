@@ -47,7 +47,10 @@ import security_config
 #                     execution-mode transitions, entity locks (new tables).
 #   2 -> 3 (LIVE-4B): nullable `intents.scenario_id` for OPTIONAL Scenario
 #                     lineage. Nothing on any execution path reads it.
-SCHEMA_VERSION = 3
+#   3 -> 4 (LIVE-4D): nullable `intents.recommendation_id` for OPTIONAL
+#                     Recommendation lineage. Also read by nothing on the
+#                     execution path.
+SCHEMA_VERSION = 4
 
 
 class StoreError(RuntimeError):
@@ -95,14 +98,16 @@ class ExecutionStore:
                 #   2 -> 3 (LIVE-4B): nullable `intents.scenario_id` for optional
                 #                     Scenario lineage. No existing value changes
                 #                     and no execution behaviour depends on it.
-                if found not in (1, 2):
+                if found not in (1, 2, 3):
                     raise StoreError("unsupported_schema_version",
                                      f"no migration path from schema {found}")
-                if found < 3:
-                    cols = {r[1] for r in conn.execute(
-                        "PRAGMA table_info(intents)").fetchall()}
-                    if cols and "scenario_id" not in cols:
-                        conn.execute("ALTER TABLE intents ADD COLUMN scenario_id TEXT")
+                cols = {r[1] for r in conn.execute(
+                    "PRAGMA table_info(intents)").fetchall()}
+                if found < 3 and cols and "scenario_id" not in cols:
+                    conn.execute("ALTER TABLE intents ADD COLUMN scenario_id TEXT")
+                if found < 4 and cols and "recommendation_id" not in cols:
+                    conn.execute(
+                        "ALTER TABLE intents ADD COLUMN recommendation_id TEXT")
                 conn.execute("UPDATE meta SET value=? WHERE key='schema_version'",
                              (str(SCHEMA_VERSION),))
         conn.execute(
@@ -117,7 +122,8 @@ class ExecutionStore:
                 metadata_json TEXT NOT NULL,
                 state TEXT NOT NULL, updated_at TEXT NOT NULL,
                 broker_ref TEXT,
-                scenario_id TEXT
+                scenario_id TEXT,
+                recommendation_id TEXT
             )""")
         conn.execute(
             """CREATE TABLE IF NOT EXISTS intent_transitions (
@@ -199,8 +205,9 @@ class ExecutionStore:
                         idempotency_key, command_name, kind, deployment_id, account_id,
                         instrument, side, order_type, quantity, entry, stop_loss,
                         take_profit, time_in_force, source, created_at, expires_at,
-                        metadata_json, state, updated_at, broker_ref, scenario_id)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        metadata_json, state, updated_at, broker_ref, scenario_id,
+                        recommendation_id)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (intent.intent_id, intent.command_id, intent.correlation_id,
                      intent.idempotency_key, intent.command_name, intent.kind,
                      intent.deployment_id, intent.account_id, intent.instrument,
@@ -208,7 +215,7 @@ class ExecutionStore:
                      intent.stop_loss, intent.take_profit, intent.time_in_force,
                      intent.source, intent.created_at, intent.expires_at,
                      json.dumps(redacted), ol.CREATED, now, None,
-                     intent.scenario_id))
+                     intent.scenario_id, intent.recommendation_id))
                 conn.execute(
                     "INSERT INTO intent_transitions (intent_id, from_state, to_state, at, reason, evidence, broker_ref)"
                     " VALUES (?,?,?,?,?,?,?)",

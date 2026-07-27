@@ -581,9 +581,12 @@ class ExecutionOrchestrator:
             kind=kind,
             command_id=command_id,
             correlation_id=command_id,     # lineage: the command groups the records
-            # LIVE-4B: optional Scenario lineage, captured verbatim if supplied.
-            # No gate, validator or policy reads it — behaviour is unchanged.
+            # LIVE-4B/4D: optional Scenario and Recommendation lineage, captured
+            # verbatim if supplied. No gate, validator or policy reads either —
+            # behaviour is unchanged, and an accepted Recommendation never
+            # authorizes anything.
             scenario_id=payload.get("scenarioId"),
+            recommendation_id=payload.get("recommendationId"),
             idempotency_key=idempotency_key,
             deployment_id=payload.get("deploymentId"),
             # LIVE-2: a submit-kind intent persists the full canonical request

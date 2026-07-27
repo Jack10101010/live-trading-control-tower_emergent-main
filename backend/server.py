@@ -57,6 +57,9 @@ import broker_history as broker_history_layer
 import trade_ledger_domain as ledger_domain
 import trade_ledger_store as ledger_store_layer
 import trade_reconstruction as reconstruction_layer
+import recommendation_domain as recommendation_layer
+import recommendation_service as recommendation_service_layer
+import recommendation_store as recommendation_store_layer
 import reconciliation as reconciliation_layer
 import ops_status as ops_status_layer
 import security_config
@@ -1267,6 +1270,57 @@ def _ledger_store() -> ledger_store_layer.TradeLedgerStore | None:
         logger.exception("trade ledger store unavailable — ledger reads report unavailable")
         _LEDGER_STORE_FAILED = True
         return None
+
+
+# LIVE-4D: the durable RECOMMENDATION store + the ONE write service. Own file
+# and schema version; owns proposals and decisions only. The service can never
+# submit an order, grant authorization or change execution mode — accepting a
+# Recommendation records a decision and stops.
+RECOMMENDATION_DB_PATH = ROOT_DIR / 'recommendation_state.db'
+_RECOMMENDATION_STORE: recommendation_store_layer.RecommendationStore | None = None
+_RECOMMENDATION_STORE_FAILED = False
+
+
+def _recommendation_store() -> recommendation_store_layer.RecommendationStore | None:
+    global _RECOMMENDATION_STORE, _RECOMMENDATION_STORE_FAILED
+    if _RECOMMENDATION_STORE is not None:
+        return _RECOMMENDATION_STORE
+    if _RECOMMENDATION_STORE_FAILED:
+        return None
+    try:
+        _RECOMMENDATION_STORE = recommendation_store_layer.RecommendationStore(
+            RECOMMENDATION_DB_PATH)
+        return _RECOMMENDATION_STORE
+    except Exception:
+        logger.exception("recommendation store unavailable — reads report unavailable")
+        _RECOMMENDATION_STORE_FAILED = True
+        return None
+
+
+def _scenario_reader(scenario_id: str):
+    store = _scenario_store()
+    if store is None:
+        return None
+    try:
+        return store.get_scenario(scenario_id)
+    except Exception:
+        return None
+
+
+_RECOMMENDATION_SERVICE = recommendation_service_layer.RecommendationService(
+    store_fn=lambda: _recommendation_store(),
+    scenario_reader=_scenario_reader,
+    now_iso_fn=lambda: _now_iso(),
+    execution_mode_fn=lambda: _EXECUTION_MODE.current_mode(),
+)
+
+
+def scenario_identity_for_key(scenario_key: str):
+    """The ONE scenario identity rule, reused by the fixture adapter: parse the
+    canonical `scenarioKey` and derive the same ScenarioId the domain would."""
+    parsed = scenario_layer.parse_scenario_key(scenario_key)
+    scenario_id = scenario_layer.ScenarioId.derive(**parsed).value
+    return scenario_id, parsed["instrument"], parsed["direction"]
 
 
 # ARCH-3: the tower-owned mock authorization provider. EXPLICITLY MOCK — it
@@ -3007,6 +3061,176 @@ def ledger_trade_history(trade_id: str, limit: int = 200):
     except Exception:
         logger.exception("ledger history failed")
         return _ledger_unavailable("ledger_history_failed")
+
+
+# ── LIVE-4D: the canonical Recommendation read surface (read-only, derived) ──
+#
+# PATH NAMESPACE: these live under `/api/trade-recommendations/*`, NOT
+# `/api/recommendations`. The audit found a pre-existing `/api/recommendations`
+# route serving the fixture world's POLICY-CHANGE proposals (a different
+# concept, consumed by PolicyEngineView, EdgeMonitorView and PolicyCellRenderer).
+# Reusing that path would silently shadow it and break those views, so the
+# canonical TRADE recommendation domain gets its own namespace and the existing
+# fixture surface is left exactly as it was.
+#
+# There is deliberately NO public write route: the operator command vocabulary
+# contains no decision verb, so decisions enter through `_RECOMMENDATION_SERVICE`
+# behind the existing authenticated boundary. Accepting a Recommendation never
+# submits an order — there is no browser-to-broker path here.
+
+MAX_RECOMMENDATION_PAGE = 200
+
+
+def _recommendation_unavailable(code: str = "recommendation_store_unavailable"):
+    summary = projection_layer.build_recommendation_summary(None, now=_now_iso())
+    return _projection_response(
+        {"error": "unavailable", "code": code, "recommendations": [],
+         "summary": summary.as_dict(), "projectionTimestamp": _now_iso()}, 503)
+
+
+def _recommendation_views(items):
+    """Project through the ONE projection owner, with decisions and warnings
+    supplied by the service — no aggregation happens in a route handler."""
+    store = _recommendation_store()
+    now = _now_iso()
+    return projection_layer.build_recommendations(
+        items, now=now,
+        decisions_for=(lambda rid: store.decisions(rid)) if store else None,
+        warnings_for=lambda r: _RECOMMENDATION_SERVICE.warnings_for(r, now=now))
+
+
+def _recommendation_filters(request: Request) -> dict:
+    q = request.query_params
+    return {"scenario_id": q.get("scenarioId"), "instrument": q.get("instrument"),
+            "direction": q.get("direction"), "source": q.get("source"),
+            "node_id": q.get("nodeId"),
+            "account_fingerprint": q.get("accountFingerprint"),
+            "created_from": q.get("createdFrom"), "created_to": q.get("createdTo"),
+            "linked_intent": q.get("linkedIntent")}
+
+
+@api_router.get("/trade-recommendations/summary")
+def recommendations_summary():
+    """Counts only — no performance metrics."""
+    try:
+        store = _recommendation_store()
+        if store is None:
+            return _recommendation_unavailable()
+        summary = projection_layer.build_recommendation_summary(
+            store.summary(), now=_now_iso())
+        return _projection_response({"summary": summary.as_dict(),
+                                     "projectionTimestamp": _now_iso()})
+    except Exception:
+        logger.exception("recommendation summary failed")
+        return _recommendation_unavailable("recommendation_summary_failed")
+
+
+@api_router.get("/trade-recommendations")
+def list_recommendations_route(request: Request, status: str | None = None,
+                               decisionType: str | None = None,
+                               limit: int = 50, offset: int = 0):
+    try:
+        store = _recommendation_store()
+        if store is None:
+            return _recommendation_unavailable()
+        page = max(1, min(int(limit), MAX_RECOMMENDATION_PAGE))
+        filters = _recommendation_filters(request)
+        statuses = (status,) if status else None
+        items = store.list_recommendations(statuses=statuses, limit=page,
+                                           offset=max(0, int(offset)), **filters)
+        views = _recommendation_views(items)
+        if decisionType:
+            views = tuple(v for v in views if v.latest_decision
+                          and v.latest_decision.decision_type == decisionType)
+        return _projection_response({
+            "recommendations": [v.as_dict() for v in views],
+            "summary": projection_layer.build_recommendation_summary(
+                store.summary(), now=_now_iso()).as_dict(),
+            "totalCount": store.count_recommendations(statuses=statuses, **filters),
+            "limit": page, "offset": max(0, int(offset)),
+            "projectionTimestamp": _now_iso()})
+    except Exception:
+        logger.exception("recommendation listing failed")
+        return _recommendation_unavailable("recommendation_listing_failed")
+
+
+@api_router.get("/trade-recommendations/active")
+def active_recommendations_route():
+    try:
+        store = _recommendation_store()
+        if store is None:
+            return _recommendation_unavailable()
+        views = _recommendation_views(store.list_active_recommendations())
+        return _projection_response({
+            "recommendations": [v.as_dict() for v in views],
+            "projectionTimestamp": _now_iso()})
+    except Exception:
+        logger.exception("active recommendation listing failed")
+        return _recommendation_unavailable("recommendation_listing_failed")
+
+
+@api_router.get("/trade-recommendations/{recommendation_id}")
+def get_recommendation_route(recommendation_id: str):
+    try:
+        store = _recommendation_store()
+        if store is None:
+            return _recommendation_unavailable()
+        item = store.get_recommendation(recommendation_id)
+        if item is None:
+            return _projection_response(
+                {"error": "not_found", "code": "recommendation_not_found",
+                 "recommendationId": recommendation_id}, 404)
+        view = _recommendation_views([item])[0]
+        return _projection_response({
+            **view.as_dict(),
+            "decisions": [d.safe_view() for d in store.decisions(recommendation_id)],
+            "history": [e.as_dict() for e in store.history(recommendation_id)]})
+    except Exception:
+        logger.exception("recommendation detail failed")
+        return _recommendation_unavailable("recommendation_detail_failed")
+
+
+@api_router.get("/trade-recommendations/{recommendation_id}/history")
+def recommendation_history_route(recommendation_id: str, limit: int = 200):
+    try:
+        store = _recommendation_store()
+        if store is None:
+            return _recommendation_unavailable()
+        events = store.history(recommendation_id,
+                               limit=max(1, min(int(limit), 500)))
+        if not events:
+            return _projection_response(
+                {"error": "not_found", "code": "recommendation_not_found",
+                 "recommendationId": recommendation_id}, 404)
+        return _projection_response({
+            "recommendationId": recommendation_id,
+            "events": [e.as_dict() for e in events],
+            "projectionTimestamp": _now_iso()})
+    except Exception:
+        logger.exception("recommendation history failed")
+        return _recommendation_unavailable("recommendation_history_failed")
+
+
+@api_router.get("/trade-recommendations/{recommendation_id}/decisions")
+def recommendation_decisions_route(recommendation_id: str):
+    """The append-only decision history, with actors pseudonymized."""
+    try:
+        store = _recommendation_store()
+        if store is None:
+            return _recommendation_unavailable()
+        if store.get_recommendation(recommendation_id) is None:
+            return _projection_response(
+                {"error": "not_found", "code": "recommendation_not_found",
+                 "recommendationId": recommendation_id}, 404)
+        decisions = store.decisions(recommendation_id)
+        return _projection_response({
+            "recommendationId": recommendation_id,
+            "decisions": [d.safe_view() for d in decisions],
+            "conflicts": list(recommendation_layer.conflicting_decisions(decisions)),
+            "projectionTimestamp": _now_iso()})
+    except Exception:
+        logger.exception("recommendation decisions failed")
+        return _recommendation_unavailable("recommendation_decisions_failed")
 
 
 @api_router.get("/execution/health")

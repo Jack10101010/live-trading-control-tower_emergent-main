@@ -961,6 +961,93 @@ export interface LedgerEventView {
   provenance: string;
 }
 
+/* ── LIVE-4D: canonical Recommendation read models ────────────────────────── */
+export interface RecommendationDecisionView {
+  decisionId: string;
+  decisionType: string;
+  actorType: string;
+  actor: string | null;
+  occurredAt: string | null;
+  sequence: number;
+  reason: string | null;
+  authorizationReference: string | null;
+  executionMode: string | null;
+}
+
+export interface RecommendationOperationalView {
+  recommendationId: string;
+  scenarioId: string;
+  instrument: string | null;
+  direction: string | null;
+  source: string | null;
+  status: string | null;
+  outcome: string | null;
+  latestDecision: RecommendationDecisionView | null;
+  actorType: string | null;
+  proposedEntry: number | null;
+  stopLoss: number | null;
+  takeProfit: number | null;
+  quantity: number | null;
+  riskAmount: number | null;
+  riskPercent: number | null;
+  plannedR: number | null;
+  rationale: string | null;
+  confidence: number | null;
+  linkedIntentCount: number;
+  linkedIntentIds: string[];
+  supersededBy: string | null;
+  supersedes: string | null;
+  createdAt: string | null;
+  expiresAt: string | null;
+  ageSeconds: number | null;
+  pastDue: boolean;
+  active: boolean;
+  nodeId: string | null;
+  accountFingerprintMasked: string | null;
+  executionTermsAvailability: string | null;
+  riskTermsAvailability: string | null;
+  warnings: string[];
+  tags: string[];
+  provenance: string;
+  freshness: ProjectionFreshness | null;
+}
+
+export interface RecommendationOperationalSummary {
+  activeCount: number;
+  pendingDecisionCount: number;
+  acceptedCount: number;
+  rejectedCount: number;
+  expiredCount: number;
+  withdrawnCount: number;
+  supersededCount: number;
+  executionLinkedCount: number;
+  latestCreatedAt: string | null;
+  availability: string;
+  provenance: string;
+  freshness: ProjectionFreshness | null;
+}
+
+export interface RecommendationListView {
+  recommendations: RecommendationOperationalView[];
+  summary: RecommendationOperationalSummary;
+  totalCount: number;
+  limit?: number;
+  offset?: number;
+  error?: string;
+  code?: string;
+}
+
+export interface RecommendationEventView {
+  eventId: string;
+  recommendationId: string;
+  sequence: number;
+  eventType: string;
+  occurredAt: string;
+  recordedAt: string;
+  payload: Record<string, unknown>;
+  provenance: string;
+}
+
 export interface ExecutionModeView {
   mode: string;
   history: Array<Record<string, unknown>>;
@@ -1106,6 +1193,30 @@ export const api = {
       `/ledger/trades/${encodeURIComponent(tradeId)}/history`),
   ledgerIncomplete: () => apiFetch<TradeLedgerView>('/ledger/incomplete'),
   ledgerConflicts: () => apiFetch<TradeLedgerView>('/ledger/conflicts'),
+  /* LIVE-4D — the canonical Recommendation read surface. READ-ONLY: there is
+   * no decision write route, and the UI never authorizes or executes. */
+  tradeRecommendationsSummary: () =>
+    apiFetch<{ summary: RecommendationOperationalSummary }>('/trade-recommendations/summary'),
+  tradeRecommendations: (filters: {
+    status?: string; scenarioId?: string; instrument?: string; direction?: string;
+    source?: string; nodeId?: string; decisionType?: string; linkedIntent?: string;
+    limit?: number; offset?: number;
+  } = {}) => {
+    const q = new URLSearchParams(
+      Object.entries(filters).filter(([, v]) => v !== undefined && v !== '')
+        .map(([k, v]) => [k, String(v)]) as [string, string][]
+    ).toString();
+    return apiFetch<RecommendationListView>(`/trade-recommendations${q ? `?${q}` : ''}`);
+  },
+  activeTradeRecommendations: () =>
+    apiFetch<{ recommendations: RecommendationOperationalView[] }>('/trade-recommendations/active'),
+  tradeRecommendation: (id: string) =>
+    apiFetch<RecommendationOperationalView & {
+      decisions: RecommendationDecisionView[]; history: RecommendationEventView[];
+    }>(`/trade-recommendations/${encodeURIComponent(id)}`),
+  tradeRecommendationDecisions: (id: string) =>
+    apiFetch<{ decisions: RecommendationDecisionView[]; conflicts: string[] }>(
+      `/trade-recommendations/${encodeURIComponent(id)}/decisions`),
   scenarioHistory: (scenarioId?: string) =>
     apiFetch<{ events: ScenarioEventView[] }>(
       `/scenarios/history${scenarioId ? `?scenarioId=${encodeURIComponent(scenarioId)}` : ''}`),

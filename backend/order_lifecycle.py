@@ -137,6 +137,10 @@ class OrderIntent:
     #: Recorded for lineage only — no execution decision reads it, and a missing
     #: value changes nothing.
     scenario_id: str | None = None
+    #: LIVE-4D: OPTIONAL link to the Recommendation this intent acts on. Lineage
+    #: only: accepting a Recommendation never authorizes execution, and no gate,
+    #: validator or policy reads this field.
+    recommendation_id: str | None = None
     idempotency_key: str | None = None
     deployment_id: str | None = None
     account_id: str | None = None
@@ -175,6 +179,7 @@ class OrderIntent:
             "commandId": self.command_id,
             "correlationId": self.correlation_id,
             "scenarioId": self.scenario_id,
+            "recommendationId": self.recommendation_id,
             "idempotencyKey": self.idempotency_key,
             "deploymentId": self.deployment_id,
             "accountId": self.account_id,

@@ -51,6 +51,7 @@ BLOCK_NO_CLOSING_DEAL = "no_closing_deal_observed"
 BLOCK_QUANTITY_MISMATCH = "exit_quantity_exceeds_entry_quantity"
 BLOCK_UNSUPPORTED_ENTRY = "unsupported_deal_entry_direction"
 BLOCK_SCENARIO_CONFLICT = "conflicting_scenario_lineage"
+BLOCK_RECOMMENDATION_CONFLICT = "conflicting_recommendation_lineage"
 BLOCK_DUPLICATE_DEAL = "duplicate_deal_evidence"
 BLOCK_RECONCILIATION = "unresolved_material_reconciliation_finding"
 
@@ -58,6 +59,7 @@ BLOCK_RECONCILIATION = "unresolved_material_reconciliation_finding"
 WARN_COSTS_PENDING = "cost_evidence_pending"
 WARN_RISK_UNAVAILABLE = "initial_risk_evidence_unavailable"
 WARN_SCENARIO_UNLINKED = "scenario_lineage_unavailable"
+WARN_RECOMMENDATION_UNLINKED = "recommendation_lineage_unavailable"
 WARN_PARTIAL_CLOSE = "position_partially_closed"
 WARN_NO_ORDER_HISTORY = "broker_order_history_unavailable"
 
@@ -360,6 +362,23 @@ def _reconstruct_one(position_id: str, deals, inputs: ReconstructionInput,
     elif scenario_id is None:
         warnings.append(WARN_SCENARIO_UNLINKED)
 
+    # -- LIVE-4D recommendation lineage, from EXPLICIT intent linkage only.
+    #    Ledger ACCOUNTING never depends on it: an absent recommendation is
+    #    simply unavailable, and conflicting ids block silent lineage
+    #    finalization without touching a single financial value.
+    intent_recommendations = {row.get("recommendation_id")
+                              for row in matching_intents
+                              if row.get("recommendation_id")}
+    recommendation_id = None
+    if len(intent_recommendations) == 1:
+        recommendation_id = next(iter(intent_recommendations))
+    elif len(intent_recommendations) > 1:
+        conflicts.append(
+            f"{BLOCK_RECOMMENDATION_CONFLICT}: {sorted(intent_recommendations)}")
+        blocking.append(BLOCK_RECOMMENDATION_CONFLICT)
+    else:
+        warnings.append(WARN_RECOMMENDATION_UNLINKED)
+
     # -- origin (PART 19): a recorded intent means the tower opened it -------
     origin = (tld.TradeOrigin.CONTROL_TOWER if matching_intents
               else tld.TradeOrigin.MANUAL_BROKER if history.provenance == bh.PROV_LIVE_MT5
@@ -409,7 +428,7 @@ def _reconstruct_one(position_id: str, deals, inputs: ReconstructionInput,
 
     lineage = tld.TradeLineage(
         trade_id=trade_id, scenario_id=scenario_id,
-        recommendation_id=None,                 # no recommendation link is recorded yet
+        recommendation_id=recommendation_id,    # LIVE-4D: explicit linkage only
         intent_ids=tuple(intent_ids),
         internal_operation_ids=tuple(sorted(
             {row.get("command_id") for row in matching_intents if row.get("command_id")})),
