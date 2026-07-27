@@ -22,6 +22,7 @@ The Live Trading Control Tower is an **institutional trading-operations platform
 - `_fixtures/contracts.md` — Track B Canonical Contracts (entities, identifiers, command vocabulary, number-format canon).
 - `_fixtures/world.v1.json` = `frontend/src/data/world.v1.json` = `backend/fixtures/world.v1.json` — the Fixture World (three copies, must stay byte-identical).
 - `AUDIT-AND-ROADMAP.md` — first-pass audit + the phased roadmap being followed.
+- `LIVE-3-ARCHITECTURE-CHECKPOINT.md` — **canonical post-LIVE-3 execution architecture**: ownership map, the one execution pipeline, execution-mode and authorization state machines, lifecycle/lock/reconciliation semantics, failure matrix and LIVE-4 entry criteria. Read this before any further live-execution work.
 - `memory/PRD.md` — product requirements memory.
 - Full set (Master Report, UI Blueprints R1/R2, Design System Spec, R3 Review, Claude Design Prompt) lives in the separate `FX-OB-Research-Lab/live-tower/` repository.
 
