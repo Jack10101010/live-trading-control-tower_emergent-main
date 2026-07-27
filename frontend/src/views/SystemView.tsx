@@ -6,6 +6,7 @@ import { AuthSessionPanel } from '@/components/domain/AuthSessionPanel';
 import { BrokerReadPanel } from '@/components/domain/BrokerReadPanel';
 import { MarketOrderPanel } from '@/components/domain/MarketOrderPanel';
 import { ManualExecutionPanel } from '@/components/domain/ManualExecutionPanel';
+import { OperationalDashboard } from '@/components/domain/OperationalDashboard';
 import { useFleet, usePackages, useFeatureFlags, useRuntimeHealth, useBrokerReconciliation, useStrategyEvaluation, useSchedulerStatus, useMarketSnapshot, useRiskLimits, useActivePackage, useBackendHealth } from '@/hooks/useRepository';
 import { api, QK } from '@/lib/api';
 import { queryClient } from '@/lib/queryClient';
@@ -100,6 +101,11 @@ export function SystemView() {
           Deployments, manifests, feature flags, engine health, storage
         </p>
       </div>
+
+      {/* LIVE-4A — the operational dashboard. ONE projection query feeds every
+          card; no card re-derives operational truth. Placed first: it is the
+          canonical operational view of the system. */}
+      <OperationalDashboard />
 
       {/* UI-1 — the live relationship between this Control Tower, the execution
           node and MT5. Placed first: it is the only thing on this page that

@@ -570,3 +570,31 @@ execution_telemetry + BotEvent audit (derived read model; /api/execution/state)
 **Boundary.** LIVE-3 enables manual, individually confirmed position and order management only: exactly four executable operations through the one canonical pipeline. Pending/limit/stop order creation, SL removal, risk-increasing modification, partial close, bulk mutation, strategy/autonomous execution and remote profiles remain structurally unavailable. Under the shipped configuration every live mutation still denies until an operator explicitly issues a grant and activates manual_live with all gates healthy.
 
 *The audited post-LIVE-3 state of the system — ownership map, pipeline, state machines, failure matrix and LIVE-4 entry criteria — is recorded in `LIVE-3-ARCHITECTURE-CHECKPOINT.md`, which is the canonical reference for that material.*
+
+### ADR-LIVE-4A — Operational read model and Control Tower projection (LIVE-4A, 2026-07-27)
+
+**Context.** After LIVE-3 the Control Tower answered a dozen independent endpoints, and each UI panel re-derived its own version of "what is happening" — joining broker reads, node telemetry, execution state and reconciliation locally. Operational truth therefore had no single owner on the read side, and two panels could disagree. **LIVE-4A introduces the canonical operational read model. It introduces no new execution capability.**
+
+**Decision.**
+
+1. **One projection owner** — new `backend/operational_projection.py`. It consumes broker snapshots, node telemetry, execution-store lifecycle, reconciliation posture, execution mode, authorization state and entity locks, and produces immutable read models. It holds no adapter, issues no command, owns no persistence and caches no mutable state. Structural tests pin that it references no `get_broker`, no `order_send`, no store write, no socket, and imports no runtime owner.
+
+2. **Immutable canonical read models** — `NodeOperationalView`, `AccountOperationalView`, `OrderOperationalView`, `PositionOperationalView`, `ScenarioProjection`, `OperationalSummary`. All frozen dataclasses with tuple collections and deterministic `as_dict()` (sorted keys at every level, JSON-safe). **Orders and positions are separate concepts and are never merged** — distinct types with distinct field vocabularies.
+
+3. **Deterministic, injected-clock builder** — every `build_*` function takes an explicit `ProjectionSources` bundle of read-only callables plus `now`. It reads no clock, environment or global, so identical sources at an identical `now` produce byte-identical output. Restart-safe by construction: the projection holds nothing between calls. Projection order is Broker → Execution Store → Lifecycle → Reconciliation → Telemetry → Mode → Authorization → Projection.
+
+4. **Explicit freshness** — every time-sensitive model carries a `Freshness` (`projectionAt`, `sourceAt`, `ageSeconds`, `stale`, `available`, `status`). **UNAVAILABLE (the source could not be read) and STALE (read but too old) are distinct states** and are never collapsed into a zero or a healthy-looking default; an unparseable timestamp is stale, never fresh.
+
+5. **Explicit provenance** — every model carries `provenance` (`live_mt5` / `mock-fixture` / `node-telemetry` / `durable-store` / `absent`), so a fixture value can never be mistaken for live broker truth.
+
+6. **Nothing is invented** — a missing broker snapshot yields no positions (not an empty "healthy" list); a missing account read yields an explicitly unavailable account (not zeroed balances); non-derivable fields (`realizedPnLToday`, `openRisk`, position `currentPrice`, position age) are reported absent rather than estimated; absent node telemetry yields one explicitly-unavailable node view rather than an empty list.
+
+7. **Unified read-only API** — `GET /api/operations/{summary,nodes,accounts,orders,positions}` and `GET /api/operations/{node,order,position}/{id}`. All operator-authenticated by the deny-by-default classifier, all `Cache-Control: no-store`, all derived. **No handler aggregates anything** — each delegates to the projection owner (structurally pinned).
+
+8. **Scenario foundation (placeholder only)** — no scenario entity exists in this repository; the only evidence is a `scenarioKey` string echoed in stored command payloads. `ScenarioProjection` projects exactly that and nothing else. No strategy logic and no scenario generation was added.
+
+9. **Trade-ledger foundation (interfaces only)** — `TradeLedgerProjection`, `ClosedTradeProjection`, `LedgerSummary` pin the shape a future ledger slice must satisfy. No persistence, no analytics: constructing the ledger today reports `available: false`, `ledger_not_implemented`.
+
+10. **Projection-driven UI** — new `OperationalDashboard` with a **single** polling source (`api.operationsSummary`). Node, account, order, position, operations, reconciliation, warnings and system-health cards each receive an already-projected model; formatting lives in one set of shared helpers. Badges are explicit: **LIVE / MOCK / NODE / STALE / UNAVAILABLE / RECONCILIATION REQUIRED**. The dashboard is read-only — it renders zero buttons and zero inputs.
+
+**Boundary.** LIVE-4A is a READ MODEL. It adds no broker execution, no strategy logic, no autonomous behaviour and no change to the execution pipeline: the execution surface remains exactly the four LIVE-2/LIVE-3 operations (test-pinned), and the projection cannot write, execute or persist. The UI no longer reconstructs operational truth — it reflects the projection.

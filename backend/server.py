@@ -50,6 +50,7 @@ import execution_context as execution_context_layer
 import execution_store as execution_store_layer
 import execution_telemetry as execution_telemetry_layer
 import order_lifecycle as order_lifecycle_layer
+import operational_projection as projection_layer
 import reconciliation as reconciliation_layer
 import ops_status as ops_status_layer
 import security_config
@@ -2410,6 +2411,222 @@ async def set_execution_mode(request: Request):
                             headers={"Cache-Control": "no-store"})
     return JSONResponse(content={"transitioned": True, **outcome},
                         headers={"Cache-Control": "no-store"})
+
+
+# ---------------------------------------------------------------------------
+# LIVE-4A — the canonical OPERATIONAL PROJECTION surface.
+#
+# `_projection_sources()` binds the projection owner to the already-authoritative
+# read APIs. The projection module imports nothing from here; the runtime hands
+# it read-only callables, so it can never write, execute, or persist.
+#
+# Every route below is READ-ONLY and DERIVED: no handler aggregates anything
+# itself — each one calls the projection owner and serializes the result.
+# ---------------------------------------------------------------------------
+
+def _node_observation_entries() -> list:
+    """Node telemetry observation envelopes (durable + hot cache), newest first."""
+    try:
+        now = datetime.now(timezone.utc)
+        records = _load_live_snapshots()
+        records.update({k: v for k, v in _LIVE_STATUS.items()
+                        if isinstance(v, dict) and isinstance(v.get("snapshot"), dict)})
+        entries = [_live_status_entry(iid, rec, now) for iid, rec in records.items()]
+        return sorted(entries, key=lambda e: e.get("published_at") or "", reverse=True)
+    except Exception:
+        logger.exception("node observation entries unavailable")
+        return []
+
+
+def _projection_sources() -> projection_layer.ProjectionSources:
+    """Bind the projection owner to canonical read APIs. Each callable is
+    individually guarded: a source that cannot be read reports UNAVAILABLE
+    rather than failing the whole projection or inventing a value."""
+    store = _execution_store()
+
+    def _intents() -> list:
+        try:
+            return store.intents_by_state(limit=500) if store else []
+        except Exception:
+            return []
+
+    def _transitions(intent_id: str) -> list:
+        try:
+            return store.transitions_of(intent_id) if store and intent_id else []
+        except Exception:
+            return []
+
+    def _locks() -> list:
+        try:
+            return store.active_entity_locks() if store else []
+        except Exception:
+            return []
+
+    def _latest_recon() -> dict | None:
+        try:
+            return store.latest_reconciliation() if store else None
+        except Exception:
+            return None
+
+    def _authorization() -> dict | None:
+        try:
+            ctx = _execution_context()
+            grant = ctx.authorization
+            if grant is None or not grant.is_active(datetime.now(timezone.utc)):
+                return None
+            return grant.safe_view()
+        except Exception:
+            return None
+
+    def _account_snapshot() -> dict | None:
+        try:
+            r = broker_layer.get_broker().account_snapshot(_broker_context({}, _now_iso()))
+            return r.data if r.ok and isinstance(r.data, dict) else None
+        except Exception:
+            return None
+
+    def _connection() -> str:
+        try:
+            return broker_layer.get_broker().connection().state
+        except Exception:
+            return "Disconnected"
+
+    return projection_layer.ProjectionSources(
+        broker_snapshot=_fresh_broker_snapshot,
+        account_snapshot=_account_snapshot,
+        adapter_kind=lambda: broker_layer.active_kind(),
+        connection_state=_connection,
+        node_entries=_node_observation_entries,
+        intents=_intents,
+        transitions=_transitions,
+        reconciliation_posture=lambda: reconciliation_layer.safety_posture(store),
+        latest_reconciliation=_latest_recon,
+        execution_mode=lambda: _EXECUTION_MODE.current_mode(),
+        authorization=_authorization,
+        entity_locks=_locks,
+    )
+
+
+def _projection_response(payload: dict, status_code: int = 200) -> JSONResponse:
+    return JSONResponse(content=payload, status_code=status_code,
+                        headers={"Cache-Control": "no-store"})
+
+
+def _operational_summary() -> projection_layer.OperationalSummary:
+    return projection_layer.build_summary(_projection_sources(), now=_now_iso())
+
+
+@api_router.get("/operations/summary")
+def operations_summary():
+    """LIVE-4A — the ONE whole-system operational projection."""
+    try:
+        return _projection_response(_operational_summary().as_dict())
+    except Exception:
+        logger.exception("operational projection failed")
+        return _projection_response(
+            {"error": "unavailable", "code": "projection_unavailable"}, 503)
+
+
+@api_router.get("/operations/nodes")
+def operations_nodes():
+    try:
+        sources = _projection_sources()
+        nodes = projection_layer.build_nodes(sources, now=_now_iso())
+        return _projection_response({"nodes": [n.as_dict() for n in nodes],
+                                     "projectionTimestamp": _now_iso()})
+    except Exception:
+        logger.exception("node projection failed")
+        return _projection_response(
+            {"error": "unavailable", "code": "projection_unavailable"}, 503)
+
+
+@api_router.get("/operations/accounts")
+def operations_accounts():
+    try:
+        sources = _projection_sources()
+        accounts = projection_layer.build_accounts(sources, now=_now_iso())
+        return _projection_response({"accounts": [a.as_dict() for a in accounts],
+                                     "projectionTimestamp": _now_iso()})
+    except Exception:
+        logger.exception("account projection failed")
+        return _projection_response(
+            {"error": "unavailable", "code": "projection_unavailable"}, 503)
+
+
+@api_router.get("/operations/orders")
+def operations_orders():
+    try:
+        sources = _projection_sources()
+        orders = projection_layer.build_orders(sources, now=_now_iso())
+        return _projection_response({"orders": [o.as_dict() for o in orders],
+                                     "projectionTimestamp": _now_iso()})
+    except Exception:
+        logger.exception("order projection failed")
+        return _projection_response(
+            {"error": "unavailable", "code": "projection_unavailable"}, 503)
+
+
+@api_router.get("/operations/positions")
+def operations_positions():
+    try:
+        sources = _projection_sources()
+        positions = projection_layer.build_positions(sources, now=_now_iso())
+        return _projection_response({"positions": [p.as_dict() for p in positions],
+                                     "projectionTimestamp": _now_iso()})
+    except Exception:
+        logger.exception("position projection failed")
+        return _projection_response(
+            {"error": "unavailable", "code": "projection_unavailable"}, 503)
+
+
+@api_router.get("/operations/node/{node_id}")
+def operations_node(node_id: str):
+    try:
+        nodes = projection_layer.build_nodes(_projection_sources(), now=_now_iso())
+        match = next((n for n in nodes if n.node_id == node_id), None)
+        if match is None:
+            return _projection_response(
+                {"error": "not_found", "code": "node_not_projected",
+                 "nodeId": node_id}, 404)
+        return _projection_response(match.as_dict())
+    except Exception:
+        logger.exception("node projection failed")
+        return _projection_response(
+            {"error": "unavailable", "code": "projection_unavailable"}, 503)
+
+
+@api_router.get("/operations/order/{intent_id}")
+def operations_order(intent_id: str):
+    try:
+        orders = projection_layer.build_orders(_projection_sources(), now=_now_iso())
+        match = next((o for o in orders
+                      if intent_id in (o.intent_id, o.broker_order_reference)), None)
+        if match is None:
+            return _projection_response(
+                {"error": "not_found", "code": "order_not_projected",
+                 "orderId": intent_id}, 404)
+        return _projection_response(match.as_dict())
+    except Exception:
+        logger.exception("order projection failed")
+        return _projection_response(
+            {"error": "unavailable", "code": "projection_unavailable"}, 503)
+
+
+@api_router.get("/operations/position/{reference}")
+def operations_position(reference: str):
+    try:
+        positions = projection_layer.build_positions(_projection_sources(), now=_now_iso())
+        match = next((p for p in positions
+                      if p.broker_position_reference == reference), None)
+        if match is None:
+            return _projection_response(
+                {"error": "not_found", "code": "position_not_projected",
+                 "positionId": reference}, 404)
+        return _projection_response(match.as_dict())
+    except Exception:
+        logger.exception("position projection failed")
+        return _projection_response(
+            {"error": "unavailable", "code": "projection_unavailable"}, 503)
 
 
 @api_router.get("/execution/health")

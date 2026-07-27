@@ -736,6 +736,131 @@ export interface EntityOperationResponse {
   acceptedAt: string;
 }
 
+/* ── LIVE-4A: canonical operational projection read models ────────────────── */
+export interface ProjectionFreshness {
+  projectionAt: string;
+  sourceAt: string | null;
+  ageSeconds: number | null;
+  stale: boolean;
+  available: boolean;
+  staleAfterSeconds: number;
+  status: 'ok' | 'stale' | 'unavailable' | string;
+  detail: string | null;
+}
+
+export interface NodeOperationalView {
+  nodeId: string;
+  instanceId: string | null;
+  deployment: string | null;
+  adapter: string | null;
+  broker: string | null;
+  accountFingerprintMasked: string | null;
+  connectionState: string | null;
+  heartbeatAgeSeconds: number | null;
+  health: string | null;
+  executionMode: string | null;
+  authorizationSummary: Record<string, unknown> | null;
+  reconciliationState: string | null;
+  openPositionCount: number | null;
+  openOrderCount: number | null;
+  activeScenarioCount: number | null;
+  lastActivity: string | null;
+  telemetryAgeSeconds: number | null;
+  warnings: string[];
+  provenance: string;
+  freshness: ProjectionFreshness | null;
+}
+
+export interface AccountOperationalView {
+  accountFingerprint: string | null;
+  broker: string | null;
+  server: string | null;
+  balance: number | null;
+  equity: number | null;
+  margin: number | null;
+  marginLevel: number | null;
+  leverage: number | null;
+  currency: string | null;
+  unrealizedPnL: number | null;
+  realizedPnLToday: number | null;
+  openRisk: number | null;
+  connectionState: string | null;
+  provenance: string;
+  freshness: ProjectionFreshness | null;
+}
+
+export interface LifecycleStep {
+  state: string | null;
+  at: string | null;
+  reason: string | null;
+  brokerRef?: string | null;
+}
+
+export interface OrderOperationalView {
+  intentId: string | null;
+  brokerOrderReference: string | null;
+  brokerTicket: string | null;
+  instrument: string | null;
+  side: string | null;
+  orderType: string | null;
+  quantity: number | null;
+  requestedPrice: number | null;
+  currentState: string | null;
+  lifecycle: LifecycleStep[];
+  brokerStatus: string | null;
+  scenarioId: string | null;
+  timestamps: { createdAt: string | null; updatedAt: string | null };
+  reconciliation: { required?: boolean; criticalUnresolved?: boolean; lastRunId?: string | null } | null;
+  nodeId: string | null;
+  provenance: string;
+}
+
+export interface PositionOperationalView {
+  brokerPositionReference: string | null;
+  instrument: string | null;
+  side: string | null;
+  quantity: number | null;
+  entryPrice: number | null;
+  currentPrice: number | null;
+  unrealizedPnL: number | null;
+  stopLoss: number | null;
+  takeProfit: number | null;
+  ageSeconds: number | null;
+  lifecycle: LifecycleStep[];
+  protectionState: string | null;
+  reconciliation: { required?: boolean; criticalUnresolved?: boolean; locked?: boolean; lockOperation?: string | null } | null;
+  scenarioId: string | null;
+  nodeId: string | null;
+  accountFingerprint: string | null;
+  provenance: string;
+}
+
+export interface ScenarioProjection {
+  scenarioId: string;
+  status: string | null;
+  instrument: string | null;
+  session: string | null;
+  created: string | null;
+  nodeId: string | null;
+  linkedIntent: string | null;
+  provenance: string;
+}
+
+export interface OperationalSummaryView {
+  schemaVersion: string;
+  projectionTimestamp: string;
+  nodes: NodeOperationalView[];
+  accounts: AccountOperationalView[];
+  activeOrders: OrderOperationalView[];
+  openPositions: PositionOperationalView[];
+  activeScenarios: ScenarioProjection[];
+  reconciliationIssues: Array<{ class: string | null; entityId: string | null; critical: boolean; detail: string | null; resolved: boolean }>;
+  activeOperations: Array<{ entityRef: string | null; intentId: string | null; operation: string | null; acquiredAt: string | null }>;
+  warnings: string[];
+  counts: Record<string, number>;
+  freshness: ProjectionFreshness | null;
+}
+
 export interface ExecutionModeView {
   mode: string;
   history: Array<Record<string, unknown>>;
@@ -845,6 +970,15 @@ export const api = {
   closePosition: (ref: string, body: { reason?: string } = {}) =>
     api.entityOperation(`/execution/positions/${encodeURIComponent(ref)}/close`, body),
   executionMode: () => apiFetch<ExecutionModeView>('/execution/mode'),
+  /* LIVE-4A — the canonical operational projection. `operationsSummary` is the
+   * SINGLE polling source for the dashboard: every card derives from it, so no
+   * component re-aggregates operational truth. The per-collection endpoints
+   * exist for focused views and parity with the backend surface. */
+  operationsSummary: () => apiFetch<OperationalSummaryView>('/operations/summary'),
+  operationsNodes: () => apiFetch<{ nodes: NodeOperationalView[] }>('/operations/nodes'),
+  operationsAccounts: () => apiFetch<{ accounts: AccountOperationalView[] }>('/operations/accounts'),
+  operationsOrders: () => apiFetch<{ orders: OrderOperationalView[] }>('/operations/orders'),
+  operationsPositions: () => apiFetch<{ positions: PositionOperationalView[] }>('/operations/positions'),
   setExecutionMode: (mode: string, reason: string) =>
     apiFetch<{ transitioned: boolean }>('/execution/mode', {
       method: 'POST',
