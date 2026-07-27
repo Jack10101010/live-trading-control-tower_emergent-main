@@ -351,3 +351,74 @@ class MT5Gateway:
         if result is None or result.retcode != self.sdk.TRADE_RETCODE_DONE:
             return False, f"close failed: {getattr(result, 'retcode', 'none')}"
         return True, {"ticket": ticket, "closed": True}
+
+    # ── LIVE-3 typed manual-management operations ────────────────────────────
+    # Narrowly scoped: each performs AT MOST one order_send, returns a typed
+    # MT5ActionResult, never raises SDK exceptions upward, retains no SDK object.
+
+    def modify_position_protection(self, ticket: int, sl, tp) -> "mt5_results.MT5ActionResult":
+        """Modify SL/TP of ONE open position (TRADE_ACTION_SLTP). A None sl/tp
+        keeps the position's current value (verified from a fresh positions_get
+        read); the position must exist. Exactly one order_send."""
+        if not self._connected:
+            return mt5_results.action_not_submitted("gateway_not_connected")
+        try:
+            positions = self.sdk.positions_get(ticket=int(ticket)) or []
+            if not positions:
+                return mt5_results.action_not_submitted(f"position {ticket} not found")
+            p = positions[0]
+            request = {"action": self.sdk.TRADE_ACTION_SLTP,
+                       "symbol": self.config.broker_symbol,
+                       "position": int(ticket),
+                       "sl": float(sl) if sl is not None else float(getattr(p, "sl", 0.0) or 0.0),
+                       "tp": float(tp) if tp is not None else float(getattr(p, "tp", 0.0) or 0.0)}
+            result = self.sdk.order_send(request)          # called exactly once
+        except Exception as exc:                            # noqa: BLE001 - typed
+            return mt5_results.action_from_exception(exc)
+        return mt5_results.classify_action(mt5_results.extract_evidence(result),
+                                           mt5_results.build_retcode_map(self.sdk))
+
+    def cancel_pending_order(self, ticket: int) -> "mt5_results.MT5ActionResult":
+        """Remove ONE pending order (TRADE_ACTION_REMOVE). The order must exist
+        in a fresh orders_get read. Exactly one order_send."""
+        if not self._connected:
+            return mt5_results.action_not_submitted("gateway_not_connected")
+        try:
+            orders = [o for o in (self.sdk.orders_get(symbol=self.config.broker_symbol) or [])
+                      if getattr(o, "ticket", None) == int(ticket)]
+            if not orders:
+                return mt5_results.action_not_submitted(f"pending order {ticket} not found")
+            request = {"action": self.sdk.TRADE_ACTION_REMOVE, "order": int(ticket)}
+            result = self.sdk.order_send(request)          # called exactly once
+        except Exception as exc:                            # noqa: BLE001 - typed
+            return mt5_results.action_from_exception(exc)
+        return mt5_results.classify_action(mt5_results.extract_evidence(result),
+                                           mt5_results.build_retcode_map(self.sdk))
+
+    def close_position_full(self, ticket: int) -> "mt5_results.MT5ActionResult":
+        """Close ONE open position IN FULL at market (TRADE_ACTION_DEAL with the
+        observed volume — never more, never a partial). Exactly one order_send."""
+        if not self._connected:
+            return mt5_results.action_not_submitted("gateway_not_connected")
+        try:
+            positions = self.sdk.positions_get(ticket=int(ticket)) or []
+            if not positions:
+                return mt5_results.action_not_submitted(f"position {ticket} not found")
+            p = positions[0]
+            side_close = (self.sdk.ORDER_TYPE_SELL if p.type == self.sdk.ORDER_TYPE_BUY
+                          else self.sdk.ORDER_TYPE_BUY)
+            tick = self.sdk.symbol_info_tick(self.config.broker_symbol)
+            if tick is None:
+                return mt5_results.action_not_submitted("no market tick for close price")
+            price = tick.bid if side_close == self.sdk.ORDER_TYPE_SELL else tick.ask
+            request = {"action": self.sdk.TRADE_ACTION_DEAL,
+                       "symbol": self.config.broker_symbol,
+                       "volume": p.volume, "type": side_close, "position": int(ticket),
+                       "price": float(price), "deviation": 20,
+                       "magic": self.config.magic_number, "comment": "ct_close",
+                       "type_filling": self.sdk.ORDER_FILLING_IOC}
+            result = self.sdk.order_send(request)          # called exactly once
+        except Exception as exc:                            # noqa: BLE001 - typed
+            return mt5_results.action_from_exception(exc)
+        return mt5_results.classify_action(mt5_results.extract_evidence(result),
+                                           mt5_results.build_retcode_map(self.sdk))

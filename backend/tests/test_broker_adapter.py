@@ -112,14 +112,19 @@ def test_mt5_construction_performs_no_gateway_work(monkeypatch):
     assert calls == [1]
 
 
-def test_mt5_execution_operations_are_inert():
+def test_mt5_execution_operations_fail_closed_without_a_gateway():
+    # LIVE-2/3 (deliberate evolution of the ARCH-2 inertness pin): four ops are
+    # now REAL, but with no gateway every one answers a canonical fail-closed
+    # envelope and touches nothing.
     mt5 = ba.get_adapter("mt5")
     assert isinstance(mt5, broker_layer.MT5Adapter)
     assert mt5.connection().state == ba.ConnectionState.DISCONNECTED
-    # Canonical lifecycle ops answer the explicit inert envelope.
-    for op in ("submit_order", "close_position"):
-        result = getattr(mt5, op)(None, None)
-        assert result.ok is False and result.code == ba.RESULT_UNAVAILABLE
+    assert mt5.submit_order(None, None).code == ba.RESULT_UNAVAILABLE  # still inert
+    close = mt5.close_position(
+        ba.ClosePositionRequest(intent_id="intent_t", position_ref="1",
+                                instrument="EURUSD"), None)
+    assert close.ok is False and close.code in (ba.RESULT_UNAVAILABLE,
+                                                "connection_denied")
     assert mt5.recent_executions(None).code == ba.RESULT_UNAVAILABLE
     assert mt5.account_snapshot(None).code == ba.RESULT_UNAVAILABLE
     assert mt5.reconcile_snapshot(None).code == ba.RESULT_UNAVAILABLE
@@ -134,7 +139,10 @@ def test_mt5_operations_open_no_socket(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", explode)
     mt5 = ba.get_adapter("mt5")
     mt5.connection(); mt5.health(); mt5.capabilities()
-    mt5.submit_order(None, None); mt5.close_position("p", None)
+    mt5.submit_order(None, None)
+    mt5.close_position(ba.ClosePositionRequest(intent_id="intent_t",
+                                               position_ref="1",
+                                               instrument="EURUSD"), None)
 
 
 # ── canonical models / no duplicate ownership ─────────────────────────────────

@@ -216,3 +216,60 @@ def classify(evidence: dict | None, requested_volume, retcodes: RetcodeMap) -> M
     # Unknown / unmapped retcode -> conservative AMBIGUOUS + freeze.
     return MT5SubmitResult(disposition=MT5SubmitDisposition.AMBIGUOUS,
                            diagnostic=f"unknown retcode {retcode}", freeze=True, **common)
+
+
+# ── LIVE-3: typed classification of a non-submit broker ACTION ────────────────
+# (SL/TP modification, pending-order removal, position close). Same conservative
+# posture as submit classification: only an explicit DONE is success; rejects are
+# the enumerated deterministic refusals; anything unknown/missing/timeout is
+# AMBIGUOUS+freeze; an exception is EXCEPTION+freeze. No SDK object retained.
+
+class MT5ActionDisposition(Enum):
+    DONE = "done"
+    REJECTED = "rejected"
+    AMBIGUOUS = "ambiguous"
+    EXCEPTION = "exception"
+    NOT_SUBMITTED = "not_submitted"     # order_send was never called
+
+
+@dataclass(frozen=True)
+class MT5ActionResult:
+    disposition: MT5ActionDisposition
+    retcode: Any = None
+    broker_order_ticket: Any = None
+    broker_deal_ticket: Any = None
+    comment: Any = None
+    diagnostic: str = ""
+    freeze: bool = False
+
+
+def action_not_submitted(diagnostic: str) -> MT5ActionResult:
+    return MT5ActionResult(disposition=MT5ActionDisposition.NOT_SUBMITTED,
+                           diagnostic=diagnostic)
+
+
+def action_from_exception(exc: BaseException) -> MT5ActionResult:
+    return MT5ActionResult(disposition=MT5ActionDisposition.EXCEPTION,
+                           diagnostic=f"{type(exc).__name__}: {exc}", freeze=True)
+
+
+def classify_action(evidence: dict | None, retcodes: RetcodeMap) -> MT5ActionResult:
+    """Classify one non-submit order_send outcome from snapshotted evidence."""
+    if not evidence:
+        return MT5ActionResult(disposition=MT5ActionDisposition.AMBIGUOUS,
+                               diagnostic="order_send returned no result", freeze=True)
+    retcode = evidence.get("retcode")
+    order = evidence.get("order")
+    deal = evidence.get("deal")
+    comment = evidence.get("comment")
+    common = dict(retcode=retcode, comment=comment,
+                  broker_order_ticket=order if usable_ticket(order) else None,
+                  broker_deal_ticket=deal if usable_ticket(deal) else None)
+    if retcode == retcodes.done:
+        return MT5ActionResult(disposition=MT5ActionDisposition.DONE,
+                               diagnostic="broker confirmed", **common)
+    if retcode in retcodes.reject:
+        return MT5ActionResult(disposition=MT5ActionDisposition.REJECTED,
+                               diagnostic=f"broker rejected: retcode {retcode}", **common)
+    return MT5ActionResult(disposition=MT5ActionDisposition.AMBIGUOUS, freeze=True,
+                           diagnostic=f"unclassifiable retcode {retcode}", **common)

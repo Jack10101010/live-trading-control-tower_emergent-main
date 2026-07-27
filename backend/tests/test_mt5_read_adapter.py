@@ -223,20 +223,27 @@ def test_every_write_operation_is_inert():
     assert mt5.modify_order("1", {}, _ctx()) == (None, None)
     assert mt5.flatten("d", _ctx()) == []
     assert mt5.submit_order(None, _ctx()).code == ba.RESULT_UNAVAILABLE
-    assert mt5.close_position("1", _ctx()).code == ba.RESULT_UNAVAILABLE
+    # LIVE-3: close_position is now a REAL canonical operation; without a
+    # gateway it fails closed rather than answering the inert envelope.
+    close = mt5.close_position(
+        ba.ClosePositionRequest(intent_id="intent_t", position_ref="1",
+                                instrument="EURUSD"), _ctx())
+    assert close.ok is False
 
 
-def test_write_capability_is_exactly_the_live2_market_order():
-    """LIVE-1 pinned every write capability False. LIVE-2 DELIBERATELY adds
-    exactly one: MT5 market-order submission. The mock still has no live-write
-    capability, and every OTHER MT5 mutation capability remains absent."""
+def test_write_capability_is_exactly_the_live3_operation_set():
+    """LIVE-1 pinned every write capability False; LIVE-2 added market-order
+    submission; LIVE-3 DELIBERATELY completes the set at exactly FOUR writes.
+    The mock still has no live-write capability; every other MT5 mutation
+    capability remains absent."""
     mock_caps = broker_layer.capability_dict(broker_layer.get_broker("mock").capabilities())
     assert mock_caps["supportsLiveWrite"] is False        # fixture, never a live writer
     mt5caps = broker_layer.capability_dict(broker_layer.get_broker("mt5").capabilities())
-    assert mt5caps["supportsLiveWrite"] is True           # LIVE-2: the ONE write
-    assert mt5caps["supportsMarketExecution"] is True
-    for w in ("supportsPendingOrders", "supportsModify",
-              "supportsPartialClose", "supportsHedging", "supportsNetting"):
+    for w in ("supportsLiveWrite", "supportsMarketExecution", "supportsModify",
+              "supportsCancelOrder", "supportsClosePosition"):
+        assert mt5caps[w] is True
+    for w in ("supportsPendingOrders", "supportsPartialClose",
+              "supportsHedging", "supportsNetting", "supportsReplay"):
         assert mt5caps[w] is False
 
 

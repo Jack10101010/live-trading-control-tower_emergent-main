@@ -5,6 +5,7 @@ import { OperatorCommandPanel } from '@/components/domain/OperatorCommandPanel';
 import { AuthSessionPanel } from '@/components/domain/AuthSessionPanel';
 import { BrokerReadPanel } from '@/components/domain/BrokerReadPanel';
 import { MarketOrderPanel } from '@/components/domain/MarketOrderPanel';
+import { ManualExecutionPanel } from '@/components/domain/ManualExecutionPanel';
 import { useFleet, usePackages, useFeatureFlags, useRuntimeHealth, useBrokerReconciliation, useStrategyEvaluation, useSchedulerStatus, useMarketSnapshot, useRiskLimits, useActivePackage, useBackendHealth } from '@/hooks/useRepository';
 import { api, QK } from '@/lib/api';
 import { queryClient } from '@/lib/queryClient';
@@ -128,6 +129,10 @@ export function SystemView() {
         {/* LIVE-2 — the ONE execution control (gate-disabled, confirmed). */}
         <div className="col-span-12 lg:col-span-6">
           <MarketOrderPanel />
+        </div>
+        {/* LIVE-3 — manual position/order management (governed, confirmed). */}
+        <div className="col-span-12 lg:col-span-6">
+          <ManualExecutionPanel />
         </div>
       </div>
 

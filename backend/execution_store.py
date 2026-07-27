@@ -42,7 +42,11 @@ from typing import Any
 import order_lifecycle as ol
 import security_config
 
-SCHEMA_VERSION = 1
+# LIVE-3 bumped 1 -> 2: adds the durable authorization grants (+ append-only
+# grant event history), execution-mode transitions and entity locks. The 1 -> 2
+# migration is purely ADDITIVE (new tables); it is applied explicitly in
+# `_init_schema` and stamps the new version, failing closed on any error.
+SCHEMA_VERSION = 2
 
 
 class StoreError(RuntimeError):
@@ -84,8 +88,15 @@ class ExecutionStore:
                 # A newer schema than this code understands: refuse, never guess.
                 raise StoreError("unsupported_schema_version",
                                  f"store schema {found} > supported {SCHEMA_VERSION}")
-            # found < SCHEMA_VERSION would be a real migration; none exists yet —
-            # when one does, it must be explicit and fail closed on error.
+            if found < SCHEMA_VERSION:
+                # LIVE-3: the ONLY supported migration is 1 -> 2, purely additive
+                # (the CREATE TABLE IF NOT EXISTS statements below create the new
+                # tables). Anything else refuses.
+                if found != 1:
+                    raise StoreError("unsupported_schema_version",
+                                     f"no migration path from schema {found}")
+                conn.execute("UPDATE meta SET value=? WHERE key='schema_version'",
+                             (str(SCHEMA_VERSION),))
         conn.execute(
             """CREATE TABLE IF NOT EXISTS intents (
                 intent_id TEXT PRIMARY KEY,
@@ -123,6 +134,41 @@ class ExecutionStore:
                 class TEXT NOT NULL, entity_id TEXT, critical INTEGER NOT NULL,
                 detail TEXT NOT NULL, resolved INTEGER NOT NULL DEFAULT 0,
                 resolved_at TEXT, resolved_evidence TEXT
+            )""")
+        # ── LIVE-3 (schema v2) ────────────────────────────────────────────────
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS auth_grants (
+                authorization_id TEXT PRIMARY KEY,
+                operator_ref TEXT NOT NULL,
+                issued_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+                risk_classes_json TEXT NOT NULL, scopes_json TEXT NOT NULL,
+                account_scope TEXT, commands_json TEXT,
+                max_quantity REAL,
+                adapter_kind TEXT NOT NULL,
+                confirmed INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0,
+                reason TEXT NOT NULL, provider TEXT NOT NULL
+            )""")
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS auth_grant_events (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                authorization_id TEXT NOT NULL,
+                event TEXT NOT NULL, at TEXT NOT NULL,
+                operator_ref TEXT NOT NULL, detail TEXT NOT NULL
+            )""")
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS mode_transitions (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_mode TEXT NOT NULL, to_mode TEXT NOT NULL,
+                at TEXT NOT NULL, operator_ref TEXT NOT NULL,
+                reason TEXT NOT NULL, evidence TEXT NOT NULL DEFAULT ''
+            )""")
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS entity_locks (
+                entity_ref TEXT PRIMARY KEY,
+                intent_id TEXT NOT NULL, operation TEXT NOT NULL,
+                acquired_at TEXT NOT NULL,
+                released INTEGER NOT NULL DEFAULT 0,
+                released_at TEXT, release_reason TEXT
             )""")
         conn.commit()
 
@@ -312,6 +358,167 @@ class ExecutionStore:
             row = conn.execute(
                 "SELECT COUNT(*) AS n FROM recon_items WHERE critical=1 AND resolved=0").fetchone()
             return int(row["n"])
+
+    def unresolved_items_for_entity(self, entity_ref: str) -> list[dict]:
+        """LIVE-3: unresolved reconciliation discrepancies naming this broker
+        entity — an unresolved same-entity discrepancy blocks further mutation."""
+        if not entity_ref:
+            return []
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM recon_items WHERE entity_id=? AND resolved=0 ORDER BY seq ASC",
+                (str(entity_ref),)).fetchall()
+            return [dict(r) for r in rows]
+
+    # ── LIVE-3: durable authorization grants ─────────────────────────────────
+    def save_grant(self, record: dict, *, now: str) -> None:
+        """Persist one immutable grant + its issuance audit event, atomically.
+        The record carries NO credential or secret (enforced by the provider)."""
+        try:
+            with self._conn() as conn:
+                conn.execute("BEGIN")
+                conn.execute(
+                    """INSERT INTO auth_grants (authorization_id, operator_ref,
+                        issued_at, expires_at, risk_classes_json, scopes_json,
+                        account_scope, commands_json, max_quantity, adapter_kind,
+                        confirmed, revoked, reason, provider)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (record["authorization_id"], record["operator_ref"],
+                     record["issued_at"], record["expires_at"],
+                     json.dumps(sorted(record["risk_classes"])),
+                     json.dumps(sorted(record["scopes"])),
+                     record.get("account_scope"),
+                     json.dumps(sorted(record["commands"])) if record.get("commands") else None,
+                     record.get("max_quantity"), record["adapter_kind"],
+                     int(record.get("confirmed", False)), 0,
+                     record.get("reason", ""), record.get("provider", "")))
+                conn.execute(
+                    "INSERT INTO auth_grant_events (authorization_id, event, at, operator_ref, detail)"
+                    " VALUES (?,?,?,?,?)",
+                    (record["authorization_id"], "issued", now,
+                     record["operator_ref"], record.get("reason", "")))
+                conn.commit()
+        except sqlite3.IntegrityError as exc:
+            raise StoreError("duplicate_authorization_id", record.get("authorization_id", "")) from exc
+        except sqlite3.Error as exc:
+            raise StoreError("store_write_failed", type(exc).__name__) from exc
+
+    def revoke_grant(self, authorization_id: str, *, now: str, operator_ref: str,
+                     detail: str = "") -> bool:
+        """Mark a grant revoked (a NEW audit fact; the row keeps full history)."""
+        try:
+            with self._conn() as conn:
+                row = conn.execute("SELECT revoked FROM auth_grants WHERE authorization_id=?",
+                                   (authorization_id,)).fetchone()
+                if row is None:
+                    return False
+                conn.execute("BEGIN")
+                conn.execute("UPDATE auth_grants SET revoked=1 WHERE authorization_id=?",
+                             (authorization_id,))
+                conn.execute(
+                    "INSERT INTO auth_grant_events (authorization_id, event, at, operator_ref, detail)"
+                    " VALUES (?,?,?,?,?)",
+                    (authorization_id, "revoked", now, operator_ref, detail))
+                conn.commit()
+                return True
+        except sqlite3.Error as exc:
+            raise StoreError("store_write_failed", type(exc).__name__) from exc
+
+    def grants(self, *, include_revoked: bool = True, limit: int = 200) -> list[dict]:
+        with self._conn() as conn:
+            q = "SELECT * FROM auth_grants"
+            if not include_revoked:
+                q += " WHERE revoked=0"
+            rows = conn.execute(q + " ORDER BY issued_at DESC, authorization_id DESC LIMIT ?",
+                                (int(limit),)).fetchall()
+            return [dict(r) for r in rows]
+
+    def grant_events(self, authorization_id: str) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM auth_grant_events WHERE authorization_id=? ORDER BY seq ASC",
+                (authorization_id,)).fetchall()
+            return [dict(r) for r in rows]
+
+    # ── LIVE-3: execution-mode governance (append-only transition log) ───────
+    def record_mode_transition(self, *, from_mode: str, to_mode: str, at: str,
+                               operator_ref: str, reason: str,
+                               evidence: str = "") -> None:
+        if not reason:
+            raise StoreError("reason_required", "mode transitions require a reason")
+        try:
+            with self._conn() as conn:
+                conn.execute(
+                    "INSERT INTO mode_transitions (from_mode, to_mode, at, operator_ref, reason, evidence)"
+                    " VALUES (?,?,?,?,?,?)",
+                    (from_mode, to_mode, at, operator_ref, reason, evidence))
+                conn.commit()
+        except sqlite3.Error as exc:
+            raise StoreError("store_write_failed", type(exc).__name__) from exc
+
+    def current_mode_row(self) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM mode_transitions ORDER BY seq DESC LIMIT 1").fetchone()
+            return dict(row) if row else None
+
+    def mode_transitions(self, limit: int = 100) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM mode_transitions ORDER BY seq DESC LIMIT ?",
+                (int(limit),)).fetchall()
+            return [dict(r) for r in rows]
+
+    # ── LIVE-3: durable entity locks (one in-flight mutation per entity) ─────
+    def acquire_entity_lock(self, entity_ref: str, *, intent_id: str,
+                            operation: str, now: str) -> bool:
+        """Claim the entity. Returns False when an UNRELEASED claim exists
+        (atomic via the primary key — two claimants cannot both win). A released
+        prior claim is replaced; a stale unreleased claim is NEVER silently
+        expired (reconciliation must resolve it)."""
+        try:
+            with self._conn() as conn:
+                row = conn.execute("SELECT released FROM entity_locks WHERE entity_ref=?",
+                                   (str(entity_ref),)).fetchone()
+                if row is not None and not row["released"]:
+                    return False
+                conn.execute("BEGIN")
+                if row is not None:
+                    conn.execute("DELETE FROM entity_locks WHERE entity_ref=? AND released=1",
+                                 (str(entity_ref),))
+                conn.execute(
+                    "INSERT INTO entity_locks (entity_ref, intent_id, operation, acquired_at)"
+                    " VALUES (?,?,?,?)",
+                    (str(entity_ref), intent_id, operation, now))
+                conn.commit()
+                return True
+        except sqlite3.IntegrityError:
+            return False                    # concurrent claimant won the insert
+        except sqlite3.Error as exc:
+            raise StoreError("store_write_failed", type(exc).__name__) from exc
+
+    def release_entity_lock(self, entity_ref: str, *, now: str, reason: str) -> None:
+        try:
+            with self._conn() as conn:
+                conn.execute(
+                    "UPDATE entity_locks SET released=1, released_at=?, release_reason=?"
+                    " WHERE entity_ref=? AND released=0",
+                    (now, reason, str(entity_ref)))
+                conn.commit()
+        except sqlite3.Error as exc:
+            raise StoreError("store_write_failed", type(exc).__name__) from exc
+
+    def active_entity_locks(self) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM entity_locks WHERE released=0 ORDER BY acquired_at ASC").fetchall()
+            return [dict(r) for r in rows]
+
+    def entity_lock(self, entity_ref: str) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM entity_locks WHERE entity_ref=?",
+                               (str(entity_ref),)).fetchone()
+            return dict(row) if row else None
 
     def resolve_item(self, seq: int, *, at: str, evidence: str) -> None:
         """Mark a discrepancy resolved — a NEW fact with evidence, not a deletion."""

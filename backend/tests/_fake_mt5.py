@@ -20,6 +20,7 @@ from types import SimpleNamespace
 # ── constants referenced by live/mt5_gateway.py (distinct sentinels) ──────────
 TRADE_ACTION_DEAL = "TRADE_ACTION_DEAL"
 TRADE_ACTION_SLTP = "TRADE_ACTION_SLTP"
+TRADE_ACTION_REMOVE = "TRADE_ACTION_REMOVE"
 ORDER_TYPE_BUY = 0
 ORDER_TYPE_SELL = 1
 ORDER_TIME_GTC = "ORDER_TIME_GTC"
@@ -108,6 +109,15 @@ def make_arm_runtime(*, login: int = 1_000_001, server: str = "Broker-Demo",
     return ArmRuntime(ctx)
 
 
+def make_order(ticket: int, *, symbol: str = "EURUSD.r", type: int = 2,
+               volume: float = 0.1, price_open: float = 1.1, sl: float = 0.0,
+               tp: float = 0.0, comment: str = "", magic: int = 0) -> SimpleNamespace:
+    """A fake pending order (fields the gateway/adapter read via getattr)."""
+    return SimpleNamespace(ticket=ticket, symbol=symbol, type=type,
+                           volume_current=volume, price_open=price_open,
+                           sl=sl, tp=tp, comment=comment, magic=magic)
+
+
 def make_result(retcode: int = TRADE_RETCODE_DONE, *, order: int = 0, deal: int = 0,
                 price: float = 0.0, volume: float = 0.0, bid: float = 0.0, ask: float = 0.0,
                 comment: str = "", request_id: int = 0,
@@ -144,6 +154,7 @@ class FakeMT5:
     ACCOUNT_TRADE_MODE_REAL = 2
     TRADE_ACTION_DEAL = TRADE_ACTION_DEAL
     TRADE_ACTION_SLTP = TRADE_ACTION_SLTP
+    TRADE_ACTION_REMOVE = TRADE_ACTION_REMOVE
     ORDER_TYPE_BUY = ORDER_TYPE_BUY
     ORDER_TYPE_SELL = ORDER_TYPE_SELL
     ORDER_TIME_GTC = ORDER_TIME_GTC
@@ -236,7 +247,11 @@ class FakeMT5:
 
     def orders_get(self, symbol=None):
         self.orders_get_calls.append({"symbol": symbol})
-        return []
+        # LIVE-3: scriptable pending orders (set fake._orders); default none.
+        orders = list(getattr(self, "_orders", []) or [])
+        if symbol is not None:
+            orders = [o for o in orders if getattr(o, "symbol", None) == symbol]
+        return orders
 
     # ── market data ────────────────────────────────────────────────────────────
     def copy_rates_range(self, symbol, timeframe, date_from, date_to):

@@ -78,6 +78,9 @@ class BrokerCapability:
     supportsHedging: bool = False
     supportsNetting: bool = False
     supportsReplay: bool = False
+    # LIVE-3: the two additional manual-management operations, each explicit.
+    supportsCancelOrder: bool = False
+    supportsClosePosition: bool = False
 
 
 @dataclass
@@ -296,8 +299,22 @@ class BrokerAdapter(ABC):
         submission answers `unavailable` and touches nothing."""
         return inert_result("submit_market_order")
 
-    def close_position(self, position_id: str, ctx: BrokerContext) -> BrokerResult:
-        """Close a position by id. Inert by default."""
+    # -- LIVE-3: the three manual-management operations (inert by default) ----
+    def modify_position_protection(self, request: "ModifyPositionProtectionRequest",
+                                   ctx: BrokerContext) -> BrokerResult:
+        """Modify SL/TP of one position. Inert unless the adapter implements it."""
+        return inert_result("modify_position_protection")
+
+    def cancel_pending_order(self, request: "CancelPendingOrderRequest",
+                             ctx: BrokerContext) -> BrokerResult:
+        """Cancel one pending order. Inert unless the adapter implements it."""
+        return inert_result("cancel_pending_order")
+
+    def close_position(self, request: "ClosePositionRequest",
+                       ctx: BrokerContext) -> BrokerResult:
+        """Close one position (full close only). Inert unless implemented.
+        LIVE-3: signature moved from (position_id, ctx) to the canonical
+        immutable request — the operation is now real on implementing adapters."""
         return inert_result("close_position")
 
     # -- reconciliation ------------------------------------------------------
@@ -560,3 +577,142 @@ class MarketOrderAck:
     def as_dict(self) -> dict:
         from dataclasses import asdict
         return dict(sorted(asdict(self).items()))     # deterministic serialization
+
+
+# ── LIVE-3 canonical manual-management operations ─────────────────────────────
+# Exactly three additional executable operations: modify position protection,
+# cancel a pending order, close a position. Immutable requests validated at
+# construction; one canonical acknowledgement model; deterministic serialization.
+
+ACK_CONFIRMED = "acknowledged"           # broker accepted the ACTION request
+
+_OP_ACK_STATUSES = frozenset({
+    ACK_CONFIRMED, ACK_REJECTED, ACK_NOT_SUBMITTED,
+    ACK_TIMEOUT, ACK_COMMUNICATION_FAILED,
+})
+
+
+def _require_intent_id(value: str) -> None:
+    if not (isinstance(value, str) and value.startswith("intent_")):
+        raise ValueError("operation requires a canonical intent_ operation id")
+
+
+def _require_ref(value, name: str) -> None:
+    if not (isinstance(value, str) and value.strip()):
+        raise ValueError(f"operation requires a {name}")
+
+
+def _require_price(value, name: str) -> None:
+    import math
+    if isinstance(value, bool) or not isinstance(value, (int, float)) \
+            or not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be a finite positive price")
+
+
+@dataclass(frozen=True)
+class ModifyPositionProtectionRequest:
+    """Modify SL/TP of ONE open position. At least one level must be supplied;
+    a level left None is UNCHANGED (protection can never be removed here).
+    Quantity and instrument cannot be changed by construction."""
+    intent_id: str                        # operation id (canonical intent identity)
+    position_ref: str                     # broker position reference (ticket)
+    instrument: str
+    stop_loss: float | None = None
+    take_profit: float | None = None
+    correlation_id: str | None = None
+    idempotency_key: str | None = None
+    execution_mode: str = "live"
+    reason: str | None = None
+
+    def __post_init__(self):
+        _require_intent_id(self.intent_id)
+        _require_ref(self.position_ref, "position reference")
+        _require_ref(self.instrument, "instrument")
+        if self.stop_loss is None and self.take_profit is None:
+            raise ValueError("at least one of stop loss or take profit is required")
+        if self.stop_loss is not None:
+            _require_price(self.stop_loss, "stop_loss")
+        if self.take_profit is not None:
+            _require_price(self.take_profit, "take_profit")
+
+    def as_dict(self) -> dict:
+        from dataclasses import asdict
+        return dict(sorted(asdict(self).items()))
+
+
+@dataclass(frozen=True)
+class CancelPendingOrderRequest:
+    """Cancel ONE pending order by broker reference."""
+    intent_id: str
+    order_ref: str
+    instrument: str
+    correlation_id: str | None = None
+    idempotency_key: str | None = None
+    execution_mode: str = "live"
+    reason: str | None = None
+
+    def __post_init__(self):
+        _require_intent_id(self.intent_id)
+        _require_ref(self.order_ref, "order reference")
+        _require_ref(self.instrument, "instrument")
+
+    def as_dict(self) -> dict:
+        from dataclasses import asdict
+        return dict(sorted(asdict(self).items()))
+
+
+@dataclass(frozen=True)
+class ClosePositionRequest:
+    """Close ONE position. Only a FULL close is supported: a supplied quantity
+    is rejected at construction (the gateway closes the observed volume — a
+    partial close cannot be made deterministic from current broker evidence)."""
+    intent_id: str
+    position_ref: str
+    instrument: str
+    quantity: float | None = None         # must be None — full close only
+    correlation_id: str | None = None
+    idempotency_key: str | None = None
+    execution_mode: str = "live"
+    reason: str | None = None
+
+    def __post_init__(self):
+        _require_intent_id(self.intent_id)
+        _require_ref(self.position_ref, "position reference")
+        _require_ref(self.instrument, "instrument")
+        if self.quantity is not None:
+            raise ValueError("partial close is not supported — quantity must be omitted "
+                             "(full close of the observed volume only)")
+
+    def as_dict(self) -> dict:
+        from dataclasses import asdict
+        return dict(sorted(asdict(self).items()))
+
+
+@dataclass(frozen=True)
+class OperationAck:
+    """The immutable broker-neutral acknowledgement of ONE manual-management
+    action (modify/cancel/close). Plain scalars only. `status=acknowledged`
+    means the broker ACCEPTED the request — the operation is CONFIRMED only by
+    reconciliation observing the resulting broker state."""
+    intent_id: str
+    operation: str                        # modify_position_protection | cancel_pending_order | close_position
+    status: str                           # _OP_ACK_STATUSES
+    entity_ref: str | None = None
+    broker_order_ticket: str | None = None
+    broker_deal_ticket: str | None = None
+    reason: str | None = None
+    detail: str | None = None
+    provenance: str = "live_mt5"
+    at: str | None = None
+
+    def __post_init__(self):
+        if self.status not in _OP_ACK_STATUSES:
+            raise ValueError(f"unknown operation acknowledgement status: {self.status!r}")
+
+    @property
+    def accepted(self) -> bool:
+        return self.status == ACK_CONFIRMED
+
+    def as_dict(self) -> dict:
+        from dataclasses import asdict
+        return dict(sorted(asdict(self).items()))

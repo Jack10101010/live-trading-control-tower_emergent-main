@@ -687,12 +687,60 @@ export interface MarketOrderTelemetry {
   provenance: string;
 }
 
+export interface OperationView {
+  intentId: string | null;
+  command: string;
+  state: string | null;
+  brokerRef: string | null;
+  updatedAt: string | null;
+  finalReason?: string | null;
+  latencyMs?: number | null;
+}
+
+export interface GovernanceTelemetry {
+  executionMode: string;
+  modeProvenance: string;
+  authorization: { active: boolean; summary?: Record<string, unknown>; expiresAt?: string };
+  operations: {
+    available: boolean;
+    inFlight?: OperationView[];
+    awaitingAcknowledgementConfirmation?: OperationView[];
+    reconciliationRequired?: OperationView[];
+    confirmed?: number;
+    failures?: number;
+    lastOperation?: OperationView | null;
+    entityLocks?: Array<{ entityRef: string; intentId: string; operation: string; acquiredAt: string }>;
+  };
+  provenance: string;
+}
+
 export interface ExecutionStateView {
   schemaVersion: string;
   observedAt: string;
   broker?: ExecutionBrokerState;
   marketOrder?: MarketOrderTelemetry;
+  governance?: GovernanceTelemetry;
   readiness: { tradingReady: boolean; gates: Record<string, boolean> };
+}
+
+export interface EntityOperationResponse {
+  ok: boolean;
+  commandId: string;
+  intentId: string | null;
+  lifecycleState: string | null;
+  brokerRef: string | null;
+  acknowledgement: Record<string, unknown> | null;
+  reconciliationConfirmed: boolean;
+  deduplicated: boolean;
+  latencyMs: number | null;
+  acceptedAt: string;
+}
+
+export interface ExecutionModeView {
+  mode: string;
+  history: Array<Record<string, unknown>>;
+  manualLiveGates: Record<string, boolean>;
+  observedAt: string;
 }
 
 export interface MarketOrderResponse {
@@ -762,6 +810,61 @@ export const api = {
     }
     return (await res.json()) as MarketOrderResponse;
   },
+  /* LIVE-3 — the three manual-management operations + governance. Each mutation
+   * carries a fresh idempotency key and explicit confirmation; denials surface
+   * as MarketOrderError(code, stage, reason). */
+  entityOperation: async (
+    path: string,
+    body: Record<string, unknown>
+  ): Promise<EntityOperationResponse> => {
+    const res = await fetch(apiUrl(path), {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'Idempotency-Key': idempotencyKey(),
+        ...authHeader(),
+      },
+      body: JSON.stringify({ ...body, confirm: true }),
+    });
+    if (res.status === 422) {
+      const parsed = (await res.json().catch(() => null)) as { detail?: MarketOrderDenial } | null;
+      const d = parsed?.detail;
+      throw new MarketOrderError(d?.code ?? 'denied', d?.stage ?? 'unknown', d?.reason ?? '');
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`API ${res.status} ${path}: ${text.slice(0, 200)}`);
+    }
+    return (await res.json()) as EntityOperationResponse;
+  },
+  modifyProtection: (ref: string, body: { stopLoss?: number; takeProfit?: number; reason?: string }) =>
+    api.entityOperation(`/execution/positions/${encodeURIComponent(ref)}/protection`, body),
+  cancelPendingOrder: (ref: string, body: { reason?: string } = {}) =>
+    api.entityOperation(`/execution/orders/${encodeURIComponent(ref)}/cancel`, body),
+  closePosition: (ref: string, body: { reason?: string } = {}) =>
+    api.entityOperation(`/execution/positions/${encodeURIComponent(ref)}/close`, body),
+  executionMode: () => apiFetch<ExecutionModeView>('/execution/mode'),
+  setExecutionMode: (mode: string, reason: string) =>
+    apiFetch<{ transitioned: boolean }>('/execution/mode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, reason, confirm: true }),
+    }),
+  authorizationGrants: () =>
+    apiFetch<{ grants: Array<Record<string, unknown>> }>('/authorization/grants'),
+  issueGrant: (body: Record<string, unknown>) =>
+    apiFetch<{ issued: boolean; grant: Record<string, unknown> }>('/authorization/grants', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, confirm: true }),
+    }),
+  revokeGrant: (id: string, reason: string) =>
+    apiFetch<{ revoked: boolean }>(`/authorization/grants/${encodeURIComponent(id)}/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    }),
   securityConfig: () => apiFetch<SecurityConfigStatus>('/security/config'),
   liveConnection: () => apiFetch<ConnectionState>('/live/connection'),
   liveStatus: () => apiFetch<LiveStatus>('/live/status'),

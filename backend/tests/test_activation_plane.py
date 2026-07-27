@@ -350,7 +350,10 @@ def test_no_permissive_context_for_non_mock_adapters(monkeypatch):
     ctx = server._execution_context()
     assert ctx.authorization is None
     assert ctx.execution_mode == es.MODE_OBSERVE
-    assert dict(ctx.provenance)["tower"] == "deny-default"
+    # LIVE-3 (deliberate evolution): the non-mock context is now assembled from
+    # DURABLE governance (mode owner + durable grants) — still deny-by-default:
+    # observe mode and no grant unless explicitly issued.
+    assert dict(ctx.provenance)["tower"] == "durable-governance"
 
 
 # ── node publisher (ingest credential; HTTP ≠ network failure) ────────────────

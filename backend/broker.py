@@ -40,9 +40,14 @@ from broker_adapter import (  # noqa: F401 — re-exported contract surface
     BrokerPosition,
     BrokerResult,
     BrokerSymbol,
+    ACK_CONFIRMED,
+    CancelPendingOrderRequest,
+    ClosePositionRequest,
     ConnectionState,
     MarketOrderAck,
     MarketOrderRequest,
+    ModifyPositionProtectionRequest,
+    OperationAck,
     RESULT_NOT_CONNECTED,
     RESULT_UNAVAILABLE,
     UnknownAdapterError,
@@ -127,6 +132,7 @@ class MockBroker(Broker):
         return BrokerCapability(
             supportsMarketExecution=True, supportsPendingOrders=True, supportsModify=True,
             supportsPartialClose=True, supportsHedging=True, supportsNetting=True, supportsReplay=True,
+            supportsCancelOrder=True, supportsClosePosition=True,
         )
 
     def account_identity(self) -> BrokerResult:
@@ -292,6 +298,74 @@ class MockBroker(Broker):
         return BrokerResult(ok=True, code="ok", detail="mock fixture market order",
                             data=ack.as_dict(), broker_ref=ticket)
 
+    # ── LIVE-3: deterministic fixture manual-management operations ───────────
+    # Each mutates the runtime overlay through ctx (like submit_command does),
+    # so the fixture world's reconcile_snapshot genuinely reflects the change
+    # and reconciliation can confirm the operation end-to-end. Deterministic
+    # tickets; no invented prices or fills.
+
+    def _op_ticket(self, intent_id: str) -> str:
+        import hashlib
+        return "mockop_" + hashlib.sha256(intent_id.encode()).hexdigest()[:12]
+
+    def _op_ack(self, request, operation: str, status: str, ctx: BrokerContext,
+                reason: str | None = None, detail: str | None = None) -> BrokerResult:
+        from broker_adapter import ACK_CONFIRMED, OperationAck
+        entity = getattr(request, "position_ref", None) or getattr(request, "order_ref", None)
+        ticket = self._op_ticket(request.intent_id)
+        ack = OperationAck(intent_id=request.intent_id, operation=operation,
+                           status=status, entity_ref=entity,
+                           broker_order_ticket=ticket if status == ACK_CONFIRMED else None,
+                           reason=reason, detail=detail,
+                           provenance="mock-fixture", at=ctx.now)
+        ok = status == ACK_CONFIRMED
+        return BrokerResult(ok=ok, code="ok" if ok else (reason or "rejected"),
+                            detail=detail or "", data=ack.as_dict(),
+                            broker_ref=ticket if ok else None)
+
+    def modify_position_protection(self, request, ctx: BrokerContext) -> BrokerResult:
+        from broker_adapter import ACK_CONFIRMED, ACK_REJECTED
+        cur = ctx.trade_current(request.position_ref)
+        if not cur:
+            return self._op_ack(request, "modify_position_protection", ACK_REJECTED,
+                                ctx, reason="rejected", detail="position not found")
+        scalars = {}
+        before = {"sl": cur.get("sl"), "tp": cur.get("tp")}
+        if request.stop_loss is not None:
+            scalars["sl"] = request.stop_loss
+        if request.take_profit is not None:
+            scalars["tp"] = request.take_profit
+        ctx.append_trade_management(
+            request.position_ref,
+            ctx.mgmt_entry("PROTECTION_MODIFIED", ctx.now, before, dict(scalars),
+                           request.reason or "manual protection modification"),
+            scalars=scalars)
+        return self._op_ack(request, "modify_position_protection", ACK_CONFIRMED, ctx)
+
+    def cancel_pending_order(self, request, ctx: BrokerContext) -> BrokerResult:
+        from broker_adapter import ACK_CONFIRMED, ACK_REJECTED
+        cur = ctx.trade_by_order_id(request.order_ref)
+        if not cur:
+            return self._op_ack(request, "cancel_pending_order", ACK_REJECTED,
+                                ctx, reason="rejected", detail="pending order not found")
+        ctx.append_trade_management(
+            cur["tradeId"],
+            ctx.mgmt_entry("ORDER_CANCELLED", ctx.now, {"state": cur.get("state")},
+                           {"state": "cancelled"},
+                           request.reason or "manual cancellation"),
+            scalars={"state": "cancelled"})
+        return self._op_ack(request, "cancel_pending_order", ACK_CONFIRMED, ctx)
+
+    def close_position(self, request, ctx: BrokerContext) -> BrokerResult:
+        from broker_adapter import ACK_CONFIRMED, ACK_REJECTED
+        cur = ctx.trade_current(request.position_ref)
+        if not cur:
+            return self._op_ack(request, "close_position", ACK_REJECTED,
+                                ctx, reason="rejected", detail="position not found")
+        ctx.close_trade(request.position_ref, ctx.now,
+                        request.reason or "manual close")
+        return self._op_ack(request, "close_position", ACK_CONFIRMED, ctx)
+
     def _order_command(self, name: str, ctx: BrokerContext) -> tuple[dict | None, dict | None]:
         payload, now, reason = ctx.payload, ctx.now, ctx.reason
         order_id = payload.get("orderId")
@@ -438,16 +512,19 @@ class MT5Adapter(Broker):
         return BrokerHealth(brokerId=self.broker_id, kind=self.kind, connection=state, detail=detail)
 
     def capabilities(self) -> BrokerCapability:
-        # LIVE-2: the MT5 adapter supports EXACTLY ONE live write — market-order
-        # submission (`submit_market_order`). `supportsLiveWrite` and
-        # `supportsMarketExecution` are therefore True and EVERY other write
-        # capability remains False: pending orders, modification, partial close
-        # and all other mutations are structurally unavailable (their verbs stay
-        # inert and their capabilities absent).
+        # LIVE-3: the MT5 adapter supports EXACTLY FOUR live writes — market-order
+        # submission, position-protection modification, pending-order cancellation
+        # and position close. Every OTHER mutation capability remains False:
+        # pending-order placement, partial close, hedging-mode changes and all
+        # other mutations are structurally unavailable (inert verbs, absent
+        # capabilities).
         return BrokerCapability(
             supportsLiveWrite=True,
             supportsMarketExecution=True,
-            supportsPendingOrders=False, supportsModify=False,
+            supportsModify=True,            # LIVE-3: SL/TP protection modification
+            supportsCancelOrder=True,       # LIVE-3: pending-order cancellation
+            supportsClosePosition=True,     # LIVE-3: full position close
+            supportsPendingOrders=False,
             supportsPartialClose=False, supportsHedging=False, supportsNetting=False,
             supportsReplay=False,
         )
@@ -669,6 +746,137 @@ class MT5Adapter(Broker):
         return BrokerResult(ok=False, code="timeout", detail=result.diagnostic,
                             data=ack.as_dict(),
                             broker_ref=order_ticket or deal_ticket)
+
+    # ── LIVE-3: the three manual-management writes (typed gateway; canonical acks) ─
+
+    def _guarded_action(self, operation: str, request, entity_ref: str, fn):
+        """Run one manual-management write with total failure handling. Every
+        failure mode answers a canonical BrokerResult carrying an OperationAck;
+        an exception in this path means the outcome is UNKNOWABLE
+        (communication_failed, type name only)."""
+        from broker_adapter import (ACK_COMMUNICATION_FAILED, ACK_NOT_SUBMITTED,
+                                    OperationAck)
+        gw = self._gateway
+        if gw is None:
+            reason = getattr(self, "_policy_denied_reason", None)
+            code = "connection_denied" if reason else RESULT_UNAVAILABLE
+            detail = reason or "MetaTrader5 package unavailable on this host"
+            ack = OperationAck(intent_id=request.intent_id, operation=operation,
+                               status=ACK_NOT_SUBMITTED, entity_ref=entity_ref,
+                               reason="submission_failed", detail=detail,
+                               provenance="live_mt5")
+            return BrokerResult(ok=False, code=code, detail=detail, data=ack.as_dict())
+        if not gw.connected:
+            ack = OperationAck(intent_id=request.intent_id, operation=operation,
+                               status=ACK_NOT_SUBMITTED, entity_ref=entity_ref,
+                               reason="submission_failed",
+                               detail="MT5 terminal not connected",
+                               provenance="live_mt5")
+            return BrokerResult(ok=False, code=RESULT_NOT_CONNECTED,
+                                detail="MT5 terminal not connected", data=ack.as_dict())
+        try:
+            return fn(gw)
+        except Exception as exc:
+            import logging
+            logging.getLogger("broker").warning(
+                "AUDIT mt5_operation_failed op=%s err=%s", operation,
+                type(exc).__name__)
+            ack = OperationAck(intent_id=request.intent_id, operation=operation,
+                               status=ACK_COMMUNICATION_FAILED, entity_ref=entity_ref,
+                               reason="communication_failed",
+                               detail=type(exc).__name__, provenance="live_mt5")
+            return BrokerResult(ok=False, code="communication_failed",
+                                detail=type(exc).__name__, data=ack.as_dict())
+
+    def _map_action_result(self, operation: str, request, entity_ref: str,
+                           result, ctx: BrokerContext) -> BrokerResult:
+        """Map one typed MT5ActionResult into the canonical OperationAck."""
+        from broker_adapter import (ACK_COMMUNICATION_FAILED, ACK_CONFIRMED,
+                                    ACK_NOT_SUBMITTED, ACK_REJECTED, ACK_TIMEOUT,
+                                    OperationAck)
+        from live import mt5_results as _mr
+        order_ticket = (str(result.broker_order_ticket)
+                        if _mr.usable_ticket(result.broker_order_ticket) else None)
+        deal_ticket = (str(result.broker_deal_ticket)
+                       if _mr.usable_ticket(result.broker_deal_ticket) else None)
+        common = dict(intent_id=request.intent_id, operation=operation,
+                      entity_ref=entity_ref, broker_order_ticket=order_ticket,
+                      broker_deal_ticket=deal_ticket, provenance="live_mt5",
+                      at=ctx.now)
+        disp = result.disposition
+        if disp == _mr.MT5ActionDisposition.DONE:
+            ack = OperationAck(status=ACK_CONFIRMED, **common)
+            return BrokerResult(ok=True, code="ok", detail="broker acknowledged",
+                                data=ack.as_dict(),
+                                broker_ref=order_ticket or deal_ticket or entity_ref)
+        if disp == _mr.MT5ActionDisposition.REJECTED:
+            ack = OperationAck(status=ACK_REJECTED, reason="broker_rejected",
+                               detail=result.diagnostic, **common)
+            return BrokerResult(ok=False, code="rejected", detail=result.diagnostic,
+                                data=ack.as_dict())
+        if disp == _mr.MT5ActionDisposition.NOT_SUBMITTED:
+            ack = OperationAck(status=ACK_NOT_SUBMITTED, reason="submission_failed",
+                               detail=result.diagnostic, **common)
+            return BrokerResult(ok=False, code="not_submitted", detail=result.diagnostic,
+                                data=ack.as_dict())
+        if disp == _mr.MT5ActionDisposition.EXCEPTION:
+            exc_type = (result.diagnostic or "").split(":", 1)[0] or "Exception"
+            ack = OperationAck(status=ACK_COMMUNICATION_FAILED,
+                               reason="communication_failed", detail=exc_type, **common)
+            return BrokerResult(ok=False, code="communication_failed", detail=exc_type,
+                                data=ack.as_dict())
+        ack = OperationAck(status=ACK_TIMEOUT, reason="timeout",
+                           detail=result.diagnostic, **common)
+        return BrokerResult(ok=False, code="timeout", detail=result.diagnostic,
+                            data=ack.as_dict(),
+                            broker_ref=order_ticket or deal_ticket)
+
+    @staticmethod
+    def _numeric_ticket(ref: str):
+        try:
+            return int(str(ref).strip())
+        except (TypeError, ValueError):
+            return None
+
+    def modify_position_protection(self, request, ctx: BrokerContext) -> BrokerResult:
+        op = "modify_position_protection"
+        def write(gw):
+            ticket = self._numeric_ticket(request.position_ref)
+            if ticket is None:
+                from live import mt5_results as _mr
+                return self._map_action_result(
+                    op, request, request.position_ref,
+                    _mr.action_not_submitted("non-numeric position reference"), ctx)
+            result = gw.modify_position_protection(ticket, request.stop_loss,
+                                                   request.take_profit)
+            return self._map_action_result(op, request, request.position_ref, result, ctx)
+        return self._guarded_action(op, request, request.position_ref, write)
+
+    def cancel_pending_order(self, request, ctx: BrokerContext) -> BrokerResult:
+        op = "cancel_pending_order"
+        def write(gw):
+            ticket = self._numeric_ticket(request.order_ref)
+            if ticket is None:
+                from live import mt5_results as _mr
+                return self._map_action_result(
+                    op, request, request.order_ref,
+                    _mr.action_not_submitted("non-numeric order reference"), ctx)
+            result = gw.cancel_pending_order(ticket)
+            return self._map_action_result(op, request, request.order_ref, result, ctx)
+        return self._guarded_action(op, request, request.order_ref, write)
+
+    def close_position(self, request, ctx: BrokerContext) -> BrokerResult:
+        op = "close_position"
+        def write(gw):
+            ticket = self._numeric_ticket(request.position_ref)
+            if ticket is None:
+                from live import mt5_results as _mr
+                return self._map_action_result(
+                    op, request, request.position_ref,
+                    _mr.action_not_submitted("non-numeric position reference"), ctx)
+            result = gw.close_position_full(ticket)
+            return self._map_action_result(op, request, request.position_ref, result, ctx)
+        return self._guarded_action(op, request, request.position_ref, write)
 
     def _snapshot(self) -> dict | None:
         if self._gateway is None or not self._gateway.connected:

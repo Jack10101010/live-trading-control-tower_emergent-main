@@ -39,9 +39,16 @@ import security_config
 
 # ── system execution mode (default OBSERVE — no execution is possible) ─────────
 MODE_OBSERVE = "observe"          # the default and only safe mode: observation only
-MODE_ACTIVE = "active"            # execution *may* be permitted, if everything else holds
+MODE_ACTIVE = "active"            # fixture/mock world: execution *may* be permitted
 MODE_SUSPENDED = "suspended"      # deliberately halted; nothing execution-affecting allowed
-KNOWN_MODES = frozenset({MODE_OBSERVE, MODE_ACTIVE, MODE_SUSPENDED})
+# LIVE-3 governed modes (owned durably by execution_mode.py):
+MODE_MANUAL_LIVE = "manual_live"  # explicitly authorized MANUAL operations only
+MODE_HALTED = "halted"            # emergency: only flagged de-risking ops may run
+KNOWN_MODES = frozenset({MODE_OBSERVE, MODE_ACTIVE, MODE_SUSPENDED,
+                         MODE_MANUAL_LIVE, MODE_HALTED})
+
+#: Modes in which a fully-gated non-read-only command may proceed at all.
+_PERMISSIVE_MODES = frozenset({MODE_ACTIVE, MODE_MANUAL_LIVE})
 
 # ── command risk classes ───────────────────────────────────────────────────────
 RISK_READ_ONLY = "read_only"                 # observes only; never touches node state
@@ -92,6 +99,7 @@ DENY_UNKNOWN_COMMAND = "unknown_command"
 DENY_EXPIRED = "command_expired"
 DENY_DUPLICATE = "duplicate_command"
 DENY_MODE_NOT_ACTIVE = "execution_mode_not_active"
+DENY_MODE_HALTED = "execution_halted"
 DENY_IDENTITY_REQUIRED = "operator_identity_required"
 DENY_CONFIRMATION_REQUIRED = "confirmation_required"
 DENY_DISARMED = "system_disarmed"
@@ -325,12 +333,20 @@ def evaluate(request: CommandRequest, context: SafetyContext | None = None, *,
 
         # --- everything below is a non-read-only (execution-relevant) command ---
 
-        # 4) The system execution mode must be ACTIVE. Default OBSERVE denies; a
-        #    deliberately SUSPENDED system denies too. (Every non-read-only class
-        #    requires active mode.)
-        if risk_class in _REQUIRES_ACTIVE_MODE and ctx.mode != MODE_ACTIVE:
-            return _decision(request, ctx, risk_class, allowed=False,
-                             reason=DENY_MODE_NOT_ACTIVE, now=clock)
+        # 4) The system execution mode must PERMIT the command. observe /
+        #    suspended / unknown deny everything non-read-only. LIVE-3: the
+        #    HALTED mode denies everything EXCEPT the registry-flagged emergency
+        #    de-risking operations (cancel pending order, close position) — and
+        #    those still pass every remaining gate below; nothing is waived.
+        if risk_class in _REQUIRES_ACTIVE_MODE and ctx.mode not in _PERMISSIVE_MODES:
+            if ctx.mode == MODE_HALTED:
+                from command_registry import is_halted_available
+                if not is_halted_available(request.command_type):
+                    return _decision(request, ctx, risk_class, allowed=False,
+                                     reason=DENY_MODE_HALTED, now=clock)
+            else:
+                return _decision(request, ctx, risk_class, allowed=False,
+                                 reason=DENY_MODE_NOT_ACTIVE, now=clock)
 
         # 5) A duplicate execution-relevant command denies safely (no double action).
         if request.duplicate:

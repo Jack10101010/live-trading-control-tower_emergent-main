@@ -289,3 +289,133 @@ def safety_posture(store) -> dict:
         "lastRunAt": latest.get("at") if latest else None,
         "detail": None,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LIVE-3 — reconciliation-backed operation confirmation.
+#
+# A broker ACKNOWLEDGEMENT of a modify/cancel/close is not the final state: the
+# terminal modified/cancelled/closed transition is recorded ONLY here, when a
+# FRESH broker snapshot observes the resulting state. Ambiguous operations
+# (unknown -> reconciliation_required) are resolved here with evidence — the
+# entity's durable lock is released only by confirmation or evidence-backed
+# failure, never by expiry. NO corrective broker operation is ever issued.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_CONFIRMABLE_COMMANDS = {
+    "ModifyPositionProtection": "modify",
+    "CancelPendingOrder": "cancel",
+    "ClosePosition": "close",
+}
+
+_PRICE_TOLERANCE = 1e-6
+
+
+def _norm_entity(entry: dict) -> dict:
+    return {
+        "id": str(entry.get("positionId") or entry.get("orderId") or entry.get("id") or ""),
+        "sl": entry.get("sl", entry.get("stop")),
+        "tp": entry.get("tp", entry.get("target")),
+        "size": entry.get("size", entry.get("volume")),
+    }
+
+
+def _close_enough(a, b) -> bool:
+    try:
+        return abs(float(a) - float(b)) <= _PRICE_TOLERANCE
+    except (TypeError, ValueError):
+        return False
+
+
+def confirm_operations(store, snapshot: dict | None, *, now: str,
+                       stale_after_s: float = DEFAULT_STALE_AFTER_S) -> dict:
+    """Confirm acknowledged manual-management operations against ONE fresh
+    broker snapshot. Stale/missing snapshots confirm NOTHING (stale data can
+    never produce a clean outcome). Returns a summary; persists any
+    discrepancies as an immutable confirmation run."""
+    if store is None:
+        return {"confirmed": [], "resolved": [], "discrepancies": [], "stale": True}
+    if not isinstance(snapshot, dict) or _is_stale(snapshot.get("at"), now, stale_after_s):
+        return {"confirmed": [], "resolved": [], "discrepancies": [], "stale": True}
+
+    positions = {e["id"]: e for e in map(_norm_entity, snapshot.get("positions") or [])}
+    orders = {e["id"]: e for e in map(_norm_entity, snapshot.get("orders") or [])}
+    confirmed, resolved, items = [], [], []
+
+    rows = [r for r in store.intents_by_state(
+                (ol.ACKNOWLEDGED, ol.RECONCILIATION_REQUIRED), limit=500)
+            if r.get("command_name") in _CONFIRMABLE_COMMANDS]
+    for row in rows:
+        iid = row["intent_id"]
+        command = row["command_name"]
+        entity_ref = None
+        try:
+            import json as _json
+            payload = (_json.loads(row.get("metadata_json") or "{}").get("payload") or {})
+            entity_ref = str(payload.get("positionRef") or payload.get("orderRef") or "")
+        except (ValueError, TypeError):
+            payload = {}
+        if not entity_ref:
+            continue
+        outcome_applied = None      # True/False when determinable from the snapshot
+        detail = ""
+        if command == "ModifyPositionProtection":
+            pos = positions.get(entity_ref)
+            if pos is None:
+                outcome_applied, detail = None, "position no longer observable"
+            else:
+                ok_sl = payload.get("stopLoss") is None or _close_enough(pos["sl"], payload["stopLoss"])
+                ok_tp = payload.get("takeProfit") is None or _close_enough(pos["tp"], payload["takeProfit"])
+                outcome_applied = bool(ok_sl and ok_tp)
+                detail = f"observed sl={pos['sl']} tp={pos['tp']}"
+        elif command == "CancelPendingOrder":
+            outcome_applied = entity_ref not in orders
+            detail = "order absent from snapshot" if outcome_applied else "order still active"
+        elif command == "ClosePosition":
+            outcome_applied = entity_ref not in positions
+            detail = ("position absent from snapshot" if outcome_applied
+                      else f"position still open (size {positions[entity_ref]['size']})")
+
+        terminal = {"modify": ol.MODIFIED, "cancel": ol.CANCELLED,
+                    "close": ol.CLOSED}[_CONFIRMABLE_COMMANDS[command]]
+        evidence = f"reconciliation@{snapshot.get('at')}: {detail}"
+        if row["state"] == ol.ACKNOWLEDGED:
+            if outcome_applied:
+                store.record_transition(iid, terminal, at=now,
+                                        reason="reconciliation_confirmed",
+                                        evidence=evidence)
+                store.release_entity_lock(entity_ref, now=now,
+                                          reason="reconciliation_confirmed")
+                confirmed.append(iid)
+            elif outcome_applied is False:
+                # Acknowledged but the change is NOT observed — a discrepancy;
+                # the operation stays acknowledged and the entity stays locked.
+                items.append(Discrepancy(STATUS_MISMATCH, entity_ref,
+                                         f"{command} acknowledged but not observed: {detail}"))
+        else:  # RECONCILIATION_REQUIRED — ambiguous outcome now resolvable
+            if outcome_applied is None:
+                continue
+            store.record_transition(iid, ol.RECONCILED, at=now,
+                                    reason="reconciliation_evidence", evidence=evidence)
+            if outcome_applied:
+                store.record_transition(iid, terminal, at=now,
+                                        reason="reconciliation_confirmed",
+                                        evidence=evidence)
+            else:
+                store.record_transition(iid, ol.FAILED, at=now,
+                                        reason="operation_not_applied",
+                                        evidence=evidence)
+            store.release_entity_lock(entity_ref, now=now,
+                                      reason="reconciliation_resolved")
+            resolved.append(iid)
+
+    if items:
+        run = ReconciliationRun(
+            recon_id=ol.new_reconciliation_id(), at=now,
+            account_identity=snapshot.get("accountIdentity"),
+            expected_account_identity=snapshot.get("accountIdentity"),
+            sources={"confirmationPass": True, "brokerSnapshotAt": snapshot.get("at")},
+            discrepancies=tuple(items))
+        persist(store, run)
+    return {"confirmed": confirmed, "resolved": resolved,
+            "discrepancies": [d.as_record() for d in items], "stale": False}

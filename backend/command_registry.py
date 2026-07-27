@@ -68,6 +68,9 @@ class CommandSpec:
     risk_reducing: bool = False          # closes/cancels/de-risks — allowed under
                                          # unresolved critical reconciliation
     intent_kind: str | None = None       # order_lifecycle KIND_* for broker commands
+    # LIVE-3: available in the HALTED execution mode (emergency de-risking only —
+    # every other gate still applies; nothing else runs while halted).
+    halted_available: bool = False
 
 
 # ── the catalogue ─────────────────────────────────────────────────────────────
@@ -157,6 +160,21 @@ _EXECUTION: list[CommandSpec] = [
     CommandSpec("SubmitMarketOrder", RISK_EXECUTION_AFFECTING, SURFACE_EXECUTION,
                 category="order", broker_dispatched=True,
                 broker_capability="supportsMarketExecution", intent_kind="submit"),
+    # LIVE-3: the three manual-management operations. Modify is NOT risk_reducing
+    # (it requires clean reconciliation and a proven non-risk-increasing change);
+    # cancel and close are risk-reducing and are the ONLY commands available in
+    # the halted mode (documented emergency semantics — all other gates apply).
+    CommandSpec("ModifyPositionProtection", RISK_EXECUTION_AFFECTING, SURFACE_EXECUTION,
+                category="trade", broker_dispatched=True,
+                broker_capability="supportsModify", intent_kind="modify"),
+    CommandSpec("CancelPendingOrder", RISK_EXECUTION_AFFECTING, SURFACE_EXECUTION,
+                category="order", broker_dispatched=True,
+                broker_capability="supportsCancelOrder", intent_kind="cancel",
+                risk_reducing=True, halted_available=True),
+    CommandSpec("ClosePosition", RISK_EXECUTION_AFFECTING, SURFACE_EXECUTION,
+                category="trade", broker_dispatched=True,
+                broker_capability="supportsClosePosition", intent_kind="close",
+                risk_reducing=True, halted_available=True),
 ]
 
 _ALL_SPECS: tuple[CommandSpec, ...] = tuple(_OPERATOR + _ABSTRACT + _FIXTURE + _EXECUTION)
@@ -235,6 +253,14 @@ def is_risk_reducing(name) -> bool:
     operator can always de-risk; unknown commands answer False (fail closed)."""
     spec = spec_of(name)
     return bool(spec and spec.risk_reducing)
+
+
+def is_halted_available(name) -> bool:
+    """LIVE-3: may this command run in the HALTED execution mode? Only the two
+    explicitly-flagged emergency de-risking operations answer True; unknown
+    commands answer False (fail closed)."""
+    spec = spec_of(name)
+    return bool(spec and spec.halted_available)
 
 
 def intent_kind_of(name) -> str | None:

@@ -42,6 +42,7 @@ import command_channel
 import command_transport
 import command_registry
 import command_authorization
+import execution_mode as execution_mode_layer
 import connection_policy
 import transport as transport_layer
 import execution_safety
@@ -867,6 +868,11 @@ def _run_broker_sync(append_event: bool = True) -> dict:
                     broker_snapshot_at=snap.data.get("at"), now=now,
                 )
                 reconciliation_layer.persist(store, run)
+                # LIVE-3: confirmation pass — acknowledged manual-management
+                # operations reach their terminal modified/cancelled/closed
+                # state ONLY here, when the fresh snapshot observes the change;
+                # ambiguous (frozen) operations are resolved with evidence.
+                reconciliation_layer.confirm_operations(store, snap.data, now=now)
     except Exception:
         logger.exception("canonical reconciliation pass failed (fixture sync unaffected)")
 
@@ -950,6 +956,49 @@ def _apply_command_effects(name: str, payload: dict, now: str) -> tuple[dict | N
         )
         result = broker_layer.get_broker().submit_market_order(
             request, _broker_context(payload, now))
+        return None, {"ok": result.ok, "code": result.code, "detail": result.detail,
+                      "brokerRef": result.broker_ref,
+                      "ack": result.data if isinstance(result.data, dict) else None}
+
+    # LIVE-3: the three manual-management operations — canonical immutable
+    # requests, adapter dispatch, canonical OperationAck back through `after`.
+    if name in ("ModifyPositionProtection", "CancelPendingOrder", "ClosePosition"):
+        # The route is entity-addressed; resolve the instrument from the FRESH
+        # observed entity when the payload does not carry one (the validator has
+        # already proven the entity exists in a fresh snapshot).
+        instrument = payload.get("instrument")
+        if not instrument:
+            snap = _fresh_broker_snapshot() or {}
+            ref = str(payload.get("positionRef") or payload.get("orderRef") or "")
+            for entry in (snap.get("positions") or []) + (snap.get("orders") or []):
+                if str(entry.get("positionId") or entry.get("orderId") or "") == ref:
+                    instrument = entry.get("canonicalSymbol") or entry.get("symbol")
+                    break
+        common = dict(intent_id=payload.get("intentId") or "",
+                      instrument=instrument or "",
+                      correlation_id=payload.get("commandId"),
+                      idempotency_key=payload.get("idempotencyKey"),
+                      execution_mode=("mock-fixture" if broker_layer.active_kind() == "mock"
+                                      else "live"),
+                      reason=payload.get("reason"))
+        if name == "ModifyPositionProtection":
+            request = broker_layer.ModifyPositionProtectionRequest(
+                position_ref=payload.get("positionRef") or "",
+                stop_loss=payload.get("stopLoss"),
+                take_profit=payload.get("takeProfit"), **common)
+            result = broker_layer.get_broker().modify_position_protection(
+                request, _broker_context(payload, now))
+        elif name == "CancelPendingOrder":
+            request = broker_layer.CancelPendingOrderRequest(
+                order_ref=payload.get("orderRef") or "", **common)
+            result = broker_layer.get_broker().cancel_pending_order(
+                request, _broker_context(payload, now))
+        else:
+            request = broker_layer.ClosePositionRequest(
+                position_ref=payload.get("positionRef") or "",
+                quantity=payload.get("quantity"), **common)
+            result = broker_layer.get_broker().close_position(
+                request, _broker_context(payload, now))
         return None, {"ok": result.ok, "code": result.code, "detail": result.detail,
                       "brokerRef": result.broker_ref,
                       "ack": result.data if isinstance(result.data, dict) else None}
@@ -1110,6 +1159,16 @@ def _dispatch_command(name: str, payload: dict, now: str, dry_run: bool) -> tupl
         _DRY_RUN.reset(token)
 
 
+def _fresh_broker_snapshot() -> dict | None:
+    """LIVE-3: one FRESH canonical broker snapshot for entity-operation
+    validation. A failed read answers None (which DENIES the operation)."""
+    try:
+        snap = broker_layer.get_broker().reconcile_snapshot(_broker_context({}, _now_iso()))
+        return snap.data if snap.ok and isinstance(snap.data, dict) else None
+    except Exception:
+        return None
+
+
 def _execution_env() -> execution_layer.ExecutionEnv:
     brk = broker_layer.get_broker()
     return execution_layer.ExecutionEnv(
@@ -1119,6 +1178,7 @@ def _execution_env() -> execution_layer.ExecutionEnv:
         active_package_version=lambda: _active_package_runtime().get("current"),
         broker_connection=lambda: brk.connection().state,
         broker_capabilities=lambda: broker_layer.capability_dict(brk.capabilities()),
+        broker_snapshot=_fresh_broker_snapshot,
     )
 
 
@@ -1165,6 +1225,69 @@ _MOCK_AUTHORIZATION = command_authorization.MockAuthorizationProvider(
 #: The account fingerprint the tower EXPECTS the node to report (`acctfp_...`).
 #: Used to derive the account-identity match state for real node telemetry.
 VAR_EXPECTED_ACCOUNT = "NODE_EXPECTED_ACCOUNT_FINGERPRINT"
+
+# LIVE-3: per-request operator confirmation, threaded to the context assembler
+# without widening the orchestrator's nullary factory seam. Routes set it around
+# orchestrator execution; default False (unconfirmed) — fail closed.
+_CONFIRMED_CTX = contextvars.ContextVar("ct_operator_confirmed", default=False)
+
+
+def _live3_account_state() -> str:
+    """Account-identity state for grant issuance / activation gates (derived
+    from node telemetry vs the configured expectation — same authority the
+    execution context uses)."""
+    return _account_identity_state(_node_facts())
+
+
+# LIVE-3: the DURABLE local operator authorization provider (real, non-mock).
+_DURABLE_AUTHORIZATION = command_authorization.DurableOperatorAuthorizationProvider(
+    store_fn=lambda: _execution_store(),
+    active_adapter_kind_fn=lambda: broker_layer.active_kind(),
+    account_state_fn=_live3_account_state,
+    profile_ok_fn=lambda: connection_policy.active_profile()
+        in connection_policy.APPROVED_PROFILES,
+    now_iso_fn=lambda: _now_iso(),
+)
+
+
+def _manual_live_gates() -> dict:
+    """The manual_live activation gate set — every gate a named, derived fact."""
+    now = datetime.now(timezone.utc)
+    node = _node_facts()
+    brk = None
+    caps = {}
+    try:
+        brk = broker_layer.get_broker()
+        caps = broker_layer.capability_dict(brk.capabilities())
+    except Exception:
+        pass
+    recon = reconciliation_layer.safety_posture(_execution_store())
+    grant = _DURABLE_AUTHORIZATION.applicable_grant(
+        now=now, account_fingerprint=(os.environ.get(VAR_EXPECTED_ACCOUNT) or "").strip() or None,
+        adapter_kind=broker_layer.active_kind())
+    return {
+        "operatorAuthenticated": (not _AUTH_POLICY.enabled) or _AUTH_POLICY.enforcing,
+        "approvedConnectionProfile": connection_policy.active_profile()
+            in connection_policy.APPROVED_PROFILES,
+        "adapterIsMt5": broker_layer.active_kind() == "mt5",
+        "adapterWriteCapable": bool(caps.get("supportsLiveWrite")),
+        "adapterConnected": bool(brk and brk.connection().state == "Connected"),
+        "accountIdentityMatch": _live3_account_state() == execution_safety.ACCOUNT_MATCH,
+        "nodeTelemetryFresh": node.provenance == execution_context_layer.PROV_NODE_TELEMETRY
+                              and not node.stale,
+        "reconciliationClean": not recon["criticalUnresolved"] and not recon["stale"],
+        "validScopedGrant": grant is not None,
+        "executionStoreAvailable": _execution_store() is not None,
+    }
+
+
+# LIVE-3: the ONE durable execution-mode owner. No strategy code path calls its
+# transition API; no environment variable feeds it.
+_EXECUTION_MODE = execution_mode_layer.ExecutionModeOwner(
+    store_fn=lambda: _execution_store(),
+    now_iso_fn=lambda: _now_iso(),
+    gates_fn=_manual_live_gates,
+)
 
 
 def _node_facts() -> execution_context_layer.NodeFacts:
@@ -1245,19 +1368,33 @@ def _execution_context() -> execution_context_layer.ExecutionContext:
 
     real_node = _node_facts()
     if broker_layer.active_kind() != "mock":
+        # LIVE-3: the live context consumes the DURABLE governed facts —
+        # execution mode from the one mode owner (observe unless an operator
+        # explicitly activated manual_live this process), the applicable grant
+        # from the durable provider (deterministic selection; None denies), and
+        # per-request operator confirmation (context-var; default False).
+        expected_fp = (os.environ.get(VAR_EXPECTED_ACCOUNT) or "").strip() or None
+        durable_grant = _DURABLE_AUTHORIZATION.applicable_grant(
+            now=now, account_fingerprint=expected_fp,
+            adapter_kind=broker_layer.active_kind())
         return execution_context_layer.ExecutionContext(
+            execution_mode=_EXECUTION_MODE.current_mode(),
+            operator=execution_safety.OperatorAuthorization(
+                operator_ref=_operator_id(),
+                confirmed=bool(_CONFIRMED_CTX.get())),
+            authorization=durable_grant,
             reconciliation=recon_facts,
             account_identity_state=_account_identity_state(real_node),
             node=real_node,
             broker_kind=broker_layer.active_kind(),
             broker_connection=brk.connection().state,
             broker_capabilities=caps,
-            provenance=(("tower", "deny-default"),
+            provenance=(("tower", "durable-governance"),
                         ("node", real_node.provenance),
                         ("broker", broker_layer.active_kind()),
                         ("reconciliation", execution_context_layer.PROV_DURABLE_STORE)),
             observed_at=_now_iso(),
-        )   # fail-closed defaults: observe / no grant / account unknown
+        )
 
     # Mock world: real telemetry is used when a node has actually published;
     # otherwise the synthetic mock node facts are used and labelled as such.
@@ -1811,6 +1948,9 @@ def execution_state():
         # the durable store (provenance explicit; nothing invented; unavailable
         # states explicit).
         content["marketOrder"] = _market_order_telemetry(store)
+        # LIVE-3: governed mode, authorization summary, in-flight operations,
+        # entity locks — all derived, acknowledgement vs confirmation distinct.
+        content["governance"] = _governance_telemetry(store, ctx, now_dt)
         return JSONResponse(content=content, headers={"Cache-Control": "no-store"})
     except Exception:
         logger.exception("execution state read model failed")
@@ -1819,6 +1959,82 @@ def execution_state():
                                      "code": "execution_state_unavailable",
                                      "detail": None},
                             headers={"Cache-Control": "no-store"})
+
+
+def _governance_telemetry(store, ctx, now_dt) -> dict:
+    """LIVE-3 — the derived governance/operations read model. Every fact comes
+    from the durable store or the one mode owner; acknowledged (broker said yes)
+    and confirmed (reconciliation observed it) are DISTINCT."""
+    out: dict = {
+        "executionMode": _EXECUTION_MODE.current_mode(),
+        "modeProvenance": "durable-store",
+        "authorization": None,
+        "operations": {"available": store is not None},
+        "provenance": ("mock-fixture" if broker_layer.active_kind() == "mock"
+                       else "live_mt5"),
+    }
+    grant = (ctx.authorization if ctx and ctx.authorization
+             and ctx.authorization.is_active(now_dt) else None)
+    if grant is not None:
+        out["authorization"] = {"active": True, "summary": grant.safe_view(),
+                                "expiresAt": grant.expires_at}
+    else:
+        out["authorization"] = {"active": False}
+    if store is None:
+        return out
+    try:
+        op_rows = [r for r in store.intents_by_state(limit=200)
+                   if r.get("command_name") in ("ModifyPositionProtection",
+                                                "CancelPendingOrder", "ClosePosition")]
+        def views(rows):
+            return [{"intentId": r.get("intent_id"), "command": r.get("command_name"),
+                     "state": r.get("state"), "brokerRef": r.get("broker_ref"),
+                     "updatedAt": r.get("updated_at")} for r in rows]
+        in_flight = [r for r in op_rows if r.get("state") in
+                     (order_lifecycle_layer.MODIFY_PENDING,
+                      order_lifecycle_layer.CANCEL_PENDING,
+                      order_lifecycle_layer.CLOSE_PENDING)]
+        acknowledged = [r for r in op_rows
+                        if r.get("state") == order_lifecycle_layer.ACKNOWLEDGED]
+        confirmed = [r for r in op_rows if r.get("state") in
+                     (order_lifecycle_layer.MODIFIED, order_lifecycle_layer.CANCELLED,
+                      order_lifecycle_layer.CLOSED)]
+        recon_required = [r for r in op_rows if r.get("state") in
+                          (order_lifecycle_layer.UNKNOWN,
+                           order_lifecycle_layer.RECONCILIATION_REQUIRED)]
+        failed = [r for r in op_rows if r.get("state") in
+                  (order_lifecycle_layer.REJECTED, order_lifecycle_layer.FAILED)]
+        last = op_rows[0] if op_rows else None
+        last_view = None
+        if last is not None:
+            transitions = store.transitions_of(last["intent_id"])
+            final = transitions[-1] if transitions else {}
+            latency = None
+            try:
+                latency = json.loads(final.get("evidence") or "{}").get("brokerLatencyMs")
+            except (ValueError, TypeError):
+                pass
+            last_view = {**views([last])[0], "finalReason": final.get("reason"),
+                         "latencyMs": latency}
+        out["operations"] = {
+            "available": True,
+            "inFlight": views(in_flight),
+            "awaitingAcknowledgementConfirmation": views(acknowledged),
+            "reconciliationRequired": views(recon_required),
+            "confirmed": len(confirmed),
+            "failures": len(failed),
+            "lastOperation": last_view,
+            "entityLocks": [{"entityRef": l.get("entity_ref"),
+                             "intentId": l.get("intent_id"),
+                             "operation": l.get("operation"),
+                             "acquiredAt": l.get("acquired_at")}
+                            for l in store.active_entity_locks()],
+            "provenance": "durable-store",
+        }
+    except Exception as exc:
+        out["operations"] = {"available": False, "code": "operations_read_failed",
+                             "detail": type(exc).__name__}
+    return out
 
 
 def _market_order_telemetry(store) -> dict:
@@ -1907,9 +2123,14 @@ async def submit_market_order(request: Request) -> dict[str, Any]:
 
     command_id = f"cmd_{uuid.uuid4().hex[:20]}"
     now = _now_iso()
-    result = _ORCHESTRATOR.execute("SubmitMarketOrder", payload, now,
-                                   dry_run=False, command_id=command_id,
-                                   idempotency_key=idem_key)
+    # LIVE-3: thread per-request operator confirmation to the live context.
+    token = _CONFIRMED_CTX.set(payload.get("confirm") is True)
+    try:
+        result = _ORCHESTRATOR.execute("SubmitMarketOrder", payload, now,
+                                       dry_run=False, command_id=command_id,
+                                       idempotency_key=idem_key)
+    finally:
+        _CONFIRMED_CTX.reset(token)
 
     intent_row = None
     if result.intent_id:
@@ -1968,6 +2189,227 @@ async def submit_market_order(request: Request) -> dict[str, Any]:
         "timeline": result.timeline,
         "acceptedAt": now,
     }
+
+
+async def _run_entity_operation(command: str, reference: str, request: Request,
+                                ref_key: str) -> dict[str, Any]:
+    """LIVE-3 — the ONE shared runner for the three manual-management routes.
+    Requires an Idempotency-Key and explicit confirmation; flows exclusively
+    through the canonical orchestrator; appends denial/result audit events."""
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    payload[ref_key] = reference
+
+    idem_key = (request.headers.get("Idempotency-Key") or "").strip()
+    if not idem_key:
+        raise HTTPException(status_code=422, detail={
+            "status": "rejected", "stage": "received",
+            "reason": "an Idempotency-Key header is required",
+            "code": "idempotency_key_required"})
+    if payload.get("confirm") is not True:
+        raise HTTPException(status_code=422, detail={
+            "status": "rejected", "stage": "received",
+            "reason": "explicit confirmation (confirm: true) is required",
+            "code": "confirmation_required"})
+
+    command_id = f"cmd_{uuid.uuid4().hex[:20]}"
+    now = _now_iso()
+    token = _CONFIRMED_CTX.set(True)
+    try:
+        result = _ORCHESTRATOR.execute(command, payload, now, dry_run=False,
+                                       command_id=command_id,
+                                       idempotency_key=idem_key)
+    finally:
+        _CONFIRMED_CTX.reset(token)
+
+    intent_row = None
+    if result.intent_id:
+        store = _execution_store()
+        if store is not None:
+            try:
+                intent_row = store.get_intent(result.intent_id)
+            except Exception:
+                intent_row = None
+
+    if result.status in ("rejected", "denied"):
+        _append_event({
+            "eventId": f"ev_{uuid.uuid4().hex[:26].upper()}", "seq": 0,
+            "category": "order", "code": f"{_snake_upper(command)}_DENIED",
+            "humanExplanation": (f"{command} on {reference} refused at stage "
+                                 f"{result.stage}: {result.code}."),
+            "who": _operator_id(), "causedBy": command_id,
+            "before": None, "after": {"stage": result.stage, "code": result.code},
+            "at": now,
+        }, None)
+        raise HTTPException(status_code=422, detail={
+            "status": result.status, "stage": result.stage, "reason": result.reason,
+            "code": result.code, "timeline": result.timeline, "stages": result.stages,
+            "safety": result.safety,
+        })
+
+    ack = (result.after or {}).get("ack") if isinstance(result.after, dict) else None
+    state = intent_row.get("state") if intent_row else None
+    broker_ref = intent_row.get("broker_ref") if intent_row else None
+    if not result.deduplicated:
+        _append_event({
+            "eventId": f"ev_{uuid.uuid4().hex[:26].upper()}", "seq": 0,
+            "category": "order", "code": f"{_snake_upper(command)}_RESULT",
+            "humanExplanation": (f"{command} on {reference} -> lifecycle "
+                                 f"{state or 'unrecorded'}"
+                                 f"{f' (ref {broker_ref})' if broker_ref else ''}."),
+            "who": _operator_id(), "causedBy": command_id,
+            "before": None,
+            "after": {"intentId": result.intent_id, "state": state,
+                      "brokerRef": broker_ref},
+            "at": now,
+        }, idem_key)
+    return {
+        # `ok` = the broker ACKNOWLEDGED. Confirmation is reconciliation's —
+        # the terminal modified/cancelled/closed state arrives only after a
+        # fresh snapshot observes the change.
+        "ok": state == order_lifecycle_layer.ACKNOWLEDGED
+              or state in (order_lifecycle_layer.MODIFIED,
+                           order_lifecycle_layer.CANCELLED,
+                           order_lifecycle_layer.CLOSED),
+        "commandId": command_id,
+        "intentId": result.intent_id,
+        "lifecycleState": state,
+        "brokerRef": broker_ref,
+        "acknowledgement": ack,
+        "reconciliationConfirmed": state in (order_lifecycle_layer.MODIFIED,
+                                             order_lifecycle_layer.CANCELLED,
+                                             order_lifecycle_layer.CLOSED),
+        "deduplicated": result.deduplicated,
+        "latencyMs": result.timeline.get("brokerMs"),
+        "acceptedAt": now,
+    }
+
+
+@api_router.post("/execution/positions/{reference}/protection")
+async def modify_position_protection_route(reference: str, request: Request):
+    """LIVE-3 — modify SL/TP of ONE position (non-risk-increasing only)."""
+    return await _run_entity_operation("ModifyPositionProtection", reference,
+                                       request, "positionRef")
+
+
+@api_router.post("/execution/orders/{reference}/cancel")
+async def cancel_pending_order_route(reference: str, request: Request):
+    """LIVE-3 — cancel ONE pending order."""
+    return await _run_entity_operation("CancelPendingOrder", reference,
+                                       request, "orderRef")
+
+
+@api_router.post("/execution/positions/{reference}/close")
+async def close_position_route(reference: str, request: Request):
+    """LIVE-3 — close ONE position in full."""
+    return await _run_entity_operation("ClosePosition", reference,
+                                       request, "positionRef")
+
+
+# ── LIVE-3: durable operator authorization (issue / inspect / revoke) ─────────
+
+@api_router.get("/authorization/grants")
+def list_grants():
+    grants = [g.safe_view() for g in _DURABLE_AUTHORIZATION.grants()]
+    return JSONResponse(content={"grants": grants, "provider": "local-operator",
+                                 "observedAt": _now_iso()},
+                        headers={"Cache-Control": "no-store"})
+
+
+@api_router.post("/authorization/grants")
+async def issue_grant(request: Request):
+    """Issue ONE durable scoped grant. Confirmation required; issuance denies
+    unless the profile is approved, the adapter is MT5 and the account identity
+    is verified (machine-readable reasons)."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    try:
+        grant = _DURABLE_AUTHORIZATION.issue(
+            operator_ref=_operator_id(),
+            ttl_seconds=body.get("ttlSeconds", 3600),
+            scopes=set(body.get("scopes") or []),
+            account_scope=str(body.get("accountScope") or ""),
+            risk_classes=set(body.get("riskClasses")
+                             or [execution_safety.RISK_EXECUTION_AFFECTING]),
+            commands=set(body["commands"]) if body.get("commands") else None,
+            max_quantity=body.get("maxQuantity"),
+            reason=body.get("reason") or "",
+            confirmed=body.get("confirm") is True,
+            now=datetime.now(timezone.utc))
+    except command_authorization.GrantIssuanceError as exc:
+        return JSONResponse(status_code=422,
+                            content={"error": "grant_refused", "code": exc.reason},
+                            headers={"Cache-Control": "no-store"})
+    return JSONResponse(content={"issued": True, "grant": grant.safe_view()},
+                        headers={"Cache-Control": "no-store"})
+
+
+@api_router.post("/authorization/grants/{authorization_id}/revoke")
+async def revoke_grant(authorization_id: str, request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        found = _DURABLE_AUTHORIZATION.revoke(
+            authorization_id, operator_ref=_operator_id(),
+            detail=(body or {}).get("reason") or "operator revocation")
+    except command_authorization.GrantIssuanceError as exc:
+        return JSONResponse(status_code=422,
+                            content={"error": "revocation_refused", "code": exc.reason},
+                            headers={"Cache-Control": "no-store"})
+    if not found:
+        return JSONResponse(status_code=404,
+                            content={"error": "grant_not_found", "code": "grant_not_found"},
+                            headers={"Cache-Control": "no-store"})
+    return JSONResponse(content={"revoked": True, "authorizationId": authorization_id},
+                        headers={"Cache-Control": "no-store"})
+
+
+# ── LIVE-3: execution-mode governance (view / transition) ─────────────────────
+
+@api_router.get("/execution/mode")
+def get_execution_mode():
+    return JSONResponse(content={
+        "mode": _EXECUTION_MODE.current_mode(),
+        "history": _EXECUTION_MODE.history(limit=20),
+        "manualLiveGates": _manual_live_gates(),
+        "observedAt": _now_iso(),
+    }, headers={"Cache-Control": "no-store"})
+
+
+@api_router.post("/execution/mode")
+async def set_execution_mode(request: Request):
+    """Transition the governed execution mode. Confirmation + reason required;
+    manual_live requires EVERY activation gate healthy; observe/halted are
+    always reachable by an authenticated, confirming operator."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    try:
+        outcome = _EXECUTION_MODE.transition(
+            str(body.get("mode") or ""),
+            operator_ref=_operator_id(),
+            reason=str(body.get("reason") or ""),
+            confirmed=body.get("confirm") is True)
+    except execution_mode_layer.ModeTransitionError as exc:
+        return JSONResponse(status_code=422,
+                            content={"error": "mode_transition_refused",
+                                     "code": exc.reason, "detail": exc.detail},
+                            headers={"Cache-Control": "no-store"})
+    return JSONResponse(content={"transitioned": True, **outcome},
+                        headers={"Cache-Control": "no-store"})
 
 
 @api_router.get("/execution/health")

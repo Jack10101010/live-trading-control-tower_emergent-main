@@ -242,6 +242,12 @@ ALLOWED_TRANSITIONS: frozenset = frozenset({
     (ACKNOWLEDGED, UNKNOWN), (ACKNOWLEDGED, FAILED),
     # LIVE-2: a broker-acknowledged market order whose position is confirmed open.
     (ACKNOWLEDGED, OPEN), (PARTIALLY_FILLED, OPEN),
+    # LIVE-3: manual-management operations. The broker ACKNOWLEDGEMENT of a
+    # modify/cancel/close request is NOT the final state — reconciliation
+    # confirms the observed broker change into the terminal state.
+    (MODIFY_PENDING, ACKNOWLEDGED), (CANCEL_PENDING, ACKNOWLEDGED),
+    (CLOSE_PENDING, ACKNOWLEDGED),
+    (ACKNOWLEDGED, MODIFIED), (ACKNOWLEDGED, CANCELLED), (ACKNOWLEDGED, CLOSED),
     (PARTIALLY_FILLED, PARTIALLY_FILLED), (PARTIALLY_FILLED, FILLED),
     (PARTIALLY_FILLED, CANCEL_PENDING), (PARTIALLY_FILLED, CLOSE_PENDING),
     (PARTIALLY_FILLED, UNKNOWN), (PARTIALLY_FILLED, FAILED),

@@ -109,16 +109,16 @@ def key_spy(monkeypatch):
 
 # ── 1. Producer inventory guard ──────────────────────────────────────────────
 
-def test_exactly_six_append_event_production_call_sites():
+def test_exactly_eight_append_event_production_call_sites():
     src = (BACKEND_DIR / "server.py").read_text()
     calls = [m for m in re.finditer(r"_append_event\(", src)
              if not src[max(0, m.start() - 4):m.start()].endswith("def ")]
     # LIVE-2 deliberately added two reviewed producers: the market-order route's
     # denial event and its result event.
-    assert len(calls) == 6, (
-        f"expected exactly 6 production _append_event call sites "
+    assert len(calls) == 8, (
+        f"expected exactly 8 production _append_event call sites "
         f"(command, broker-sync, LIVE_STATUS, L2 projector wiring, market-order "
-        f"denial, market-order result); found {len(calls)} — "
+        f"denial/result, entity-operation denial/result); found {len(calls)} — "
         "a new producer must be reviewed before it ships")
 
 

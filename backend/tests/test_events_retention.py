@@ -418,12 +418,12 @@ def test_oversized_store_pruned_only_on_append(iso, small_cap):
 
 # ── 15. Regression boundaries ────────────────────────────────────────────────
 
-def test_exactly_six_append_event_production_call_sites():
+def test_exactly_eight_append_event_production_call_sites():
     src = (BACKEND_DIR / "server.py").read_text()
     calls = [m for m in re.finditer(r"_append_event\(", src)
              if not src[max(0, m.start() - 4):m.start()].endswith("def ")]
-    # LIVE-2: + market-order denial and result events (both reviewed producers).
-    assert len(calls) == 6  # command, broker-sync, LIVE_STATUS, L2 projector, MO denial, MO result
+    # LIVE-2/3: + market-order and entity-operation denial/result events.
+    assert len(calls) == 8  # command, broker-sync, LIVE_STATUS, L2 projector, MO denial, MO result
 
 
 def test_no_stray_events_db_in_repo():

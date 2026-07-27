@@ -95,6 +95,42 @@ class ExecutionEnv:
     active_package_version: Callable[[], Any]
     broker_connection: Callable[[], str]
     broker_capabilities: Callable[[], dict]
+    # LIVE-3: a FRESH canonical broker snapshot (the adapter's reconcile_snapshot
+    # data: positions/orders/accountIdentity/at) taken at call time, or None when
+    # the read fails — a failed/stale read DENIES entity operations.
+    broker_snapshot: Callable[[], dict | None] = lambda: None
+
+
+#: How old a broker snapshot may be before entity operations deny as stale.
+SNAPSHOT_FRESH_SECONDS = 120.0
+
+
+def _snapshot_fresh(snap: dict | None, now: str) -> bool:
+    if not isinstance(snap, dict):
+        return False
+    src, ref = _parse_now(str(snap.get("at"))), _parse_now(now)
+    return abs((ref - src).total_seconds()) <= SNAPSHOT_FRESH_SECONDS
+
+
+def _entity_view(entry: dict) -> dict:
+    """Normalize a broker position/order record across adapter shapes."""
+    return {
+        "id": str(entry.get("positionId") or entry.get("orderId") or entry.get("id") or ""),
+        "symbol": entry.get("canonicalSymbol") or entry.get("symbol"),
+        "side": entry.get("side"),
+        "size": entry.get("size", entry.get("volume")),
+        "sl": entry.get("sl", entry.get("stop")),
+        "tp": entry.get("tp", entry.get("target")),
+        "entry": entry.get("entry", entry.get("entryPrice", entry.get("price"))),
+    }
+
+
+def _find_entity(snap: dict, group: str, ref: str) -> dict | None:
+    for entry in (snap.get(group) or []):
+        view = _entity_view(entry)
+        if view["id"] == str(ref):
+            return view
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +209,108 @@ def v_approved_connection_profile(payload: dict, env: ExecutionEnv) -> Validatio
         return ValidationResult(True)
     return ValidationResult(False, "connection_profile_not_approved",
                             "the active connection profile is not approved for execution")
+
+
+# ── LIVE-3 entity-operation validators ────────────────────────────────────────
+# Each verifies the target entity against a FRESH canonical broker snapshot and
+# enforces the operation's structural + non-risk-increasing rules. A failed or
+# stale snapshot DENIES — stale data can never authorize a mutation.
+
+def _finite_positive(v) -> bool:
+    import math
+    return (not isinstance(v, bool) and isinstance(v, (int, float))
+            and math.isfinite(v) and v > 0)
+
+
+def _fresh_snapshot_or_deny(env: ExecutionEnv):
+    from datetime import datetime, timezone
+    snap = env.broker_snapshot()
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    if not _snapshot_fresh(snap, now):
+        return None, ValidationResult(False, "stale_broker_snapshot",
+                                      "the broker snapshot is missing or stale")
+    return snap, None
+
+
+def v_position_protection(payload: dict, env: ExecutionEnv) -> ValidationResult:
+    ref = payload.get("positionRef")
+    if not (isinstance(ref, str) and ref.strip()):
+        return ValidationResult(False, "invalid_position_ref", "positionRef is required")
+    sl, tp = payload.get("stopLoss"), payload.get("takeProfit")
+    if sl is None and tp is None:
+        return ValidationResult(False, "protection_level_required",
+                                "at least one of stopLoss or takeProfit is required")
+    for name, v in (("stopLoss", sl), ("takeProfit", tp)):
+        if v is not None and not _finite_positive(v):
+            return ValidationResult(False, "invalid_protective_level",
+                                    f"{name} must be a finite positive price")
+    snap, deny = _fresh_snapshot_or_deny(env)
+    if deny:
+        return deny
+    pos = _find_entity(snap, "positions", ref)
+    if pos is None:
+        return ValidationResult(False, "position_not_found",
+                                "the position is not present in a fresh broker snapshot")
+    instrument = payload.get("instrument")
+    if instrument and pos["symbol"] and str(instrument) != str(pos["symbol"]):
+        return ValidationResult(False, "instrument_mismatch",
+                                "request instrument does not match the observed position")
+    side = pos["side"]
+    if side not in ("long", "short"):
+        return ValidationResult(False, "direction_unverifiable",
+                                "the position's direction cannot be verified")
+    cur_sl = pos["sl"] if _finite_positive(pos["sl"]) else None
+    # A modification may only TIGHTEN (or first set) a stop. Removing a stop is
+    # impossible by construction (None = unchanged); worsening denies.
+    if sl is not None and cur_sl is not None:
+        if side == "long" and sl < cur_sl:
+            return ValidationResult(False, "risk_increasing_stop",
+                                    "the new stop is further from price than the current stop")
+        if side == "short" and sl > cur_sl:
+            return ValidationResult(False, "risk_increasing_stop",
+                                    "the new stop is further from price than the current stop")
+    # Contradictory direction: for a long, SL must sit below TP; short reversed.
+    eff_sl = sl if sl is not None else cur_sl
+    eff_tp = tp if tp is not None else (pos["tp"] if _finite_positive(pos["tp"]) else None)
+    if eff_sl is not None and eff_tp is not None:
+        if side == "long" and not (eff_sl < eff_tp):
+            return ValidationResult(False, "direction_contradiction",
+                                    "stop/target ordering contradicts a long position")
+        if side == "short" and not (eff_sl > eff_tp):
+            return ValidationResult(False, "direction_contradiction",
+                                    "stop/target ordering contradicts a short position")
+    return ValidationResult(True)
+
+
+def v_cancel_order(payload: dict, env: ExecutionEnv) -> ValidationResult:
+    ref = payload.get("orderRef")
+    if not (isinstance(ref, str) and ref.strip()):
+        return ValidationResult(False, "invalid_order_ref", "orderRef is required")
+    snap, deny = _fresh_snapshot_or_deny(env)
+    if deny:
+        return deny
+    if _find_entity(snap, "orders", ref) is None:
+        return ValidationResult(False, "order_not_found",
+                                "the pending order is not present in a fresh broker snapshot")
+    return ValidationResult(True)
+
+
+def v_close_position(payload: dict, env: ExecutionEnv) -> ValidationResult:
+    ref = payload.get("positionRef")
+    if not (isinstance(ref, str) and ref.strip()):
+        return ValidationResult(False, "invalid_position_ref", "positionRef is required")
+    if payload.get("quantity") is not None:
+        # Partial close cannot be made deterministic from current broker
+        # evidence — an explicit, machine-readable denial, never a silent full close.
+        return ValidationResult(False, "partial_close_unsupported",
+                                "only a full close is supported; omit quantity")
+    snap, deny = _fresh_snapshot_or_deny(env)
+    if deny:
+        return deny
+    if _find_entity(snap, "positions", ref) is None:
+        return ValidationResult(False, "position_not_found",
+                                "the position is not present in a fresh broker snapshot")
+    return ValidationResult(True)
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +423,27 @@ COMMAND_SPEC: dict[str, tuple[list, Policy | None]] = {
     "SubmitMarketOrder": ([v_market_order_payload, v_broker_connected,
                            v_capability("supportsMarketExecution"),
                            v_approved_connection_profile], None),
+    # LIVE-3: the three manual-management operations. Fresh-snapshot entity
+    # verification + non-risk-increasing rules live in the validators; the
+    # safety gate then applies mode/identity/confirmation/node/account/
+    # reconciliation/authorization; entity locks + same-entity discrepancy
+    # blocking are enforced by the orchestrator before dispatch.
+    "ModifyPositionProtection": ([v_position_protection, v_broker_connected,
+                                  v_capability("supportsModify"),
+                                  v_approved_connection_profile], None),
+    "CancelPendingOrder": ([v_cancel_order, v_broker_connected,
+                            v_capability("supportsCancelOrder"),
+                            v_approved_connection_profile], None),
+    "ClosePosition": ([v_close_position, v_broker_connected,
+                       v_capability("supportsClosePosition"),
+                       v_approved_connection_profile], None),
+}
+
+#: LIVE-3: which payload key names the broker entity each operation mutates.
+ENTITY_REF_KEY = {
+    "ModifyPositionProtection": "positionRef",
+    "CancelPendingOrder": "orderRef",
+    "ClosePosition": "positionRef",
 }
 
 # ARCH-1 uniqueness/derivation guard: every feasibility entry MUST name a command the
@@ -479,6 +638,26 @@ class ExecutionOrchestrator:
                 except Exception:
                     existing = None          # store trouble -> normal path denies later
             if existing is not None:
+                # LIVE-3: a CHANGED payload under the SAME idempotency key is a
+                # conflict — it must never silently replay a different request.
+                import json as _json
+                import security_config as _sec
+                try:
+                    stored = _json.loads(existing.get("metadata_json") or "{}")
+                    stored_payload = stored.get("payload")
+                except (ValueError, TypeError):
+                    stored_payload = None
+                current_payload = _sec.redact_mapping(dict(payload))
+                if stored_payload is not None and \
+                        _json.dumps(stored_payload, sort_keys=True) != \
+                        _json.dumps(current_payload, sort_keys=True):
+                    stages.append({"stage": STAGE_LIFECYCLE, "ok": False,
+                                   "detail": "idempotency payload conflict"})
+                    return ExecutionResult(
+                        status="denied", stages=stages, timeline=timeline,
+                        dryRun=dry_run, stage=STAGE_LIFECYCLE,
+                        reason="idempotency_conflict", code="idempotency_conflict",
+                        intent_id=existing.get("intent_id"))
                 stages.append({"stage": STAGE_LIFECYCLE, "ok": True,
                                "deduplicated": True,
                                "intentId": existing.get("intent_id")})
@@ -552,6 +731,43 @@ class ExecutionOrchestrator:
                                        reason="execution_store_unavailable",
                                        code="execution_store_unavailable", safety=safety_view)
 
+        # 3c) LIVE-3 entity gate — for the manual-management operations, the
+        #     target broker entity must have NO unresolved reconciliation
+        #     discrepancy and NO other in-flight mutation. The durable lock is
+        #     claimed here (atomic; two claimants cannot both win) and released
+        #     only by a terminal outcome or reconciliation — never by expiry.
+        entity_ref = None
+        if intent is not None and name in ENTITY_REF_KEY:
+            entity_ref = str(payload.get(ENTITY_REF_KEY[name]) or "")
+            try:
+                unresolved = store.unresolved_items_for_entity(entity_ref)
+            except Exception:
+                unresolved = [{"class": "unknown"}]      # unreadable -> fail closed
+            if unresolved:
+                store.record_transition(intent.intent_id, lifecycle.FAILED, at=now,
+                                        reason="entity_discrepancy_unresolved",
+                                        evidence=f"{len(unresolved)} unresolved discrepancy(ies)")
+                self.metrics.policy_failures += 1
+                stages.append({"stage": STAGE_LIFECYCLE, "ok": False,
+                               "detail": "entity has unresolved reconciliation discrepancies"})
+                return ExecutionResult(status="denied", stages=stages, timeline=timeline,
+                                       dryRun=dry_run, stage=STAGE_LIFECYCLE,
+                                       reason="entity_discrepancy_unresolved",
+                                       code="entity_discrepancy_unresolved",
+                                       safety=safety_view, intent_id=intent.intent_id)
+            if not store.acquire_entity_lock(entity_ref, intent_id=intent.intent_id,
+                                             operation=name, now=now):
+                store.record_transition(intent.intent_id, lifecycle.FAILED, at=now,
+                                        reason="entity_locked",
+                                        evidence="another operation is in flight for this entity")
+                self.metrics.policy_failures += 1
+                stages.append({"stage": STAGE_LIFECYCLE, "ok": False,
+                               "detail": "entity already has an in-flight operation"})
+                return ExecutionResult(status="denied", stages=stages, timeline=timeline,
+                                       dryRun=dry_run, stage=STAGE_LIFECYCLE,
+                                       reason="entity_locked", code="entity_locked",
+                                       safety=safety_view, intent_id=intent.intent_id)
+
         # 4) Broker Dispatch  5) Broker Result  6) Lifecycle Persistence  7) Audit
         if intent is not None:
             # LIVE-2: the safety stage above is what authorized this intent — the
@@ -567,7 +783,8 @@ class ExecutionOrchestrator:
         # (the dispatch signature stays unchanged; the original payload is not
         # mutated).
         dispatch_payload = payload
-        if intent is not None and intent.kind == lifecycle.KIND_SUBMIT:
+        if intent is not None and (intent.kind == lifecycle.KIND_SUBMIT
+                                   or name in ENTITY_REF_KEY):
             dispatch_payload = {**payload, "intentId": intent.intent_id,
                                 "idempotencyKey": idempotency_key,
                                 "commandId": command_id}
@@ -576,7 +793,13 @@ class ExecutionOrchestrator:
         timeline["brokerMs"] = round((time.perf_counter() - t) * 1000, 3)
         stages.append({"stage": STAGE_BROKER_RESULT, "ok": True})
         if intent is not None:
-            if intent.kind == lifecycle.KIND_SUBMIT:
+            if name in ENTITY_REF_KEY:
+                # LIVE-3: drive the entity-operation lifecycle. Acknowledgement
+                # is NOT final — reconciliation confirms; the lock follows.
+                lifecycle_ok = self._operation_lifecycle(
+                    store, intent, after, now, entity_ref=entity_ref,
+                    broker_ms=timeline["brokerMs"])
+            elif intent.kind == lifecycle.KIND_SUBMIT:
                 # LIVE-2: drive the market-order lifecycle from the canonical
                 # BrokerResult the adapter answered (threaded through `after`).
                 lifecycle_ok = self._market_order_lifecycle(
@@ -659,4 +882,56 @@ class ExecutionOrchestrator:
         # anything unrecognised: order_send never ran — deterministic failure.
         store.record_transition(iid, lifecycle.FAILED, at=now,
                                 reason="submission_failed", evidence=evidence)
+        return False
+
+    # ── LIVE-3: entity-operation lifecycle persistence ─────────────────────────
+    def _operation_lifecycle(self, store, intent, after: dict | None, now: str,
+                             *, entity_ref: str | None, broker_ms: float) -> bool:
+        """Record the outcome of ONE manual-management dispatch (modify/cancel/
+        close). The broker ACKNOWLEDGEMENT is not the final state:
+
+            ok (broker accepted)     -> acknowledged        (lock KEPT — the
+                                        confirmed terminal state is recorded by
+                                        reconciliation observing the change)
+            rejected                 -> rejected             (lock released)
+            not_submitted /
+              unavailable /
+              not_connected /
+              connection_denied      -> failed               (lock released)
+            timeout /
+              communication_failed   -> unknown ->
+                                        reconciliation_required (lock KEPT —
+                                        the entity is frozen pending evidence)
+        """
+        import json as _json
+        view = after if isinstance(after, dict) else {}
+        code = view.get("code")
+        ack = view.get("ack") if isinstance(view.get("ack"), dict) else {}
+        ref = view.get("brokerRef") or ack.get("broker_order_ticket") \
+            or ack.get("broker_deal_ticket") or entity_ref
+        evidence = _json.dumps({"ack": dict(sorted(ack.items())),
+                                "brokerLatencyMs": broker_ms}, sort_keys=True)
+        iid = intent.intent_id
+        if view.get("ok") and code == "ok":
+            store.record_transition(iid, lifecycle.ACKNOWLEDGED, at=now,
+                                    reason="broker_acknowledged", evidence=evidence,
+                                    broker_ref=ref)
+            return True                       # lock kept until reconciliation confirms
+        if code == "rejected":
+            store.record_transition(iid, lifecycle.REJECTED, at=now,
+                                    reason="broker_rejected", evidence=evidence)
+            if entity_ref:
+                store.release_entity_lock(entity_ref, now=now, reason="broker_rejected")
+            return False
+        if code in ("timeout", "communication_failed"):
+            store.record_transition(iid, lifecycle.UNKNOWN, at=now,
+                                    reason=code, evidence=evidence, broker_ref=ref)
+            store.record_transition(iid, lifecycle.RECONCILIATION_REQUIRED, at=now,
+                                    reason="ambiguous_operation_outcome",
+                                    evidence=evidence)
+            return False                      # lock KEPT — entity frozen for reconciliation
+        store.record_transition(iid, lifecycle.FAILED, at=now,
+                                reason="submission_failed", evidence=evidence)
+        if entity_ref:
+            store.release_entity_lock(entity_ref, now=now, reason="submission_failed")
         return False

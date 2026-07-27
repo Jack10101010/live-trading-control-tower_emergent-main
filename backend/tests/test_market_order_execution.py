@@ -117,14 +117,19 @@ def test_market_order_ack_is_canonical_and_immutable():
 
 # ── exactly one executable operation, one surface ─────────────────────────────
 
-def test_exactly_one_execution_surface_command():
-    assert reg.execution_command_names() == frozenset({"SubmitMarketOrder"})
+def test_exactly_four_execution_surface_commands():
+    # LIVE-3 (deliberate evolution of the LIVE-2 exactly-one pin): the execution
+    # surface carries EXACTLY the four executable operations.
+    assert reg.execution_command_names() == frozenset({
+        "SubmitMarketOrder", "ModifyPositionProtection",
+        "CancelPendingOrder", "ClosePosition"})
     spec = reg.spec_of("SubmitMarketOrder")
     assert spec.broker_dispatched and spec.intent_kind == "submit"
     assert spec.risk_class == es.RISK_EXECUTION_AFFECTING
     assert spec.broker_capability == "supportsMarketExecution"
-    # NOT part of the fixture control-plane vocabulary:
-    assert "SubmitMarketOrder" not in reg.fixture_command_names()
+    # None are part of the fixture control-plane vocabulary:
+    for name in reg.execution_command_names():
+        assert name not in reg.fixture_command_names()
 
 
 def test_fixture_route_rejects_the_execution_command():
@@ -133,6 +138,9 @@ def test_fixture_route_rejects_the_execution_command():
 
 
 def test_every_other_broker_mutation_remains_unavailable():
+    # LIVE-3 (deliberate evolution): exactly FOUR writes exist (market order,
+    # modify protection, cancel pending order, close position). Every legacy
+    # fixture verb stays inert on MT5 and every other capability stays absent.
     mt5 = broker_layer.MT5Adapter()
     mt5._gateway_cache = None; mt5._gateway_loaded = True
     mt5._policy_denied_reason = None
@@ -141,12 +149,12 @@ def test_every_other_broker_mutation_remains_unavailable():
     assert mt5.modify_order("1", {}, _bctx()) == (None, None)
     assert mt5.flatten("d", _bctx()) == []
     assert mt5.submit_order(None, _bctx()).code == ba.RESULT_UNAVAILABLE
-    assert mt5.close_position("1", _bctx()).code == ba.RESULT_UNAVAILABLE
     caps = broker_layer.capability_dict(mt5.capabilities())
-    # Exactly one write capability pair; every other mutation capability absent.
-    assert caps["supportsLiveWrite"] is True and caps["supportsMarketExecution"] is True
-    for w in ("supportsPendingOrders", "supportsModify", "supportsPartialClose",
-              "supportsHedging", "supportsNetting"):
+    for w in ("supportsLiveWrite", "supportsMarketExecution", "supportsModify",
+              "supportsCancelOrder", "supportsClosePosition"):
+        assert caps[w] is True
+    for w in ("supportsPendingOrders", "supportsPartialClose",
+              "supportsHedging", "supportsNetting", "supportsReplay"):
         assert caps[w] is False
 
 
