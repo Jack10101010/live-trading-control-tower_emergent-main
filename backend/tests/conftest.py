@@ -46,11 +46,27 @@ def _isolated_execution_store(tmp_path, monkeypatch):
         monkeypatch.setattr(server, "SCENARIO_DB_PATH", tmp_path / "scenario_state.db")
         monkeypatch.setattr(server, "_SCENARIO_STORE", None)
         monkeypatch.setattr(server, "_SCENARIO_STORE_FAILED", False)
+    # LIVE-4D: the recommendation store is a fourth durable file — any test that
+    # reaches an /api/trade-recommendations route would otherwise create
+    # backend/recommendation_state.db inside the repository.
+    if server is not None and hasattr(server, "RECOMMENDATION_DB_PATH"):
+        monkeypatch.setattr(server, "RECOMMENDATION_DB_PATH",
+                            tmp_path / "recommendation_state.db")
+        monkeypatch.setattr(server, "_RECOMMENDATION_STORE", None)
+        monkeypatch.setattr(server, "_RECOMMENDATION_STORE_FAILED", False)
+    # The runtime OVERLAY database (entity pause/resume state and operator
+    # preferences). Unlike the three stores above it has NO lazy cache to reset:
+    # `server._runtime_db()` opens a fresh connection from the module-level path
+    # on every call, so patching the path is the whole of the isolation.
+    if server is not None and hasattr(server, "RUNTIME_DB_PATH"):
+        monkeypatch.setattr(server, "RUNTIME_DB_PATH", tmp_path / "runtime.db")
     yield
     # Belt-and-braces: if anything slipped past the patch (an import-order edge),
     # fail the offending test loudly instead of leaving a stray database.
     for name, owner in (("execution_state.db", "execution store"),
-                        ("scenario_state.db", "scenario store")):
+                        ("scenario_state.db", "scenario store"),
+                        ("recommendation_state.db", "recommendation store"),
+                        ("runtime.db", "runtime overlay")):
         stray = BACKEND_DIR / name
         assert not stray.exists(), (
             f"a test created backend/{name} — the {owner} must be isolated to "
