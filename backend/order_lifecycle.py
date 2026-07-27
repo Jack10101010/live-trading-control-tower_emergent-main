@@ -133,6 +133,10 @@ class OrderIntent:
     kind: str                            # KIND_* — how the adapter must treat it
     command_id: str | None = None        # lineage: the operator command
     correlation_id: str | None = None    # lineage: groups related records
+    #: LIVE-4B: OPTIONAL link to the canonical Scenario that parents this intent.
+    #: Recorded for lineage only — no execution decision reads it, and a missing
+    #: value changes nothing.
+    scenario_id: str | None = None
     idempotency_key: str | None = None
     deployment_id: str | None = None
     account_id: str | None = None
@@ -170,6 +174,7 @@ class OrderIntent:
             "kind": self.kind,
             "commandId": self.command_id,
             "correlationId": self.correlation_id,
+            "scenarioId": self.scenario_id,
             "idempotencyKey": self.idempotency_key,
             "deploymentId": self.deployment_id,
             "accountId": self.account_id,

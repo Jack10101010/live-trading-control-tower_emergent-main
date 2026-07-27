@@ -23,6 +23,7 @@ for p in (str(REPO_ROOT), str(BACKEND_DIR), str(BACKEND_DIR / "tests")):
         sys.path.insert(0, p)
 
 import operational_projection as op                                 # noqa: E402
+import scenario_domain as sd                                        # noqa: E402
 import server                                                       # noqa: E402
 from conftest import code_only                                      # noqa: E402
 
@@ -65,6 +66,14 @@ def _intent(intent_id="intent_a", command="ClosePosition", state="acknowledged",
         "metadata_json": json.dumps({"payload": {"positionRef": ref,
                                                  "scenarioKey": "EURUSD:london"}}),
     }
+
+
+def _scenario(**over):
+    kw = dict(instrument="EURUSD", session="london", structure="BOS",
+              direction="long", entry_model="BullExpand", created_at=NOW,
+              node_id="node-1", account_fingerprint="acctfp_live1")
+    kw.update(over)
+    return sd.new_scenario(**kw)
 
 
 def _sources(**over):
@@ -174,7 +183,8 @@ def test_unavailable_broker_snapshot_is_explicit_and_invents_nothing():
 # ── provenance on every model ────────────────────────────────────────────────
 
 def test_every_model_carries_provenance():
-    summary = op.build_summary(_sources(), now=NOW)
+    # LIVE-4B: scenarios now come from the canonical scenario STORE source.
+    summary = op.build_summary(_sources(scenarios=lambda: [_scenario()]), now=NOW)
     assert summary.nodes[0].provenance == op.PROV_NODE_TELEMETRY
     assert summary.accounts[0].provenance == op.PROV_MOCK_FIXTURE
     assert summary.open_positions[0].provenance == op.PROV_MOCK_FIXTURE
@@ -293,21 +303,29 @@ def test_critical_reconciliation_becomes_a_node_warning():
 
 # ── scenarios: placeholder projection of existing evidence only ──────────────
 
-def test_scenarios_project_only_existing_evidence():
-    summary = op.build_summary(_sources(), now=NOW)
+def test_scenarios_project_the_canonical_store_entity():
+    """LIVE-4B (deliberate replacement of the LIVE-4A placeholder): scenarios are
+    projected from the canonical scenario STORE, not scraped from a payload."""
+    summary = op.build_summary(_sources(scenarios=lambda: [_scenario()]), now=NOW)
     assert len(summary.active_scenarios) == 1
     s = summary.active_scenarios[0]
-    assert s.scenario_id == "EURUSD:london"          # the ONLY evidence that exists
-    assert s.status == "referenced"
-    assert s.session is None                         # no session evidence -> absent
-    assert s.linked_intent == "intent_a"
+    assert s.scenario_id.startswith("scn_")
+    assert s.instrument == "EURUSD" and s.direction == "long"
+    assert s.session == "london" and s.structure == "BOS"
+    assert s.entry_model == "BullExpand"
+    assert s.status == sd.ScenarioStatus.CREATED and s.active is True
+    assert s.provenance == op.PROV_DURABLE_STORE
+    assert s.freshness is not None
 
 
-def test_no_scenario_evidence_yields_no_scenarios():
-    summary = op.build_summary(_sources(
-        intents=lambda: [{"intent_id": "i", "state": "acknowledged",
-                          "metadata_json": "{}", "created_at": NOW}]), now=NOW)
+def test_no_scenario_store_yields_no_scenarios_and_is_reported_unavailable():
+    """An absent store yields an empty projection AND an explicit unavailable
+    signal — an empty list never claims 'no scenarios exist'."""
+    sources = _sources()                             # default scenarios source -> None
+    summary = op.build_summary(sources, now=NOW)
     assert summary.active_scenarios == ()            # never fabricated
+    assert op.scenarios_available(sources) is False
+    assert op.scenarios_available(_sources(scenarios=lambda: [])) is True
 
 
 # ── account masking + non-derivable fields ───────────────────────────────────

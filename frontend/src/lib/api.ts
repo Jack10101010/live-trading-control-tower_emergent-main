@@ -835,15 +835,47 @@ export interface PositionOperationalView {
   provenance: string;
 }
 
-export interface ScenarioProjection {
+export interface ScenarioOperationalView {
   scenarioId: string;
-  status: string | null;
   instrument: string | null;
+  direction: string | null;
   session: string | null;
-  created: string | null;
+  structure: string | null;
+  entryModel: string | null;
+  timeframe: string | null;
+  status: string | null;
+  outcome: string | null;
   nodeId: string | null;
-  linkedIntent: string | null;
+  accountFingerprintMasked: string | null;
+  linkedRecommendation: string | null;
+  linkedIntentCount: number;
+  linkedOrderCount: number;
+  linkedPositionCount: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+  expiresAt: string | null;
+  ageSeconds: number | null;
+  active: boolean;
+  tags: string[];
   provenance: string;
+  freshness: ProjectionFreshness | null;
+}
+
+export interface ScenarioEventView {
+  scenarioId: string;
+  eventType: string;
+  at: string;
+  reason: string;
+  data: Record<string, unknown>;
+  sequence: number | null;
+}
+
+export interface ScenarioSummaryView {
+  total: number;
+  active: number;
+  byStatus: Record<string, number>;
+  byInstrument: Record<string, number>;
+  byOutcome: Record<string, number>;
 }
 
 export interface OperationalSummaryView {
@@ -853,7 +885,7 @@ export interface OperationalSummaryView {
   accounts: AccountOperationalView[];
   activeOrders: OrderOperationalView[];
   openPositions: PositionOperationalView[];
-  activeScenarios: ScenarioProjection[];
+  activeScenarios: ScenarioOperationalView[];
   reconciliationIssues: Array<{ class: string | null; entityId: string | null; critical: boolean; detail: string | null; resolved: boolean }>;
   activeOperations: Array<{ entityRef: string | null; intentId: string | null; operation: string | null; acquiredAt: string | null }>;
   warnings: string[];
@@ -975,6 +1007,23 @@ export const api = {
    * component re-aggregates operational truth. The per-collection endpoints
    * exist for focused views and parity with the backend surface. */
   operationsSummary: () => apiFetch<OperationalSummaryView>('/operations/summary'),
+  /* LIVE-4B — the canonical Scenario read surface. Read-only and derived: the
+   * UI never constructs, mutates or infers a scenario. */
+  scenarios: (filters: { instrument?: string; session?: string; nodeId?: string; status?: string } = {}) => {
+    const q = new URLSearchParams(
+      Object.entries(filters).filter(([, v]) => v) as [string, string][]
+    ).toString();
+    return apiFetch<{ scenarios: ScenarioOperationalView[]; summary: ScenarioSummaryView | null }>(
+      `/scenarios${q ? `?${q}` : ''}`
+    );
+  },
+  activeScenarios: () => apiFetch<{ scenarios: ScenarioOperationalView[] }>('/scenarios/active'),
+  scenarioHistory: (scenarioId?: string) =>
+    apiFetch<{ events: ScenarioEventView[] }>(
+      `/scenarios/history${scenarioId ? `?scenarioId=${encodeURIComponent(scenarioId)}` : ''}`),
+  scenario: (scenarioId: string) =>
+    apiFetch<ScenarioOperationalView & { history: ScenarioEventView[] }>(
+      `/scenarios/${encodeURIComponent(scenarioId)}`),
   operationsNodes: () => apiFetch<{ nodes: NodeOperationalView[] }>('/operations/nodes'),
   operationsAccounts: () => apiFetch<{ accounts: AccountOperationalView[] }>('/operations/accounts'),
   operationsOrders: () => apiFetch<{ orders: OrderOperationalView[] }>('/operations/orders'),

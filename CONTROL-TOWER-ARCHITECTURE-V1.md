@@ -598,3 +598,33 @@ execution_telemetry + BotEvent audit (derived read model; /api/execution/state)
 10. **Projection-driven UI** — new `OperationalDashboard` with a **single** polling source (`api.operationsSummary`). Node, account, order, position, operations, reconciliation, warnings and system-health cards each receive an already-projected model; formatting lives in one set of shared helpers. Badges are explicit: **LIVE / MOCK / NODE / STALE / UNAVAILABLE / RECONCILIATION REQUIRED**. The dashboard is read-only — it renders zero buttons and zero inputs.
 
 **Boundary.** LIVE-4A is a READ MODEL. It adds no broker execution, no strategy logic, no autonomous behaviour and no change to the execution pipeline: the execution surface remains exactly the four LIVE-2/LIVE-3 operations (test-pinned), and the projection cannot write, execute or persist. The UI no longer reconstructs operational truth — it reflects the projection.
+
+### ADR-LIVE-4B — Canonical Scenario domain (LIVE-4B, 2026-07-27)
+
+**Context.** The trading lineage had no parent. Recommendations, intents, orders and positions each existed independently, joined only by a `scenarioKey` STRING (`instrument:session:structure:direction:entryModel`) carried on fixture records — a convention, not an entity. LIVE-4A could therefore only project that string as a placeholder. Without a canonical parent, no future trade can be attributed, and no ledger or analytics slice can aggregate honestly. **LIVE-4B introduces the canonical Scenario domain. It introduces no strategy engine. It introduces no autonomous trading.**
+
+**Decision.**
+
+1. **The Scenario is the canonical parent object** — new `backend/scenario_domain.py`. Target lineage: `Scenario → Recommendation → Intent → Order → Position → Deals → Ledger → Analytics`. Every future trade must be traceable to exactly one Scenario.
+
+2. **Immutable, validated models** — `Scenario` (frozen; natural key, timeframe, status, node, account fingerprint, timestamps, expiry, explicit link tuples, tags, bounded JSON-safe metadata, provenance), `ScenarioId`, `ScenarioStatus`, `ScenarioOutcome`, `ScenarioEvent`, `ScenarioSummary`. All serialize with sorted keys and are JSON-safe; invalid natural keys, directions, statuses, oversized metadata and excess tags are rejected at construction.
+
+3. **Deterministic identity** — `ScenarioId.derive()` hashes the natural key plus an explicit discriminator, so the same setup always yields the same `scn_<16 hex>` id (replay- and rebuild-stable). `ScenarioId.from_key()` parses the existing fixture convention; malformed keys raise rather than being partially guessed.
+
+4. **Explicit lifecycle** — 15 statuses (`CREATED … REJECTED`) with an explicit forward table plus abandonment (`INVALIDATED`/`EXPIRED`/`CANCELLED`) reachable from every non-terminal status. Terminal statuses are immutable. Transitions require a reason and monotonic time, and are PURE — `transition()` returns a new Scenario and never mutates its input. Illegal pairs raise `ScenarioError("invalid_transition")`.
+
+5. **Append-only durable store** — new `backend/scenario_store.py`, its OWN database file and schema version. `scenario_events` is append-only (no update/delete surface); the `scenarios` table is a snapshot that can be discarded and rebuilt deterministically from events alone (`rebuild_scenario`). Writes are atomic and idempotent on `(scenario_id, sequence)`; creating the same scenario twice appends nothing. Nothing is created or updated automatically. The store owns scenarios ONLY — it never touches execution, reconciliation, authorization, mode or lock tables (structurally pinned).
+
+6. **Explicit relationships** — links are identifier tuples on the Scenario (`linked_recommendation_id`, `linked_intent_ids`, `linked_order_ids`, `linked_position_ids`), recorded through `link()`: idempotent, sorted, conflict-detecting. Nothing is inferred and nothing is reverse-reconstructed — an unrecorded link does not exist.
+
+7. **Projection integration** — the LIVE-4A placeholder is REPLACED. `ScenarioOperationalView` is built from the scenario store with linkage counts, age, masked account fingerprint, freshness and `durable-store` provenance. An unreadable store yields an empty projection AND an explicit `scenarios_available() == False` — an empty list never claims "no scenarios exist".
+
+8. **Read-only API** — `GET /api/scenarios` (with `instrument`/`session`/`nodeId`/`status` filters and a deterministic summary), `/api/scenarios/active`, `/api/scenarios/history`, `/api/scenarios/{id}` (view + append-only history). Operator-authenticated, `no-store`, deterministically ordered, projection-owned, honest 404/503.
+
+9. **Execution independence** — the execution pipeline, broker behaviour, routing, authorization and reconciliation are UNCHANGED. `OrderIntent` gains one OPTIONAL `scenario_id` for lineage, persisted via an additive nullable column (execution store schema 2 → 3, explicit fail-closed migration). The orchestrator CAPTURES it verbatim at intent creation and nothing else: no validator, gate, policy or adapter reads it, and no execution module imports the Scenario domain (all structurally pinned).
+
+10. **Ledger preparation** — `TradeLedgerProjection`, `ClosedTradeProjection` and `LedgerSummary` now carry the scenario dimension (`scenarioId`, `scenarioIds`, `byScenario`). Interfaces only: still no persistence, no analytics, and the ledger still reports `available: false`.
+
+11. **UI** — a read-only Scenario section (`ScenarioPanel`) listing identity, status, natural key, node, linkage counts, age and freshness, with status/instrument/session/node filters. No editing, no mutation, no strategy control (zero buttons, zero inputs; only the four filter selects).
+
+**Boundary.** LIVE-4B introduces the canonical Scenario domain: the parent entity, its lifecycle, its append-only store, its projection and its read-only surfaces. It introduces NO strategy engine, NO signal generation, NO scenario generation and NO autonomous trading — every scenario and every transition is an explicit, caller-supplied fact. The four executable operations and every ARCH-1…LIVE-3 safety guarantee are untouched.

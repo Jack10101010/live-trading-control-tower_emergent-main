@@ -51,6 +51,8 @@ import execution_store as execution_store_layer
 import execution_telemetry as execution_telemetry_layer
 import order_lifecycle as order_lifecycle_layer
 import operational_projection as projection_layer
+import scenario_domain as scenario_layer
+import scenario_store as scenario_store_layer
 import reconciliation as reconciliation_layer
 import ops_status as ops_status_layer
 import security_config
@@ -1212,6 +1214,30 @@ def _execution_store() -> execution_store_layer.ExecutionStore | None:
     except Exception:
         logger.exception("execution store unavailable — broker-dispatched commands will be denied")
         _EXECUTION_STORE_FAILED = True
+        return None
+
+
+# LIVE-4B: the durable SCENARIO store. Its own file and its own schema version —
+# it owns scenarios only and never touches execution tables. Lazy + fail-soft:
+# an unavailable store makes scenario reads explicitly unavailable and changes
+# NO execution behaviour (scenarios are not on any execution path).
+SCENARIO_DB_PATH = ROOT_DIR / 'scenario_state.db'
+_SCENARIO_STORE: scenario_store_layer.ScenarioStore | None = None
+_SCENARIO_STORE_FAILED = False
+
+
+def _scenario_store() -> scenario_store_layer.ScenarioStore | None:
+    global _SCENARIO_STORE, _SCENARIO_STORE_FAILED
+    if _SCENARIO_STORE is not None:
+        return _SCENARIO_STORE
+    if _SCENARIO_STORE_FAILED:
+        return None
+    try:
+        _SCENARIO_STORE = scenario_store_layer.ScenarioStore(SCENARIO_DB_PATH)
+        return _SCENARIO_STORE
+    except Exception:
+        logger.exception("scenario store unavailable — scenario reads report unavailable")
+        _SCENARIO_STORE_FAILED = True
         return None
 
 
@@ -2491,6 +2517,17 @@ def _projection_sources() -> projection_layer.ProjectionSources:
         except Exception:
             return "Disconnected"
 
+    def _scenarios():
+        """LIVE-4B: canonical scenarios, or None when the store is unavailable
+        (explicitly unavailable — never an empty 'no scenarios' answer)."""
+        sstore = _scenario_store()
+        if sstore is None:
+            return None
+        try:
+            return sstore.list_scenarios(limit=500)
+        except Exception:
+            return None
+
     return projection_layer.ProjectionSources(
         broker_snapshot=_fresh_broker_snapshot,
         account_snapshot=_account_snapshot,
@@ -2504,6 +2541,7 @@ def _projection_sources() -> projection_layer.ProjectionSources:
         execution_mode=lambda: _EXECUTION_MODE.current_mode(),
         authorization=_authorization,
         entity_locks=_locks,
+        scenarios=_scenarios,
     )
 
 
@@ -2627,6 +2665,110 @@ def operations_position(reference: str):
         logger.exception("position projection failed")
         return _projection_response(
             {"error": "unavailable", "code": "projection_unavailable"}, 503)
+
+
+# ── LIVE-4B: the canonical Scenario read surface (read-only, derived) ────────
+
+def _scenario_views(*, active_only: bool = False, instrument: str | None = None,
+                    session: str | None = None, node_id: str | None = None,
+                    status: str | None = None) -> tuple:
+    """Project scenarios through the ONE projection owner. Filtering happens at
+    the store (deterministic ordering) and the projection shapes the view."""
+    sstore = _scenario_store()
+    if sstore is None:
+        return None
+    statuses = None
+    if active_only:
+        statuses = tuple(sorted(scenario_layer.ACTIVE_STATUSES))
+    elif status:
+        statuses = (status,)
+    scenarios = sstore.list_scenarios(statuses=statuses, instrument=instrument,
+                                      session=session, node_id=node_id, limit=500)
+    sources = projection_layer.ProjectionSources(scenarios=lambda: scenarios)
+    return projection_layer.build_scenarios(sources, now=_now_iso())
+
+
+def _scenario_unavailable() -> JSONResponse:
+    return _projection_response(
+        {"error": "unavailable", "code": "scenario_store_unavailable",
+         "scenarios": [], "projectionTimestamp": _now_iso()}, 503)
+
+
+@api_router.get("/scenarios")
+def list_scenarios(instrument: str | None = None, session: str | None = None,
+                   nodeId: str | None = None, status: str | None = None):
+    """All scenarios, newest first. Read-only and derived."""
+    try:
+        views = _scenario_views(instrument=instrument, session=session,
+                                node_id=nodeId, status=status)
+        if views is None:
+            return _scenario_unavailable()
+        sstore = _scenario_store()
+        return _projection_response({
+            "scenarios": [v.as_dict() for v in views],
+            "summary": sstore.summary().as_dict() if sstore else None,
+            "projectionTimestamp": _now_iso(),
+        })
+    except Exception:
+        logger.exception("scenario listing failed")
+        return _scenario_unavailable()
+
+
+@api_router.get("/scenarios/active")
+def list_active_scenarios():
+    """Only scenarios in a non-terminal status."""
+    try:
+        views = _scenario_views(active_only=True)
+        if views is None:
+            return _scenario_unavailable()
+        return _projection_response({"scenarios": [v.as_dict() for v in views],
+                                     "projectionTimestamp": _now_iso()})
+    except Exception:
+        logger.exception("active scenario listing failed")
+        return _scenario_unavailable()
+
+
+@api_router.get("/scenarios/history")
+def scenario_history(scenarioId: str | None = None, limit: int = 200):
+    """The append-only scenario event history (one scenario, or the newest
+    events across all scenarios). Immutable facts only."""
+    try:
+        sstore = _scenario_store()
+        if sstore is None:
+            return _scenario_unavailable()
+        events = (sstore.history(scenarioId, limit=limit) if scenarioId
+                  else sstore.all_events(limit=limit))
+        return _projection_response({
+            "scenarioId": scenarioId,
+            "events": [e.as_dict() for e in events],
+            "projectionTimestamp": _now_iso(),
+        })
+    except Exception:
+        logger.exception("scenario history failed")
+        return _scenario_unavailable()
+
+
+@api_router.get("/scenarios/{scenario_id}")
+def get_scenario(scenario_id: str):
+    """One scenario, with its append-only history."""
+    try:
+        sstore = _scenario_store()
+        if sstore is None:
+            return _scenario_unavailable()
+        scenario = sstore.get_scenario(scenario_id)
+        if scenario is None:
+            return _projection_response(
+                {"error": "not_found", "code": "scenario_not_found",
+                 "scenarioId": scenario_id}, 404)
+        sources = projection_layer.ProjectionSources(scenarios=lambda: [scenario])
+        view = projection_layer.build_scenarios(sources, now=_now_iso())[0]
+        return _projection_response({
+            **view.as_dict(),
+            "history": [e.as_dict() for e in sstore.history(scenario_id)],
+        })
+    except Exception:
+        logger.exception("scenario detail failed")
+        return _scenario_unavailable()
 
 
 @api_router.get("/execution/health")

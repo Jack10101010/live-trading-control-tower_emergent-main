@@ -310,30 +310,62 @@ class PositionOperationalView:
 
 
 @dataclass(frozen=True)
-class ScenarioProjection:
-    """LIVE-4A placeholder. No scenario ENTITY exists in this repository — the
-    fixture world carries a `scenarioKey` string on trades/recommendations. This
-    projects only that existing fact. It implements NO strategy logic and
-    generates NO scenarios."""
+class ScenarioOperationalView:
+    """LIVE-4B — the projected view of a canonical Scenario.
+
+    Replaces the LIVE-4A placeholder, which could only echo a `scenarioKey`
+    string found in a command payload. This view derives from the SCENARIO
+    STORE: the scenario is a real entity with a lifecycle, an append-only
+    history and explicit links."""
     scenario_id: str
-    status: str | None = None
     instrument: str | None = None
+    direction: str | None = None
     session: str | None = None
-    created: str | None = None
+    structure: str | None = None
+    entry_model: str | None = None
+    timeframe: str | None = None
+    status: str | None = None
+    outcome: str | None = None
     node_id: str | None = None
-    linked_intent: str | None = None
+    account_fingerprint_masked: str | None = None
+    linked_recommendation: str | None = None
+    linked_intent_count: int = 0
+    linked_order_count: int = 0
+    linked_position_count: int = 0
+    created_at: str | None = None
+    updated_at: str | None = None
+    expires_at: str | None = None
+    age_seconds: float | None = None
+    active: bool = False
+    tags: tuple = field(default_factory=tuple)
     provenance: str = PROV_ABSENT
+    freshness: Freshness | None = None
 
     def as_dict(self) -> dict:
         return _sorted({
             "scenarioId": self.scenario_id,
-            "status": self.status,
             "instrument": self.instrument,
+            "direction": self.direction,
             "session": self.session,
-            "created": self.created,
+            "structure": self.structure,
+            "entryModel": self.entry_model,
+            "timeframe": self.timeframe,
+            "status": self.status,
+            "outcome": self.outcome,
             "nodeId": self.node_id,
-            "linkedIntent": self.linked_intent,
+            "accountFingerprintMasked": self.account_fingerprint_masked,
+            "linkedRecommendation": self.linked_recommendation,
+            "linkedIntentCount": self.linked_intent_count,
+            "linkedOrderCount": self.linked_order_count,
+            "linkedPositionCount": self.linked_position_count,
+            "createdAt": self.created_at,
+            "updatedAt": self.updated_at,
+            "expiresAt": self.expires_at,
+            "ageSeconds": self.age_seconds,
+            "active": self.active,
+            "tags": list(self.tags),
             "provenance": self.provenance,
+            "freshness": self.freshness.as_dict() if self.freshness else None,
         })
 
 
@@ -413,17 +445,23 @@ class ClosedTradeProjection:
 
 @dataclass(frozen=True)
 class LedgerSummary:
-    """Aggregate over closed trades. INTERFACE ONLY — no analytics implemented."""
+    """Aggregate over closed trades. INTERFACE ONLY — no analytics implemented.
+    LIVE-4B: carries the scenario dimension so a future ledger can attribute
+    every closed trade to exactly one Scenario."""
     trade_count: int = 0
     realized_pnl: float | None = None
     window_start: str | None = None
     window_end: str | None = None
+    scenario_ids: tuple = field(default_factory=tuple)
+    by_scenario: dict = field(default_factory=dict)
     provenance: str = PROV_ABSENT
 
     def as_dict(self) -> dict:
         return _sorted({
             "tradeCount": self.trade_count, "realizedPnL": self.realized_pnl,
             "windowStart": self.window_start, "windowEnd": self.window_end,
+            "scenarioIds": list(self.scenario_ids),
+            "byScenario": dict(self.by_scenario),
             "provenance": self.provenance,
         })
 
@@ -432,9 +470,11 @@ class LedgerSummary:
 class TradeLedgerProjection:
     """The read-only ledger surface a future slice will populate. Constructing
     it today yields an explicitly UNAVAILABLE ledger — never an empty-looking
-    healthy one."""
+    healthy one. LIVE-4B: `scenario_id` is optional here so the ledger can be
+    read per-Scenario once it exists."""
     available: bool = False
     code: str = "ledger_not_implemented"
+    scenario_id: str | None = None
     trades: tuple = field(default_factory=tuple)
     summary: LedgerSummary = field(default_factory=LedgerSummary)
     provenance: str = PROV_ABSENT
@@ -442,6 +482,7 @@ class TradeLedgerProjection:
     def as_dict(self) -> dict:
         return _sorted({
             "available": self.available, "code": self.code,
+            "scenarioId": self.scenario_id,
             "trades": [t.as_dict() for t in self.trades],
             "summary": self.summary.as_dict(), "provenance": self.provenance,
         })
@@ -480,6 +521,10 @@ class ProjectionSources:
     authorization: Callable[[], dict | None] = lambda: None
     #: () -> list[dict] — active entity locks.
     entity_locks: Callable[[], list] = list
+    #: LIVE-4B: () -> list — canonical Scenario objects from the scenario store,
+    #: or None when the store is unavailable (reported explicitly, never as an
+    #: empty "no scenarios" answer).
+    scenarios: Callable[[], Any] = lambda: None
 
 
 #: Lifecycle states treated as an ACTIVE order (tower-side work in flight).
@@ -701,25 +746,57 @@ def build_positions(sources: ProjectionSources, *, now: str) -> tuple:
     return tuple(out)
 
 
-def build_scenarios(sources: ProjectionSources, *, now: str) -> tuple:
-    """Placeholder projection of the ONLY scenario evidence that exists today:
-    a `scenarioKey` echoed in a stored command payload. No scenario is
-    generated and no strategy logic runs."""
-    seen: dict[str, ScenarioProjection] = {}
-    for row in sources.intents():
-        payload = _payload_of(row)
-        sid = _scenario_of(row, payload)
-        if not sid or sid in seen:
-            continue
-        seen[sid] = ScenarioProjection(
-            scenario_id=sid,
-            status="referenced",             # the only status evidence supports
-            instrument=row.get("instrument") or payload.get("instrument"),
-            session=None,                    # no session evidence exists
-            created=row.get("created_at"),
-            linked_intent=row.get("intent_id"),
-            provenance=PROV_DURABLE_STORE)
-    return tuple(seen[k] for k in sorted(seen))
+def build_scenarios(sources: ProjectionSources, *, now: str,
+                    stale_after_s: float = DEFAULT_STALE_AFTER_S) -> tuple:
+    """LIVE-4B — project canonical Scenarios from the SCENARIO STORE.
+
+    This replaces the LIVE-4A placeholder, which could only echo a `scenarioKey`
+    string found in a command payload. Nothing is generated here: the store is
+    read and its scenarios are projected. When the store is unavailable the
+    result is empty and the caller surfaces that explicitly (see
+    `scenarios_available`) — an empty projection never claims "no scenarios".
+    """
+    scenarios = sources.scenarios()
+    if scenarios is None:
+        return ()
+    out = []
+    for scenario in scenarios:
+        try:
+            out.append(ScenarioOperationalView(
+                scenario_id=scenario.scenario_id,
+                instrument=scenario.instrument,
+                direction=scenario.direction,
+                session=scenario.session,
+                structure=scenario.structure,
+                entry_model=scenario.entry_model,
+                timeframe=scenario.timeframe,
+                status=scenario.status,
+                outcome=scenario.outcome,
+                node_id=scenario.node_id,
+                account_fingerprint_masked=_mask_fingerprint(scenario.account_fingerprint),
+                linked_recommendation=scenario.linked_recommendation_id,
+                linked_intent_count=len(scenario.linked_intent_ids),
+                linked_order_count=len(scenario.linked_order_ids),
+                linked_position_count=len(scenario.linked_position_ids),
+                created_at=scenario.created_at,
+                updated_at=scenario.updated_at,
+                expires_at=scenario.expires_at,
+                age_seconds=scenario.age_seconds(now),
+                active=scenario.active,
+                tags=tuple(scenario.tags),
+                provenance=PROV_DURABLE_STORE,
+                freshness=freshness(now=now, source_at=scenario.updated_at,
+                                    available=True, stale_after_s=stale_after_s)))
+        except Exception:
+            continue                       # a malformed scenario is skipped, never faked
+    out.sort(key=lambda v: (v.created_at or "", v.scenario_id))
+    return tuple(out)
+
+
+def scenarios_available(sources: ProjectionSources) -> bool:
+    """Whether the scenario store could be read at all — so an empty list is
+    never confused with an unavailable store."""
+    return sources.scenarios() is not None
 
 
 def build_nodes(sources: ProjectionSources, *, now: str,
@@ -837,7 +914,8 @@ def build_summary(sources: ProjectionSources, *, now: str,
         warnings=warnings, freshness=fresh)
 
 
-def build_trade_ledger() -> TradeLedgerProjection:
-    """LIVE-4A: the ledger is INTERFACE ONLY. This always reports unavailable —
-    a future slice implements persistence and analytics."""
-    return TradeLedgerProjection()
+def build_trade_ledger(scenario_id: str | None = None) -> TradeLedgerProjection:
+    """LIVE-4A/4B: the ledger is INTERFACE ONLY. This always reports unavailable
+    — a future slice implements persistence and analytics. `scenario_id` pins
+    the per-Scenario read shape without implementing it."""
+    return TradeLedgerProjection(scenario_id=scenario_id)

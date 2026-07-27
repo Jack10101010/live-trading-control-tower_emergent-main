@@ -7,6 +7,7 @@ import { BrokerReadPanel } from '@/components/domain/BrokerReadPanel';
 import { MarketOrderPanel } from '@/components/domain/MarketOrderPanel';
 import { ManualExecutionPanel } from '@/components/domain/ManualExecutionPanel';
 import { OperationalDashboard } from '@/components/domain/OperationalDashboard';
+import { ScenarioPanel } from '@/components/domain/ScenarioPanel';
 import { useFleet, usePackages, useFeatureFlags, useRuntimeHealth, useBrokerReconciliation, useStrategyEvaluation, useSchedulerStatus, useMarketSnapshot, useRiskLimits, useActivePackage, useBackendHealth } from '@/hooks/useRepository';
 import { api, QK } from '@/lib/api';
 import { queryClient } from '@/lib/queryClient';
@@ -106,6 +107,10 @@ export function SystemView() {
           card; no card re-derives operational truth. Placed first: it is the
           canonical operational view of the system. */}
       <OperationalDashboard />
+
+      {/* LIVE-4B — the canonical Scenario domain: the parent object of every
+          recommendation, intent, order, position and future ledger entry. */}
+      <ScenarioPanel />
 
       {/* UI-1 — the live relationship between this Control Tower, the execution
           node and MT5. Placed first: it is the only thing on this page that

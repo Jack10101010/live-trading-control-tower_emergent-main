@@ -39,13 +39,22 @@ def _isolated_execution_store(tmp_path, monkeypatch):
         monkeypatch.setattr(server, "EXECUTION_DB_PATH", tmp_path / "execution_state.db")
         monkeypatch.setattr(server, "_EXECUTION_STORE", None)
         monkeypatch.setattr(server, "_EXECUTION_STORE_FAILED", False)
+    # LIVE-4B: the scenario store is a second durable file with the same hazard —
+    # any test that reaches an /api/operations or /api/scenarios route would
+    # otherwise create backend/scenario_state.db inside the repository.
+    if server is not None and hasattr(server, "SCENARIO_DB_PATH"):
+        monkeypatch.setattr(server, "SCENARIO_DB_PATH", tmp_path / "scenario_state.db")
+        monkeypatch.setattr(server, "_SCENARIO_STORE", None)
+        monkeypatch.setattr(server, "_SCENARIO_STORE_FAILED", False)
     yield
     # Belt-and-braces: if anything slipped past the patch (an import-order edge),
     # fail the offending test loudly instead of leaving a stray database.
-    stray = BACKEND_DIR / "execution_state.db"
-    assert not stray.exists(), (
-        "a test created backend/execution_state.db — the execution store must be "
-        "isolated to tmp_path (see _isolated_execution_store)")
+    for name, owner in (("execution_state.db", "execution store"),
+                        ("scenario_state.db", "scenario store")):
+        stray = BACKEND_DIR / name
+        assert not stray.exists(), (
+            f"a test created backend/{name} — the {owner} must be isolated to "
+            "tmp_path (see _isolated_execution_store)")
 
 
 def code_only(rel: str) -> str:

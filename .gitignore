@@ -128,3 +128,4 @@ rehearsal_out/
 *.jks
 secrets/
 certs/
+backend/scenario_state.db

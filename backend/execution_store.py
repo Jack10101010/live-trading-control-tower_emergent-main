@@ -42,11 +42,12 @@ from typing import Any
 import order_lifecycle as ol
 import security_config
 
-# LIVE-3 bumped 1 -> 2: adds the durable authorization grants (+ append-only
-# grant event history), execution-mode transitions and entity locks. The 1 -> 2
-# migration is purely ADDITIVE (new tables); it is applied explicitly in
-# `_init_schema` and stamps the new version, failing closed on any error.
-SCHEMA_VERSION = 2
+# Schema history — every migration is explicit, purely ADDITIVE, and fails closed:
+#   1 -> 2 (LIVE-3):  durable authorization grants + append-only grant events,
+#                     execution-mode transitions, entity locks (new tables).
+#   2 -> 3 (LIVE-4B): nullable `intents.scenario_id` for OPTIONAL Scenario
+#                     lineage. Nothing on any execution path reads it.
+SCHEMA_VERSION = 3
 
 
 class StoreError(RuntimeError):
@@ -89,12 +90,19 @@ class ExecutionStore:
                 raise StoreError("unsupported_schema_version",
                                  f"store schema {found} > supported {SCHEMA_VERSION}")
             if found < SCHEMA_VERSION:
-                # LIVE-3: the ONLY supported migration is 1 -> 2, purely additive
-                # (the CREATE TABLE IF NOT EXISTS statements below create the new
-                # tables). Anything else refuses.
-                if found != 1:
+                # Supported migrations, each purely ADDITIVE and explicit:
+                #   1 -> 2 (LIVE-3): new grant/mode/lock tables, created below.
+                #   2 -> 3 (LIVE-4B): nullable `intents.scenario_id` for optional
+                #                     Scenario lineage. No existing value changes
+                #                     and no execution behaviour depends on it.
+                if found not in (1, 2):
                     raise StoreError("unsupported_schema_version",
                                      f"no migration path from schema {found}")
+                if found < 3:
+                    cols = {r[1] for r in conn.execute(
+                        "PRAGMA table_info(intents)").fetchall()}
+                    if cols and "scenario_id" not in cols:
+                        conn.execute("ALTER TABLE intents ADD COLUMN scenario_id TEXT")
                 conn.execute("UPDATE meta SET value=? WHERE key='schema_version'",
                              (str(SCHEMA_VERSION),))
         conn.execute(
@@ -108,7 +116,8 @@ class ExecutionStore:
                 source TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT,
                 metadata_json TEXT NOT NULL,
                 state TEXT NOT NULL, updated_at TEXT NOT NULL,
-                broker_ref TEXT
+                broker_ref TEXT,
+                scenario_id TEXT
             )""")
         conn.execute(
             """CREATE TABLE IF NOT EXISTS intent_transitions (
@@ -190,15 +199,16 @@ class ExecutionStore:
                         idempotency_key, command_name, kind, deployment_id, account_id,
                         instrument, side, order_type, quantity, entry, stop_loss,
                         take_profit, time_in_force, source, created_at, expires_at,
-                        metadata_json, state, updated_at, broker_ref)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        metadata_json, state, updated_at, broker_ref, scenario_id)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (intent.intent_id, intent.command_id, intent.correlation_id,
                      intent.idempotency_key, intent.command_name, intent.kind,
                      intent.deployment_id, intent.account_id, intent.instrument,
                      intent.side, intent.order_type, intent.quantity, intent.entry,
                      intent.stop_loss, intent.take_profit, intent.time_in_force,
                      intent.source, intent.created_at, intent.expires_at,
-                     json.dumps(redacted), ol.CREATED, now, None))
+                     json.dumps(redacted), ol.CREATED, now, None,
+                     intent.scenario_id))
                 conn.execute(
                     "INSERT INTO intent_transitions (intent_id, from_state, to_state, at, reason, evidence, broker_ref)"
                     " VALUES (?,?,?,?,?,?,?)",
