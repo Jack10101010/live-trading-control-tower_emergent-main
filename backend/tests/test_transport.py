@@ -22,6 +22,7 @@ for p in (str(REPO_ROOT), str(BACKEND_DIR)):
 
 import security_config as sc                                          # noqa: E402
 import transport as t                                                # noqa: E402
+from conftest import code_only                                       # noqa: E402
 
 
 # ── interface contract ────────────────────────────────────────────────────────
@@ -230,7 +231,10 @@ def test_transport_selection_stays_centralized_and_default_safe():
 
     # 4: node_client is the approved seam — it goes through default_transport() and
     #    neither imports the concrete adapter nor constructs a transport itself.
-    node_client_src = (BACKEND_DIR / "node_client.py").read_text()
+    #    CODE ONLY: node_client's docstring names `transport.default_transport()`, so
+    #    a whole-file grep is satisfied by prose. The behavioural proof that it is
+    #    genuinely called lives in test_node_client_selects_through_the_single_seam.
+    node_client_src = code_only("node_client.py")
     assert "default_transport(" in node_client_src
     assert "import rest_transport" not in node_client_src
     assert "RestTransport(" not in node_client_src
@@ -239,3 +243,32 @@ def test_transport_selection_stays_centralized_and_default_safe():
     server_src = (BACKEND_DIR / "server.py").read_text()
     assert "RestTransport(" not in server_src
     assert "select_rest_transport" not in server_src
+
+    # 5: repo-wide — `select_rest_transport` is called from exactly one place
+    #    (`transport.default_transport`). Guarding only server.py would let any other
+    #    production module obtain a real networked transport outside the seam.
+    #    Walks the filesystem rather than `git grep`, so an untracked new module counts.
+    callers = sorted(
+        p.name for p in BACKEND_DIR.glob("*.py")
+        if "select_rest_transport" in code_only(p.name)
+    )
+    assert callers == ["rest_transport.py", "transport.py"], f"stray caller: {callers}"
+
+
+def test_node_client_selects_through_the_single_seam(monkeypatch):
+    """BEHAVIOURAL companion to clause 4: prove `poll_node` really routes through
+    `transport.default_transport()` rather than acquiring a transport another way."""
+    import node_client
+
+    calls: list[dict] = []
+    real = t.default_transport
+
+    def recording(config=None, env=None):
+        calls.append({"env": env})
+        return real(config, env)
+
+    monkeypatch.setattr(t, "default_transport", recording)
+    result = node_client.poll_node(env={})
+
+    assert calls, "poll_node did not go through transport.default_transport()"
+    assert result["state"] == "disabled"          # NullTransport → disabled, no I/O

@@ -353,7 +353,53 @@ def test_channel_does_no_io_and_persists_nothing(monkeypatch):
     assert cc.NullCommandChannel().recent(10) == []
 
 
+#: The complete, exact read-only vocabulary. Pinned HERE, in the module that owns
+#: `ALLOWED_TYPES`, so widening it fails in its own test file rather than depending
+#: on a cross-slice assertion in test_execution_safety.py.
+READ_ONLY_VOCABULARY = frozenset({"noop", "request_health", "request_telemetry"})
+
+
+def test_allowed_types_is_exactly_the_read_only_vocabulary():
+    """An EXACT pin. Adding any command type — however harmless it looks — must fail
+    here and force a deliberate, audited decision."""
+    assert cc.ALLOWED_TYPES == READ_ONLY_VOCABULARY
+    assert cc.ALLOWED_TYPES == {cc.CMD_NOOP, cc.CMD_REQUEST_HEALTH, cc.CMD_REQUEST_TELEMETRY}
+    assert len(cc.ALLOWED_TYPES) == 3
+
+
 def test_the_vocabulary_contains_no_state_changing_command():
+    """SUBSTRING matching across every allowed type.
+
+    The previous form was `banned not in cc.ALLOWED_TYPES`, which is EXACT frozenset
+    membership — `"kill" not in {"kill_switch"}` is True, so the guard passed on a
+    vocabulary containing `kill_switch` and `close_position`. Each allowed type is
+    now scanned for the banned fragment.
+    """
     for banned in ("pause", "resume", "arm", "disarm", "close", "open", "order",
-                   "submit_order", "kill", "flatten", "modify"):
-        assert banned not in cc.ALLOWED_TYPES
+                   "submit_order", "kill", "flatten", "modify", "cancel", "execute",
+                   "trade", "position"):
+        offenders = [t for t in cc.ALLOWED_TYPES if banned in t.lower()]
+        assert offenders == [], f"banned fragment {banned!r} appears in {offenders}"
+
+
+def test_execution_affecting_types_cannot_become_submit_able_unnoticed():
+    """The vocabulary is the submit-ability gate: `validate_envelope` rejects any type
+    outside `ALLOWED_TYPES`. Prove that for the real execution-affecting names, and
+    prove the rejection is driven by the vocabulary rather than a hard-coded denylist
+    (i.e. widening ALLOWED_TYPES really would make them submit-able — which is exactly
+    why the exact pin above must fail first)."""
+    execution_affecting = ["pause_submission", "resume_submission", "close_position",
+                           "cancel_order", "modify_order", "kill_switch", "flatten_all",
+                           "disarm", "arm", "order_send", "submit_order"]
+    for command_type in execution_affecting:
+        assert command_type not in cc.ALLOWED_TYPES
+        with pytest.raises(cc.CommandError) as exc:
+            cc.validate_envelope(envelope(command_type=command_type,
+                                          idempotency_key=command_type), now=NOW)
+        assert exc.value.reason == cc.REASON_UNKNOWN_TYPE
+
+    # The gate really is the vocabulary: a type is accepted iff it is in ALLOWED_TYPES.
+    for command_type in sorted(cc.ALLOWED_TYPES):
+        env = cc.validate_envelope(envelope(command_type=command_type,
+                                            idempotency_key=command_type), now=NOW)
+        assert env.command_type == command_type

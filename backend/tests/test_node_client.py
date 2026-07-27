@@ -30,6 +30,7 @@ import node_client as nc                                              # noqa: E4
 import rest_transport as rt                                           # noqa: E402
 import server                                                         # noqa: E402
 import transport as tmod                                             # noqa: E402
+from conftest import code_only                                        # noqa: E402
 
 NOW = datetime(2026, 7, 26, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -349,12 +350,52 @@ def test_module_has_no_mutation_or_command_surface():
                       "disarm", "kill_switch", "submit", "close_position",
                       "open_position", "modify_position", "requests.", "httpx"):
         assert forbidden not in code, forbidden
-    assert "security_config.redact_text" in (BACKEND_DIR / "node_client.py").read_text()
+    # CODE ONLY — the docstring names redact_text as a rule, so a whole-file grep
+    # is satisfied by prose even with every call site deleted.
+    assert "security_config.redact_text" in code_only("node_client.py")
+
+
+def test_a_uri_credential_in_a_transport_detail_is_also_redacted():
+    """Companion to the bearer-token case above: a `user:pass@host` URI embedded in
+    a transport error must not survive into the surfaced result either."""
+    leaky = FakeTransport(health=tmod.TransportResult(
+        ok=False, available=False, reason="connection_error",
+        detail="connect failed for https://operator:S3CRET-PASSWORD@node.internal/health"))
+    result = nc.poll_node(transport=leaky, now=NOW)
+    assert "S3CRET-PASSWORD" not in str(result)
+    assert "***redacted***" in str(result["detail"])
+
+
+def test_poll_node_actually_calls_the_canonical_telemetry_functions(monkeypatch):
+    """BEHAVIOURAL: prove REUSE of the UI-2 contract rather than a re-implementation.
+
+    A source grep is satisfied by the module docstring, which names both functions;
+    wrapping them proves they are genuinely on the code path."""
+    seen: list[str] = []
+    real_validate = nc.live_telemetry.validate_snapshot
+    real_observation = nc.live_telemetry.observation
+
+    def validate(payload):
+        seen.append("validate_snapshot")
+        return real_validate(payload)
+
+    def observation(snap, **kw):
+        seen.append("observation")
+        return real_observation(snap, **kw)
+
+    monkeypatch.setattr(nc.live_telemetry, "validate_snapshot", validate)
+    monkeypatch.setattr(nc.live_telemetry, "observation", observation)
+
+    tr = FakeTransport(telemetry=ok_result(snapshot()))
+    result = nc.poll_node(transport=tr, now=NOW)
+
+    assert result["state"] in (nc.STATE_HEALTHY, nc.STATE_STALE)
+    assert seen == ["validate_snapshot", "observation"]
 
 
 def test_module_does_not_duplicate_the_telemetry_model():
     """It REUSES validate_snapshot + observation, never redefining the schema."""
-    source = (BACKEND_DIR / "node_client.py").read_text()
+    source = code_only("node_client.py")      # docstring names both; strip it
     assert "live_telemetry.validate_snapshot" in source
     assert "live_telemetry.observation" in source
     assert "SCHEMA_VERSION =" not in source

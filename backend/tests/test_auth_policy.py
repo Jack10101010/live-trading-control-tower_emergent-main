@@ -37,6 +37,7 @@ from starlette.middleware.cors import CORSMiddleware                   # noqa: E
 import auth_policy as ap                                               # noqa: E402
 import cors_policy as cp                                               # noqa: E402
 import security_config as sc                                           # noqa: E402
+from conftest import code_only                                         # noqa: E402
 import server                                                          # noqa: E402
 
 VALID_TOKEN = "T" * ap.MIN_TOKEN_LENGTH
@@ -185,8 +186,37 @@ def test_no_token_hash_is_produced_anywhere():
 
 # ══ constant-time comparison ══════════════════════════════════════════════════
 
+def test_verification_actually_routes_through_hmac_compare_digest(monkeypatch):
+    """BEHAVIOURAL: prove the constant-time primitive is really invoked.
+
+    A source grep cannot show this — `hmac.compare_digest` is named in the module
+    docstring, so the grep passes even with every call site deleted. Here the real
+    primitive is wrapped and the policy is exercised, so the assertion fails if the
+    comparison is ever rewritten as a plain `==`.
+    """
+    calls: list[tuple[bytes, bytes]] = []
+    real = ap.hmac.compare_digest
+
+    def recording(a, b):
+        calls.append((a, b))
+        return real(a, b)
+
+    monkeypatch.setattr(ap.hmac, "compare_digest", recording)
+
+    policy = ap.load_policy({ap.VAR_ENABLED: "true", ap.VAR_TOKEN: VALID_TOKEN})
+    assert policy.verify(f"Bearer {VALID_TOKEN}") is True
+    assert calls, "verify() did not use hmac.compare_digest"
+
+    calls.clear()
+    assert policy.verify("Bearer wrong-token-but-long-enough-to-compare-xxxxxxx") is False
+    assert calls, "a failing verify() must also use the constant-time primitive"
+
+
 def test_constant_time_primitive_is_used_structurally():
-    source = (BACKEND_DIR / "auth_policy.py").read_text()
+    # CODE ONLY — the module docstring names `hmac.compare_digest` as a design rule,
+    # so a whole-file grep is satisfied by prose and would keep passing even if the
+    # real call site were deleted.
+    source = code_only("auth_policy.py")
     assert "hmac.compare_digest" in source
     assert "import hmac" in source
     # No hand-rolled equality on the secret: an early-return `==` leaks the shared

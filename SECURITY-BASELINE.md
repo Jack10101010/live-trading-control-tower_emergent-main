@@ -1,8 +1,49 @@
-# Security Baseline (UI-9) — **NOT ACTIVE**
+# Security Baseline
 
-> **UI-9 introduces no connectivity.** There is no transport, no authentication, no
-> TLS, no VPN, no tunnel, no WebSocket and no reverse proxy in this build. Nothing
-> here contacts the VPS, and no environment variable can make it do so.
+> ## Current state — read this first
+>
+> This document is **append-only by slice**. Each section below describes the world
+> as of the slice that wrote it, and several early statements have since been
+> superseded. This table is the only present-tense normative content; where it and a
+> slice section disagree, **this table wins**.
+>
+> | Capability | Built? | Default | Activation | Owner |
+> | --- | --- | --- | --- | --- |
+> | Request authentication | **Yes** (UI-11) | **Disabled** | `CONTROL_TOWER_AUTH_ENABLED` + `CONTROL_TOWER_API_TOKEN` | `auth_policy.py` |
+> | Browser origin policy (CORS) | **Yes** (UI-10) | Loopback-only | `CORS_ORIGINS` | `cors_policy.py` |
+> | Outbound REST transport | **Yes** (UI-13) | **Disabled** | `CONTROL_TOWER_TRANSPORT_ENABLED` + `NODE_TRANSPORT=https` + endpoint + token | `rest_transport.py`, selected via `transport.default_transport()` |
+> | Read-only node integration | **Yes** (UI-14) | Disabled with transport | — | `node_client.py` |
+> | Read-only command channel | **Yes** (UI-15/16/17) | **Disabled** | follows the transport | `command_channel.py`, `command_transport.py` |
+> | Execution safety policy | **Contract only** (UI-18) | **Wired to nothing** | — | `execution_safety.py` |
+> | TLS termination / pinned CA | **No** | — | — | — |
+> | mTLS | **No** (`mtls` is vocabulary only) | — | — | — |
+> | VPN / private network path | **No** | — | — | — |
+> | Secrets management / rotation | **No** (env vars only) | — | — | — |
+> | Mutating / execution commands | **No** | — | — | — |
+>
+> **Setting environment variables CAN cause this build to open authenticated
+> outbound HTTP.** Specifically `CONTROL_TOWER_TRANSPORT_ENABLED=1` together with
+> `NODE_TRANSPORT=https`, `NODE_ENDPOINT` and `NODE_API_TOKEN`. Earlier text in this
+> document stating that no environment variable can create connectivity was true at
+> UI-9 and is **no longer true**.
+>
+> **Approved scope: loopback / local testing only.** Remote activation is not
+> approved — see *Activation prerequisites*, where four of seven items are NOT MET.
+>
+> `security_config.is_active()` is a UI-9-era posture flag hard-wired to `False`. It
+> does **not** govern transport or authentication activation and must not be read as
+> evidence that connectivity is impossible.
+
+---
+
+## UI-9 — as shipped (historical)
+
+> **UI-9 itself introduced no connectivity.** At the time this section was written
+> there was no transport, no authentication, no TLS, no VPN, no tunnel, no WebSocket
+> and no reverse proxy, and nothing contacted the VPS.
+>
+> ⚠️ **Superseded:** authentication arrived in UI-11 and a real transport in UI-13.
+> See *Current state* above.
 
 This slice prepares the *architecture* for eventual secure connectivity. It
 declares configuration, validates it, guarantees secrets cannot be logged, and
@@ -137,26 +178,83 @@ these references stay valid.
 
 ## Activation prerequisites
 
-Before any connectivity slice (UI-11) may proceed:
+> **Approved scope today: LOOPBACK / LOCAL TESTING ONLY.**
+> A REST transport (UI-13) exists and *can* open authenticated outbound HTTP when
+> explicitly enabled. **Remote activation against a real node is NOT approved.**
+> Four of the seven prerequisites below are still open. A shipped transport does
+> **not** imply a cleared gate — this list is the gate, and it is not cleared.
+>
+> *Status labels were added in AUDIT-FIX-1. Previously this list was presented as
+> binding with no indication that connectivity had shipped past it.*
 
-1. **Network path** — a private link (VPN or equivalent). Not in scope here; the
-   node must remain reachable only over a trusted path, never the public internet.
-2. **TLS** — `https` end to end, with the node presenting a verifiable certificate
-   and the tower verifying it against a pinned CA.
-3. **Authentication** — mutual, with credentials supplied through
-   `AuthenticationProvider` and never placed in a URL.
-4. **CORS review — RESOLVED in UI-10.** The wildcard-plus-credentials default is
-   gone: origins are explicit, validated and loopback-only by default, wildcard is
-   unsupported, and credentials are off. See *Browser origin policy* below. Note
-   this closes the **browser** boundary only; remote exposure still requires items
-   1–3 and 5–7.
-5. **Secrets at rest** — a real secrets mechanism. Environment variables on a
-   single operator machine are acceptable for local development only.
+| # | Prerequisite | Status |
+| --- | --- | --- |
+| 1 | Network path (private link / VPN) | **NOT MET** |
+| 2 | TLS end-to-end with pinned CA | **NOT MET** |
+| 3 | Authentication | **SUBSTITUTED** |
+| 4 | CORS review | **MET** (UI-10) |
+| 5 | Secrets at rest | **NOT MET** |
+| 6 | Fail-closed gate (`ConnectionPolicy`) | **SUBSTITUTED (partial)** |
+| 7 | Direction of trust (I-10) | **MET** |
+
+1. **Network path** — a private link (VPN or equivalent); the node reachable only
+   over a trusted path, never the public internet.
+   **NOT MET.** No VPN, tunnel or private-link artefact exists in the repository.
+   This alone blocks any remote endpoint.
+2. **TLS** — `https` end to end, node presenting a verifiable certificate, tower
+   verifying against a pinned CA.
+   **NOT MET.** `rest_transport` accepts `https` URLs but the repo terminates no TLS
+   and pins no CA. `NODE_CA_PATH` / `NODE_CERT_PATH` are validated as paths and never
+   read. Plaintext `http` is therefore **local-test-only** — a bearer token is
+   readable on the wire.
+3. **Authentication** — mutual, credentials supplied through
+   `AuthenticationProvider`, never in a URL.
+   **SUBSTITUTED.** Outbound uses a bearer token on the `Authorization` header
+   (UI-13) held in a masked `_Secret`, never logged or placed in a URL. Inbound uses
+   the UI-11 deny-by-default boundary. The named `AuthenticationProvider` seam
+   remains unimplemented, and authentication is **not mutual** (mTLS is not built).
+4. **CORS review — MET (UI-10).** Origins explicit, validated, loopback-only by
+   default; wildcard structurally unsupported; credentials off. Closes the
+   **browser** boundary only; remote exposure still requires 1–3 and 5–7.
+5. **Secrets at rest** — a real secrets mechanism.
+   **NOT MET.** Environment variables only, which the prerequisite itself limits to
+   local development. No rotation, no vault, no sealed storage.
 6. **Fail-closed gate** — `ConnectionPolicy` implemented and consulted before the
    first socket, with `error` findings from `validate_config()` treated as fatal.
-7. **Direction of trust** — the node stays authoritative and autonomous. Any
-   transport must preserve invariant **I-10**: the node keeps trading and
-   protecting the account when the Control Tower is unreachable.
+   **SUBSTITUTED (partial).** The *second half* is genuinely enforced:
+   `rest_transport.select_rest_transport` refuses to build a transport when
+   `validate_config()` reports any error, so an invalid configuration yields
+   `NullTransport`. The *first half* is **not** met — `ConnectionPolicy` remains a
+   declared Protocol with no implementation, and `RestTransport._get` opens sockets
+   without consulting any policy. The substitute is a **selection-time** check, not a
+   **per-connection** gate.
+7. **Direction of trust — MET.** The node stays authoritative and autonomous
+   (**I-7**, **I-10**). The transport is GET-only and read-only; the tower issues no
+   mutating command, and the node keeps trading and protecting the account when the
+   Control Tower is unreachable.
+
+### Ordered activation runbook
+
+Enable in **this order**. Enabling transport before authentication leaves the tower
+able to reach a node while its own API is unauthenticated.
+
+1. **Authentication first** — set `CONTROL_TOWER_AUTH_ENABLED=true` and
+   `CONTROL_TOWER_API_TOKEN` (≥32 chars, no whitespace). Verify a protected route
+   returns `401` without a credential and `200` with one.
+   *Note:* no in-repo client currently sends this header — see the open finding on
+   client credential support before relying on it.
+2. **TLS** — terminate TLS and set `NODE_ENDPOINT=https://…`. (Prerequisite 2 is NOT
+   MET; until it is, only `http://127.0.0.1` is approved.)
+3. **Transport config** — set `NODE_TRANSPORT=https` and `NODE_API_TOKEN`.
+4. **Verify before enabling** — `GET /api/security/config` must report
+   `hasErrors: false`. A validation error makes selection return `None` and the tower
+   silently falls back to `NullTransport`, which presents as "transport won't turn
+   on" with no direct signal.
+5. **Enable transport last** — `CONTROL_TOWER_TRANSPORT_ENABLED=1`.
+6. **Browser boundary** — set `CORS_ORIGINS` explicitly if the UI is served from a
+   non-default origin.
+
+Do not proceed to a step until the previous step verifies.
 
 ## What UI-9 did not touch
 
@@ -461,9 +559,13 @@ access:
 6. **Node autonomy preserved** — invariant I-10: the node keeps trading and
    protecting the account when the Control Tower is unreachable.
 
-**Status: authentication preparation is complete at the CONTRACT level only.**
-Remote authenticated transport is **not active**. The only transport that exists is
-`NullTransport` (UI-12), which never communicates; no networking transport exists.
+**Status (as of UI-11): authentication preparation is complete at the CONTRACT level
+only.** Remote authenticated transport is not active, and the only transport that
+exists at this point in the sequence is `NullTransport` (UI-12).
+
+> ⚠️ **Superseded by UI-13:** a real networking transport (`RestTransport`) now
+> exists. It is disabled by default and approved for loopback/local testing only.
+> See *Current state* at the top of this document.
 
 ---
 
@@ -471,7 +573,7 @@ Remote authenticated transport is **not active**. The only transport that exists
 
 `backend/transport.py` defines the **canonical interface** a future
 Control-Tower -> node transport must implement, and ships the default that stands
-in until one is built. **It contains no networking and none is reachable from it:**
+in until one is built. **It contains no networking inline:**
 no socket, no HTTP client, no WebSocket, no polling, no retry, no authentication,
 no TLS, no VPS address. A test proves the entire surface can be exercised while any
 real socket call is rigged to blow up.
@@ -509,9 +611,14 @@ request/response shape), not a continuous stream, so a streaming operation would
 speculative surface today. It can be added alongside the implementation that
 justifies it.
 
-## NullTransport — the default everywhere
+## NullTransport — the default when no transport is configured
 
-`NullTransport` is the default and the only implementation today. Every operation
+> ⚠️ **Superseded in part by UI-13:** `default_transport()` is deny-by-default, not
+> unconditional — it returns a real `RestTransport` when the UI-13 activation
+> conditions hold. `transport.py` reaches `rest_transport` via a lazy import and is
+> therefore the single activation point for outbound traffic.
+
+`NullTransport` was the only implementation as of UI-12. Every operation
 returns `transport_unavailable` without touching a socket. It is the **correct
 behaviour**, not a stub: there is no remote transport, so reporting exactly that is
 the truthful answer, and callers always hold a real object with a predictable

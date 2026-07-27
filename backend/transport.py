@@ -1,31 +1,44 @@
-"""UI-12 — the canonical remote-transport contract. ARCHITECTURE ONLY.
+"""UI-12 — the canonical remote-transport contract, and the single activation point.
 
-This module defines the SHAPE a future Control-Tower -> node transport must take,
-and ships the default `NullTransport` that stands in until a real transport is
-deliberately built. It contains no networking of any kind and none is reachable
-from here: no socket, no HTTP client, no WebSocket, no polling, no retry, no
-authentication, no TLS, no VPS address. Importing or exercising anything in this
-file cannot open a connection.
+This module defines the SHAPE a Control-Tower -> node transport must take, and ships
+the default `NullTransport` used whenever no real transport is configured.
 
-WHY NETWORKING IS ABSENT ON PURPOSE
+THIS FILE CONTAINS NO NETWORKING INLINE — BUT NETWORKING IS REACHABLE FROM IT
+    There is no socket, HTTP client, WebSocket, retry loop, TLS handling or VPS
+    address written in this file. It is NOT, however, a dead end: since UI-13,
+    `default_transport()` lazily imports `rest_transport.select_rest_transport` and
+    can return a real `RestTransport` that opens authenticated outbound HTTP.
+    Importing this module opens nothing; calling `default_transport()` with the UI-13
+    activation conditions satisfied does establish a real client.
+
+    This module is therefore the SINGLE ACTIVATION POINT for all outbound
+    Control-Tower -> node traffic, and should be treated as such when auditing which
+    code can produce network activity.
+
+WHY THE CONTRACT CAME FIRST
     The Control Tower is observational (invariant I-7) and the live node stays
-    autonomous when the tower is unreachable (I-10). Remote connectivity is a
-    later, separately-audited slice gated by the UI-9 security prerequisites
-    (TLS, a private network path, authenticated transport). Defining the interface
-    now — with a fail-predictably default — lets every future caller depend on one
-    stable seam instead of an ad-hoc client, and lets review see the intended shape
-    before any wire code exists.
+    autonomous when the tower is unreachable (I-10). Defining the interface before
+    any wire code — with a fail-predictably default — lets every caller depend on one
+    stable seam instead of an ad-hoc client.
 
-THE DEFAULT IS NullTransport, EVERYWHERE
-    `default_transport()` is the single wiring point. It returns `NullTransport`
-    unconditionally in this slice: there is no real transport to select, and
-    `security_config.is_active()` is hard-disabled. A future slice adds a real
-    implementation HERE, at one place, so nothing ever references a concrete
-    transport inline.
+THE DEFAULT IS NullTransport WHEN NOTHING IS CONFIGURED
+    `default_transport()` is the single wiring point, and it is DENY-BY-DEFAULT:
+    absent, blank, malformed or invalid configuration yields `NullTransport`. It
+    returns a real `RestTransport` only when `CONTROL_TOWER_TRANSPORT_ENABLED` is
+    explicitly truthy AND the UI-9 security configuration validates with
+    `NODE_TRANSPORT=https` plus an endpoint and token (see `default_transport`'s own
+    docstring below, which is authoritative for the exact conditions).
 
     NullTransport never attempts communication. Every operation returns a typed,
     non-raising result whose reason is `transport_unavailable`. It is safe to call
     from anywhere, including code paths that must never block or fail.
+
+APPROVED SCOPE (AUDIT-FIX-1)
+    The REST transport is approved for LOOPBACK / LOCAL TESTING ONLY. Remote
+    activation against a real node is NOT yet approved: UI-9 activation
+    prerequisites 1 (private network path), 2 (TLS end-to-end), 5 (secrets
+    management) and 6 (fail-closed `ConnectionPolicy` gate) remain open. See
+    "Activation prerequisites" in SECURITY-BASELINE.md for the per-item status.
 
 RELATION TO UI-9
     UI-9 declared a typing-only `security_config.TransportAdapter` Protocol

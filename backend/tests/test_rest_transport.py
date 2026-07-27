@@ -24,7 +24,9 @@ for p in (str(REPO_ROOT), str(BACKEND_DIR)):
         sys.path.insert(0, p)
 
 import rest_transport as rt                                          # noqa: E402
+import security_config                                              # noqa: E402
 import transport as t                                               # noqa: E402
+from conftest import code_only                                      # noqa: E402
 
 TOKEN = "node-token-" + "x" * 32
 
@@ -324,8 +326,31 @@ def test_no_retry_or_streaming_or_cookie_machinery():
         assert forbidden not in code, forbidden
 
 
+def test_a_credential_in_a_connection_error_never_reaches_the_result(monkeypatch):
+    """BEHAVIOURAL: a transport error whose text embeds a credential must come back
+    redacted. A whole-file grep for `security_config.redact_text` cannot show this —
+    the string is in the module docstring, so the grep passes with every real call
+    site deleted."""
+    leaky = "failed to reach https://operator:S3CRET-PASSWORD@node.internal/health"
+
+    transport = rt.RestTransport("http://127.0.0.1:1", TOKEN)
+
+    def explode(*a, **k):
+        raise rt.urllib.error.URLError(leaky)
+
+    monkeypatch.setattr(transport._opener, "open", explode)
+    result = transport.health()
+
+    assert result.ok is False and result.available is False
+    assert "S3CRET-PASSWORD" not in result.detail
+    assert "S3CRET-PASSWORD" not in str(result)
+    assert security_config.REDACTED in result.detail       # positively redacted
+
+
 def test_redaction_is_applied_to_error_detail():
-    assert "security_config.redact_text" in (BACKEND_DIR / "rest_transport.py").read_text()
+    # CODE ONLY — see conftest.code_only: the module docstring names
+    # `security_config.redact_text` as a rule, so a whole-file grep is prose-satisfied.
+    assert "security_config.redact_text" in code_only("rest_transport.py")
 
 
 def test_no_vps_address_or_hardcoded_remote_host():

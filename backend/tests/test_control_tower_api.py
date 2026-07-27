@@ -1,8 +1,23 @@
-"""Backend contract tests for Control Tower API.
+"""EXTERNAL smoke tests for the Control Tower API.
 
-Tests every route defined in /app/backend/server.py against the frozen
-world.v1.json fixture. All requests go through the public REACT_APP_BACKEND_URL
-so kubernetes ingress (/api → backend:8001) is exercised end-to-end.
+Every test here talks to a DEPLOYED backend over real HTTP at
+`REACT_APP_BACKEND_URL`, exercising ingress end-to-end against the frozen
+world.v1.json fixture. It is therefore an environment-dependent smoke suite, not a
+unit suite.
+
+WHY THIS FILE SKIPS INSTEAD OF ASSERTING AT IMPORT
+    It previously ran `assert BASE_URL` at module scope. With the variable unset —
+    the normal local and CI case — that assertion fired during COLLECTION, which
+    aborted the whole run (`pytest -n 0` reported "Interrupted: 1 error during
+    collection" and executed zero tests; `-n 2` reported two worker errors and a
+    non-zero exit). The failure was silent in practice because the headline count
+    still read "N passed". A module-level `skipif` reports the situation honestly
+    and lets the rest of the suite run.
+
+    The safety-critical assertions this file used to carry — MT5 never connects, and
+    the fixture command route cannot reach a real broker — did NOT depend on a
+    deployed backend. They now live in `test_safety_invariants.py`, where they run
+    unconditionally against the in-process app.
 """
 import os
 import pytest
@@ -20,7 +35,15 @@ if not BASE_URL:
                     BASE_URL = line.split("=", 1)[1].strip()
                     break
 BASE_URL = (BASE_URL or "").rstrip("/")
-assert BASE_URL, "REACT_APP_BACKEND_URL is not set"
+
+#: Skip the whole module — clearly, and at collection time — when no deployed
+#: backend is configured. Never abort collection for the rest of the suite.
+pytestmark = pytest.mark.skipif(
+    not BASE_URL,
+    reason="REACT_APP_BACKEND_URL is not set — external smoke tests need a deployed "
+           "backend. Local unit and safety coverage runs unconditionally; the "
+           "MT5-isolation and fixture-command guards live in test_safety_invariants.py.",
+)
 
 
 @pytest.fixture(scope="session")
