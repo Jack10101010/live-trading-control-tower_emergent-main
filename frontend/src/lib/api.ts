@@ -635,8 +635,44 @@ export class OperatorCommandError extends Error {
   }
 }
 
+/* LIVE-1: the canonical execution read model's broker block (read-only). */
+export interface ExecutionBrokerState {
+  kind: string;
+  connection: string;
+  provenance: 'live_mt5' | 'mock-fixture' | string;
+  readOnly: boolean;
+  liveWriteCapable: boolean;
+  account: {
+    available: boolean;
+    login_masked?: string;
+    broker_company?: string | null;
+    server?: string | null;
+    currency?: string | null;
+    balance?: number | null;
+    equity?: number | null;
+    margin?: number | null;
+    margin_level?: number | null;
+    leverage?: number | null;
+    code?: string;
+    detail?: string;
+  };
+  openPositions: number | null;
+  openOrders: number | null;
+  recentExecutions: number | null;
+  reads: { accountSnapshot: string; reconcileSnapshot: string; recentExecutions: string };
+  observedAt: string;
+}
+
+export interface ExecutionStateView {
+  schemaVersion: string;
+  observedAt: string;
+  broker?: ExecutionBrokerState;
+  readiness: { tradingReady: boolean; gates: Record<string, boolean> };
+}
+
 export const api = {
   world: () => apiFetch<WorldFixture>('/world'),
+  executionState: () => apiFetch<ExecutionStateView>('/execution/state'),
   securityConfig: () => apiFetch<SecurityConfigStatus>('/security/config'),
   liveConnection: () => apiFetch<ConnectionState>('/live/connection'),
   liveStatus: () => apiFetch<LiveStatus>('/live/status'),

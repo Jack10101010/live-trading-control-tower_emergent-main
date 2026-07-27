@@ -482,3 +482,29 @@ execution_telemetry + BotEvent audit (derived read model; /api/execution/state)
 6. **Activation runbook**: 13 ordered, observable steps with rollback (SECURITY-BASELINE.md); transport is enabled last, after its auth and policy prerequisites; remote profiles are verified to still deny as the final step.
 
 **Boundary.** ARCH-3 does not enable remote or live execution: mock remains the only active adapter, MT5 stays inert, no real order path exists, `local_loopback` is the only approved profile, and remote activation remains explicitly prohibited. Completion of ARCH-3 permits work on a mock-validated Live-1 adapter vertical slice; it does not itself authorize any real broker connection or order submission.
+
+### ADR-LIVE-1 — Read-only MT5 adapter vertical slice (LIVE-1, 2026-07-27)
+
+**Context.** ARCH-3 permitted a mock-validated Live-1 adapter slice. Until now every broker read was simulated by `MockBroker`; no in-repo code read a real terminal. The first genuine step toward live operation is to read a real MT5 terminal — account, positions, orders, history, server time — while keeping execution structurally impossible. **LIVE-1 introduces live broker reads only. Execution remains structurally impossible.**
+
+**Decision.**
+
+1. **Genuine read-only MT5 adapter** (`broker.py` `MT5Adapter` over `live/mt5_gateway.py`): supports connection/terminal status, account information + identity fingerprint, broker information, symbol specs, open positions, open orders, recent executions (history deals), and server time. Every write verb — `submit_order`, `close_position`, `submit_command`, `cancel_order`, `modify_order`, `flatten` — is inert and returns a canonical unavailable/denied `BrokerResult` (never touches the terminal). The MT5 SDK is injectable (`MT5Gateway(config, sdk=…)`) so the whole slice is provable against a fake SDK with no terminal present.
+
+2. **Adapter activation is centralized and fail-closed** (`broker_adapter.py`): `active_kind()` reads the single selection variable `CONTROL_TOWER_BROKER_ADAPTER` (blank → `mock` default; unknown value returned verbatim then rejected at construction). `get_adapter()` is the ONLY factory: lazy, cached-after-success, constructs nothing for an unknown kind (`UnknownAdapterError`), and — for `mt5` — calls `ConnectionPolicy.evaluate_local_broker("mt5")` and constructs the adapter only on approval (`AdapterDeniedError` + `AUDIT adapter_denied` otherwise). Importing the backend performs no MT5 import side effects, initialization or connection (pinned by a subprocess test that traps `socket.connect`).
+
+3. **ConnectionPolicy gates all MT5 access** (`connection_policy.py` `evaluate_local_broker`): deny-by-default; `local_loopback` is the only approved profile; `remote_pre_live`/`remote_live` deny naming missing prerequisites; a non-`{mock,mt5}` kind denies (`adapter_unknown`). A denied policy makes zero MT5 API calls — the gateway property short-circuits to `connection_denied` before loading the SDK — with a machine-readable reason and an `AUDIT mt5_gateway_denied` event.
+
+4. **Canonical broker models** (`BrokerAccountInfo`, canonical positions/orders, `BrokerDeal`, `SymbolSpec`, `TerminalInfo`, broker info): immutable, broker-neutral field names, redaction-safe (`login_masked = mt5_****NNNN`; raw login never leaves the adapter), deterministic serialization (`as_dict()` returns sorted keys). No MT5 SDK object (`SimpleNamespace`/named tuple) escapes the adapter boundary — pinned by tests asserting no MT5 type names or SDK objects appear in returned data.
+
+5. **Capabilities derive from the adapter, write stays absent**: `BrokerCapability` gained `supportsLiveWrite` (default `False`). Mock = read ✓ / write ✗; MT5 = read ✓ / write ✗. Execution safety continues to deny every execution command; a non-mock adapter has no permissive execution context, so a live read opens no execution path.
+
+6. **Telemetry integration** (`/api/execution/state` `broker` block): exposes adapter kind, connection state, terminal-connected, account identity + broker identity, equity/balance/margin/margin-level/leverage, open positions/orders counts, recent-execution count, server time, telemetry timestamp, and `provenance` (`live_mt5` vs `mock-fixture`). Unavailable/partial reads are reported with explicit codes (`reads.*`) and never invented — an unavailable account read carries `available:false` + `code`, with no fabricated balances.
+
+7. **Reconciliation consumes live reads, still read-only** (`reconcile_snapshot` → `run_reconciliation`): no corrective action, account-identity mismatch remains a hard failure, `recon_` ids and discrepancy classes preserved.
+
+8. **Minimal read-only UI** (`BrokerReadPanel.tsx`): displays connection, masked account, broker, server, balance, equity, margin level, open positions/orders, adapter kind; labelled **LIVE READ ONLY · NO EXECUTION**; provenance badge (LIVE (MT5) vs MOCK FIXTURE); unavailable reads shown explicitly; no button, input or execution control of any kind.
+
+9. **Graceful failure** (`_guarded`): package missing, terminal absent/closed, login failure, account/symbol unavailable, timeout, or malformed data each map to a canonical `BrokerResult` — no crash, no traceback leakage, machine-readable code, `AUDIT mt5_read_failed` event — and execution remains unavailable throughout.
+
+**Boundary.** LIVE-1 introduces live broker reads only. **Execution remains structurally impossible**: no order submission, modification, cancellation, position close, or account mutation path exists in the live adapter (all write verbs are inert), the MT5 write capability is absent, and `local_loopback` remains the only approved connection profile. LIVE-1 does not enable trade execution, remote profiles, or any account mutation.

@@ -35,6 +35,8 @@ from broker_adapter import (  # noqa: F401 — re-exported contract surface
     BrokerResult,
     BrokerSymbol,
     ConnectionState,
+    RESULT_NOT_CONNECTED,
+    RESULT_UNAVAILABLE,
     UnknownAdapterError,
 )
 import broker_adapter as _adapter_boundary
@@ -357,7 +359,21 @@ class MT5Adapter(Broker):
     @property
     def _gateway(self):
         if not self._gateway_loaded:
-            self._gateway_cache = _load_live_gateway()
+            # LIVE-1: the ConnectionPolicy must approve BEFORE any terminal access.
+            # A deny loads nothing, performs zero MT5 API calls, and every read
+            # reports the machine-readable policy reason.
+            import connection_policy
+            decision = connection_policy.evaluate_local_broker("mt5")
+            if not decision.allowed:
+                import logging
+                logging.getLogger("broker").warning(
+                    "AUDIT mt5_gateway_denied reason=%s profile=%s",
+                    decision.reason, decision.profile)
+                self._policy_denied_reason = decision.reason
+                self._gateway_cache = None
+            else:
+                self._policy_denied_reason = None
+                self._gateway_cache = _load_live_gateway()
             self._gateway_loaded = True
         return self._gateway_cache
 
@@ -392,8 +408,14 @@ class MT5Adapter(Broker):
     def capabilities(self) -> BrokerCapability:
         # Realistic MT5 placeholders (netting/hedging depend on account type; replay is N/A live).
         return BrokerCapability(
-            supportsMarketExecution=True, supportsPendingOrders=True, supportsModify=True,
-            supportsPartialClose=True, supportsHedging=True, supportsNetting=True, supportsReplay=False,
+            # LIVE-1: the MT5 adapter is STRUCTURALLY READ-ONLY. Every write
+            # capability is False, so capability checks (and execution safety)
+            # deny every execution command against it. supportsLiveWrite is False
+            # on every adapter in this repository.
+            supportsLiveWrite=False,
+            supportsMarketExecution=False, supportsPendingOrders=False, supportsModify=False,
+            supportsPartialClose=False, supportsHedging=False, supportsNetting=False,
+            supportsReplay=False,
         )
 
     def translate_symbol(self, canonical: str) -> str:
@@ -401,6 +423,121 @@ class MT5Adapter(Broker):
 
     def to_canonical(self, broker_symbol: str) -> str:
         return self._symbols.to_canonical(broker_symbol)
+
+    # ── LIVE-1 canonical read operations ─────────────────────────────────────
+    # Every read is TOTAL: any missing package/terminal/login/malformed data
+    # yields a canonical BrokerResult (machine code, redaction-safe detail),
+    # never a traceback. MT5 SDK objects never leave this class.
+
+    @staticmethod
+    def _mask_login(login) -> str:
+        s = str(login) if login is not None else ""
+        return f"mt5_****{s[-4:]}" if len(s) >= 4 else "mt5_****"
+
+    def _guarded(self, operation: str, fn):
+        """Run one read against the gateway with total failure handling."""
+        decision_gateway = self._gateway
+        if decision_gateway is None:
+            reason = getattr(self, "_policy_denied_reason", None)
+            if reason:
+                return BrokerResult(ok=False, code="connection_denied", detail=reason)
+            return BrokerResult(ok=False, code=RESULT_UNAVAILABLE,
+                                detail="MetaTrader5 package unavailable on this host")
+        if not decision_gateway.connected:
+            return BrokerResult(ok=False, code=RESULT_NOT_CONNECTED,
+                                detail="MT5 terminal not connected")
+        try:
+            return fn(decision_gateway)
+        except Exception as exc:            # malformed MT5 data / timeout / hostile object
+            import logging
+            logging.getLogger("broker").warning("AUDIT mt5_read_failed op=%s err=%s",
+                                                operation, type(exc).__name__)
+            return BrokerResult(ok=False, code="error",
+                                detail=f"{operation} failed: {type(exc).__name__}")
+
+    def account_identity(self) -> BrokerResult:
+        def read(gw):
+            ident = gw.account_identity()
+            if ident is None:
+                return BrokerResult(ok=False, code=RESULT_UNAVAILABLE,
+                                    detail="account identity unavailable")
+            fp = getattr(ident, "fingerprint", None)
+            login = getattr(ident, "login", None)
+            return BrokerResult(ok=True, code="ok", data={
+                "accountId": self._mask_login(login), "fingerprint": fp,
+                "brokerId": self.broker_id, "provenance": "live_mt5"})
+        return self._guarded("account_identity", read)
+
+    def account_snapshot(self, ctx: BrokerContext) -> BrokerResult:
+        from broker_adapter import BrokerAccountInfo
+        def read(gw):
+            acct = gw.sdk.account_info()
+            if acct is None:
+                return BrokerResult(ok=False, code=RESULT_UNAVAILABLE,
+                                    detail="account information unavailable")
+            ident = gw.account_identity()
+            server_time = gw.server_time_utc()
+            info = BrokerAccountInfo(
+                login_masked=self._mask_login(getattr(acct, "login", None)),
+                fingerprint=getattr(ident, "fingerprint", None) if ident else None,
+                broker_company=getattr(acct, "company", None),
+                server=getattr(acct, "server", None),
+                currency=getattr(acct, "currency", None),
+                balance=getattr(acct, "balance", None),
+                equity=getattr(acct, "equity", None),
+                margin=getattr(acct, "margin", None),
+                margin_free=getattr(acct, "margin_free", None),
+                margin_level=getattr(acct, "margin_level", None),
+                leverage=getattr(acct, "leverage", None),
+                at=server_time.isoformat().replace("+00:00", "Z") if server_time else None,
+            )
+            return BrokerResult(ok=True, code="ok", data=info.as_dict())
+        return self._guarded("account_snapshot", read)
+
+    def recent_executions(self, ctx: BrokerContext) -> BrokerResult:
+        from datetime import datetime, timedelta, timezone
+        from broker_adapter import BrokerDeal
+        def read(gw):
+            history = getattr(gw.sdk, "history_deals_get", None)
+            if history is None:
+                # Partial capability: the SDK build offers no deal history. Explicit.
+                return BrokerResult(ok=False, code=RESULT_UNAVAILABLE,
+                                    detail="deal history not available from this terminal")
+            end = datetime.now(timezone.utc)
+            deals = history(end - timedelta(days=1), end) or []
+            out = []
+            for d in deals[:50]:
+                out.append(BrokerDeal(
+                    deal_id=str(getattr(d, "ticket", "")),
+                    order_ref=str(getattr(d, "order", "")) or None,
+                    symbol=self.to_canonical(getattr(d, "symbol", "") or ""),
+                    side="long" if getattr(d, "type", 0) == 0 else "short",
+                    volume=getattr(d, "volume", None),
+                    price=getattr(d, "price", None),
+                    profit=getattr(d, "profit", None),
+                    at=None if getattr(d, "time", None) is None else
+                       datetime.fromtimestamp(d.time, tz=timezone.utc)
+                       .isoformat().replace("+00:00", "Z"),
+                ).as_dict())
+            return BrokerResult(ok=True, code="ok", data=out)
+        return self._guarded("recent_executions", read)
+
+    def reconcile_snapshot(self, ctx: BrokerContext) -> BrokerResult:
+        """One coherent LIVE read for the canonical reconciliation authority."""
+        def read(gw):
+            ident = gw.account_identity()
+            server_time = gw.server_time_utc()
+            return BrokerResult(ok=True, code="ok", data={
+                "positions": self.positions(ctx),
+                "orders": self.orders(ctx),
+                "accounts": self.accounts(ctx),
+                "connection": ConnectionState.CONNECTED,
+                "accountIdentity": getattr(ident, "fingerprint", None) if ident else None,
+                "at": server_time.isoformat().replace("+00:00", "Z") if server_time
+                      else ctx.now,
+                "provenance": "live_mt5",
+            })
+        return self._guarded("reconcile_snapshot", read)
 
     def _snapshot(self) -> dict | None:
         if self._gateway is None or not self._gateway.connected:
@@ -470,12 +607,16 @@ class MT5Adapter(Broker):
 # importing this module constructs no adapter and probes no gateway. `_ACTIVE`
 # remains the authoritative active-kind constant (delegating to the boundary) so
 # existing assertions and call sites keep working.
-_ACTIVE = _adapter_boundary.ACTIVE_KIND  # "mock" — the Control Tower runs entirely against MockBroker
+# LIVE-1: `_ACTIVE` is the DEFAULT constant (mock). The runtime resolves the
+# selected adapter through `active_kind()` (which reads the explicit selection
+# variable), so `get_broker()` follows an operator's adapter choice.
+_ACTIVE = _adapter_boundary.ACTIVE_KIND  # "mock" — default when nothing is selected
 
 
 def get_broker(kind: str | None = None) -> Broker:
-    """Back-compat entry point. Delegates to the single centralized factory."""
-    return _adapter_boundary.get_adapter(kind or _ACTIVE)
+    """Back-compat entry point. Delegates to the single centralized factory, using
+    the SELECTED adapter kind (mock unless explicitly changed)."""
+    return _adapter_boundary.get_adapter(kind or _adapter_boundary.active_kind())
 
 
 def active_kind() -> str:

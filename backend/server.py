@@ -859,7 +859,11 @@ def _run_broker_sync(append_event: bool = True) -> dict:
                     broker_orders=snap.data.get("orders", []),
                     broker_positions=snap.data.get("positions", []),
                     broker_account_identity=snap.data.get("accountIdentity"),
-                    expected_account_identity=snap.data.get("accountIdentity"),
+                    # LIVE-1: when an expected fingerprint is configured it is the
+                    # authority (mismatch = hard failure); the mock's self-match
+                    # behaviour is preserved when unset.
+                    expected_account_identity=(os.environ.get(VAR_EXPECTED_ACCOUNT, "").strip()
+                                               or snap.data.get("accountIdentity")),
                     broker_snapshot_at=snap.data.get("at"), now=now,
                 )
                 reconciliation_layer.persist(store, run)
@@ -1743,6 +1747,37 @@ def execution_state():
         content["availability"]["denialReasons"] = [
             name for name, ok in content["readiness"]["gates"].items() if not ok]
         content["context"] = ctx.safe_view()
+        # LIVE-1: the live broker read block — derived at request time from the
+        # active adapter's canonical reads. Explicit unavailability, no invented
+        # values, provenance stated (live_mt5 vs mock-fixture).
+        bctx = _broker_context({}, _now_iso())
+        acct_read = brk.account_snapshot(bctx)
+        recon_read = brk.reconcile_snapshot(bctx)
+        exec_read = brk.recent_executions(bctx)
+        content["broker"] = {
+            "kind": broker_layer.active_kind(),
+            "connection": brk.connection().state,
+            "provenance": ("live_mt5" if broker_layer.active_kind() == "mt5"
+                           else "mock-fixture"),
+            "readOnly": True,
+            "liveWriteCapable": bool(broker_layer.capability_dict(
+                brk.capabilities()).get("supportsLiveWrite")),   # always False (LIVE-1)
+            "account": ({"available": True, **acct_read.data}
+                        if acct_read.ok and isinstance(acct_read.data, dict)
+                        else {"available": False, "code": acct_read.code,
+                              "detail": acct_read.detail}),
+            "openPositions": (len(recon_read.data.get("positions", []))
+                              if recon_read.ok else None),
+            "openOrders": (len(recon_read.data.get("orders", []))
+                           if recon_read.ok else None),
+            "recentExecutions": (len(exec_read.data) if exec_read.ok else None),
+            "reads": {
+                "accountSnapshot": acct_read.code,
+                "reconcileSnapshot": recon_read.code,
+                "recentExecutions": exec_read.code,
+            },
+            "observedAt": _now_iso(),
+        }
         return JSONResponse(content=content, headers={"Cache-Control": "no-store"})
     except Exception:
         logger.exception("execution state read model failed")

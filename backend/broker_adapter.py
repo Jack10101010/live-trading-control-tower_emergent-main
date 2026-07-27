@@ -64,7 +64,13 @@ class ConnectionState:
 @dataclass
 class BrokerCapability:
     """The one canonical capability model. `command_registry` names which command
-    requires which capability field; adapters declare what they support."""
+    requires which capability field; adapters declare what they support.
+
+    LIVE-1: `supportsLiveWrite` is the REAL-broker write capability. It is False
+    for EVERY adapter (the mock's "writes" are fixture simulations against the
+    runtime overlay, never a broker; the MT5 adapter is structurally read-only).
+    Execution against a live broker therefore remains impossible by capability."""
+    supportsLiveWrite: bool = False
     supportsMarketExecution: bool = False
     supportsPendingOrders: bool = False
     supportsModify: bool = False
@@ -309,9 +315,22 @@ class UnknownAdapterError(LookupError):
     """Selection failed closed: the requested adapter kind does not exist."""
 
 
-#: The active adapter kind. Authoritative: the Control Tower runs entirely against
-#: the mock adapter. Changing this is a deliberate, audited act — never automatic.
+class AdapterDeniedError(PermissionError):
+    """The ConnectionPolicy refused adapter construction. `reason` is the
+    policy's machine-readable code; nothing was initialized."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+#: The DEFAULT adapter kind. The Control Tower runs against the mock adapter
+#: unless an operator explicitly selects another known kind (LIVE-1).
 ACTIVE_KIND = "mock"
+
+#: LIVE-1: explicit adapter selection. Allowed values: mock | mt5. Anything else
+#: DENIES (get_adapter raises; nothing constructs, nothing falls back silently).
+VAR_ADAPTER = "CONTROL_TOWER_BROKER_ADAPTER"
 
 _CACHE: dict[str, BrokerAdapter] = {}
 
@@ -328,20 +347,104 @@ def get_adapter(kind: str | None = None) -> BrokerAdapter:
     This is the single construction path. `broker.get_broker()` delegates here;
     nothing else may instantiate an adapter class.
     """
-    resolved = kind or ACTIVE_KIND
+    resolved = kind or active_kind()
     if resolved in _CACHE:
         return _CACHE[resolved]
+    if resolved not in known_kinds():
+        raise UnknownAdapterError(f"unknown broker adapter kind: {resolved!r}")
+    # LIVE-1: the ConnectionPolicy must approve BEFORE a broker-touching adapter
+    # is constructed. The mock is an in-process fixture (no external system to
+    # police); MT5 touches a terminal, so a policy deny constructs NOTHING and
+    # performs zero MT5 API calls.
+    if resolved == "mt5":
+        import connection_policy
+        decision = connection_policy.evaluate_local_broker("mt5")
+        if not decision.allowed:
+            import logging
+            logging.getLogger("broker_adapter").warning(
+                "AUDIT adapter_denied kind=mt5 reason=%s profile=%s",
+                decision.reason, decision.profile)
+            raise AdapterDeniedError(decision.reason)
     # Lazy import: the adapters module is only loaded when an adapter is actually
     # requested, and each adapter is only constructed when ITS kind is requested.
     import broker as _adapters
     if resolved == "mock":
         _CACHE[resolved] = _adapters.MockBroker()
-    elif resolved == "mt5":
-        _CACHE[resolved] = _adapters.MT5Adapter()
     else:
-        raise UnknownAdapterError(f"unknown broker adapter kind: {resolved!r}")
+        _CACHE[resolved] = _adapters.MT5Adapter()
     return _CACHE[resolved]
 
 
 def active_kind() -> str:
-    return ACTIVE_KIND
+    """LIVE-1: the selected adapter kind. Unset/blank -> the mock default. A value
+    outside `known_kinds()` is returned VERBATIM so every construction attempt
+    fails closed in `get_adapter` (unknown values deny; nothing falls back)."""
+    import os
+    raw = (os.environ.get(VAR_ADAPTER) or "").strip().lower()
+    return raw if raw else ACTIVE_KIND
+
+
+# ── LIVE-1 canonical read models (immutable; MT5 types never escape the adapter) ─
+
+@dataclass(frozen=True)
+class BrokerAccountInfo:
+    """Canonical account snapshot. `login_masked` shows only the last 4 digits."""
+    login_masked: str
+    fingerprint: str | None
+    broker_company: str | None
+    server: str | None
+    currency: str | None
+    balance: float | None
+    equity: float | None
+    margin: float | None
+    margin_free: float | None
+    margin_level: float | None
+    leverage: int | None
+    at: str | None = None
+
+    def as_dict(self) -> dict:
+        from dataclasses import asdict
+        return dict(sorted(asdict(self).items()))     # deterministic serialization
+
+
+@dataclass(frozen=True)
+class BrokerDeal:
+    """Canonical executed deal (history read)."""
+    deal_id: str
+    order_ref: str | None
+    symbol: str | None
+    side: str | None
+    volume: float | None
+    price: float | None
+    profit: float | None
+    at: str | None
+
+    def as_dict(self) -> dict:
+        from dataclasses import asdict
+        return dict(sorted(asdict(self).items()))
+
+
+@dataclass(frozen=True)
+class SymbolSpec:
+    """Canonical symbol specification."""
+    canonical: str
+    broker_symbol: str
+    digits: int | None = None
+    point: float | None = None
+    trade_allowed: bool | None = None
+
+    def as_dict(self) -> dict:
+        from dataclasses import asdict
+        return dict(sorted(asdict(self).items()))
+
+
+@dataclass(frozen=True)
+class TerminalInfo:
+    """Canonical terminal state (value-free: no paths, no build details)."""
+    connected: bool
+    trade_allowed: bool | None = None
+    company: str | None = None
+
+    def as_dict(self) -> dict:
+        from dataclasses import asdict
+        return dict(sorted(asdict(self).items()))

@@ -215,6 +215,36 @@ def evaluate(url: str, *, env: dict | None = None,
                               detail=type(exc).__name__)
 
 
+ALLOW_LOCAL_BROKER = "allow_local_broker"
+DENY_ADAPTER_UNKNOWN = "adapter_unknown"
+
+
+def evaluate_local_broker(kind: str, env: dict | None = None) -> PolicyDecision:
+    """LIVE-1: may a LOCAL broker terminal adapter (e.g. the MT5 terminal on this
+    host) be constructed and queried? Deny-by-default: unknown kinds deny, unknown
+    profiles deny, and only the approved local_loopback profile permits local
+    terminal access. Remote profiles keep denying with their named prerequisites.
+    Never raises."""
+    import os
+    source = os.environ if env is None else env
+    profile = active_profile(source)
+    try:
+        if profile not in KNOWN_PROFILES:
+            return PolicyDecision(False, DENY_PROFILE_UNKNOWN, profile,
+                                  detail=f"unknown profile {profile!r}")
+        if profile not in APPROVED_PROFILES:
+            return PolicyDecision(False, DENY_PROFILE_NOT_APPROVED, profile,
+                                  missing_prerequisites=_missing_remote_prerequisites(source))
+        if kind not in ("mock", "mt5"):
+            return PolicyDecision(False, DENY_ADAPTER_UNKNOWN, profile,
+                                  detail=f"unknown adapter kind {kind!r}")
+        return PolicyDecision(True, ALLOW_LOCAL_BROKER, profile,
+                              host_class="local-terminal")
+    except Exception as exc:               # FAIL CLOSED
+        return PolicyDecision(False, DENY_POLICY_ERROR, profile,
+                              detail=type(exc).__name__)
+
+
 class CanonicalConnectionPolicy:
     """Satisfies the UI-9 `security_config.ConnectionPolicy` Protocol
     (`may_connect() -> bool`) for a fixed URL + environment."""

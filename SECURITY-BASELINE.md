@@ -18,14 +18,17 @@
 > | Read-only node integration | **Yes** (UI-14) | Disabled with transport | — | `node_client.py` |
 > | Read-only command channel | **Yes** (UI-15/16/17) | **Disabled** | follows the transport | `command_channel.py`, `command_transport.py` |
 > | Execution safety policy | **Yes** (UI-18; wired by ARCH-1) | Deny-by-default; every pipeline command consults `evaluate()` | — | `execution_safety.py` |
-> | Broker adapter boundary | **Yes** (ARCH-2) | Mock active; MT5 inert; lazy fail-closed factory | adapter kind change = audited code change | `broker_adapter.py` |
+> | Broker adapter boundary | **Yes** (ARCH-2) | Mock active; MT5 read-only; lazy fail-closed factory | adapter kind change = audited code change | `broker_adapter.py` |
+> | Broker adapter selection | **Yes** (LIVE-1) | `mock` (blank/unset); `mt5` selects the READ-ONLY adapter; unknown rejected | `CONTROL_TOWER_BROKER_ADAPTER` | `broker_adapter.py` `active_kind()` |
+> | Read-only live MT5 adapter | **Yes** (LIVE-1) | Reads only (account/positions/orders/history/time); every write verb inert; policy-gated construction | `CONTROL_TOWER_BROKER_ADAPTER=mt5` + `local_loopback` | `broker.py` `MT5Adapter`, `live/mt5_gateway.py` |
 > | Durable order lifecycle + reconciliation | **Yes** (ARCH-2) | Mock-only; broker dispatch requires durability | — | `execution_store.py`, `order_lifecycle.py`, `reconciliation.py` |
 > | Broker fault injection | Test-only | **Disabled** (404) | `BROKER_FAULT_INJECTION_ENABLED` | `server.py` |
 > | TLS termination / pinned CA | **No** | — | — | — |
 > | mTLS | **No** (`mtls` is vocabulary only) | — | — | — |
 > | VPN / private network path | **No** | — | — | — |
 > | Secrets management / rotation | **No** (env vars only) | — | — | — |
-> | Live/mutating broker execution | **No** (mock only; no real order path) | — | — | — |
+> | Live broker **reads** | **Yes** (LIVE-1, read-only) | MT5 read-only via policy-gated adapter; no write path | `CONTROL_TOWER_BROKER_ADAPTER=mt5` | `broker.py` `MT5Adapter` |
+> | Live/mutating broker execution | **No** (no real order path; every write verb inert; write capability absent) | — | — | — |
 >
 > **Setting environment variables CAN cause this build to open authenticated
 > outbound HTTP.** Specifically `CONTROL_TOWER_TRANSPORT_ENABLED=1` together with
@@ -106,6 +109,7 @@ All are **blank** in `backend/.env.example` and unset in every environment.
 | `NODE_CONNECT_TIMEOUT` | Connect timeout, seconds | Validated 0.1–300; no client uses it |
 | `NODE_READ_TIMEOUT` | Read timeout, seconds | Validated 0.1–300; no client uses it |
 | `ALLOW_INSECURE_LOCALHOST` | Local-development escape hatch | Always warns; never production |
+| `CONTROL_TOWER_BROKER_ADAPTER` | LIVE-1 broker adapter selection | `mock` default (blank/unset); `mt5` selects the READ-ONLY adapter; unknown rejected at construction. Selecting `mt5` enables live **reads only** — every write verb is inert, the write capability is absent, and construction still requires ConnectionPolicy approval (`local_loopback`). No order path exists regardless of this value. |
 
 ## Validation
 
