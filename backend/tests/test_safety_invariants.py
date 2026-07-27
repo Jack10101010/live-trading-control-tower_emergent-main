@@ -224,27 +224,19 @@ def test_an_unknown_command_is_rejected_by_the_fixture_route():
 
 # ── 5. execution_safety remains deliberately unwired ──────────────────────────
 
-def test_execution_safety_is_deliberately_not_wired_into_any_production_module():
-    """UI-18 is a CONTRACT-ONLY slice: `evaluate()` is defined, exhaustively tested and
-    intentionally called by nothing.
+def test_execution_safety_is_now_wired_into_the_execution_pipeline():
+    """ARCH-1 flips the UI-18 deliberate-isolation guard: the execution pipeline now
+    consults `execution_safety`, and this is the audited slice that did it.
 
-    This guard exists so that wiring it in becomes a LOUD, deliberate act. When the
-    dedicated remediation slice lands, this test is replaced by its positive
-    counterpart (every non-read-only command path must consult `evaluate()`), not
-    silently deleted.
-    """
-    importers = sorted(
-        p.name for p in BACKEND_DIR.glob("*.py")
-        if p.name != "execution_safety.py" and "execution_safety" in p.read_text()
-    )
-    assert importers == [], (
-        "execution_safety is contract-only (UI-18). Wiring it into a command path "
-        f"requires its own audited slice — found importers: {importers}"
-    )
+    The orchestrator (`execution.py`) is the single authority and must import the
+    safety module."""
+    import execution
+    assert "execution_safety" in (BACKEND_DIR / "execution.py").read_text()
+    assert hasattr(execution, "safety")           # the imported policy engine
 
 
 def test_execution_safety_still_denies_by_default():
-    """The contract itself must keep failing closed while it waits to be wired."""
+    """The contract itself must keep failing closed."""
     import execution_safety as es
 
     decision = es.evaluate(es.CommandRequest(command_type="close_position"))

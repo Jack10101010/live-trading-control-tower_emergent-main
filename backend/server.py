@@ -40,6 +40,8 @@ import cors_policy
 import node_client
 import command_channel
 import command_transport
+import command_registry
+import execution_safety
 import ops_status as ops_status_layer
 import security_config
 import ops_journal as ops_journal_layer
@@ -114,43 +116,15 @@ WORLD = _load_world()
 EVENTS_DB_PATH = ROOT_DIR / 'events.db'
 _events_lock = threading.Lock()
 
-# Mirror of the frontend Command union (frontend/src/lib/commands.ts, Track B §5).
-# Adding a command means adding it in BOTH places.
-KNOWN_COMMANDS = {
-    # Policy lifecycle
-    "CreateDraft", "DiscardDraft", "PromoteDraft", "RunNativeValidation",
-    "ApproveRecommendation", "RejectRecommendation", "ApplyOverride", "RemoveOverride",
-    # Package / deployment
-    "DeployPackage", "RollbackPackage", "PauseDeployment", "ResumeDeployment",
-    "KillDeployment", "FlattenDeployment", "SetLaneMode",
-    "LockDeployment", "UnlockDeployment",
-    # Order management
-    "CancelOrder", "ReduceOrderRisk", "ConvertOrderToGhost",
-    # Trade management
-    "CloseTrade", "SLToBE", "MoveTradeSL", "MoveTradeTP", "PartialClose",
-    "ReduceTradeRisk", "SetAutoManagement",
-    # Deployment Manifest
-    "CloneManifest", "ExportManifest", "RestoreManifest", "RedeployManifest",
-    # Safety
-    "GlobalKill", "PausePair",
-}
+# ARCH-1: the command vocabulary and per-command audit categories are DERIVED from the
+# single canonical `command_registry` — no longer re-declared here. `KNOWN_COMMANDS`
+# is the fixture-surface control-plane vocabulary; `_COMMAND_CATEGORY` its audit
+# categories. The frontend Command union (frontend/src/lib/commands.ts) still mirrors
+# this set; keeping it in sync remains a frontend concern (not changed by this slice).
+KNOWN_COMMANDS = command_registry.fixture_command_names()
 
 # Track B event categories: decision·order·trade·policy·risk·manual·system·error·broker
-_COMMAND_CATEGORY = {
-    "CreateDraft": "policy", "DiscardDraft": "policy", "PromoteDraft": "policy",
-    "RunNativeValidation": "policy", "ApproveRecommendation": "policy",
-    "RejectRecommendation": "policy", "ApplyOverride": "policy", "RemoveOverride": "policy",
-    "DeployPackage": "policy", "RollbackPackage": "policy",
-    "PauseDeployment": "system", "ResumeDeployment": "system", "KillDeployment": "system",
-    "FlattenDeployment": "system", "SetLaneMode": "system",
-    "LockDeployment": "system", "UnlockDeployment": "system",
-    "CancelOrder": "order", "ReduceOrderRisk": "order", "ConvertOrderToGhost": "order",
-    "CloseTrade": "trade", "SLToBE": "trade", "MoveTradeSL": "trade", "MoveTradeTP": "trade",
-    "PartialClose": "trade", "ReduceTradeRisk": "trade", "SetAutoManagement": "trade",
-    "CloneManifest": "system", "ExportManifest": "system", "RestoreManifest": "system",
-    "RedeployManifest": "system",
-    "GlobalKill": "risk", "PausePair": "risk",
-}
+_COMMAND_CATEGORY = command_registry.fixture_categories()
 
 _FIXTURE_MAX_SEQ = max((e.get("seq", 0) for e in WORLD.get("events", [])), default=0)
 
@@ -1086,9 +1060,40 @@ def _execution_env() -> execution_layer.ExecutionEnv:
     )
 
 
+def _safety_context() -> execution_safety.SafetyContext:
+    """The SafetyContext the execution pipeline evaluates every command against.
+
+    ARCH-1 safety property: a PERMISSIVE context (which lets the fixture control-plane
+    keep working exactly as before) is built ONLY while the active broker is the mock.
+    The mock is a fixture — no real orders, no real account — so authorizing execution
+    against it is safe, and every command still passes through
+    `execution_safety.evaluate()` (the gate is genuinely consulted, not bypassed).
+
+    The moment a NON-mock broker becomes active, this returns the deny-by-default
+    `SafetyContext()`, so `evaluate()` denies every execution-affecting command until a
+    real, audited context (armed, identified, confirmed, healthy node) is supplied by a
+    future live-execution slice. There is no configuration in which a real broker is
+    dispatched to on the strength of this mock context.
+    """
+    if broker_layer.active_kind() != "mock":
+        return execution_safety.SafetyContext()          # deny-by-default
+    now = datetime.now(timezone.utc)
+    horizon = now.timestamp() + 3600.0
+    expires = datetime.fromtimestamp(horizon, timezone.utc).isoformat().replace("+00:00", "Z")
+    return execution_safety.SafetyContext(
+        mode=execution_safety.MODE_ACTIVE,
+        arming=execution_safety.ArmingState(armed=True, armed_by="mock-fixture",
+                                            expires_at=expires),
+        node=execution_safety.NodeSafety(execution_safety.NODE_HEALTHY),
+        operator=execution_safety.OperatorAuthorization(operator_ref=_operator_id(),
+                                                        confirmed=True),
+    )
+
+
 _EXEC_METRICS = execution_layer.ExecutionMetrics()
 _ORCHESTRATOR = execution_layer.ExecutionOrchestrator(
     dispatch=_dispatch_command, env_factory=_execution_env, metrics=_EXEC_METRICS,
+    safety_context_factory=_safety_context,
 )
 
 

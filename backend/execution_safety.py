@@ -51,28 +51,11 @@ RISK_EMERGENCY = "emergency"                 # a safety STOP (kill/flatten/disar
 KNOWN_RISK_CLASSES = frozenset({
     RISK_READ_ONLY, RISK_OPERATIONAL, RISK_EXECUTION_AFFECTING, RISK_EMERGENCY})
 
-# The classification registry. Read-only entries mirror the UI-15 vocabulary exactly.
-# The operational / execution-affecting / emergency entries are declared FOR FUTURE
-# USE — none of them is submit-able through UI-15/UI-16/UI-17 in this slice.
-_RISK_BY_COMMAND: dict[str, str] = {
-    # read-only (the UI-15 ALLOWED_TYPES — the only submit-able commands today)
-    "noop": RISK_READ_ONLY,
-    "request_health": RISK_READ_ONLY,
-    "request_telemetry": RISK_READ_ONLY,
-    # operational (future): touch operation, not trades
-    "request_reconcile": RISK_OPERATIONAL,
-    "refresh_status": RISK_OPERATIONAL,
-    # execution-affecting (future): can change trading state
-    "pause_submission": RISK_EXECUTION_AFFECTING,
-    "resume_submission": RISK_EXECUTION_AFFECTING,
-    "close_position": RISK_EXECUTION_AFFECTING,
-    "cancel_order": RISK_EXECUTION_AFFECTING,
-    "modify_order": RISK_EXECUTION_AFFECTING,
-    # emergency (future): a safety stop
-    "kill_switch": RISK_EMERGENCY,
-    "flatten_all": RISK_EMERGENCY,
-    "disarm": RISK_EMERGENCY,
-}
+# ARCH-1: command→risk classification is no longer owned here. `classify()` delegates
+# to the single canonical `command_registry`, which resolves aliases (the snake_case
+# safety names like `close_position` map onto their canonical fixture command). This
+# module still OWNS the risk-class constants and the `evaluate()` policy engine; it no
+# longer keeps a second, drift-prone command list.
 
 # Per-class requirements. These are the heart of the contract.
 _REQUIRES_ACTIVE_MODE = frozenset({
@@ -149,10 +132,15 @@ def _parse_iso(value: Any) -> datetime | None:
 
 def classify(command_type: Any) -> str | None:
     """The risk class of a command type, or None if it is unknown. Unknown is never
-    a class — it is the absence of one, and the evaluator denies it."""
+    a class — it is the absence of one, and the evaluator denies it.
+
+    Delegates to the single canonical `command_registry` (imported lazily so this
+    module has no import-time dependency on the catalogue, keeping the policy engine a
+    leaf). Aliases resolve: `classify("close_position")` → `CloseTrade`'s class."""
     if not isinstance(command_type, str):
         return None
-    return _RISK_BY_COMMAND.get(command_type)
+    from command_registry import risk_class_of
+    return risk_class_of(command_type)
 
 
 # ── immutable contract value objects ──────────────────────────────────────────

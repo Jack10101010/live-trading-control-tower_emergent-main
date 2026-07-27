@@ -223,11 +223,11 @@ class Broker(ABC):
 
 # Trade/order commands the broker owns (execution boundary). Deployment/package
 # lifecycle stays in the runtime control-plane.
-BROKER_COMMANDS = {
-    "CloseTrade", "SLToBE", "MoveTradeSL", "MoveTradeTP", "PartialClose",
-    "ReduceTradeRisk", "SetAutoManagement",
-    "CancelOrder", "ReduceOrderRisk", "ConvertOrderToGhost",
-}
+# ARCH-1: DERIVED from the single canonical `command_registry` (the `broker_dispatched`
+# flag) rather than re-declared here, so this set can never drift from the catalogue.
+import command_registry as _registry
+
+BROKER_COMMANDS = _registry.broker_dispatched_names()
 
 
 class MockBroker(Broker):

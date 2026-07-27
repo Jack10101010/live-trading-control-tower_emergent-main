@@ -358,3 +358,57 @@ Everything follows from these: strategies cannot know brokers, MT5, Polygon, or 
 | I-10 | Safety functions (Risk Guard, dead-man's switch, broker-side stops) live server-side and operate with CT offline (§4.4, §6) | Review + failure-drill testing |
 
 An invariant with no enforcement column entry would be an aspiration; every entry above names the mechanism that catches its violation. When a future change genuinely requires breaking one of these, that is by definition an architectural change — it goes through an ADR, never through code review alone.
+
+---
+
+## 14. Architecture Decision Records (ADRs)
+
+This frozen baseline is amended only by accepted ADRs (see the Status line at the top). Each ADR records an architectural change made after V1.2 was frozen.
+
+### ADR-1 — Unify execution authority (ARCH-1, 2026-07-27)
+
+**Context.** Architecture Audit A found two parallel execution architectures in the live-prep backend. The *wired* path (`POST /api/commands/{name}` → `execution.ExecutionOrchestrator` → `broker`) enforced a fail-**open** policy: 27 of 33 commands reached broker dispatch through `PolicyResult(True, "none")`, i.e. no authorization gate. The *audited* deny-by-default policy engine (`execution_safety.evaluate()`, UI-18) was imported by nothing. The command vocabulary was declared five times, in two non-intersecting spellings (`CloseTrade` vs `close_position`), so naively wiring the safety gate would have classified every real command as unknown. This violated invariant I-7's spirit: two sources of truth for "may this command execute".
+
+**Decision.** Establish exactly one execution authority with one canonical pipeline. Nothing may reach broker dispatch without passing it.
+
+```
+Operator Command
+      ↓
+Command Contract              (command_channel — read-only operator surface)
+      ↓
+Execution Safety Policy       (execution_safety.evaluate — deny-by-default gate)
+      ↓
+Execution Orchestrator        (execution.ExecutionOrchestrator — the single authority)
+      ↓
+Broker Adapter                (broker — MockBroker active; MT5 inert)
+      ↓
+Broker
+```
+
+The orchestrator's stages are explicit and unskippable:
+
+```
+Validate → Safety → Resolve → Broker Dispatch → Broker Result → Audit
+```
+
+- **Validate** — command is known to the registry (unknown ⇒ reject) + structural pre-checks.
+- **Safety** — `execution_safety.evaluate()` is consulted for **every** command; a DENY ends the pipeline before dispatch. This is the anti-fail-open gate.
+- **Resolve** — per-command feasibility (locked deployment, already-closed trade, capability). A command with no extra rule resolves to an *explicit named* `no_additional_feasibility_constraint`, never a silent allow.
+- **Broker Dispatch / Broker Result / Audit** — effect through the mock broker; before/after captured; immutable BotEvent appended.
+
+**Single command registry.** `backend/command_registry.py` is the one authoritative catalogue. It owns command identity, canonical name, aliases, risk classification, audit category (lifecycle metadata), broker-dispatch flag and required broker capability, and the submission surface. The snake_case safety names are **aliases** of their canonical PascalCase commands (`close_position` → `CloseTrade`), so the two former vocabularies now resolve to one entry. Import-time guards reject duplicate canonical names and alias collisions.
+
+**Removed duplicate authorities** (each now has exactly one owner):
+
+| Concept | Before (duplicated) | After (single owner) |
+|---|---|---|
+| Command identity / vocabulary | `server.KNOWN_COMMANDS`, `execution.COMMAND_SPEC` keys, `broker.BROKER_COMMANDS`, `execution_safety._RISK_BY_COMMAND`, `server._COMMAND_CATEGORY` | `command_registry` (all derive from it) |
+| Risk classification | `execution_safety._RISK_BY_COMMAND` | `command_registry` (constants owned by `execution_safety`) |
+| Policy / authorization | `execution._policy` fail-open + `execution_safety` (unwired) | `execution_safety.evaluate()` — the sole gate, always consulted |
+| Broker-dispatch routing | `broker.BROKER_COMMANDS` literal | `command_registry.broker_dispatched_names()` |
+| Broker capability requirement | hard-coded in feasibility policies | `command_registry` `broker_capability` field |
+| Execution mode vocabulary | `execution_safety` modes vs `security_config.KNOWN_MODES` | (unchanged this slice; `execution_safety` owns execution mode) |
+
+**Broker isolation (unchanged).** `_ACTIVE` remains `"mock"`; MT5 stays inert (order operations are no-ops, no gateway, no socket); no transport, UI or live-trading change. The permissive `SafetyContext` that lets the fixture world keep working is built **only** while the active broker is the mock; against any non-mock broker the pipeline reverts to deny-by-default, so a real broker can never be dispatched to on the strength of the mock context.
+
+**Consequences.** Fail-open is structurally impossible: unknown commands deny, every dispatch requires a prior safety allow, and the "no additional feasibility rule" case is an explicit named outcome. When live execution is built, the only change required is to supply a *real* `SafetyContext` (armed, identified, confirmed, healthy node) for the real broker — the pipeline and registry do not change.
