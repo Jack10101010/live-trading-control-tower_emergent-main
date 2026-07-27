@@ -42,6 +42,11 @@ import command_channel
 import command_transport
 import command_registry
 import execution_safety
+import execution_context as execution_context_layer
+import execution_store as execution_store_layer
+import execution_telemetry as execution_telemetry_layer
+import order_lifecycle as order_lifecycle_layer
+import reconciliation as reconciliation_layer
 import ops_status as ops_status_layer
 import security_config
 import ops_journal as ops_journal_layer
@@ -833,6 +838,31 @@ def _run_broker_sync(append_event: bool = True) -> dict:
     if status == "ok":
         _LAST_SUCCESSFUL_SYNC_AT = now
     _SYNC_CACHE = result
+
+    # ARCH-2: delegate to the CANONICAL reconciliation authority on the same
+    # cadence (no new mutating route). The fixture-view sync above drives the
+    # existing UI panels; the canonical run compares durable tower intent state
+    # against the adapter's coherent snapshot and persists an immutable
+    # reconciliation record that feeds the execution safety gate. A store or
+    # snapshot failure is logged and skipped — the fixture sync result is
+    # unaffected, and safety fails closed via `reconciliation.safety_posture`.
+    try:
+        store = _execution_store()
+        if store is not None:
+            snap = broker_layer.get_broker().reconcile_snapshot(_broker_context({}, now))
+            if snap.ok and isinstance(snap.data, dict):
+                run = reconciliation_layer.run_reconciliation(
+                    tower_intents=store.intents_by_state(limit=1000),
+                    broker_orders=snap.data.get("orders", []),
+                    broker_positions=snap.data.get("positions", []),
+                    broker_account_identity=snap.data.get("accountIdentity"),
+                    expected_account_identity=snap.data.get("accountIdentity"),
+                    broker_snapshot_at=snap.data.get("at"), now=now,
+                )
+                reconciliation_layer.persist(store, run)
+    except Exception:
+        logger.exception("canonical reconciliation pass failed (fixture sync unaffected)")
+
     return result
 
 
@@ -1060,40 +1090,100 @@ def _execution_env() -> execution_layer.ExecutionEnv:
     )
 
 
-def _safety_context() -> execution_safety.SafetyContext:
-    """The SafetyContext the execution pipeline evaluates every command against.
+# ---------------------------------------------------------------------------
+# ARCH-2: the durable execution store (lazy, fail-closed) and the canonical
+# execution context (assembled ONCE per command at this boundary).
+# ---------------------------------------------------------------------------
 
-    ARCH-1 safety property: a PERMISSIVE context (which lets the fixture control-plane
-    keep working exactly as before) is built ONLY while the active broker is the mock.
-    The mock is a fixture — no real orders, no real account — so authorizing execution
-    against it is safe, and every command still passes through
-    `execution_safety.evaluate()` (the gate is genuinely consulted, not bypassed).
+EXECUTION_DB_PATH = ROOT_DIR / 'execution_state.db'
+_EXECUTION_STORE: execution_store_layer.ExecutionStore | None = None
+_EXECUTION_STORE_FAILED = False
 
-    The moment a NON-mock broker becomes active, this returns the deny-by-default
-    `SafetyContext()`, so `evaluate()` denies every execution-affecting command until a
-    real, audited context (armed, identified, confirmed, healthy node) is supplied by a
-    future live-execution slice. There is no configuration in which a real broker is
-    dispatched to on the strength of this mock context.
+
+def _execution_store() -> execution_store_layer.ExecutionStore | None:
+    """The single durable execution/order store. Created LAZILY on first use;
+    restart recovery runs exactly once at creation (deterministic, fail-closed —
+    see order_lifecycle.recovery_plan). Returns None when the store is
+    unavailable/corrupt, in which case the orchestrator DENIES broker-dispatched
+    commands rather than executing without durability."""
+    global _EXECUTION_STORE, _EXECUTION_STORE_FAILED
+    if _EXECUTION_STORE is not None:
+        return _EXECUTION_STORE
+    if _EXECUTION_STORE_FAILED:
+        return None
+    try:
+        store = execution_store_layer.ExecutionStore(EXECUTION_DB_PATH)
+        store.recover(now=_now_iso())
+        _EXECUTION_STORE = store
+        return store
+    except Exception:
+        logger.exception("execution store unavailable — broker-dispatched commands will be denied")
+        _EXECUTION_STORE_FAILED = True
+        return None
+
+
+def _execution_context() -> execution_context_layer.ExecutionContext:
+    """The canonical ExecutionContext, assembled ONCE at the execution boundary.
+    The safety gate and the orchestrator both consume this one assembly.
+
+    ARCH-1/ARCH-2 safety property: a PERMISSIVE context (which lets the fixture
+    control-plane keep working exactly as before) is built ONLY while the active
+    adapter is the mock. The mock is a fixture — no real orders, no real account —
+    so authorizing execution against it is safe, and every command still passes
+    through `execution_safety.evaluate()`. Against any NON-mock adapter this
+    returns fail-closed defaults (observe mode, unauthorized, unknown node), so a
+    real broker can never be dispatched to on the strength of the mock context.
+
+    Node-authoritative facts stay observed (node health here is the mock world's
+    synthetic healthy state, clearly tied to the mock adapter); the tower-side
+    authorization window is COMMAND authorization, never node arming.
     """
+    brk = broker_layer.get_broker()
+    caps = execution_context_layer.capabilities_from_mapping(
+        broker_layer.capability_dict(brk.capabilities()))
+    recon = reconciliation_layer.safety_posture(_execution_store())
+    recon_facts = execution_context_layer.ReconciliationFacts(
+        critical_unresolved=recon["criticalUnresolved"], stale=recon["stale"],
+        last_run_id=recon["lastRunId"], last_run_at=recon["lastRunAt"])
     if broker_layer.active_kind() != "mock":
-        return execution_safety.SafetyContext()          # deny-by-default
+        return execution_context_layer.ExecutionContext(
+            broker_kind=broker_layer.active_kind(),
+            broker_connection=brk.connection().state,
+            broker_capabilities=caps,
+            reconciliation=recon_facts,
+            observed_at=_now_iso(),
+        )   # fail-closed defaults: observe / unauthorized / unknown node
     now = datetime.now(timezone.utc)
-    horizon = now.timestamp() + 3600.0
-    expires = datetime.fromtimestamp(horizon, timezone.utc).isoformat().replace("+00:00", "Z")
-    return execution_safety.SafetyContext(
-        mode=execution_safety.MODE_ACTIVE,
-        arming=execution_safety.ArmingState(armed=True, armed_by="mock-fixture",
-                                            expires_at=expires),
-        node=execution_safety.NodeSafety(execution_safety.NODE_HEALTHY),
+    expires = datetime.fromtimestamp(now.timestamp() + 3600.0,
+                                     timezone.utc).isoformat().replace("+00:00", "Z")
+    return execution_context_layer.ExecutionContext(
+        source="operator",
+        execution_mode=execution_safety.MODE_ACTIVE,
         operator=execution_safety.OperatorAuthorization(operator_ref=_operator_id(),
                                                         confirmed=True),
+        command_authorization=execution_safety.ArmingState(
+            armed=True, armed_by="mock-fixture", expires_at=expires),
+        reconciliation=recon_facts,
+        node_health=execution_safety.NODE_HEALTHY,   # mock world synthetic health
+        broker_kind="mock",
+        broker_connection=brk.connection().state,
+        broker_capabilities=caps,
+        observed_at=_now_iso(),
     )
+
+
+def _safety_context() -> execution_safety.SafetyContext:
+    """The safety-gate view of the canonical execution context. Kept as a named
+    seam (and for its ARCH-1 guarantees); it derives from `_execution_context()`
+    so there is exactly ONE assembly of safety-relevant facts."""
+    return _execution_context().to_safety_context()
 
 
 _EXEC_METRICS = execution_layer.ExecutionMetrics()
 _ORCHESTRATOR = execution_layer.ExecutionOrchestrator(
     dispatch=_dispatch_command, env_factory=_execution_env, metrics=_EXEC_METRICS,
-    safety_context_factory=_safety_context,
+    safety_context_factory=_execution_context,
+    store_factory=_execution_store,
 )
 
 
@@ -1323,6 +1413,20 @@ async def health():
     node_instances = sorted(_LIVE_STATUS)
     live_node_connected = bool(node_instances)
     broker_kind = broker_layer.active_kind()
+    # ARCH-2: tradingReady is DERIVED from the canonical readiness gates, never a
+    # constant. In the mock-only world it is False because the named gates
+    # (liveAdapterActive among them) are genuinely not met.
+    try:
+        gates = execution_telemetry_layer.readiness_gates(
+            adapter_kind=broker_kind,
+            adapter_connection=broker_layer.get_broker().connection().state,
+            reconciliation=reconciliation_layer.safety_posture(_execution_store()),
+            node_healthy=live_node_connected,
+            store_available=_execution_store() is not None,
+        )
+        trading_ready = execution_telemetry_layer.trading_ready(gates)
+    except Exception:                     # a health probe must never 500 on derivation
+        trading_ready = False
     return {
         "status": "ok",
         "scope": "process",              # process liveness, not trading readiness
@@ -1330,7 +1434,7 @@ async def health():
         "backendMode": "fixture",        # this backend serves the fixture world
         "brokerKind": broker_kind,       # active broker impl; "mock" != MT5 connected
         "liveNodeConnected": live_node_connected,
-        "tradingReady": False,           # UI-0: no live path exists in this backend
+        "tradingReady": trading_ready,   # ARCH-2: derived from named gates (False in the mock world)
         "dataSources": {
             "world": "fixture",
             "broker": "mock" if broker_kind == "mock" else broker_kind,
@@ -1463,16 +1567,37 @@ async def broker_reconciliation():
     return _SYNC_CACHE
 
 
+# ARCH-2: synthetic fault injection is TEST-ONLY and DISABLED BY DEFAULT. The
+# audit found this route could permanently corrupt reconciliation truth in a
+# production process; it now 404s unless an operator explicitly enables it. The
+# flag is read per-request so tests can enable it without a restart.
+_FAULT_INJECTION_VAR = "BROKER_FAULT_INJECTION_ENABLED"
+
+
+def _fault_injection_enabled() -> bool:
+    raw = os.environ.get(_FAULT_INJECTION_VAR, "")
+    return isinstance(raw, str) and raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _fault_injection_gate() -> None:
+    if not _fault_injection_enabled():
+        raise HTTPException(status_code=404, detail={
+            "error": "disabled", "code": "fault_injection_disabled",
+            "detail": "synthetic broker fault injection is test-only and disabled by default"})
+
+
 @api_router.get("/broker/faults")
 async def broker_get_faults():
-    """Developer-only fault toggles (simulate broker divergence)."""
+    """TEST-ONLY fault toggles (simulate broker divergence). Disabled by default."""
+    _fault_injection_gate()
     return sync_layer.get_faults()
 
 
 @api_router.post("/broker/faults")
 async def broker_set_faults(request: Request):
-    """Developer-only: set/clear simulated broker faults. Perturbs the broker
-    snapshot only — the runtime stays authoritative."""
+    """TEST-ONLY: set/clear simulated broker faults. Disabled by default; perturbs
+    the broker snapshot only — the runtime stays authoritative."""
+    _fault_injection_gate()
     try:
         patch = await request.json()
     except Exception:
@@ -1480,6 +1605,40 @@ async def broker_set_faults(request: Request):
     if isinstance(patch, dict) and patch.get("clear"):
         return sync_layer.clear_faults()
     return sync_layer.set_faults(patch if isinstance(patch, dict) else {})
+
+
+@api_router.get("/execution/state")
+def execution_state():
+    """ARCH-2 — the canonical execution read model (derived, read-only).
+
+    Everything here derives from durable/canonical sources: the execution store,
+    the active adapter, and the persisted reconciliation posture. The mock adapter
+    is explicitly labelled; readiness is derived from named gates (never a
+    constant); stale/absent/degraded stay distinct. Machine-readable failure code
+    on error; never a raw 500 body."""
+    try:
+        store = _execution_store()
+        brk = broker_layer.get_broker()
+        identity = brk.account_identity()
+        content = execution_telemetry_layer.build(
+            store=store,
+            adapter_kind=broker_layer.active_kind(),
+            adapter_connection=brk.connection().state,
+            adapter_provenance="mock-fixture" if broker_layer.active_kind() == "mock" else "live-capable",
+            account_identity=identity.data if identity.ok else None,
+            execution_mode=_execution_context().execution_mode,
+            reconciliation_posture=reconciliation_layer.safety_posture(store),
+            node_healthy=bool(_LIVE_STATUS),
+            now=_now_iso(),
+        )
+        return JSONResponse(content=content, headers={"Cache-Control": "no-store"})
+    except Exception:
+        logger.exception("execution state read model failed")
+        return JSONResponse(status_code=500,
+                            content={"error": "unavailable",
+                                     "code": "execution_state_unavailable",
+                                     "detail": None},
+                            headers={"Cache-Control": "no-store"})
 
 
 @api_router.get("/execution/health")
@@ -1911,7 +2070,9 @@ async def run_command(name: str, request: Request) -> dict[str, Any]:
     # (broker / runtime control-plane) → runtime overlay update. The orchestrator
     # owns execution policy; dispatch owns the mock execution.
     dry_run = bool(payload.get("dryRun")) or _DRY_RUN_MODE
-    result = _ORCHESTRATOR.execute(name, payload, now, dry_run)
+    result = _ORCHESTRATOR.execute(name, payload, now, dry_run,
+                                   command_id=command_id,
+                                   idempotency_key=request.headers.get("Idempotency-Key"))
     if result.status in ("rejected", "denied"):
         raise HTTPException(status_code=422, detail={
             "status": result.status, "stage": result.stage, "reason": result.reason,

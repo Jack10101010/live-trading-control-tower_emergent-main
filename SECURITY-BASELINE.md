@@ -14,12 +14,15 @@
 > | Outbound REST transport | **Yes** (UI-13) | **Disabled** | `CONTROL_TOWER_TRANSPORT_ENABLED` + `NODE_TRANSPORT=https` + endpoint + token | `rest_transport.py`, selected via `transport.default_transport()` |
 > | Read-only node integration | **Yes** (UI-14) | Disabled with transport | — | `node_client.py` |
 > | Read-only command channel | **Yes** (UI-15/16/17) | **Disabled** | follows the transport | `command_channel.py`, `command_transport.py` |
-> | Execution safety policy | **Contract only** (UI-18) | **Wired to nothing** | — | `execution_safety.py` |
+> | Execution safety policy | **Yes** (UI-18; wired by ARCH-1) | Deny-by-default; every pipeline command consults `evaluate()` | — | `execution_safety.py` |
+> | Broker adapter boundary | **Yes** (ARCH-2) | Mock active; MT5 inert; lazy fail-closed factory | adapter kind change = audited code change | `broker_adapter.py` |
+> | Durable order lifecycle + reconciliation | **Yes** (ARCH-2) | Mock-only; broker dispatch requires durability | — | `execution_store.py`, `order_lifecycle.py`, `reconciliation.py` |
+> | Broker fault injection | Test-only | **Disabled** (404) | `BROKER_FAULT_INJECTION_ENABLED` | `server.py` |
 > | TLS termination / pinned CA | **No** | — | — | — |
 > | mTLS | **No** (`mtls` is vocabulary only) | — | — | — |
 > | VPN / private network path | **No** | — | — | — |
 > | Secrets management / rotation | **No** (env vars only) | — | — | — |
-> | Mutating / execution commands | **No** | — | — | — |
+> | Live/mutating broker execution | **No** (mock only; no real order path) | — | — | — |
 >
 > **Setting environment variables CAN cause this build to open authenticated
 > outbound HTTP.** Specifically `CONTROL_TOWER_TRANSPORT_ENABLED=1` together with
@@ -1099,3 +1102,36 @@ No broker integration, no order placement, no pause/resume buttons, no arm/disar
 no live node mutation, no REST execution endpoints, no credential handling, no
 persistence, no transport, no network. No trade or node mutation can occur — the
 module decides, it never acts, and it is wired into nothing in this slice.
+
+# Pre-Live Execution Core (ARCH-2) — mock-only, adapter assumptions updated
+
+ARCH-2 established the complete pre-live execution core. Security-relevant changes:
+
+- **Adapter construction is now lazy and centralized** (`broker_adapter.get_adapter`
+  — the ONLY constructor path, fail-closed on unknown kinds). Importing the backend
+  constructs no adapter and probes no MT5 gateway; the MT5 adapter loads its gateway
+  lazily on first use and answers every execution operation with an explicit inert
+  `unavailable` result. The active adapter remains the mock; activating any other
+  adapter kind remains a deliberate, audited change, not a config flip.
+- **Broker-dispatched commands now require durability**: the execution pipeline
+  denies dispatch (`execution_store_unavailable`) unless the durable order-lifecycle
+  store (`backend/execution_state.db`, gitignored, schema-versioned, fail-closed on
+  corruption) can record it. Intent metadata is redacted BEFORE persistence — no
+  secret reaches disk.
+- **Synthetic broker fault injection is now disabled by default.** `/api/broker/faults`
+  (GET and POST) answers 404 `fault_injection_disabled` unless
+  `BROKER_FAULT_INJECTION_ENABLED` is explicitly truthy. It is test-only; enabling it
+  in a production process would let one request corrupt reconciliation truth.
+- **Reconciliation feeds execution safety**: unresolved critical discrepancies deny
+  new risk-increasing execution; risk-reducing commands (close/cancel/de-risk) and
+  emergency stops stay available so an operator can always reduce risk. Account
+  identity mismatch is a hard reconciliation failure; stale snapshots can never
+  reconcile clean.
+- **`tradingReady` is derived, not constant**: `/api/health` and
+  `GET /api/execution/state` (new, read-only, `no-store`, auth-protected) derive
+  readiness from named gates; in the mock-only world every gate answer is honest and
+  readiness is False because a live adapter genuinely does not exist.
+
+**ARCH-2 does not enable live execution.** No MT5 connection, no order submission, no
+live market data. The approved scope in *Current state* (loopback/local testing only;
+remote activation NOT approved) is unchanged.

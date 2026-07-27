@@ -61,6 +61,10 @@ class CommandSpec:
     category: str | None = None          # audit lifecycle category (fixture surface)
     broker_dispatched: bool = False      # does its effect route through the Broker?
     broker_capability: str | None = None  # BrokerCapability field required, if any
+    # ARCH-2 lifecycle metadata:
+    risk_reducing: bool = False          # closes/cancels/de-risks — allowed under
+                                         # unresolved critical reconciliation
+    intent_kind: str | None = None       # order_lifecycle KIND_* for broker commands
 
 
 # ── the catalogue ─────────────────────────────────────────────────────────────
@@ -97,7 +101,7 @@ _FIXTURE: list[CommandSpec] = [
     CommandSpec("DeployPackage", RISK_EXECUTION_AFFECTING, SURFACE_FIXTURE, category="policy"),
     CommandSpec("RollbackPackage", RISK_EXECUTION_AFFECTING, SURFACE_FIXTURE, category="policy"),
     CommandSpec("PauseDeployment", RISK_EXECUTION_AFFECTING, SURFACE_FIXTURE,
-                category="system", aliases=frozenset({"pause_submission"})),
+                category="system", aliases=frozenset({"pause_submission"}), risk_reducing=True),
     CommandSpec("ResumeDeployment", RISK_EXECUTION_AFFECTING, SURFACE_FIXTURE,
                 category="system", aliases=frozenset({"resume_submission"})),
     CommandSpec("KillDeployment", RISK_EMERGENCY, SURFACE_FIXTURE, category="system"),
@@ -108,27 +112,29 @@ _FIXTURE: list[CommandSpec] = [
     CommandSpec("UnlockDeployment", RISK_OPERATIONAL, SURFACE_FIXTURE, category="system"),
     # Order management — broker-dispatched
     CommandSpec("CancelOrder", RISK_EXECUTION_AFFECTING, SURFACE_FIXTURE,
-                category="order", broker_dispatched=True, aliases=frozenset({"cancel_order"})),
+                category="order", broker_dispatched=True, aliases=frozenset({"cancel_order"}),
+                risk_reducing=True, intent_kind="cancel"),
     CommandSpec("ReduceOrderRisk", RISK_EXECUTION_AFFECTING, SURFACE_FIXTURE,
                 category="order", broker_dispatched=True, broker_capability="supportsModify",
-                aliases=frozenset({"modify_order"})),
+                aliases=frozenset({"modify_order"}), risk_reducing=True, intent_kind="modify"),
     CommandSpec("ConvertOrderToGhost", RISK_EXECUTION_AFFECTING, SURFACE_FIXTURE,
-                category="order", broker_dispatched=True),
+                category="order", broker_dispatched=True, risk_reducing=True, intent_kind="cancel"),
     # Trade management — broker-dispatched
     CommandSpec("CloseTrade", RISK_EXECUTION_AFFECTING, SURFACE_FIXTURE,
-                category="trade", broker_dispatched=True, aliases=frozenset({"close_position"})),
+                category="trade", broker_dispatched=True, aliases=frozenset({"close_position"}),
+                risk_reducing=True, intent_kind="close"),
     CommandSpec("SLToBE", RISK_EXECUTION_AFFECTING, SURFACE_FIXTURE,
-                category="trade", broker_dispatched=True),
+                category="trade", broker_dispatched=True, risk_reducing=True, intent_kind="modify"),
     CommandSpec("MoveTradeSL", RISK_EXECUTION_AFFECTING, SURFACE_FIXTURE,
-                category="trade", broker_dispatched=True),
+                category="trade", broker_dispatched=True, intent_kind="modify"),
     CommandSpec("MoveTradeTP", RISK_EXECUTION_AFFECTING, SURFACE_FIXTURE,
-                category="trade", broker_dispatched=True),
+                category="trade", broker_dispatched=True, intent_kind="modify"),
     CommandSpec("PartialClose", RISK_EXECUTION_AFFECTING, SURFACE_FIXTURE,
-                category="trade", broker_dispatched=True),
+                category="trade", broker_dispatched=True, risk_reducing=True, intent_kind="close"),
     CommandSpec("ReduceTradeRisk", RISK_EXECUTION_AFFECTING, SURFACE_FIXTURE,
-                category="trade", broker_dispatched=True),
+                category="trade", broker_dispatched=True, risk_reducing=True, intent_kind="modify"),
     CommandSpec("SetAutoManagement", RISK_EXECUTION_AFFECTING, SURFACE_FIXTURE,
-                category="trade", broker_dispatched=True),
+                category="trade", broker_dispatched=True, intent_kind="modify"),
     # Deployment manifest lifecycle
     CommandSpec("CloneManifest", RISK_OPERATIONAL, SURFACE_FIXTURE, category="system"),
     CommandSpec("ExportManifest", RISK_OPERATIONAL, SURFACE_FIXTURE, category="system"),
@@ -208,6 +214,20 @@ def requires_capability(name) -> str | None:
 def is_broker_dispatched(name) -> bool:
     spec = spec_of(name)
     return bool(spec and spec.broker_dispatched)
+
+
+def is_risk_reducing(name) -> bool:
+    """ARCH-2: does this command reduce risk (close/cancel/de-risk)? Risk-reducing
+    commands stay available under unresolved critical reconciliation so an
+    operator can always de-risk; unknown commands answer False (fail closed)."""
+    spec = spec_of(name)
+    return bool(spec and spec.risk_reducing)
+
+
+def intent_kind_of(name) -> str | None:
+    """ARCH-2: the order-lifecycle intent kind of a broker-dispatched command."""
+    spec = spec_of(name)
+    return spec.intent_kind if spec else None
 
 
 def _names_for_surface(surface: str) -> frozenset:

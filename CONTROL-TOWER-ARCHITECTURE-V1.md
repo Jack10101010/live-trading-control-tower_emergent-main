@@ -412,3 +412,55 @@ Validate → Safety → Resolve → Broker Dispatch → Broker Result → Audit
 **Broker isolation (unchanged).** `_ACTIVE` remains `"mock"`; MT5 stays inert (order operations are no-ops, no gateway, no socket); no transport, UI or live-trading change. The permissive `SafetyContext` that lets the fixture world keep working is built **only** while the active broker is the mock; against any non-mock broker the pipeline reverts to deny-by-default, so a real broker can never be dispatched to on the strength of the mock context.
 
 **Consequences.** Fail-open is structurally impossible: unknown commands deny, every dispatch requires a prior safety allow, and the "no additional feasibility rule" case is an explicit named outcome. When live execution is built, the only change required is to supply a *real* `SafetyContext` (armed, identified, confirmed, healthy node) for the real broker — the pipeline and registry do not change.
+
+### ADR-2 — Establish the pre-live execution core (ARCH-2, 2026-07-27)
+
+**Context.** ARCH-1 unified the execution authority but left the pre-live core incomplete: adapters were constructed at import (the MT5 adapter probed for a live gateway on `import broker`), execution lifecycle state existed only in process memory, there was no order-intent model, no durable order lifecycle, no canonical reconciliation over execution state, and readiness fields were constants. Audit A additionally flagged the unauthenticated fault-injection route as able to permanently corrupt reconciliation truth.
+
+**Decision.** Build the complete mock-only execution core that Live-1 will activate rather than construct:
+
+```
+Operator (or future strategy) intent
+        ↓
+command_registry            (canonical identity, risk class, intent kind, risk_reducing)
+        ↓
+execution_safety.evaluate   (deny-by-default; + reconciliation gate)
+        ↓
+execution_context           (ONE immutable context assembled at the boundary)
+        ↓
+execution.ExecutionOrchestrator
+        ↓
+broker_adapter.BrokerAdapter (canonical contract; lazy, centralized, fail-closed factory)
+        ↓
+MockBroker (active) / MT5Adapter (inert)
+        ↓
+BrokerResult                 (canonical envelope; inert ops answer `unavailable`)
+        ↓
+order_lifecycle + execution_store   (durable intents + append-only transitions)
+        ↓
+reconciliation               (canonical authority; discrepancies feed safety)
+        ↓
+execution_telemetry + BotEvent audit (derived read model; /api/execution/state)
+```
+
+**Ownership after ARCH-2 (single writable owner per fact):**
+
+| Fact | Owner |
+|---|---|
+| Adapter contract, capability model, connection-state vocabulary, result/error envelope | `broker_adapter.py` |
+| Adapter construction + selection (lazy, cached, fail-closed) | `broker_adapter.get_adapter` |
+| Execution context assembly | `server._execution_context` (one assembly; safety + orchestration consume it) |
+| Order intent model + `intent_`/`recon_` identity | `order_lifecycle.py` |
+| Lifecycle states + allowed transitions | `order_lifecycle.py` (explicit table; terminal protection; evidence rules) |
+| Durable lifecycle + reconciliation records | `execution_store.py` (`backend/execution_state.db`, schema v1, append-only transitions, fail-closed) |
+| Reconciliation classification + safety posture | `reconciliation.py` (`broker_sync` remains the fixture-VIEW sync and delegates canonical runs) |
+| Execution read model + readiness gates | `execution_telemetry.py` (derived only; `tradingReady` is a gate conjunction, never a constant) |
+
+**Key semantics.**
+- *Arming ambiguity resolved:* the node stays authoritative for live arming and broker/account safety (I-7); the tower-side window is named **command authorization** (`ExecutionContext.command_authorization`) and is never populated from node telemetry.
+- *Durability gate:* a broker-dispatched command is denied (`execution_store_unavailable`) immediately before dispatch if the durable lifecycle cannot record it. The store therefore contains exactly the authorized intents; safety/feasibility denials are refused earlier and never dispatch. An audit-append failure after dispatch surfaces loudly while the durable lifecycle already holds the evidence — no silent mutation.
+- *Restart recovery:* deterministic and fail-closed — pre-dispatch intents → `failed(restart_before_dispatch)`; possibly-dispatched intents → `unknown` → `reconciliation_required`. Completion is never fabricated; `unknown` resolves only through reconciliation with evidence.
+- *Reconciliation feeds safety:* unresolved CRITICAL discrepancies deny new risk-increasing execution (`reconciliation_unresolved`); risk-reducing commands (close/cancel/de-risk, flagged in the registry) and emergency stops stay available so an operator can always de-risk. Account-identity mismatch is a hard failure; stale input can never reconcile clean.
+- *Fault injection:* `/api/broker/faults` is test-only and disabled by default (`BROKER_FAULT_INJECTION_ENABLED`).
+
+**Boundary: ARCH-2 does NOT enable live execution.** The mock is the only constructible-active adapter; MT5 is inert (lazy gateway, no order operations, no sockets — proven by subprocess import tests); no live market data, no strategy behaviour, no frontend controls were added. **Live-1 may begin only after the ARCH-2 acceptance criteria pass**, and will consist of supplying real context facts (node-derived health, real command authorization, real account identity) and a real adapter behind the SAME boundary — not of changing the pipeline.

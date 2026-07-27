@@ -12,107 +12,32 @@ server internals and no MT5-specific structure leaks into the runtime.
 """
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, asdict
 from typing import Any, Callable
 
-
-# ---------------------------------------------------------------------------
-# Connection lifecycle
-# ---------------------------------------------------------------------------
-
-class ConnectionState:
-    DISCONNECTED = "Disconnected"
-    CONNECTING = "Connecting"
-    CONNECTED = "Connected"
-    DEGRADED = "Degraded"
-    RECONNECTING = "Reconnecting"
-    OFFLINE = "Offline"
-
-
-# ---------------------------------------------------------------------------
-# Canonical broker models — runtime-facing, broker-agnostic. No MT5 structures.
-# ---------------------------------------------------------------------------
-
-@dataclass
-class BrokerCapability:
-    supportsMarketExecution: bool = False
-    supportsPendingOrders: bool = False
-    supportsModify: bool = False
-    supportsPartialClose: bool = False
-    supportsHedging: bool = False
-    supportsNetting: bool = False
-    supportsReplay: bool = False
-
-
-@dataclass
-class BrokerConnection:
-    state: str = ConnectionState.DISCONNECTED
-    since: str | None = None
-    detail: str = ""
-
-
-@dataclass
-class BrokerHealth:
-    brokerId: str
-    kind: str
-    connection: str
-    latencyMs: int | None = None
-    lastSyncAt: str | None = None
-    detail: str = ""
-
-
-@dataclass
-class BrokerSymbol:
-    canonical: str
-    brokerSymbol: str
-
-
-@dataclass
-class BrokerAccount:
-    accountId: str
-    brokerId: str
-    type: str
-    baseCurrency: str
-    balance: float | None = None
-    equity: float | None = None
-
-
-@dataclass
-class BrokerOrder:
-    orderId: str
-    canonicalSymbol: str
-    brokerSymbol: str
-    side: str
-    size: float | None
-    state: str
-    deploymentId: str | None = None
-
-
-@dataclass
-class BrokerPosition:
-    positionId: str
-    canonicalSymbol: str
-    brokerSymbol: str
-    side: str
-    size: float | None
-    entry: float | None
-    sl: float | None
-    tp: float | None
-    state: str
-    deploymentId: str | None = None
-
-
-@dataclass
-class BrokerError:
-    code: str
-    message: str
-    recoverable: bool = True
-
-
-# Sentinels for unsupported operations (MT5 skeleton returns these).
-UNSUPPORTED = BrokerError(code="unsupported", message="Operation not supported by this broker", recoverable=False)
-NOT_IMPLEMENTED = BrokerError(code="not_implemented", message="Adapter is a skeleton — no implementation", recoverable=False)
+# ARCH-2: the canonical broker adapter contract lives in `broker_adapter.py` — the
+# single owner of the adapter interface, capability model, connection-state model,
+# result envelope and error model. This module holds the ADAPTER IMPLEMENTATIONS
+# (MockBroker, the inert MT5Adapter) and re-exports the contract names so existing
+# importers keep working unchanged.
+from broker_adapter import (  # noqa: F401 — re-exported contract surface
+    NOT_IMPLEMENTED,
+    UNSUPPORTED,
+    BrokerAccount,
+    BrokerAdapter,
+    BrokerCapability,
+    BrokerConnection,
+    BrokerContext,
+    BrokerError,
+    BrokerHealth,
+    BrokerOrder,
+    BrokerPosition,
+    BrokerResult,
+    BrokerSymbol,
+    ConnectionState,
+    UnknownAdapterError,
+)
+import broker_adapter as _adapter_boundary
 
 
 # ---------------------------------------------------------------------------
@@ -138,80 +63,12 @@ class SymbolTranslator:
 
 
 # ---------------------------------------------------------------------------
-# Runtime → broker injection: the primitives the broker needs to execute against
-# the runtime overlay, provided by the runtime so the broker stays decoupled.
+# Broker interface — the single execution boundary. ARCH-2: the interface is the
+# canonical `BrokerAdapter` contract in `broker_adapter.py`; `Broker` is kept as a
+# back-compat alias so every existing import and isinstance check keeps working.
 # ---------------------------------------------------------------------------
 
-@dataclass
-class BrokerContext:
-    now: str
-    reason: str | None
-    payload: dict
-    operator_id: str
-    trade_current: Callable[[str], dict | None]
-    trade_by_order_id: Callable[[str], dict | None]
-    append_trade_management: Callable[..., None]
-    mgmt_entry: Callable[..., dict]
-    close_trade: Callable[[str, str, str | None], tuple]
-    snake_upper: Callable[[str], str]
-    live_trades: Callable[[], list]
-    accounts: Callable[[], list]
-    brokers: Callable[[], list]
-
-
-# ---------------------------------------------------------------------------
-# Broker interface — the single execution boundary.
-# ---------------------------------------------------------------------------
-
-class Broker(ABC):
-    kind: str = "broker"
-    broker_id: str = "brk_unknown"
-
-    @abstractmethod
-    def connect(self) -> BrokerConnection: ...
-
-    @abstractmethod
-    def disconnect(self) -> BrokerConnection: ...
-
-    @abstractmethod
-    def connection(self) -> BrokerConnection: ...
-
-    @abstractmethod
-    def health(self) -> BrokerHealth: ...
-
-    @abstractmethod
-    def capabilities(self) -> BrokerCapability: ...
-
-    @abstractmethod
-    def accounts(self, ctx: BrokerContext) -> list: ...
-
-    @abstractmethod
-    def positions(self, ctx: BrokerContext) -> list: ...
-
-    @abstractmethod
-    def orders(self, ctx: BrokerContext) -> list: ...
-
-    @abstractmethod
-    def submit_command(self, name: str, ctx: BrokerContext) -> tuple[dict | None, dict | None]:
-        """Execute a trade/order command. Returns (before, after) for the audit event."""
-
-    @abstractmethod
-    def cancel_order(self, order_id: str, ctx: BrokerContext) -> tuple[dict | None, dict | None]: ...
-
-    @abstractmethod
-    def modify_order(self, order_id: str, changes: dict, ctx: BrokerContext) -> tuple[dict | None, dict | None]: ...
-
-    @abstractmethod
-    def flatten(self, deployment_id: str, ctx: BrokerContext) -> list[str]: ...
-
-    @abstractmethod
-    def sync(self, ctx: BrokerContext) -> dict: ...
-
-    def translate_symbol(self, canonical: str) -> str:
-        return canonical
-
-    def to_canonical(self, broker_symbol: str) -> str:
-        return broker_symbol
+Broker = BrokerAdapter
 
 
 # ---------------------------------------------------------------------------
@@ -261,6 +118,26 @@ class MockBroker(Broker):
             supportsMarketExecution=True, supportsPendingOrders=True, supportsModify=True,
             supportsPartialClose=True, supportsHedging=True, supportsNetting=True, supportsReplay=True,
         )
+
+    def account_identity(self) -> BrokerResult:
+        # The mock's identity is fixed and explicitly labelled as the mock's own —
+        # never confusable with a real account fingerprint.
+        return BrokerResult(ok=True, code="ok", detail="mock fixture account",
+                            data={"accountId": "acc_mock", "brokerId": self.broker_id,
+                                  "provenance": "mock-fixture"})
+
+    def reconcile_snapshot(self, ctx: BrokerContext) -> BrokerResult:
+        """One coherent snapshot for the canonical reconciliation authority."""
+        return BrokerResult(ok=True, code="ok", detail="mock fixture snapshot",
+                            data={
+                                "positions": self.positions(ctx),
+                                "orders": self.orders(ctx),
+                                "accounts": self.accounts(ctx),
+                                "connection": self._conn.state,
+                                "accountIdentity": "acc_mock",
+                                "at": ctx.now,
+                                "provenance": "mock-fixture",
+                            })
 
     def translate_symbol(self, canonical: str) -> str:
         return self._symbols.to_broker(canonical)
@@ -469,8 +346,20 @@ class MT5Adapter(Broker):
     broker_id = "brk_mt5_live"
 
     def __init__(self):
+        # ARCH-2: construction performs NO gateway work. The gateway is loaded
+        # lazily on first use (and on this host resolves to None), so constructing
+        # the adapter — which the lazy factory only does on demand anyway — can
+        # never touch a terminal or a socket.
         self._symbols = SymbolTranslator({"EURUSD": "EURUSD.r", "GBPUSD": "GBPUSD.r", "XAUUSD": "XAUUSD.a"})
-        self._gateway = _load_live_gateway()
+        self._gateway_cache: Any = None
+        self._gateway_loaded = False
+
+    @property
+    def _gateway(self):
+        if not self._gateway_loaded:
+            self._gateway_cache = _load_live_gateway()
+            self._gateway_loaded = True
+        return self._gateway_cache
 
     def _state(self) -> tuple[str, str]:
         if self._gateway is None:
@@ -575,16 +464,22 @@ class MT5Adapter(Broker):
 # selectable by config later without touching runtime call-sites.
 # ---------------------------------------------------------------------------
 
-_REGISTRY: dict[str, Broker] = {"mock": MockBroker(), "mt5": MT5Adapter()}
-_ACTIVE = "mock"  # authoritative: the Control Tower runs entirely against MockBroker
+# ARCH-2: adapter selection and construction are CENTRALIZED in
+# `broker_adapter.get_adapter` — lazy, cached, fail-closed on unknown kinds. The
+# import-time `_REGISTRY = {"mock": MockBroker(), "mt5": MT5Adapter()}` is gone:
+# importing this module constructs no adapter and probes no gateway. `_ACTIVE`
+# remains the authoritative active-kind constant (delegating to the boundary) so
+# existing assertions and call sites keep working.
+_ACTIVE = _adapter_boundary.ACTIVE_KIND  # "mock" — the Control Tower runs entirely against MockBroker
 
 
 def get_broker(kind: str | None = None) -> Broker:
-    return _REGISTRY[kind or _ACTIVE]
+    """Back-compat entry point. Delegates to the single centralized factory."""
+    return _adapter_boundary.get_adapter(kind or _ACTIVE)
 
 
 def active_kind() -> str:
-    return _ACTIVE
+    return _adapter_boundary.active_kind()
 
 
 def capability_dict(cap: BrokerCapability) -> dict:

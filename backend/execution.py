@@ -23,12 +23,19 @@ from typing import Any, Callable
 
 import command_registry as registry
 import execution_safety as safety
+from broker_adapter import ConnectionState
+import order_lifecycle as lifecycle
+from execution_store import StoreError
 
 
 # ---------------------------------------------------------------------------
-# Pipeline stages (ARCH-1) — the canonical, explicit execution pipeline:
-#   Validate -> Safety -> Resolve -> Broker Dispatch -> Broker Result -> Audit
-# No stage may be skipped and no transition is implicit.
+# Pipeline stages (ARCH-1, extended by ARCH-2) — the canonical, explicit pipeline:
+#   Validate -> Safety -> Resolve -> Broker Dispatch -> Broker Result
+#     -> Lifecycle Persistence -> Audit
+# No stage may be skipped and no transition is implicit. For broker-dispatched
+# commands the lifecycle stage is DURABLE (the execution store); a broker result
+# cannot bypass it — if the store is unavailable the command is denied BEFORE
+# dispatch, never executed without durability.
 # ---------------------------------------------------------------------------
 
 STAGE_RECEIVED = "received"
@@ -37,6 +44,7 @@ STAGE_SAFETY = "safety"            # Safety:   execution_safety.evaluate() autho
 STAGE_RESOLVED = "resolved"        # Resolve:  per-command feasibility policy
 STAGE_BROKER_DISPATCH = "broker_dispatch"
 STAGE_BROKER_RESULT = "broker_result"
+STAGE_LIFECYCLE = "lifecycle_persistence"  # ARCH-2: durable order-lifecycle record
 STAGE_RUNTIME_UPDATE = "runtime_update"
 STAGE_AUDIT_EVENT = "audit_event"
 STAGE_COMPLETED = "completed"
@@ -109,7 +117,7 @@ def v_order_exists(payload: dict, env: ExecutionEnv) -> ValidationResult:
 
 
 def v_broker_connected(payload: dict, env: ExecutionEnv) -> ValidationResult:
-    if env.broker_connection() == "Connected":
+    if env.broker_connection() == ConnectionState.CONNECTED:   # canonical constant, not a literal
         return ValidationResult(True)
     return ValidationResult(False, "broker_disconnected", "broker is not connected")
 
@@ -313,14 +321,24 @@ class ExecutionOrchestrator:
 
     def __init__(self, *, dispatch: Callable[[str, dict, str, bool], tuple],
                  env_factory: Callable[[], ExecutionEnv], metrics: ExecutionMetrics,
-                 safety_context_factory: Callable[[], safety.SafetyContext]):
+                 safety_context_factory: Callable[[], Any],
+                 store_factory: Callable[[], Any] | None = None):
         # dispatch(name, payload, now, dry_run) -> (before, after). The runtime
         # supplies it; the orchestrator neither knows nor cares whether it routes
         # to the broker or the runtime control-plane.
+        #
+        # safety_context_factory may return either the canonical ExecutionContext
+        # (ARCH-2 — assembled once, consumed by safety AND orchestration) or a bare
+        # SafetyContext (unit-test harnesses).
+        #
+        # store_factory returns the durable ExecutionStore (or None when
+        # unavailable). ARCH-2: broker-dispatched commands REQUIRE the store — no
+        # broker dispatch may occur that the durable lifecycle cannot record.
         self._dispatch = dispatch
         self._env_factory = env_factory
         self.metrics = metrics
         self._safety_context_factory = safety_context_factory
+        self._store_factory = store_factory
 
     # ── Validate ───────────────────────────────────────────────────────────────
     def _validate(self, name, payload, env) -> ValidationResult:
@@ -336,8 +354,36 @@ class ExecutionOrchestrator:
     # ── Safety (the authorization gate — always consulted) ───────────────────────
     def _safety(self, name, now: str) -> "safety.SafetyDecision":
         ctx = self._safety_context_factory()
+        # ARCH-2: the canonical ExecutionContext is assembled ONCE at the boundary;
+        # the safety gate consumes a view derived from that same context. A bare
+        # SafetyContext is accepted for unit-test harnesses.
+        if hasattr(ctx, "to_safety_context"):
+            ctx = ctx.to_safety_context()
         request = safety.CommandRequest(command_type=name)
         return safety.evaluate(request, ctx, now=_parse_now(now))
+
+    # ── Lifecycle persistence (ARCH-2, broker-dispatched commands only) ──────────
+    def _begin_intent(self, store, name: str, payload: dict, now: str,
+                      command_id: str | None, idempotency_key: str | None):
+        """Create + persist the durable OrderIntent for a broker-dispatched
+        command, through `created -> validated`. Raises on any store failure."""
+        intent = lifecycle.OrderIntent(
+            intent_id=lifecycle.new_intent_id(),
+            command_name=name,
+            kind=registry.intent_kind_of(name) or lifecycle.KIND_MODIFY,
+            command_id=command_id,
+            correlation_id=command_id,     # lineage: the command groups the records
+            idempotency_key=idempotency_key,
+            deployment_id=payload.get("deploymentId"),
+            quantity=payload.get("size"),
+            source="operator",
+            created_at=now,
+            metadata={"payload": dict(payload)},
+        )
+        store.create_intent(intent, now=now)
+        store.record_transition(intent.intent_id, lifecycle.VALIDATED, at=now,
+                                reason="validation_passed")
+        return intent
 
     # ── Resolve (per-command feasibility) ────────────────────────────────────────
     def _resolve(self, name, payload, env) -> PolicyResult:
@@ -349,10 +395,17 @@ class ExecutionOrchestrator:
             return PolicyResult(True, _NO_FEASIBILITY_CONSTRAINT)
         return policy.evaluate(payload, env)
 
-    def execute(self, name: str, payload: dict, now: str, dry_run: bool = False) -> ExecutionResult:
+    def execute(self, name: str, payload: dict, now: str, dry_run: bool = False,
+                *, command_id: str | None = None,
+                idempotency_key: str | None = None) -> ExecutionResult:
         stages: list = [{"stage": STAGE_RECEIVED, "ok": True}]
         timeline: dict = {}
         env = self._env_factory()
+
+        # ARCH-2: broker-dispatched commands carry a durable order-intent lifecycle.
+        broker_dispatched = registry.is_broker_dispatched(name)
+        store = None
+        intent = None
 
         # 1) Validate
         t = time.perf_counter()
@@ -389,12 +442,60 @@ class ExecutionOrchestrator:
                                    dryRun=dry_run, stage=STAGE_RESOLVED, reason=pol.reason,
                                    code=pol.policy, safety=safety_view)
 
-        # 4) Broker Dispatch  5) Broker Result  6) Audit
+        # 3b) ARCH-2 durability gate — immediately before dispatch: a
+        #     broker-dispatched command whose lifecycle cannot be durably recorded
+        #     is DENIED here, so no broker dispatch can ever occur that the durable
+        #     store did not first record. (Dry-run commands execute no effect and
+        #     persist no lifecycle.) The intent lifecycle therefore contains
+        #     exactly the commands that were authorized; safety/feasibility
+        #     denials are refused above and never reach the store.
+        if broker_dispatched and not dry_run:
+            store = self._store_factory() if self._store_factory else None
+            if store is not None:
+                try:
+                    intent = self._begin_intent(store, name, payload, now,
+                                                command_id, idempotency_key)
+                except (StoreError, lifecycle.LifecycleError, ValueError) as exc:
+                    store, intent = None, None
+                    denial_detail = type(exc).__name__
+            if store is None or intent is None:
+                self.metrics.policy_failures += 1
+                stages.append({"stage": STAGE_LIFECYCLE, "ok": False,
+                               "detail": locals().get("denial_detail", "execution store unavailable")})
+                return ExecutionResult(status="denied", stages=stages, timeline=timeline,
+                                       dryRun=dry_run, stage=STAGE_LIFECYCLE,
+                                       reason="execution_store_unavailable",
+                                       code="execution_store_unavailable", safety=safety_view)
+
+        # 4) Broker Dispatch  5) Broker Result  6) Lifecycle Persistence  7) Audit
+        if intent is not None:
+            store.record_transition(intent.intent_id, lifecycle.READY, at=now,
+                                    reason="authorized_and_feasible")
+            pending = lifecycle.PENDING_STATE_BY_KIND[intent.kind]
+            store.record_transition(intent.intent_id, pending, at=now,
+                                    reason="dispatching_to_adapter")
         stages.append({"stage": STAGE_BROKER_DISPATCH, "ok": True, "dryRun": dry_run})
         t = time.perf_counter()
         before, after = self._dispatch(name, payload, now, dry_run)
         timeline["brokerMs"] = round((time.perf_counter() - t) * 1000, 3)
         stages.append({"stage": STAGE_BROKER_RESULT, "ok": True})
+        if intent is not None:
+            # The mock adapter completes synchronously: the confirmed state per
+            # intent kind, with the adapter result as evidence. A (None, None)
+            # result means the effect found nothing to act on -> failed, honestly.
+            if before is None and after is None:
+                store.record_transition(intent.intent_id, lifecycle.FAILED, at=now,
+                                        reason="no_effect",
+                                        evidence="adapter reported no before/after state")
+                lifecycle_ok = False
+            else:
+                confirmed = lifecycle.CONFIRMED_STATE_BY_KIND[intent.kind]
+                store.record_transition(intent.intent_id, confirmed, at=now,
+                                        reason="mock_adapter_confirmed",
+                                        evidence="synchronous mock broker result")
+                lifecycle_ok = True
+            stages.append({"stage": STAGE_LIFECYCLE, "ok": lifecycle_ok,
+                           "intentId": intent.intent_id})
         stages.append({"stage": STAGE_RUNTIME_UPDATE, "ok": True, "persisted": not dry_run})
         stages.append({"stage": STAGE_AUDIT_EVENT, "ok": True})
         stages.append({"stage": STAGE_COMPLETED, "ok": True})

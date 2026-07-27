@@ -103,6 +103,9 @@ backend/ops_notifier_outbox.json
 # Runtime state overlay (mutable, layered over the fixture, Phase 4 Step 3)
 backend/runtime.db
 
+# ARCH-2 durable execution/order lifecycle store (append-only transitions + reconciliation)
+backend/execution_state.db
+
 # ── M3 live-slice additions ──────────────────────────────────────────────────
 # Golden archive candle mirror: 261MB (> GitHub's 100MB hard limit). It is a
 # byte-identical, hash-verified copy of the Lux dataset

@@ -97,6 +97,7 @@ DENY_CONFIRMATION_REQUIRED = "confirmation_required"
 DENY_DISARMED = "system_disarmed"
 DENY_ARMING_EXPIRED = "arming_expired"
 DENY_NODE_NOT_HEALTHY = "node_not_healthy"
+DENY_RECONCILIATION_REQUIRED = "reconciliation_unresolved"
 DENY_POLICY_ERROR = "policy_evaluation_error"
 
 #: The specific node-state deny reason, so an operator sees WHY the node blocked it.
@@ -189,6 +190,17 @@ class NodeSafety:
 
 
 @dataclass(frozen=True)
+class ReconciliationSafety:
+    """ARCH-2: the reconciliation posture the safety gate consults. Populated by
+    the execution-context builder from the canonical reconciliation authority.
+    The default represents "no critical discrepancy on record" — the CONTEXT
+    BUILDER is responsible for supplying the real posture; a command evaluated
+    with an unbuilt context is already denied by mode/arming/node defaults."""
+    critical_unresolved: bool = False
+    stale: bool = False
+
+
+@dataclass(frozen=True)
 class SafetyContext:
     """The environment a command is evaluated against. Every default is the safe one:
     observe mode, disarmed, unknown node, no operator."""
@@ -196,6 +208,7 @@ class SafetyContext:
     arming: ArmingState = field(default_factory=ArmingState)
     node: NodeSafety = field(default_factory=NodeSafety)
     operator: OperatorAuthorization = field(default_factory=OperatorAuthorization)
+    reconciliation: ReconciliationSafety = field(default_factory=ReconciliationSafety)
 
 
 @dataclass(frozen=True)
@@ -320,6 +333,19 @@ def evaluate(request: CommandRequest, context: SafetyContext | None = None, *,
             reason = _NODE_DENY_REASON.get(ctx.node.state, DENY_NODE_NOT_HEALTHY)
             return _decision(request, ctx, risk_class, allowed=False,
                              reason=reason, now=clock)
+
+        # 8b) ARCH-2 reconciliation gate: unresolved CRITICAL reconciliation
+        #     discrepancies deny NEW RISK-INCREASING execution. Risk-reducing
+        #     commands (close / cancel / risk-reduction — flagged in the canonical
+        #     registry) stay available so an operator can always de-risk, and
+        #     emergency stops are exempt by class. This is deliberately narrower
+        #     than a generic arming rule so safe close/cancel is never accidentally
+        #     blocked.
+        if risk_class == RISK_EXECUTION_AFFECTING and ctx.reconciliation.critical_unresolved:
+            from command_registry import is_risk_reducing
+            if not is_risk_reducing(request.command_type):
+                return _decision(request, ctx, risk_class, allowed=False,
+                                 reason=DENY_RECONCILIATION_REQUIRED, now=clock)
 
         # 9) Execution-affecting commands require the system to be ARMED, and arming
         #    must not have expired. (Emergency stops are exempt from arming.)
