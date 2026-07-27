@@ -345,13 +345,21 @@ def test_non_derivable_account_fields_are_absent_not_zero():
 
 # ── ledger: interfaces only ──────────────────────────────────────────────────
 
-def test_trade_ledger_is_interface_only_and_reports_unavailable():
-    ledger = op.build_trade_ledger()
-    assert ledger.available is False
-    assert ledger.code == "ledger_not_implemented"
-    assert ledger.trades == () and ledger.summary.trade_count == 0
-    json.dumps(ledger.as_dict())
-    for cls in (op.ClosedTradeProjection, op.LedgerSummary, op.TradeLedgerProjection):
+def test_trade_ledger_is_a_real_read_model_with_honest_unavailability():
+    """LIVE-4C (deliberate replacement of the LIVE-4A/4B interface-only pin):
+    the ledger is now a REAL read model. An unreadable store is still reported
+    explicitly rather than as an empty, healthy-looking ledger."""
+    unavailable = op.build_trade_ledger(None, now=NOW)
+    assert unavailable.available is False
+    assert unavailable.code == "ledger_store_unavailable"
+    assert unavailable.trades == ()
+    assert unavailable.summary.availability == op.AVAILABILITY_UNAVAILABLE
+    json.dumps(unavailable.as_dict())
+    # Readable-but-empty is a DIFFERENT state from unavailable.
+    empty = op.build_trade_ledger([], now=NOW)
+    assert empty.available is True and empty.trades == ()
+    for cls in (op.ClosedTradeOperationalView, op.LedgerOperationalSummary,
+                op.TradeLedgerOperationalView):
         assert hasattr(cls, "as_dict")
 
 
@@ -420,7 +428,10 @@ def test_route_handlers_contain_no_aggregation_logic():
     no handler may join, filter or derive operational truth itself."""
     code = code_only("server.py")
     start = code.index("def operations_summary")
-    end = code.index("def execution_health")
+    # Scope to the /api/operations handlers ONLY. (LIVE-4C added the ledger
+    # ingestion SERVICE after them; gathering reconstruction inputs there is
+    # correct and is guarded separately in test_trade_ledger.py.)
+    end = code.index("def _broker_history_snapshot")
     handlers = code[start:end]
     for forbidden in ("reconcile_snapshot(", "intents_by_state(", "transitions_of(",
                       "safety_posture(", "active_entity_locks("):

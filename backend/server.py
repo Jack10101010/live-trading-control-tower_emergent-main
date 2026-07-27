@@ -16,7 +16,7 @@ import sqlite3
 import threading
 import uuid
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +53,10 @@ import order_lifecycle as order_lifecycle_layer
 import operational_projection as projection_layer
 import scenario_domain as scenario_layer
 import scenario_store as scenario_store_layer
+import broker_history as broker_history_layer
+import trade_ledger_domain as ledger_domain
+import trade_ledger_store as ledger_store_layer
+import trade_reconstruction as reconstruction_layer
 import reconciliation as reconciliation_layer
 import ops_status as ops_status_layer
 import security_config
@@ -1238,6 +1242,30 @@ def _scenario_store() -> scenario_store_layer.ScenarioStore | None:
     except Exception:
         logger.exception("scenario store unavailable — scenario reads report unavailable")
         _SCENARIO_STORE_FAILED = True
+        return None
+
+
+# LIVE-4C: the durable TRADE LEDGER store. Its own file and schema version; it
+# owns ledger facts only and never touches execution or scenario tables. Lazy +
+# fail-soft: an unavailable ledger makes ledger reads explicitly unavailable and
+# changes NO execution behaviour (the ledger is never an execution authority).
+LEDGER_DB_PATH = ROOT_DIR / 'trade_ledger.db'
+_LEDGER_STORE: ledger_store_layer.TradeLedgerStore | None = None
+_LEDGER_STORE_FAILED = False
+
+
+def _ledger_store() -> ledger_store_layer.TradeLedgerStore | None:
+    global _LEDGER_STORE, _LEDGER_STORE_FAILED
+    if _LEDGER_STORE is not None:
+        return _LEDGER_STORE
+    if _LEDGER_STORE_FAILED:
+        return None
+    try:
+        _LEDGER_STORE = ledger_store_layer.TradeLedgerStore(LEDGER_DB_PATH)
+        return _LEDGER_STORE
+    except Exception:
+        logger.exception("trade ledger store unavailable — ledger reads report unavailable")
+        _LEDGER_STORE_FAILED = True
         return None
 
 
@@ -2769,6 +2797,216 @@ def get_scenario(scenario_id: str):
     except Exception:
         logger.exception("scenario detail failed")
         return _scenario_unavailable()
+
+
+# ── LIVE-4C: the canonical Trade Ledger (read-only surface + read-side service) ─
+
+def _broker_history_snapshot(*, days: int = 7) -> broker_history_layer.BrokerHistorySnapshot:
+    """One read of broker history through the ACTIVE adapter. Read-only: this
+    never submits, routes or mutates anything."""
+    now_iso = _now_iso()
+    try:
+        kind = broker_layer.active_kind()
+        brk = broker_layer.get_broker()
+        if kind == "mt5":
+            gateway = getattr(brk, "_gateway", None)
+            if gateway is None:
+                return broker_history_layer.unavailable_snapshot(
+                    at=now_iso, detail="MT5 gateway unavailable",
+                    provenance=broker_history_layer.PROV_LIVE_MT5)
+            end = datetime.now(timezone.utc)
+            return broker_history_layer.read_mt5_history(
+                gateway, at=now_iso, window_from=end - timedelta(days=days),
+                window_to=end, symbol_to_canonical=brk.to_canonical)
+        # Mock/fixture world: deterministic history from closed fixture trades.
+        closed = [t for t in _live_trades_view()
+                  if t.get("closedAt") or t.get("closePrice")]
+        snap = _fresh_broker_snapshot() or {}
+        open_ids = [str(p.get("positionId")) for p in (snap.get("positions") or [])
+                    if p.get("positionId")]
+        return broker_history_layer.read_mock_history(
+            closed, at=now_iso,
+            account_currency=(snap.get("accounts") or [{}])[0].get("baseCurrency"),
+            account_fingerprint=snap.get("accountIdentity"),
+            open_position_ids=open_ids)
+    except Exception:
+        logger.exception("broker history read failed")
+        return broker_history_layer.unavailable_snapshot(
+            at=now_iso, detail="broker history read failed")
+
+
+def refresh_trade_ledger(*, days: int = 7) -> dict:
+    """LIVE-4C read-side ingestion service.
+
+    Deliberately NOT an HTTP mutation endpoint and NOT an autonomous loop: it
+    is a narrowly scoped internal service, callable from tests and future
+    orchestration. It performs broker READS only and writes ledger facts —
+    never execution state, never a broker command."""
+    store = _ledger_store()
+    if store is None:
+        return {"ingested": 0, "available": False, "code": "ledger_store_unavailable"}
+    history = _broker_history_snapshot(days=days)
+    if not history.usable:
+        return {"ingested": 0, "available": False,
+                "code": "broker_history_unavailable", "detail": history.detail}
+    exec_store = _execution_store()
+    scenario_store = _scenario_store()
+    try:
+        intents = exec_store.intents_by_state(limit=1000) if exec_store else []
+        transitions = {row.get("intent_id"): exec_store.transitions_of(row.get("intent_id"))
+                       for row in intents} if exec_store else {}
+    except Exception:
+        intents, transitions = [], {}
+    try:
+        scenarios = scenario_store.list_scenarios(limit=500) if scenario_store else []
+    except Exception:
+        scenarios = []
+    try:
+        latest = exec_store.latest_reconciliation() if exec_store else None
+        recon_items = [i for i in ((latest or {}).get("items") or [])
+                       if not i.get("resolved")]
+    except Exception:
+        recon_items = []
+    results = reconstruction_layer.reconstruct(
+        reconstruction_layer.ReconstructionInput(
+            history=history, intents=tuple(intents), scenarios=tuple(scenarios),
+            reconciliation_items=tuple(recon_items), transitions=transitions,
+            node_id=_node_facts().instance_id, adapter=broker_layer.active_kind(),
+            broker=history.provenance, deployment=None))
+    entries = store.ingest_broker_history(results, now=_now_iso(),
+                                          provenance=history.provenance)
+    return {"ingested": len(entries), "available": True,
+            "accountMode": history.account_mode,
+            "readyToFinalize": sum(1 for e in entries
+                                   if e.status == ledger_domain.TradeLedgerStatus.READY_TO_FINALIZE)}
+
+
+def _ledger_filters(request: Request) -> dict:
+    q = request.query_params
+    return {"instrument": q.get("instrument"), "scenario_id": q.get("scenarioId"),
+            "node_id": q.get("nodeId"),
+            "account_fingerprint": q.get("accountFingerprint"),
+            "opened_from": q.get("openedFrom"), "opened_to": q.get("openedTo"),
+            "closed_from": q.get("closedFrom"), "closed_to": q.get("closedTo")}
+
+
+MAX_LEDGER_PAGE = 200
+
+
+def _ledger_unavailable(code: str = "ledger_store_unavailable") -> JSONResponse:
+    view = projection_layer.build_trade_ledger(None, now=_now_iso(), code=code)
+    return _projection_response(view.as_dict(), 503)
+
+
+@api_router.get("/ledger/summary")
+def ledger_summary():
+    """Ledger TOTALS only — no analytics."""
+    try:
+        store = _ledger_store()
+        if store is None:
+            return _ledger_unavailable()
+        view = projection_layer.build_trade_ledger(
+            [], store.summary(), now=_now_iso(),
+            provenance=projection_layer.PROV_DURABLE_STORE)
+        return _projection_response({"summary": view.summary.as_dict(),
+                                     "projectionTimestamp": _now_iso()})
+    except Exception:
+        logger.exception("ledger summary failed")
+        return _ledger_unavailable("ledger_summary_failed")
+
+
+@api_router.get("/ledger/trades")
+def ledger_trades(request: Request, status: str | None = None,
+                  limit: int = 50, offset: int = 0):
+    """Deterministically ordered, filtered, bounded page of ledger entries."""
+    try:
+        store = _ledger_store()
+        if store is None:
+            return _ledger_unavailable()
+        page = max(1, min(int(limit), MAX_LEDGER_PAGE))
+        filters = _ledger_filters(request)
+        statuses = (status,) if status else None
+        entries = store.list_trades(statuses=statuses, limit=page,
+                                    offset=max(0, int(offset)), **filters)
+        total = store.count_trades(statuses=statuses, **filters)
+        view = projection_layer.build_trade_ledger(
+            entries, store.summary(), now=_now_iso(), total_count=total)
+        return _projection_response({**view.as_dict(), "limit": page,
+                                     "offset": max(0, int(offset)),
+                                     "projectionTimestamp": _now_iso()})
+    except Exception:
+        logger.exception("ledger trade listing failed")
+        return _ledger_unavailable("ledger_listing_failed")
+
+
+@api_router.get("/ledger/incomplete")
+def ledger_incomplete():
+    try:
+        store = _ledger_store()
+        if store is None:
+            return _ledger_unavailable()
+        entries = store.list_trades(
+            statuses=(ledger_domain.TradeLedgerStatus.INCOMPLETE,), limit=MAX_LEDGER_PAGE)
+        view = projection_layer.build_trade_ledger(entries, now=_now_iso())
+        return _projection_response({**view.as_dict(),
+                                     "projectionTimestamp": _now_iso()})
+    except Exception:
+        logger.exception("ledger incomplete listing failed")
+        return _ledger_unavailable("ledger_listing_failed")
+
+
+@api_router.get("/ledger/conflicts")
+def ledger_conflicts():
+    try:
+        store = _ledger_store()
+        if store is None:
+            return _ledger_unavailable()
+        view = projection_layer.build_trade_ledger(store.list_conflicts(), now=_now_iso())
+        return _projection_response({**view.as_dict(),
+                                     "projectionTimestamp": _now_iso()})
+    except Exception:
+        logger.exception("ledger conflict listing failed")
+        return _ledger_unavailable("ledger_listing_failed")
+
+
+@api_router.get("/ledger/trades/{trade_id}")
+def ledger_trade(trade_id: str):
+    try:
+        store = _ledger_store()
+        if store is None:
+            return _ledger_unavailable()
+        entry = store.get_trade(trade_id)
+        if entry is None:
+            return _projection_response(
+                {"error": "not_found", "code": "trade_not_found",
+                 "tradeId": trade_id}, 404)
+        view = projection_layer.build_trade_ledger([entry], now=_now_iso())
+        return _projection_response(view.trades[0].as_dict())
+    except Exception:
+        logger.exception("ledger trade detail failed")
+        return _ledger_unavailable("ledger_detail_failed")
+
+
+@api_router.get("/ledger/trades/{trade_id}/history")
+def ledger_trade_history(trade_id: str, limit: int = 200):
+    """The append-only ledger event history for one trade."""
+    try:
+        store = _ledger_store()
+        if store is None:
+            return _ledger_unavailable()
+        events = store.history(trade_id, limit=max(1, min(int(limit), 500)))
+        if not events:
+            return _projection_response(
+                {"error": "not_found", "code": "trade_not_found",
+                 "tradeId": trade_id}, 404)
+        return _projection_response({
+            "tradeId": trade_id,
+            "events": [e.as_dict() for e in events],
+            "latestVersion": store.latest_version(trade_id),
+            "projectionTimestamp": _now_iso()})
+    except Exception:
+        logger.exception("ledger history failed")
+        return _ledger_unavailable("ledger_history_failed")
 
 
 @api_router.get("/execution/health")

@@ -408,84 +408,188 @@ class OperationalSummary:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# LIVE-4A PART 11 — trade-ledger INTERFACES ONLY.
-# No persistence, no analytics, no builder. These pin the shape a future ledger
-# slice must satisfy so it cannot invent a competing vocabulary.
+# LIVE-4C — REAL trade-ledger read models.
+#
+# These replace the LIVE-4A/4B placeholder interfaces. They project already
+# recorded ledger facts: nothing here recomputes a financial value, and an
+# unavailable number stays unavailable (never zero).
 # ─────────────────────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
-class ClosedTradeProjection:
-    """One closed round-trip. INTERFACE ONLY — nothing constructs these yet."""
+class ClosedTradeOperationalView:
+    """One ledger entry as the operator sees it. Every financial field is the
+    value the ledger RECORDED — the projection performs no accounting."""
     trade_id: str
+    status: str
+    version: int = 1
     instrument: str | None = None
     side: str | None = None
     quantity: float | None = None
-    entry_price: float | None = None
-    exit_price: float | None = None
-    realized_pnl: float | None = None
+    average_entry_price: float | None = None
+    average_exit_price: float | None = None
+    gross_realized_pnl: float | None = None
+    total_costs: float | None = None
+    net_realized_pnl: float | None = None
+    realized_r: float | None = None
+    exit_classification: str | None = None
+    outcome: str | None = None
+    account_currency: str | None = None
     opened_at: str | None = None
     closed_at: str | None = None
-    intent_ids: tuple = field(default_factory=tuple)
+    duration_seconds: float | None = None
     scenario_id: str | None = None
-    account_fingerprint: str | None = None
+    origin: str | None = None
+    cost_completeness: str | None = None
+    risk_completeness: str | None = None
+    warnings: tuple = field(default_factory=tuple)
+    conflicts: tuple = field(default_factory=tuple)
+    finalized: bool = False
+    detail: dict | None = None
     provenance: str = PROV_ABSENT
 
     def as_dict(self) -> dict:
         return _sorted({
-            "tradeId": self.trade_id, "instrument": self.instrument,
-            "side": self.side, "quantity": self.quantity,
-            "entryPrice": self.entry_price, "exitPrice": self.exit_price,
-            "realizedPnL": self.realized_pnl, "openedAt": self.opened_at,
-            "closedAt": self.closed_at, "intentIds": list(self.intent_ids),
-            "scenarioId": self.scenario_id,
-            "accountFingerprint": self.account_fingerprint,
+            "tradeId": self.trade_id, "status": self.status, "version": self.version,
+            "instrument": self.instrument, "side": self.side,
+            "quantity": self.quantity,
+            "averageEntryPrice": self.average_entry_price,
+            "averageExitPrice": self.average_exit_price,
+            "grossRealizedPnL": self.gross_realized_pnl,
+            "totalCosts": self.total_costs,
+            "netRealizedPnL": self.net_realized_pnl,
+            "realizedR": self.realized_r,
+            "exitClassification": self.exit_classification,
+            "outcome": self.outcome, "accountCurrency": self.account_currency,
+            "openedAt": self.opened_at, "closedAt": self.closed_at,
+            "durationSeconds": self.duration_seconds,
+            "scenarioId": self.scenario_id, "origin": self.origin,
+            "costCompleteness": self.cost_completeness,
+            "riskCompleteness": self.risk_completeness,
+            "warnings": list(self.warnings), "conflicts": list(self.conflicts),
+            "finalized": self.finalized, "detail": self.detail,
             "provenance": self.provenance,
         })
 
 
 @dataclass(frozen=True)
-class LedgerSummary:
-    """Aggregate over closed trades. INTERFACE ONLY — no analytics implemented.
-    LIVE-4B: carries the scenario dimension so a future ledger can attribute
-    every closed trade to exactly one Scenario."""
-    trade_count: int = 0
-    realized_pnl: float | None = None
-    window_start: str | None = None
-    window_end: str | None = None
-    scenario_ids: tuple = field(default_factory=tuple)
-    by_scenario: dict = field(default_factory=dict)
+class LedgerOperationalSummary:
+    """Ledger TOTALS only. LIVE-4C adds no win rate, expectancy, drawdown,
+    equity curve or grouping — those are deliberately out of scope."""
+    finalized_trade_count: int = 0
+    incomplete_trade_count: int = 0
+    conflicted_trade_count: int = 0
+    amended_trade_count: int = 0
+    gross_realized_pnl: float | None = None
+    net_realized_pnl: float | None = None
+    total_costs: float | None = None
+    latest_closed_at: str | None = None
+    account_currency: str | None = None
+    availability: str = AVAILABILITY_UNAVAILABLE
     provenance: str = PROV_ABSENT
+    freshness: Freshness | None = None
 
     def as_dict(self) -> dict:
         return _sorted({
-            "tradeCount": self.trade_count, "realizedPnL": self.realized_pnl,
-            "windowStart": self.window_start, "windowEnd": self.window_end,
-            "scenarioIds": list(self.scenario_ids),
-            "byScenario": dict(self.by_scenario),
-            "provenance": self.provenance,
+            "finalizedTradeCount": self.finalized_trade_count,
+            "incompleteTradeCount": self.incomplete_trade_count,
+            "conflictedTradeCount": self.conflicted_trade_count,
+            "amendedTradeCount": self.amended_trade_count,
+            "grossRealizedPnL": self.gross_realized_pnl,
+            "netRealizedPnL": self.net_realized_pnl,
+            "totalCosts": self.total_costs,
+            "latestClosedAt": self.latest_closed_at,
+            "accountCurrency": self.account_currency,
+            "availability": self.availability, "provenance": self.provenance,
+            "freshness": self.freshness.as_dict() if self.freshness else None,
         })
 
 
 @dataclass(frozen=True)
-class TradeLedgerProjection:
-    """The read-only ledger surface a future slice will populate. Constructing
-    it today yields an explicitly UNAVAILABLE ledger — never an empty-looking
-    healthy one. LIVE-4B: `scenario_id` is optional here so the ledger can be
-    read per-Scenario once it exists."""
+class TradeLedgerOperationalView:
+    """The ledger read surface: totals plus the projected trades."""
     available: bool = False
-    code: str = "ledger_not_implemented"
-    scenario_id: str | None = None
+    code: str | None = None
+    summary: LedgerOperationalSummary = field(default_factory=LedgerOperationalSummary)
     trades: tuple = field(default_factory=tuple)
-    summary: LedgerSummary = field(default_factory=LedgerSummary)
+    total_count: int = 0
     provenance: str = PROV_ABSENT
 
     def as_dict(self) -> dict:
         return _sorted({
             "available": self.available, "code": self.code,
-            "scenarioId": self.scenario_id,
+            "summary": self.summary.as_dict(),
             "trades": [t.as_dict() for t in self.trades],
-            "summary": self.summary.as_dict(), "provenance": self.provenance,
+            "totalCount": self.total_count, "provenance": self.provenance,
         })
+
+
+def _ledger_entry_view(entry: Any, *, provenance: str) -> ClosedTradeOperationalView:
+    """Project one recorded ledger entry. Reads only what the ledger stored."""
+    raw = entry.as_dict()
+    trade = raw.get("trade") or {}
+    lineage = trade.get("lineage") or {}
+    return ClosedTradeOperationalView(
+        trade_id=raw.get("tradeId"), status=raw.get("status"),
+        version=int(raw.get("version") or 1),
+        instrument=trade.get("instrument"), side=trade.get("side"),
+        quantity=trade.get("totalExitQuantity") or trade.get("totalEntryQuantity"),
+        average_entry_price=trade.get("averageEntryPrice"),
+        average_exit_price=trade.get("averageExitPrice"),
+        gross_realized_pnl=trade.get("grossRealizedPnL"),
+        total_costs=trade.get("totalCosts"),
+        net_realized_pnl=trade.get("netRealizedPnL"),
+        realized_r=trade.get("realizedR"),
+        exit_classification=trade.get("exitClassification"),
+        outcome=trade.get("outcome"),
+        account_currency=trade.get("accountCurrency"),
+        opened_at=trade.get("openedAt"), closed_at=trade.get("closedAt"),
+        duration_seconds=trade.get("durationSeconds"),
+        scenario_id=lineage.get("scenarioId"), origin=lineage.get("origin"),
+        cost_completeness=trade.get("costCompleteness"),
+        risk_completeness=trade.get("riskCompleteness"),
+        warnings=tuple(raw.get("warnings") or ()),
+        conflicts=tuple(raw.get("conflicts") or ()),
+        finalized=bool(raw.get("finalized")),
+        detail=raw, provenance=provenance)
+
+
+def build_trade_ledger(entries=None, totals=None, *, now: str,
+                       provenance: str = PROV_DURABLE_STORE,
+                       total_count: int | None = None,
+                       stale_after_s: float = DEFAULT_STALE_AFTER_S,
+                       code: str | None = None) -> TradeLedgerOperationalView:
+    """Project the ledger. `entries is None` means the LEDGER STORE COULD NOT BE
+    READ — reported explicitly, never as an empty (healthy-looking) ledger."""
+    if entries is None:
+        return TradeLedgerOperationalView(
+            available=False, code=code or "ledger_store_unavailable",
+            summary=LedgerOperationalSummary(
+                availability=AVAILABILITY_UNAVAILABLE, provenance=PROV_ABSENT,
+                freshness=freshness(now=now, source_at=None, available=False,
+                                    stale_after_s=stale_after_s,
+                                    detail="ledger store unavailable")))
+    views = tuple(_ledger_entry_view(e, provenance=provenance) for e in entries)
+    summary = LedgerOperationalSummary(availability=AVAILABILITY_OK,
+                                       provenance=provenance)
+    if totals is not None:
+        t = totals.as_dict()
+        summary = LedgerOperationalSummary(
+            finalized_trade_count=t.get("finalizedTradeCount", 0),
+            incomplete_trade_count=t.get("incompleteTradeCount", 0),
+            conflicted_trade_count=t.get("conflictedTradeCount", 0),
+            amended_trade_count=t.get("amendedTradeCount", 0),
+            gross_realized_pnl=t.get("grossRealizedPnL"),
+            net_realized_pnl=t.get("netRealizedPnL"),
+            total_costs=t.get("totalCosts"),
+            latest_closed_at=t.get("latestClosedAt"),
+            account_currency=t.get("accountCurrency"),
+            availability=AVAILABILITY_OK, provenance=provenance,
+            freshness=freshness(now=now, source_at=t.get("latestClosedAt"),
+                                available=True, stale_after_s=stale_after_s))
+    return TradeLedgerOperationalView(
+        available=True, code=None, summary=summary, trades=views,
+        total_count=total_count if total_count is not None else len(views),
+        provenance=provenance)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -912,10 +1016,3 @@ def build_summary(sources: ProjectionSources, *, now: str,
         active_orders=orders, open_positions=positions, active_scenarios=scenarios,
         reconciliation_issues=issues, active_operations=operations,
         warnings=warnings, freshness=fresh)
-
-
-def build_trade_ledger(scenario_id: str | None = None) -> TradeLedgerProjection:
-    """LIVE-4A/4B: the ledger is INTERFACE ONLY. This always reports unavailable
-    — a future slice implements persistence and analytics. `scenario_id` pins
-    the per-Scenario read shape without implementing it."""
-    return TradeLedgerProjection(scenario_id=scenario_id)

@@ -893,6 +893,74 @@ export interface OperationalSummaryView {
   freshness: ProjectionFreshness | null;
 }
 
+/* ── LIVE-4C: canonical Trade Ledger read models ──────────────────────────── */
+export interface ClosedTradeOperationalView {
+  tradeId: string;
+  status: string;
+  version: number;
+  instrument: string | null;
+  side: string | null;
+  quantity: number | null;
+  averageEntryPrice: number | null;
+  averageExitPrice: number | null;
+  grossRealizedPnL: number | null;
+  totalCosts: number | null;
+  netRealizedPnL: number | null;
+  realizedR: number | null;
+  exitClassification: string | null;
+  outcome: string | null;
+  accountCurrency: string | null;
+  openedAt: string | null;
+  closedAt: string | null;
+  durationSeconds: number | null;
+  scenarioId: string | null;
+  origin: string | null;
+  costCompleteness: string | null;
+  riskCompleteness: string | null;
+  warnings: string[];
+  conflicts: string[];
+  finalized: boolean;
+  detail: Record<string, unknown> | null;
+  provenance: string;
+}
+
+export interface LedgerOperationalSummary {
+  finalizedTradeCount: number;
+  incompleteTradeCount: number;
+  conflictedTradeCount: number;
+  amendedTradeCount: number;
+  grossRealizedPnL: number | null;
+  netRealizedPnL: number | null;
+  totalCosts: number | null;
+  latestClosedAt: string | null;
+  accountCurrency: string | null;
+  availability: string;
+  provenance: string;
+  freshness: ProjectionFreshness | null;
+}
+
+export interface TradeLedgerView {
+  available: boolean;
+  code: string | null;
+  summary: LedgerOperationalSummary;
+  trades: ClosedTradeOperationalView[];
+  totalCount: number;
+  provenance: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface LedgerEventView {
+  eventId: string;
+  tradeId: string;
+  sequence: number;
+  eventType: string;
+  occurredAt: string;
+  recordedAt: string;
+  payload: Record<string, unknown>;
+  provenance: string;
+}
+
 export interface ExecutionModeView {
   mode: string;
   history: Array<Record<string, unknown>>;
@@ -1018,6 +1086,26 @@ export const api = {
     );
   },
   activeScenarios: () => apiFetch<{ scenarios: ScenarioOperationalView[] }>('/scenarios/active'),
+  /* LIVE-4C — the canonical Trade Ledger. Read-only: the UI renders recorded
+   * ledger facts and performs NO financial reconstruction of its own. */
+  ledgerSummary: () => apiFetch<{ summary: LedgerOperationalSummary }>('/ledger/summary'),
+  ledgerTrades: (filters: {
+    status?: string; instrument?: string; scenarioId?: string; nodeId?: string;
+    limit?: number; offset?: number;
+  } = {}) => {
+    const q = new URLSearchParams(
+      Object.entries(filters).filter(([, v]) => v !== undefined && v !== '')
+        .map(([k, v]) => [k, String(v)]) as [string, string][]
+    ).toString();
+    return apiFetch<TradeLedgerView>(`/ledger/trades${q ? `?${q}` : ''}`);
+  },
+  ledgerTrade: (tradeId: string) =>
+    apiFetch<ClosedTradeOperationalView>(`/ledger/trades/${encodeURIComponent(tradeId)}`),
+  ledgerTradeHistory: (tradeId: string) =>
+    apiFetch<{ events: LedgerEventView[]; latestVersion: number | null }>(
+      `/ledger/trades/${encodeURIComponent(tradeId)}/history`),
+  ledgerIncomplete: () => apiFetch<TradeLedgerView>('/ledger/incomplete'),
+  ledgerConflicts: () => apiFetch<TradeLedgerView>('/ledger/conflicts'),
   scenarioHistory: (scenarioId?: string) =>
     apiFetch<{ events: ScenarioEventView[] }>(
       `/scenarios/history${scenarioId ? `?scenarioId=${encodeURIComponent(scenarioId)}` : ''}`),

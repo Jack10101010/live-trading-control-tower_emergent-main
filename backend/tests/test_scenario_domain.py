@@ -430,13 +430,14 @@ def test_projection_reports_store_unavailability_distinctly():
     assert op.scenarios_available(op.ProjectionSources(scenarios=lambda: [])) is True
 
 
-def test_ledger_interfaces_reference_the_scenario(tmp_path):
-    ledger = op.build_trade_ledger(scenario_id="scn_" + "a" * 16)
-    d = ledger.as_dict()
-    assert d["available"] is False and d["code"] == "ledger_not_implemented"
-    assert d["scenarioId"] == "scn_" + "a" * 16
-    assert "scenarioIds" in d["summary"] and "byScenario" in d["summary"]
-    assert "scenarioId" in op.ClosedTradeProjection(trade_id="t").as_dict()
+def test_ledger_read_models_carry_the_scenario_dimension(tmp_path):
+    """LIVE-4C (deliberate replacement of the LIVE-4B interface-only pin): the
+    ledger read model is real, and every projected trade still exposes its
+    Scenario lineage."""
+    view = op.build_trade_ledger([], now=T0)
+    assert view.available is True
+    assert "scenarioId" in op.ClosedTradeOperationalView(
+        trade_id="trd_" + "a" * 16, status="FINALIZED").as_dict()
 
 
 # ── the read-only API ────────────────────────────────────────────────────────
