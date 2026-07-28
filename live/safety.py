@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from live.config import SYMBOL
 from live.intents import CLOSE_POSITION, MODIFY_STOP, OPEN_POSITION
-from live.state import LEDGER_BLOCKED, LEDGER_CONFIRMED, LEDGER_SENT, LEDGER_SIMULATED
+from live.state import LEDGER_BLOCKED, LEDGER_SUPPRESSING
 
 ALLOWED = "allowed"
 
@@ -51,7 +51,7 @@ class SafetyRails:
                                f"{getattr(self.config, 'broker_symbol', '?')} is not {SYMBOL}")
         # 3) duplicate-order protection — idempotent ledger
         status = self.state.ledger_status(intent.intent_id)
-        if status in (LEDGER_SENT, LEDGER_CONFIRMED, LEDGER_SIMULATED):
+        if status in LEDGER_SUPPRESSING:
             return RailVerdict(False, "duplicate_intent", f"already {status}")
         # 4) daily loss kill switch (opens only)
         if intent.action == OPEN_POSITION:
@@ -66,6 +66,14 @@ class SafetyRails:
         # 6) modify/close must reference a mirrored position
         if intent.action in (MODIFY_STOP, CLOSE_POSITION):
             if self.state.mirror_ticket(intent.trade_id) is None:
+                # A position the BROKER already closed (SL/TP/manual) is still a
+                # legitimate close to ACCOUNT for — reconcile drops the mirror the
+                # moment it disappears, and blocking the engine's close here is
+                # what made the daily-loss rail miss every server-side stop-out.
+                # MODIFY_STOP stays blocked: there is nothing left to modify.
+                if (intent.action == CLOSE_POSITION
+                        and self.state.broker_closed_ticket(intent.trade_id) is not None):
+                    return RailVerdict(True, ALLOWED)
                 return RailVerdict(False, "unknown_position",
                                    f"no mirrored ticket for {intent.trade_id}")
         return RailVerdict(True, ALLOWED)

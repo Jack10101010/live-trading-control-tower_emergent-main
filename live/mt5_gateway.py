@@ -25,6 +25,10 @@ try:  # Windows VPS only; absent everywhere else by design
 except ImportError:  # pragma: no cover - exercised via injection in tests
     _mt5 = None
 
+# DST calendars a broker clock can follow. The zone supplies only the DST
+# *schedule* (its own base offset is irrelevant — `_base` provides that).
+_DST_ZONES = {"us": ZoneInfo("America/New_York"), "eu": ZoneInfo("Europe/Brussels")}
+
 
 class MT5Gateway:
     """Thin, stateless-ish wrapper. `sdk` is injectable for tests/fakes."""
@@ -33,21 +37,45 @@ class MT5Gateway:
         self.config = config
         self.sdk = sdk if sdk is not None else _mt5
         self._connected = False
-        self._zone = ZoneInfo(getattr(config, "mt5_server_tz", "Europe/Athens"))
+        self._last_probe_error = ""
+        self._base = timedelta(hours=int(getattr(config, "mt5_server_base_utc_offset_hours", 2)))
+        self._dst_rule = str(getattr(config, "mt5_server_dst_rule", "us")).lower()
+        self._dst_zone = _DST_ZONES.get(self._dst_rule)
+        if self._dst_rule != "none" and self._dst_zone is None:
+            raise ValueError(f"MT5_SERVER_DST_RULE must be one of {sorted(_DST_ZONES)} or 'none', "
+                             f"got {self._dst_rule!r}")
 
     # ── time base: server wall clock <-> canonical UTC ───────────────────────
+    def server_utc_offset(self, at_utc: datetime | None = None) -> timedelta:
+        """The broker clock's UTC offset at an instant: base + DST calendar.
+
+        Modelled rather than taken from an IANA zone because this broker keeps
+        an EET-style base but switches on the US calendar (measured), which no
+        single IANA zone expresses.
+        """
+        if self._dst_zone is None:
+            return self._base
+        at = at_utc or datetime.now(timezone.utc)
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=timezone.utc)
+        return self._base + (at.astimezone(self._dst_zone).dst() or timedelta(0))
+
     def server_epoch_to_utc(self, epoch: float) -> datetime:
         """MT5-encoded timestamp -> true UTC.
 
         The stored value is the server's wall clock stamped as UTC, so it is
-        first read back as a naive wall clock, then localised to the broker zone
-        and converted. DST is resolved by zoneinfo; the ambiguous hour of the
-        autumn fold falls inside the weekend market closure (EU transitions at
-        03:00/04:00 local Sunday; the week opens 00:00 Monday server), so no
-        live bar is ever produced inside it.
+        read back as a naive wall clock and the offset subtracted. The offset
+        itself depends on the instant, so it is estimated from the base and then
+        refined once — which resolves correctly on both sides of a transition.
         """
         wall = datetime.fromtimestamp(float(epoch), tz=timezone.utc).replace(tzinfo=None)
-        return wall.replace(tzinfo=self._zone).astimezone(timezone.utc)
+        approx = (wall - self._base).replace(tzinfo=timezone.utc)
+        offset = self.server_utc_offset(approx)
+        result = (wall - offset).replace(tzinfo=timezone.utc)
+        refined = self.server_utc_offset(result)
+        if refined != offset:
+            result = (wall - refined).replace(tzinfo=timezone.utc)
+        return result
 
     def utc_to_server_arg(self, dt_utc: datetime) -> datetime:
         """True UTC -> the datetime the copy_* APIs expect.
@@ -56,13 +84,36 @@ class MT5Gateway:
         values, so the argument must carry the server wall clock stamped as UTC
         — the exact inverse of `server_epoch_to_utc`.
         """
-        wall = dt_utc.astimezone(self._zone).replace(tzinfo=None)
+        wall = dt_utc + self.server_utc_offset(dt_utc)
         return wall.replace(tzinfo=timezone.utc)
 
     def declared_offset_hours(self, at_utc: datetime | None = None) -> float:
-        """Server offset the declared zone implies right now (+2 EET / +3 EEST)."""
+        """Server offset the configured model implies at an instant."""
+        return self.server_utc_offset(at_utc).total_seconds() / 3600.0
+
+    def measured_offset_hours(self) -> float | None:
+        """Offset implied by a live tick: raw server label vs true UTC."""
+        if not self._connected:
+            return None
+        tick = self.sdk.symbol_info_tick(self.config.broker_symbol)
+        if tick is None:
+            return None
+        raw = datetime.fromtimestamp(float(tick.time), tz=timezone.utc)
+        return (raw - datetime.now(timezone.utc)).total_seconds() / 3600.0
+
+    def dst_disagreement(self, at_utc: datetime | None = None) -> str:
+        """Non-empty while the US and EU DST calendars disagree.
+
+        These shoulder windows (~4 weeks/yr) are exactly where picking the wrong
+        calendar costs an hour, so the condition is surfaced rather than hidden.
+        """
         at = at_utc or datetime.now(timezone.utc)
-        return at.astimezone(self._zone).utcoffset().total_seconds() / 3600.0
+        us = at.astimezone(_DST_ZONES["us"]).dst() or timedelta(0)
+        eu = at.astimezone(_DST_ZONES["eu"]).dst() or timedelta(0)
+        if us == eu:
+            return ""
+        return (f"US/EU DST calendars disagree today (us={us}, eu={eu}); "
+                f"rule in force = {self._dst_rule!r}")
 
     def verify_time_base(self, tolerance_minutes: int = 5) -> tuple[bool, str]:
         """Cross-check the declared zone against a live tick.
@@ -80,13 +131,21 @@ class MT5Gateway:
         tick_utc = self.server_epoch_to_utc(tick.time)
         skew = (tick_utc - now).total_seconds()
         declared = self.declared_offset_hours(now)
+        model = (f"base{self._base.total_seconds()/3600:+.0f}h dst={self._dst_rule} "
+                 f"=> {declared:+.0f}h")
+        shoulder = self.dst_disagreement(now)
+        suffix = f" [{shoulder}]" if shoulder else ""
         if skew > tolerance_minutes * 60:
             return False, (f"tick {skew/3600:+.2f}h in the FUTURE after conversion — "
-                           f"MT5_SERVER_TZ={self.config.mt5_server_tz} (offset {declared:+.0f}h) is wrong")
+                           f"server clock model ({model}) is wrong{suffix}")
         if abs(skew) <= tolerance_minutes * 60:
-            return True, f"verified against live tick (zone offset {declared:+.0f}h, skew {skew:+.0f}s)"
+            return True, f"verified against live tick ({model}, skew {skew:+.0f}s){suffix}"
+        # Stale tick (market closed): the model cannot be confirmed, but a live
+        # tick would be reported here if one existed, and the future-check above
+        # still guards the dangerous direction.
+        measured = self.measured_offset_hours()
         return True, (f"unverified — last tick {abs(skew)/3600:.1f}h old (market closed); "
-                      f"zone offset {declared:+.0f}h, not in the future")
+                      f"{model}, raw tick implies {measured:+.2f}h{suffix}")
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     @property
@@ -129,7 +188,17 @@ class MT5Gateway:
             except Exception:  # pragma: no cover - best-effort teardown
                 pass
             ok, detail = self.connect()
-            return ok, ("reconnected" if ok else f"reconnect failed: {detail}")
+            if not ok:
+                return False, f"reconnect failed: {detail} ({self._last_probe_error})".strip(" ()")
+            # A reconnect can land on a DIFFERENT terminal or account than the one
+            # validated at startup, so the time base is re-verified rather than
+            # inherited — a broker in another zone would otherwise silently
+            # resume mislabelling bars.
+            tb_ok, tb_detail = self.verify_time_base()
+            if not tb_ok:
+                self.disconnect()
+                return False, f"reconnected but time base rejected: {tb_detail}"
+            return True, "reconnected"
         return self.connect()
 
     def disconnect(self) -> None:

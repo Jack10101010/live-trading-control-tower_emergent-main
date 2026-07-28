@@ -20,6 +20,15 @@ LEDGER_CONFIRMED = "confirmed"
 LEDGER_FAILED = "failed"
 LEDGER_BLOCKED = "blocked"
 LEDGER_SIMULATED = "simulated"   # dry_run terminal state
+LEDGER_FROZEN = "frozen"
+
+# Statuses that mean "this intent was ACTED ON" and therefore make the
+# duplicate-intent rail fire. SafetyRails imports this tuple rather than
+# re-listing it, so suppression and persistence can never drift apart.
+LEDGER_SUPPRESSING = (LEDGER_SENT, LEDGER_CONFIRMED, LEDGER_SIMULATED)
+# Rail/reconcile annotations. These describe why an intent was NOT acted on, so
+# they must never overwrite a suppressing status (see ledger_set).
+LEDGER_ANNOTATIONS = (LEDGER_BLOCKED, LEDGER_FROZEN)
 
 
 def frame_hash(frame) -> str:
@@ -37,8 +46,8 @@ class RunnerState:
         if self.path.exists():
             return json.loads(self.path.read_text())
         return {"last_boundary": None, "prev_frame_hash": "", "prev_frame_file": None,
-                "ledger": {}, "mirror": {}, "daily": {"date": None, "realized_r": 0.0},
-                "updated_at": None}
+                "ledger": {}, "mirror": {}, "broker_closed": {},
+                "daily": {"date": None, "realized_r": 0.0}, "updated_at": None}
 
     def save(self) -> None:
         self.data["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -67,8 +76,47 @@ class RunnerState:
         return entry["status"] if entry else None
 
     def ledger_set(self, intent_id: str, status: str, detail: dict | None = None) -> None:
+        """Record an intent's status, protecting acted-on states from annotations.
+
+        An intent that was already sent/confirmed/simulated is terminal for
+        duplicate-suppression purposes. Letting a later annotation (blocked,
+        frozen) overwrite it destroyed suppression: the duplicate rail only
+        fires on LEDGER_SUPPRESSING, so a replay that got blocked would rewrite
+        the entry to `blocked` and the NEXT replay would re-execute the intent —
+        a duplicate order. The annotation is counted instead of applied, which
+        keeps the audit trail without ever weakening suppression.
+        """
+        existing = self.data["ledger"].get(intent_id)
+        if (existing and existing.get("status") in LEDGER_SUPPRESSING
+                and status in LEDGER_ANNOTATIONS):
+            existing["suppressed_annotations"] = existing.get("suppressed_annotations", 0) + 1
+            existing["last_annotation"] = {"status": status, "detail": detail or {},
+                                           "at": datetime.now(timezone.utc).isoformat()}
+            return
         self.data["ledger"][intent_id] = {"status": status, "detail": detail or {},
                                           "at": datetime.now(timezone.utc).isoformat()}
+
+    # ── broker-initiated closes (SL / TP / manual) ───────────────────────────
+    def mark_broker_closed(self, trade_id: str, ticket: int) -> None:
+        """Record that the BROKER closed a mirrored position, and drop the mirror.
+
+        The engine stays the state machine, so its own CLOSE intent remains the
+        single accounting event. This marker tells the executor the position is
+        already gone (account for it, do NOT send a second close) and tells the
+        safety rail the trade is legitimately closable rather than unknown —
+        without it, every server-side stop-out was blocked as `unknown_position`
+        and its realised R never reached the daily-loss counter.
+        """
+        self.data.setdefault("broker_closed", {})[str(trade_id)] = {
+            "ticket": ticket, "at": datetime.now(timezone.utc).isoformat()}
+        self.mirror_set(trade_id, None)
+
+    def broker_closed_ticket(self, trade_id: str) -> int | None:
+        entry = (self.data.get("broker_closed") or {}).get(str(trade_id))
+        return entry["ticket"] if entry else None
+
+    def clear_broker_closed(self, trade_id: str) -> None:
+        (self.data.get("broker_closed") or {}).pop(str(trade_id), None)
 
     def mirror_ticket(self, trade_id: str) -> int | None:
         return self.data["mirror"].get(trade_id)

@@ -95,14 +95,14 @@ class FakeMT5:
 # ══════════════════════════════════════════════════════════════════════════════
 def test_server_epoch_to_utc_applies_summer_offset(tmp_path):
     """EEST (+3): a bar stamped 11:05 server is 08:05 UTC."""
-    gw = MT5Gateway(_cfg(tmp_path, mt5_server_tz="Europe/Athens"))
+    gw = MT5Gateway(_cfg(tmp_path))
     assert gw.server_epoch_to_utc(_server_epoch(datetime(2026, 7, 28, 11, 5))) == \
         datetime(2026, 7, 28, 8, 5, tzinfo=timezone.utc)
 
 
 def test_server_epoch_to_utc_is_dst_aware_not_hardcoded(tmp_path):
     """The SAME code must yield +2 in winter and +3 in summer — no fixed offset."""
-    gw = MT5Gateway(_cfg(tmp_path, mt5_server_tz="Europe/Athens"))
+    gw = MT5Gateway(_cfg(tmp_path))
     winter = gw.server_epoch_to_utc(_server_epoch(datetime(2026, 1, 15, 12, 0)))
     summer = gw.server_epoch_to_utc(_server_epoch(datetime(2026, 7, 15, 12, 0)))
     assert winter == datetime(2026, 1, 15, 10, 0, tzinfo=timezone.utc)   # +2 EET
@@ -112,7 +112,7 @@ def test_server_epoch_to_utc_is_dst_aware_not_hardcoded(tmp_path):
 
 
 def test_utc_to_server_arg_round_trips(tmp_path):
-    gw = MT5Gateway(_cfg(tmp_path, mt5_server_tz="Europe/Athens"))
+    gw = MT5Gateway(_cfg(tmp_path))
     for utc in (datetime(2026, 7, 28, 8, 5, tzinfo=timezone.utc),
                 datetime(2026, 1, 15, 10, 0, tzinfo=timezone.utc)):
         assert gw.server_epoch_to_utc(gw.utc_to_server_arg(utc).timestamp()) == utc
@@ -122,7 +122,7 @@ def test_closed_m1_bars_converts_bounds_and_labels(tmp_path):
     """Bounds go out in server encoding; bar labels come back canonical UTC."""
     now_wall = datetime(2026, 7, 28, 11, 10)              # 08:10 UTC
     sdk = FakeMT5(now_wall, bars_wall=[datetime(2026, 7, 28, 11, 5)])
-    gw = MT5Gateway(_cfg(tmp_path, mt5_server_tz="Europe/Athens"), sdk=sdk)
+    gw = MT5Gateway(_cfg(tmp_path), sdk=sdk)
     gw.connect()
     ok, bars = gw.closed_m1_bars(datetime(2026, 7, 28, 8, 0, tzinfo=timezone.utc))
     assert ok
@@ -136,7 +136,8 @@ def test_closed_m1_bars_converts_bounds_and_labels(tmp_path):
 def test_verify_time_base_rejects_future_tick(tmp_path):
     """A converted tick in the future is the unmistakable wrong-zone signature."""
     sdk = FakeMT5(datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=3))
-    gw = MT5Gateway(_cfg(tmp_path, mt5_server_tz="UTC"), sdk=sdk)   # deliberately wrong zone
+    gw = MT5Gateway(_cfg(tmp_path, mt5_server_base_utc_offset_hours=0,
+                         mt5_server_dst_rule="none"), sdk=sdk)   # deliberately wrong model
     gw.connect()
     ok, detail = gw.verify_time_base()
     assert not ok and "FUTURE" in detail
@@ -144,9 +145,10 @@ def test_verify_time_base_rejects_future_tick(tmp_path):
 
 def test_verify_time_base_accepts_correctly_converted_tick(tmp_path):
     now_utc = datetime.now(timezone.utc)
-    athens_wall = now_utc.astimezone(MT5Gateway(_cfg(tmp_path))._zone).replace(tzinfo=None)
-    sdk = FakeMT5(athens_wall)
-    gw = MT5Gateway(_cfg(tmp_path, mt5_server_tz="Europe/Athens"), sdk=sdk)
+    ref = MT5Gateway(_cfg(tmp_path))
+    server_wall = (now_utc + ref.server_utc_offset(now_utc)).replace(tzinfo=None)
+    sdk = FakeMT5(server_wall)
+    gw = MT5Gateway(_cfg(tmp_path), sdk=sdk)
     gw.connect()
     ok, detail = gw.verify_time_base()
     assert ok and "verified" in detail

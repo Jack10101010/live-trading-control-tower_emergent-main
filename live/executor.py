@@ -56,7 +56,10 @@ class Executor:
             if ticket not in ours:
                 report.add("warning", "missing_position",
                            f"trade {trade_id} ticket {ticket} not at broker (stopped out or closed externally)")
-                self.state.mirror_set(trade_id, None)
+                # Drop the mirror AND remember the broker closed it, so the
+                # engine's own CLOSE intent can still account for the realised R
+                # instead of being rejected as an unknown position.
+                self.state.mark_broker_closed(trade_id, ticket)
         # unknown: broker holds one of OUR magic-tagged positions we don't expect -> FREEZE
         for ticket in ours:
             if ticket not in expected_tickets:
@@ -122,8 +125,10 @@ class Executor:
                 self.state.mirror_set(intent.trade_id, -1)   # simulated ticket
             elif intent.action == CLOSE_POSITION:
                 self.state.mirror_set(intent.trade_id, None)
-                # dry_run accrues realised R too: the daily-loss rail must be
-                # genuinely exercised in shadow, not first armed on live money.
+                self.state.clear_broker_closed(intent.trade_id)
+                # dry_run accrues realised R through the SAME helper as live, so
+                # both modes share one accounting path (the only live-specific
+                # part is whether a broker call is sent).
                 self._record_realized(intent, today)
             return {"result": "simulated"}
 
@@ -139,9 +144,17 @@ class Executor:
             ok, res = self.gateway.modify_position_sl(ticket, intent.stop)
         elif intent.action == CLOSE_POSITION:
             ticket = self.state.mirror_ticket(intent.trade_id)
-            ok, res = self.gateway.close_position(ticket)
+            broker_ticket = self.state.broker_closed_ticket(intent.trade_id)
+            if ticket is None and broker_ticket is not None:
+                # SL/TP/manual already closed it at the broker. Account for the
+                # engine's realised R, but do NOT send a second close — that is
+                # the only difference between the two exit paths.
+                ok, res = True, {"ticket": broker_ticket, "broker_closed": True}
+            else:
+                ok, res = self.gateway.close_position(ticket)
             if ok:
                 self.state.mirror_set(intent.trade_id, None)
+                self.state.clear_broker_closed(intent.trade_id)
                 self._record_realized(intent, today)
         else:
             ok, res = False, f"unknown action {intent.action}"

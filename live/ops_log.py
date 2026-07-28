@@ -23,6 +23,14 @@ class OpsLog:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.cycles_path = self.dir / "cycles.jsonl"
         self.heartbeat_path = self.dir / "heartbeat.json"
+        self._last_boundary = self._recover_last_boundary()
+
+    def _recover_last_boundary(self):
+        """Survive a restart so the first cycle's beat still names a boundary."""
+        try:
+            return json.loads(self.heartbeat_path.read_text()).get("boundary")
+        except (OSError, ValueError):
+            return None
 
     def cycle_start(self) -> dict:
         """Open a cycle record and emit a `cycle_running` liveness beat.
@@ -36,7 +44,10 @@ class OpsLog:
         record = {"cycle_start": _now()}
         self.heartbeat_path.write_text(json.dumps({
             "at": record["cycle_start"], "phase": "cycle_running",
-            "status": "running", "boundary": None, "error": "",
+            # Carry the LAST processed boundary forward: blanking it while a
+            # cycle runs hid the engine's position from any monitor for the whole
+            # multi-minute recompute.
+            "status": "running", "boundary": self._last_boundary, "error": "",
         }))
         return record
 
@@ -55,6 +66,8 @@ class OpsLog:
             "reconcile_findings": reconcile_findings or [],
             "frozen": bool(frozen), "published": published, "error": error,
         })
+        if boundary:
+            self._last_boundary = boundary
         with self.cycles_path.open("a") as fh:
             fh.write(json.dumps(record, default=str) + "\n")
         self.heartbeat_path.write_text(json.dumps({

@@ -93,8 +93,10 @@ def preflight(cfg: LiveConfig) -> int:
         tz_ok, tz_detail = gateway.verify_time_base()
         check("mt5_time_base", tz_ok, tz_detail)
         gateway.disconnect()
-    from live.mt5_bridge import MT5BarBridge
-    seg_ok, seg_detail = MT5BarBridge(cfg, MT5Gateway(cfg)).verify_time_base()
+    # Pure function, not a bridge instance: constructing one used to stamp
+    # provenance as a side effect, breaking this module's read-only contract.
+    from live.mt5_bridge import verify_segment_time_base
+    seg_ok, seg_detail = verify_segment_time_base(cfg)
     check("live_segment_time_base", seg_ok, seg_detail)
     return finish()
 

@@ -45,10 +45,18 @@ class LiveConfig:
     mt5_password: str = field(default_factory=lambda: _env("MT5_PASSWORD", ""))
     mt5_server: str = field(default_factory=lambda: _env("MT5_SERVER", ""))
     mt5_symbol_suffix: str = field(default_factory=lambda: _env("MT5_SYMBOL_SUFFIX", ""))
-    # Broker server timezone (IANA name). MT5 exposes no timezone via its API, so
-    # the zone must be declared. FTMO servers run EET/EEST; Europe/Athens tracks
-    # both, including the DST transitions — never hardcode a fixed hour offset.
-    mt5_server_tz: str = field(default_factory=lambda: _env("MT5_SERVER_TZ", "Europe/Athens"))
+    # ── broker server clock ──────────────────────────────────────────────────
+    # MT5 exposes no timezone, so the server clock is modelled explicitly as
+    # base offset + a DST calendar. MEASURED against this broker (MT5 H1 history
+    # cross-referenced with the true-UTC Dukascopy series): the offset flips
+    # +2h -> +3h on the US DST date (2026-03-08), NOT the EU date (2026-03-29).
+    # So FTMO runs EET-style base 2 switching on the US calendar — an IANA
+    # European zone is wrong for ~4 weeks a year (08-29 Mar, 25 Oct-01 Nov).
+    #   us   -> DST per America/New_York  (default; matches the measurement)
+    #   eu   -> DST per Europe/Brussels
+    #   none -> fixed base offset, no DST
+    mt5_server_base_utc_offset_hours: int = int(_env("MT5_SERVER_BASE_UTC_OFFSET_HOURS", "2"))
+    mt5_server_dst_rule: str = field(default_factory=lambda: _env("MT5_SERVER_DST_RULE", "us"))
 
     # Control Tower
     ct_base_url: str = field(default_factory=lambda: _env("CT_BASE_URL", "http://127.0.0.1:8000/api"))

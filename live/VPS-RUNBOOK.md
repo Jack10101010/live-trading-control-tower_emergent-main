@@ -24,25 +24,41 @@ setx MT5_LOGIN "<account>" /M
 setx MT5_PASSWORD "<password>" /M
 setx MT5_SERVER "<broker-server>" /M
 setx MT5_SYMBOL_SUFFIX "" /M          :: e.g. ".r" if the broker lists EURUSD.r
-setx MT5_SERVER_TZ "Europe/Athens" /M :: broker server timezone — see §2.1
+setx MT5_SERVER_BASE_UTC_OFFSET_HOURS "2" /M   :: broker clock — see §2.1
+setx MT5_SERVER_DST_RULE "us" /M               :: us | eu | none
 setx CT_BASE_URL "http://<ct-host>:8000/api" /M
 setx PYTHONPATH "C:\trading\live-trading-control-tower" /M
 ```
 
-## 2.1 Broker server timezone (MT5_SERVER_TZ) — required
+## 2.1 Broker server clock — required
 MetaTrader 5 encodes tick and bar times as the **broker server's wall clock
 stamped as if it were UTC** (the vendor docs call this "UTC without the shift").
 On an EEST server that makes every timestamp read 3 hours in the future. The API
-exposes no timezone, so the zone must be declared here; the gateway converts and
-**everything above it runs on canonical UTC**. Never substitute a fixed offset —
-the value changes at the DST boundaries, which `zoneinfo` handles.
+exposes no timezone, so the clock is declared here; the gateway converts and
+**everything above it runs on canonical UTC**.
 
-* FTMO runs EET/EEST → `Europe/Athens` (the default).
-* Verify after any broker change: `python -m live.deploy_check preflight` must
-  report `mt5_time_base ... verified against live tick`. A converted tick in the
-  future fails the gate closed.
-* The live segment records its `time_base` in `market_data/provenance.json`.
-  A segment written under an older base is **refused at startup** — archive
+The clock is modelled as **base offset + a DST calendar**, not as an IANA zone.
+*Measured* on this broker (MT5 H1 history cross-referenced against the true-UTC
+Dukascopy series): the offset flips +2h → +3h on the **US** DST date
+(2026-03-08), **not** the EU date (2026-03-29). An IANA European zone is
+therefore wrong for ~4 weeks a year (08–29 Mar and 25 Oct–01 Nov).
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `MT5_SERVER_BASE_UTC_OFFSET_HOURS` | `2` | standard-time offset (EET) |
+| `MT5_SERVER_DST_RULE` | `us` | `us` (America/New_York) · `eu` (Europe/Brussels) · `none` |
+
+* Re-measure if you change broker. Compare the weekly open in MT5 raw labels
+  against a true-UTC reference across a March/November transition.
+* `python -m live.deploy_check preflight` must report `mt5_time_base ...
+  verified against live tick`. A converted tick in the **future** fails closed.
+  During a US/EU shoulder period the check appends a `DST calendars disagree`
+  note so the riskiest weeks are visible rather than silent.
+* A reconnect re-verifies the clock — it may land on a different terminal.
+* The live segment records its `time_base` in `market_data/provenance.json`,
+  written **only when rows are appended** (never at construction, so an
+  unverified segment can never certify itself). A segment with a mismatched
+  **or missing** provenance is **refused at startup** — archive
   `EURUSD_1m_live.csv` + `provenance.json` and let the bridge re-backfill.
 
 ## 3. Preflight (must be ALL PASS before installing the service)
@@ -96,7 +112,7 @@ instantly): `type nul > C:\trading\live_state\KILL` — delete the file to clear
 | kill_switch | all but engine closes | `LIVE_KILL_FILE` presence |
 | symbol_whitelist | non-whitelisted resolved broker symbol | `config.broker_symbol` |
 | duplicate_intent | replayed intent ids | intent ledger |
-| daily_loss_limit | new opens after −`LIVE_DAILY_LOSS_LIMIT_R` | realised `net_r` accrued on every mirrored close (also in dry_run) |
+| daily_loss_limit | new opens after −`LIVE_DAILY_LOSS_LIMIT_R` | realised `net_r` accrued on every mirrored close — **including broker-side SL/TP/manual exits**, which reconcile records so the engine's close still accounts for them |
 | max_open_positions | opens beyond `LIVE_MAX_OPEN_POSITIONS` | mirror count |
 | unknown_position | modify/close without a mirrored ticket | mirror map |
 
