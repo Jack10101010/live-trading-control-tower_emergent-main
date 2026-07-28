@@ -245,6 +245,16 @@ class MarketDataProvider:
         universe → empty; a live feed (MT5) advertises its symbol list."""
         return []
 
+    def live_tick(self, symbol: str) -> dict | None:
+        """LIVE-5A: the GENUINE newest tick, or None when this provider has none.
+
+        Deliberately separate from `quote()`. `quote()` may be derived from a
+        fixture regime (the MT5 provider's is explicitly "PREVIEW ONLY"), which
+        is fine for a preview but must never back a live trade. A provider that
+        cannot read a real tick returns None, so the runtime reports the price as
+        unavailable rather than showing a synthesized one as though it were live.
+        """
+        return None
     def feed_status(self) -> dict:
         """Provider-level feed status (Objective 4). Local synthetic providers report
         a `local` connection with no per-feed latency; MT5 overrides with real values."""
@@ -506,6 +516,44 @@ class MT5MarketDataProvider(MarketDataProvider):
             "connection": self._connection(),
         }
 
+    def live_tick(self, symbol: str) -> dict | None:
+        """A REAL MT5 tick via `symbol_info_tick` — the same call the live
+        gateway uses. Returns None on any failure, so an unavailable price is
+        reported as unavailable rather than substituted."""
+        if not self._connect():
+            return None
+        m = self._module()
+        if m is None:
+            return None
+        bsym = self.to_broker_symbol(symbol)
+        try:
+            m.symbol_select(bsym, True)          # ensure it is in Market Watch
+            tick = m.symbol_info_tick(bsym)
+        except Exception as exc:  # pragma: no cover - only on a real MT5 host
+            self._last_error = f"symbol_info_tick failed: {exc.__class__.__name__}"
+            return None
+        if tick is None:
+            return None
+        bid = getattr(tick, "bid", None)
+        ask = getattr(tick, "ask", None)
+        if not bid or not ask:
+            # MT5 reports 0.0 for "no quote". Zero is NOT a price.
+            return None
+        epoch = getattr(tick, "time", None)
+        at = None
+        if epoch:
+            from datetime import datetime as _dt, timezone as _tz
+            # MT5 tick time is a UTC epoch; normalized here so nothing
+            # downstream ever performs local-time arithmetic.
+            at = _dt.fromtimestamp(int(epoch), _tz.utc).isoformat().replace("+00:00", "Z")
+        return {
+            "symbol": symbol, "brokerSymbol": bsym,
+            "bid": float(bid), "ask": float(ask),
+            "last": float(getattr(tick, "last", None) or 0) or None,
+            "spread": round(float(ask) - float(bid), 8),
+            "at": at, "provider": self.provider_id, "source": "live_mt5",
+        }
+
     def symbols(self) -> list[dict]:
         return [{"symbol": s, "brokerSymbol": self.to_broker_symbol(s)} for s in self._universe]
 
@@ -600,6 +648,16 @@ class MarketDataEngine:
 
     def history(self, limit: int = 25) -> list[dict]:
         return [asdict(s) for s in self._history[:limit]]
+
+    def live_tick(self, symbol: str) -> dict | None:
+        """LIVE-5A: the active provider's genuine tick, or None."""
+        provider = self.active_provider()
+        if provider is None:
+            return None
+        try:
+            return provider.live_tick(symbol)
+        except Exception:
+            return None
 
     def snapshot_dict(self, symbol: str, timeframe: str = DEFAULT_TIMEFRAME) -> dict | None:
         snap = self.current(symbol, timeframe)

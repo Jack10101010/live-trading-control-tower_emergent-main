@@ -57,11 +57,15 @@ import broker_history as broker_history_layer
 import trade_ledger_domain as ledger_domain
 import trade_ledger_store as ledger_store_layer
 import trade_reconstruction as reconstruction_layer
+import live_pipeline as live_pipeline_layer
+import live_preflight as live_preflight_layer
+import market_runtime as market_runtime_layer
 import recommendation_authorization as recommendation_auth_layer
 import recommendation_decision_service as recommendation_decision_layer
 import recommendation_domain as recommendation_layer
 import recommendation_service as recommendation_service_layer
 import recommendation_store as recommendation_store_layer
+import runtime_supervisor as runtime_supervisor_layer
 import reconciliation as reconciliation_layer
 import ops_status as ops_status_layer
 import security_config
@@ -2629,6 +2633,186 @@ def _projection_sources() -> projection_layer.ProjectionSources:
     )
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# LIVE-5A — THE ONE RUNTIME REFRESH OWNER.
+#
+# Audited before building: no refresh owner existed. Every `/api/operations/*`
+# handler called `_projection_sources()`, whose `broker_snapshot` binding is
+# `_fresh_broker_snapshot()` — a SYNCHRONOUS broker read on the request path. The
+# browser polls fourteen queries, so the broker was read fourteen times a cycle
+# with no shared notion of freshness.
+#
+# From LIVE-5A there is exactly ONE component that reads the broker on a cadence:
+# `_RUNTIME_SUPERVISOR`. The live dashboard serves its CACHED snapshot and reads
+# no broker at all. The pre-existing per-request reads on the legacy operations
+# routes are deliberately left alone — removing them is a behaviour change to
+# LIVE-4A surfaces that this slice does not need and must not risk.
+#
+# CADENCE: one tick every RUNTIME_TICK_SECONDS (default 5s), single daemon
+# thread, non-overlapping (see runtime_supervisor.tick_once).
+# ═════════════════════════════════════════════════════════════════════════════
+
+RUNTIME_TICK_SECONDS = float(os.environ.get("RUNTIME_TICK_SECONDS") or 5.0)
+#: The loop runs by default so the dashboard is live out of the box. It only
+#: READS, so enabling it cannot cause a trade; set to "0" to disable.
+RUNTIME_SUPERVISOR_ENABLED = (os.environ.get("RUNTIME_SUPERVISOR_ENABLED")
+                              or "1").strip() not in ("0", "false", "no", "off")
+#: OFF by default. Automatic Scenario/Recommendation production is opt-in: a
+#: process that starts proposing trades the moment it boots is exactly the
+#: autonomy LIVE-5A must not introduce.
+LIVE_PRODUCER_ENABLED = (os.environ.get("LIVE_PRODUCER_ENABLED") or "").strip() \
+    in ("1", "true", "yes", "on")
+#: The symbols the runtime polls. Same universe the market-data layer uses.
+RUNTIME_SYMBOLS = tuple(_MT5_SYMBOLS)
+RUNTIME_TIMEFRAME = "M15"
+
+
+def _runtime_quote(symbol: str) -> dict | None:
+    """One symbol's newest price for the runtime.
+
+    Prefers a GENUINE tick (`live_tick`). Falls back to the provider's `quote()`
+    only when no real tick exists, and marks it as derived so the projection
+    never presents a fixture-derived price as a live one.
+    """
+    tick = _MARKET_DATA_ENGINE.live_tick(symbol)
+    if isinstance(tick, dict):
+        return tick
+    provider = _MARKET_DATA_ENGINE.active_provider()
+    if provider is None:
+        return None
+    quote = None
+    if hasattr(provider, "quote"):
+        try:
+            quote = provider.quote(symbol, RUNTIME_TIMEFRAME, _now_iso())
+        except Exception:
+            quote = None
+    if isinstance(quote, dict) and quote.get("bid") is not None:
+        return {**quote, "at": quote.get("timestamp") or quote.get("at"),
+                "provider": quote.get("provider") or provider.provider_id,
+                "detail": "derived from provider quote; not a broker tick"}
+    # MOCK / fixture path (PART 14): derive bid/ask from the provider's own
+    # snapshot so MOCK and LIVE produce an IDENTICALLY SHAPED projection. The
+    # `detail` and `provider` fields keep it honest — a derived price is never
+    # presented as a broker tick.
+    # `snapshot()` BUILDS a reading; `snapshot_dict()` only returns a cached one
+    # and is None until something has built it, so the builder is what we call.
+    try:
+        snapshot = _MARKET_DATA_ENGINE.snapshot(symbol, RUNTIME_TIMEFRAME)
+    except Exception:
+        return None
+    if snapshot is None:
+        return None
+    close = (snapshot.ohlc or {}).get("close")
+    spread = snapshot.spread
+    if close is None or spread is None:
+        return None
+    return {"symbol": symbol, "bid": round(close - spread / 2, 5),
+            "ask": round(close + spread / 2, 5), "last": close,
+            "spread": spread, "at": snapshot.timestamp or snapshot.asOf,
+            "provider": snapshot.provider or provider.provider_id,
+            "detail": "derived from fixture snapshot; not a broker tick"}
+
+
+def _bar_open_iso(bar: dict) -> str | None:
+    """A bar's open time as ISO-8601 UTC.
+
+    The market-data layer returns MT5-style bars whose `time` is a UTC EPOCH
+    integer, not a string. Normalizing here is what keeps every timestamp
+    crossing the runtime boundary ISO UTC, so no local-time arithmetic can creep
+    in downstream.
+    """
+    raw = bar.get("openedAt") or bar.get("timestamp") or bar.get("time")
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        try:
+            return (datetime.fromtimestamp(int(raw), timezone.utc)
+                    .isoformat().replace("+00:00", "Z"))
+        except (ValueError, OSError, OverflowError):
+            return None
+    return str(raw)
+
+
+def _runtime_candles(symbol: str, count: int = 3) -> list:
+    """The newest COMPLETED candles, newest last, as market_runtime models.
+
+    `market_data.candles()` already returns completed bars only; the close time
+    is derived by the one rule in `market_runtime.candle_close_time`.
+    """
+    try:
+        bars = _MARKET_DATA_ENGINE.candles(symbol, RUNTIME_TIMEFRAME,
+                                          count, _now_iso()) or []
+    except Exception:
+        return []
+    out = []
+    for bar in bars:
+        opened = _bar_open_iso(bar)
+        closed = (bar.get("closedAt")
+                  or market_runtime_layer.candle_close_time(opened, RUNTIME_TIMEFRAME))
+        out.append(market_runtime_layer.SymbolCandle(
+            symbol=symbol, timeframe=RUNTIME_TIMEFRAME,
+            open=bar.get("open"), high=bar.get("high"),
+            low=bar.get("low"), close=bar.get("close"),
+            opened_at=opened, closed_at=closed,
+            provider=_MARKET_DATA_ENGINE.active_provider().provider_id))
+    return sorted([c for c in out if c.closed_at], key=lambda c: str(c.closed_at))
+
+
+def _runtime_newest_candle(symbol: str) -> dict | None:
+    bars = _runtime_candles(symbol)
+    if not bars:
+        return None
+    newest = bars[-1]
+    return {"open": newest.open, "high": newest.high, "low": newest.low,
+            "close": newest.close, "openedAt": newest.opened_at,
+            "closedAt": newest.closed_at, "timeframe": newest.timeframe,
+            "provider": newest.provider}
+
+
+def _broker_symbol_for(symbol: str) -> str | None:
+    try:
+        return _MARKET_DATA_ENGINE.active_provider().to_broker_symbol(symbol)
+    except Exception:
+        return None
+
+
+_MARKET_RUNTIME = market_runtime_layer.MarketRuntime(
+    symbols=RUNTIME_SYMBOLS, now_iso_fn=_now_iso,
+    quote_fn=_runtime_quote, candle_fn=_runtime_newest_candle,
+    connection_fn=lambda: broker_layer.get_broker().connection().state,
+    provider_fn=lambda: (_MARKET_DATA_ENGINE.active_provider().provider_id
+                         if _MARKET_DATA_ENGINE.active_provider() else None),
+    adapter_kind_fn=lambda: broker_layer.active_kind(),
+    broker_symbol_fn=_broker_symbol_for, timeframe=RUNTIME_TIMEFRAME)
+
+_LIVE_PRODUCER = live_pipeline_layer.LivePipelineProducer(
+    scenario_store_fn=_scenario_store,
+    recommendation_service_fn=lambda: _RECOMMENDATION_SERVICE,
+    now_iso_fn=_now_iso,
+    history_fn=lambda symbol: _runtime_candles(symbol),
+    node_id_fn=lambda: None,
+    enabled_fn=lambda: LIVE_PRODUCER_ENABLED,
+    logger=logger)
+
+_RUNTIME_SUPERVISOR = runtime_supervisor_layer.RuntimeSupervisor(
+    market=_MARKET_RUNTIME,
+    broker_snapshot_fn=_fresh_broker_snapshot,
+    account_fn=lambda: _guarded_account_snapshot(),
+    server_time_fn=lambda: None,
+    now_iso_fn=_now_iso, interval_s=RUNTIME_TICK_SECONDS,
+    on_tick=lambda snapshot: _LIVE_PRODUCER.on_tick(snapshot),
+    logger=logger)
+
+
+def _guarded_account_snapshot() -> dict | None:
+    try:
+        result = broker_layer.get_broker().account_snapshot(
+            _broker_context({}, _now_iso()))
+        return result.data if result.ok and isinstance(result.data, dict) else None
+    except Exception:
+        return None
+
+
 def _projection_response(payload: dict, status_code: int = 200) -> JSONResponse:
     return JSONResponse(content=payload, status_code=status_code,
                         headers={"Cache-Control": "no-store"})
@@ -3380,6 +3564,143 @@ async def expire_recommendation_route(request: Request, recommendation_id: str):
     return await _record_decision_route(
         request, recommendation_id,
         recommendation_layer.RecommendationDecisionType.EXPIRE)
+
+
+# ── LIVE-5A: the live runtime surface (read-only, cached, no broker reads) ────
+#
+# PATH NAMESPACE: `/api/live-runtime/*`, NOT `/api/runtime/*`. The audit found a
+# pre-existing `/api/runtime/health` (overlay/event-store liveness), plus
+# `/api/runtime/active-package` and `/api/runtime/reset`. Reusing that namespace
+# would have shadowed the existing health route — the same collision class caught
+# in LIVE-4D — so the live runtime gets its own prefix and the existing family is
+# left exactly as it was.
+
+def _live_runtime_view():
+    """Project the supervisor's CACHED snapshot. Performs no broker read: that
+    is the supervisor's job and its alone."""
+    now = _now_iso()
+    totals = None
+    try:
+        store = _recommendation_store()
+        totals = store.summary().as_dict() if store else None
+    except Exception:
+        totals = None
+    scenario_count = None
+    try:
+        sstore = _scenario_store()
+        if sstore is not None:
+            scenario_count = len(sstore.list_active_scenarios(limit=500))
+    except Exception:
+        scenario_count = None
+    return projection_layer.build_live_runtime(
+        _RUNTIME_SUPERVISOR.last, now=now,
+        health=_RUNTIME_SUPERVISOR.health(now=now),
+        execution_mode=_EXECUTION_MODE.current_mode(),
+        recommendation_totals=totals, scenario_count=scenario_count,
+        adapter_kind=broker_layer.active_kind())
+
+
+@api_router.get("/live-runtime")
+def runtime_live_route():
+    """THE ONE live-dashboard endpoint. Every live card is backed by this single
+    response, so the whole dashboard describes one instant."""
+    try:
+        return _projection_response(_live_runtime_view().as_dict())
+    except Exception:
+        logger.exception("live runtime projection failed")
+        return _projection_response(
+            {"available": False, "code": "runtime_projection_failed",
+             "projectionTimestamp": _now_iso()}, 503)
+
+
+@api_router.get("/live-runtime/health")
+def runtime_health_route():
+    """Runtime health only — cheap enough to poll frequently."""
+    try:
+        now = _now_iso()
+        return _projection_response({
+            **_RUNTIME_SUPERVISOR.health(now=now).as_dict(),
+            "projectionTimestamp": now})
+    except Exception:
+        logger.exception("runtime health failed")
+        return _projection_response(
+            {"state": runtime_supervisor_layer.UNKNOWN,
+             "code": "runtime_health_failed"}, 503)
+
+
+@api_router.post("/live-runtime/tick")
+def runtime_tick_route():
+    """Force ONE refresh. A read-only operation: it polls the broker and market
+    exactly as the loop does and can neither submit nor modify an order. Exists
+    so an operator (or the smoke workflow) can refresh without waiting a tick."""
+    try:
+        snapshot = _RUNTIME_SUPERVISOR.tick_once()
+        return _projection_response({
+            "ticked": True, "sequence": snapshot.sequence,
+            "state": snapshot.health.state,
+            "projectionTimestamp": snapshot.at})
+    except Exception:
+        logger.exception("runtime tick failed")
+        return _projection_response(
+            {"ticked": False, "code": "runtime_tick_failed"}, 503)
+
+
+@api_router.get("/trade-recommendations/{recommendation_id}/preflight")
+def recommendation_preflight_route(recommendation_id: str):
+    """PART 15: every pre-trade condition, evaluated together.
+
+    ADVISORY. The execution pipeline's own safety, authorization, mode and
+    idempotency gates are untouched and run again at submission; this reports
+    early and in full so a doomed submission is refused with a clear reason.
+    """
+    try:
+        store = _recommendation_store()
+        if store is None:
+            return _recommendation_unavailable()
+        recommendation = store.get_recommendation(recommendation_id)
+        scenario = None
+        if recommendation is not None:
+            scenario = _scenario_reader(recommendation.scenario_id)
+        now = _now_iso()
+
+        def _intent_for(rid: str):
+            execution_store = _execution_store()
+            if execution_store is None:
+                return None
+            for intent in (execution_store.intents_by_state(limit=500) or []):
+                if intent.get("recommendation_id") == rid:
+                    return intent.get("intent_id")
+            return None
+
+        def _mode_allows(mode):
+            # The mode owner's rule, not a re-implementation of it.
+            return mode == execution_mode_layer.MODE_MANUAL_LIVE
+
+        result = live_preflight_layer.evaluate(
+            recommendation_id=recommendation_id, now=now,
+            runtime_snapshot=_RUNTIME_SUPERVISOR.last,
+            runtime_health=_RUNTIME_SUPERVISOR.health(now=now),
+            recommendation=recommendation, scenario=scenario,
+            execution_mode=_EXECUTION_MODE.current_mode(),
+            mode_allows_execution=_mode_allows,
+            authorization=_preflight_authorization(),
+            existing_intent_for=_intent_for)
+        return _projection_response({**result.as_dict(),
+                                     "projectionTimestamp": now})
+    except Exception:
+        logger.exception("recommendation preflight failed")
+        return _recommendation_unavailable("recommendation_preflight_failed")
+
+
+def _preflight_authorization() -> dict | None:
+    """The active authorization grant as a safe view, or None."""
+    try:
+        grant = _execution_context().authorization
+        if grant is None or not grant.is_active(datetime.now(timezone.utc)):
+            return None
+        return {**grant.safe_view(), "valid": True}
+    except Exception:
+        return None
 
 
 @api_router.get("/execution/health")
@@ -4662,6 +4983,10 @@ _ops_notifier = ops_notifier_layer.OpsNotifier(
 
 @app.on_event("startup")
 async def _start_ops_journal():
+    # LIVE-5A: the ONE runtime refresh owner. Started here so exactly one loop
+    # polls the broker for the whole process lifetime.
+    if RUNTIME_SUPERVISOR_ENABLED:
+        _RUNTIME_SUPERVISOR.start()
     if OPS_JOURNAL_ENABLED:
         _ops_journal.start()
     if OPS_NOTIFIER_ENABLED:
@@ -4671,6 +4996,7 @@ async def _start_ops_journal():
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    _RUNTIME_SUPERVISOR.stop()  # safe when never started
     _ops_journal.stop()  # safe when never started
     _ops_notifier.stop()  # safe when never started
     if client is not None:

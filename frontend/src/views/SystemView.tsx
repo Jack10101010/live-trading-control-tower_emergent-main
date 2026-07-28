@@ -9,6 +9,7 @@ import { ManualExecutionPanel } from '@/components/domain/ManualExecutionPanel';
 import { OperationalDashboard } from '@/components/domain/OperationalDashboard';
 import { ScenarioPanel } from '@/components/domain/ScenarioPanel';
 import { TradeLedgerPanel } from '@/components/domain/TradeLedgerPanel';
+import { LiveRuntimePanel } from '@/components/domain/LiveRuntimePanel';
 import { RecommendationPanel } from '@/components/domain/RecommendationPanel';
 import { useFleet, usePackages, useFeatureFlags, useRuntimeHealth, useBrokerReconciliation, useStrategyEvaluation, useSchedulerStatus, useMarketSnapshot, useRiskLimits, useActivePackage, useBackendHealth, useOperator } from '@/hooks/useRepository';
 import { api, QK } from '@/lib/api';
@@ -114,6 +115,11 @@ export function SystemView() {
           card; no card re-derives operational truth. Placed first: it is the
           canonical operational view of the system. */}
       <OperationalDashboard />
+
+      {/* LIVE-5A — the live runtime: one backend loop owns every broker and
+          market read, and this panel renders the snapshot it published. Placed
+          first because it is the only card that reports the LIVE market. */}
+      <LiveRuntimePanel />
 
       {/* LIVE-4B — the canonical Scenario domain: the parent object of every
           recommendation, intent, order, position and future ledger entry. */}

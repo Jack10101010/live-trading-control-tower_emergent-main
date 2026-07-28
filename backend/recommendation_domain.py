@@ -653,7 +653,10 @@ class RecommendationOutcome:
 
 class RecommendationSource:
     OPERATOR = "OPERATOR"
-    STRATEGY = "STRATEGY"          # reserved; no strategy runtime exists
+    #: LIVE-5A: used by `live_pipeline.LivePipelineProducer`, the candle-break
+    #: PIPELINE PROOF. That producer is mechanical and untuned — the source
+    #: says "not an operator", it does NOT claim a tuned strategy exists.
+    STRATEGY = "STRATEGY"
     RISK_ENGINE = "RISK_ENGINE"
     IMPORT = "IMPORT"              # imported evidence (e.g. the fixture world)
     UNKNOWN = "UNKNOWN"

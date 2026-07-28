@@ -1048,6 +1048,98 @@ export interface RecommendationListView {
   code?: string;
 }
 
+export interface LiveRuntimeStatus {
+  state: string;
+  projectionAgeSeconds: number | null;
+  brokerAgeSeconds: number | null;
+  lastTickAt: string | null;
+  lastSuccessAt: string | null;
+  tickCount: number;
+  consecutiveFailures: number;
+  intervalSeconds: number | null;
+  running: boolean;
+  warnings: string[];
+}
+
+export interface LiveBrokerRuntime {
+  connected: boolean;
+  connectionState: string | null;
+  pingMs: number | null;
+  server: string | null;
+  serverTime: string | null;
+  accountFingerprint: string | null;
+  accountCurrency: string | null;
+  balance: number | null;
+  equity: number | null;
+  margin: number | null;
+  freeMargin: number | null;
+  marginLevel: number | null;
+  leverage: number | null;
+  adapterKind: string | null;
+  executionMode: string | null;
+  lastHeartbeatAt: string | null;
+  heartbeatAgeSeconds: number | null;
+  availability: string;
+  provenance: string;
+  freshness: ProjectionFreshness | null;
+}
+
+export interface LiveMarketSymbol {
+  symbol: string;
+  brokerSymbol: string | null;
+  bid: number | null;
+  ask: number | null;
+  last: number | null;
+  spread: number | null;
+  quoteAt: string | null;
+  quoteAgeSeconds: number | null;
+  candleTimeframe: string | null;
+  candleClosedAt: string | null;
+  candleAgeSeconds: number | null;
+  candleClose: number | null;
+  live: boolean;
+  availability: string;
+  candleAvailability: string;
+  provenance: string;
+}
+
+export interface LiveExecutionRuntime {
+  activePositions: number;
+  pendingOrders: number;
+  openRecommendations: number;
+  activeScenarios: number;
+  positionsAvailable: boolean;
+  recommendationsAvailable: boolean;
+  scenariosAvailable: boolean;
+}
+
+/** The ONE live-dashboard payload. Every live card derives from this. */
+export interface LiveRuntimeView {
+  projectionTimestamp: string;
+  runtime: LiveRuntimeStatus;
+  broker: LiveBrokerRuntime;
+  symbols: LiveMarketSymbol[];
+  execution: LiveExecutionRuntime;
+  available: boolean;
+  code: string | null;
+  warnings: string[];
+}
+
+export interface PreflightCheck {
+  name: string;
+  passed: boolean;
+  code: string | null;
+  detail: string | null;
+}
+
+export interface PreflightResult {
+  at: string;
+  recommendationId: string;
+  clear: boolean;
+  blockers: string[];
+  checks: PreflightCheck[];
+}
+
 export interface RecommendationDecisionResult {
   recorded: boolean;
   replayed: boolean;
@@ -1301,6 +1393,13 @@ export const api = {
     }
     return payload as RecommendationDecisionResult;
   },
+  /** LIVE-5A: the single live-runtime projection backing every live card. */
+  liveRuntime: () => apiFetch<LiveRuntimeView>('/live-runtime'),
+  liveRuntimeHealth: () =>
+    apiFetch<LiveRuntimeStatus & { projectionTimestamp: string }>('/live-runtime/health'),
+  recommendationPreflight: (id: string) =>
+    apiFetch<PreflightResult & { projectionTimestamp: string }>(
+      `/trade-recommendations/${encodeURIComponent(id)}/preflight`),
   tradeRecommendationDecisions: (id: string) =>
     apiFetch<{ decisions: RecommendationDecisionView[]; conflicts: string[] }>(
       `/trade-recommendations/${encodeURIComponent(id)}/decisions`),

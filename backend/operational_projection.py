@@ -1251,3 +1251,323 @@ def build_summary(sources: ProjectionSources, *, now: str,
         active_orders=orders, open_positions=positions, active_scenarios=scenarios,
         reconciliation_issues=issues, active_operations=operations,
         warnings=warnings, freshness=fresh)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# LIVE-5A — the LIVE RUNTIME projection.
+#
+# The dashboard's live view is built HERE, from the runtime supervisor's cached
+# snapshot, because the projection owner is the only component allowed to decide
+# what the UI sees. Two rules shape every model below:
+#
+#   1. Nothing is invented. A field the broker did not supply is None with an
+#      availability that says so; zero is never a substitute for absent.
+#   2. Nothing is recomputed downstream. Spread, ages and counts are derived
+#      once, here, so React renders values rather than calculating them.
+# ═════════════════════════════════════════════════════════════════════════════
+
+#: Runtime states, re-exported so a consumer needs one import, not two.
+RUNTIME_STARTING = "STARTING"
+RUNTIME_CONNECTED = "CONNECTED"
+RUNTIME_STALE = "STALE"
+RUNTIME_DEGRADED = "DEGRADED"
+RUNTIME_RECONNECTING = "RECONNECTING"
+RUNTIME_STOPPED = "STOPPED"
+RUNTIME_UNKNOWN = "UNKNOWN"
+
+
+@dataclass(frozen=True)
+class BrokerRuntimeView:
+    """The broker card. Every figure is broker-supplied or None."""
+    connected: bool = False
+    connection_state: str | None = None
+    ping_ms: float | None = None
+    server: str | None = None
+    server_time: str | None = None
+    account_fingerprint: str | None = None
+    account_currency: str | None = None
+    balance: float | None = None
+    equity: float | None = None
+    margin: float | None = None
+    free_margin: float | None = None
+    margin_level: float | None = None
+    leverage: int | None = None
+    adapter_kind: str | None = None
+    execution_mode: str | None = None
+    last_heartbeat_at: str | None = None
+    heartbeat_age_seconds: float | None = None
+    availability: str = AVAILABILITY_UNAVAILABLE
+    provenance: str = PROV_ABSENT
+    freshness: Freshness | None = None
+
+    def as_dict(self) -> dict:
+        return _sorted({
+            "connected": self.connected,
+            "connectionState": self.connection_state,
+            "pingMs": self.ping_ms, "server": self.server,
+            "serverTime": self.server_time,
+            "accountFingerprint": self.account_fingerprint,
+            "accountCurrency": self.account_currency,
+            "balance": self.balance, "equity": self.equity,
+            "margin": self.margin, "freeMargin": self.free_margin,
+            "marginLevel": self.margin_level, "leverage": self.leverage,
+            "adapterKind": self.adapter_kind,
+            "executionMode": self.execution_mode,
+            "lastHeartbeatAt": self.last_heartbeat_at,
+            "heartbeatAgeSeconds": self.heartbeat_age_seconds,
+            "availability": self.availability, "provenance": self.provenance,
+            "freshness": self.freshness.as_dict() if self.freshness else None,
+        })
+
+
+@dataclass(frozen=True)
+class MarketSymbolView:
+    """One symbol's live market card."""
+    symbol: str
+    broker_symbol: str | None = None
+    bid: float | None = None
+    ask: float | None = None
+    last: float | None = None
+    spread: float | None = None
+    quote_at: str | None = None
+    quote_age_seconds: float | None = None
+    candle_timeframe: str | None = None
+    candle_closed_at: str | None = None
+    candle_age_seconds: float | None = None
+    candle_close: float | None = None
+    live: bool = False
+    availability: str = AVAILABILITY_UNAVAILABLE
+    candle_availability: str = AVAILABILITY_UNAVAILABLE
+    provenance: str = PROV_ABSENT
+
+    def as_dict(self) -> dict:
+        return _sorted({
+            "symbol": self.symbol, "brokerSymbol": self.broker_symbol,
+            "bid": self.bid, "ask": self.ask, "last": self.last,
+            "spread": self.spread, "quoteAt": self.quote_at,
+            "quoteAgeSeconds": self.quote_age_seconds,
+            "candleTimeframe": self.candle_timeframe,
+            "candleClosedAt": self.candle_closed_at,
+            "candleAgeSeconds": self.candle_age_seconds,
+            "candleClose": self.candle_close, "live": self.live,
+            "availability": self.availability,
+            "candleAvailability": self.candle_availability,
+            "provenance": self.provenance,
+        })
+
+
+@dataclass(frozen=True)
+class RuntimeStatusView:
+    """The runtime card — PART 11's health, as the UI sees it."""
+    state: str = RUNTIME_UNKNOWN
+    projection_age_seconds: float | None = None
+    broker_age_seconds: float | None = None
+    last_tick_at: str | None = None
+    last_success_at: str | None = None
+    tick_count: int = 0
+    consecutive_failures: int = 0
+    interval_seconds: float | None = None
+    running: bool = False
+    warnings: tuple = field(default_factory=tuple)
+
+    def as_dict(self) -> dict:
+        return _sorted({
+            "state": self.state,
+            "projectionAgeSeconds": self.projection_age_seconds,
+            "brokerAgeSeconds": self.broker_age_seconds,
+            "lastTickAt": self.last_tick_at,
+            "lastSuccessAt": self.last_success_at,
+            "tickCount": self.tick_count,
+            "consecutiveFailures": self.consecutive_failures,
+            "intervalSeconds": self.interval_seconds, "running": self.running,
+            "warnings": list(self.warnings),
+        })
+
+
+@dataclass(frozen=True)
+class ExecutionRuntimeView:
+    """The execution card: how much live work is in flight right now."""
+    active_positions: int = 0
+    pending_orders: int = 0
+    open_recommendations: int = 0
+    active_scenarios: int = 0
+    positions_available: bool = False
+    recommendations_available: bool = False
+    scenarios_available: bool = False
+
+    def as_dict(self) -> dict:
+        return _sorted({
+            "activePositions": self.active_positions,
+            "pendingOrders": self.pending_orders,
+            "openRecommendations": self.open_recommendations,
+            "activeScenarios": self.active_scenarios,
+            "positionsAvailable": self.positions_available,
+            "recommendationsAvailable": self.recommendations_available,
+            "scenariosAvailable": self.scenarios_available,
+        })
+
+
+@dataclass(frozen=True)
+class LiveRuntimeView:
+    """The whole live dashboard in one immutable projection.
+
+    ONE API response backs every live card, so the browser makes one request per
+    cycle instead of fourteen, and every card on screen is guaranteed to describe
+    the same instant.
+    """
+    projection_timestamp: str
+    runtime: RuntimeStatusView = field(default_factory=RuntimeStatusView)
+    broker: BrokerRuntimeView = field(default_factory=BrokerRuntimeView)
+    symbols: tuple = field(default_factory=tuple)
+    execution: ExecutionRuntimeView = field(default_factory=ExecutionRuntimeView)
+    available: bool = False
+    code: str | None = None
+    warnings: tuple = field(default_factory=tuple)
+
+    def as_dict(self) -> dict:
+        return _sorted({
+            "projectionTimestamp": self.projection_timestamp,
+            "runtime": self.runtime.as_dict(), "broker": self.broker.as_dict(),
+            "symbols": [s.as_dict() for s in self.symbols],
+            "execution": self.execution.as_dict(),
+            "available": self.available, "code": self.code,
+            "warnings": list(self.warnings),
+        })
+
+
+def build_live_runtime(snapshot=None, *, now: str, health=None,
+                       execution_mode: str | None = None,
+                       recommendation_totals=None, scenario_count=None,
+                       adapter_kind: str | None = None) -> LiveRuntimeView:
+    """Project the runtime supervisor's cached snapshot for the UI.
+
+    `snapshot is None` means the supervisor has not produced a tick yet, which is
+    reported as UNAVAILABLE — never as a healthy runtime with zero everything.
+    Performs NO broker read and NO recomputation of anything the snapshot already
+    measured.
+    """
+    if snapshot is None:
+        return LiveRuntimeView(
+            projection_timestamp=str(now), available=False,
+            code="runtime_not_started",
+            runtime=RuntimeStatusView(
+                state=(health.state if health else RUNTIME_STARTING),
+                running=bool(health.running) if health else False,
+                warnings=("runtime has produced no tick",)),
+            warnings=("runtime has produced no tick",))
+
+    market = snapshot.market
+    heartbeat = market.heartbeat if market is not None else None
+    account = snapshot.account if isinstance(snapshot.account, dict) else {}
+    resolved_health = health if health is not None else snapshot.health
+
+    heartbeat_age = (heartbeat.age_seconds(now) if heartbeat else None)
+    connected = bool(heartbeat and heartbeat.connection == "Connected")
+    broker_availability = (heartbeat.availability(now) if heartbeat
+                           else AVAILABILITY_UNAVAILABLE)
+    provenance = (PROV_LIVE_MT5 if (adapter_kind or snapshot_adapter(snapshot)) == "mt5"
+                  else PROV_MOCK_FIXTURE)
+
+    broker = BrokerRuntimeView(
+        connected=connected,
+        connection_state=(heartbeat.connection if heartbeat else None),
+        ping_ms=(heartbeat.latency_ms if heartbeat else None),
+        server=account.get("server"),
+        server_time=snapshot.server_time,
+        account_fingerprint=_mask_fingerprint(account.get("accountFingerprint")),
+        account_currency=account.get("currency"),
+        balance=_num(account.get("balance")), equity=_num(account.get("equity")),
+        margin=_num(account.get("margin")),
+        free_margin=_num(account.get("marginFree")
+                         if "marginFree" in account else account.get("margin_free")),
+        margin_level=_num(account.get("marginLevel")
+                          if "marginLevel" in account else account.get("margin_level")),
+        leverage=_int(account.get("leverage")),
+        adapter_kind=(adapter_kind or snapshot_adapter(snapshot)),
+        execution_mode=execution_mode,
+        last_heartbeat_at=(heartbeat.at if heartbeat else None),
+        heartbeat_age_seconds=heartbeat_age,
+        availability=(broker_availability if account or connected
+                      else AVAILABILITY_UNAVAILABLE),
+        provenance=(provenance if (account or connected) else PROV_ABSENT),
+        freshness=freshness(now=now,
+                            source_at=(heartbeat.at if heartbeat else None),
+                            available=bool(heartbeat and heartbeat.at)))
+
+    symbols = []
+    for sub in (market.subscriptions if market else ()):
+        quote, candle = sub.quote, sub.candle
+        symbols.append(MarketSymbolView(
+            symbol=sub.symbol, broker_symbol=sub.broker_symbol,
+            bid=(quote.bid if quote else None),
+            ask=(quote.ask if quote else None),
+            last=(quote.last if quote else None),
+            spread=(quote.spread if quote else None),
+            quote_at=(quote.at if quote else None),
+            quote_age_seconds=(quote.age_seconds(now) if quote else None),
+            candle_timeframe=(candle.timeframe if candle else None),
+            candle_closed_at=(candle.closed_at if candle else None),
+            candle_age_seconds=(candle.age_seconds(now) if candle else None),
+            candle_close=(candle.close if candle else None),
+            live=bool(sub.active),
+            availability=(quote.availability(now) if quote
+                          else AVAILABILITY_UNAVAILABLE),
+            candle_availability=(candle.availability(now) if candle
+                                 else AVAILABILITY_UNAVAILABLE),
+            provenance=((quote.provider if quote and quote.provider else None)
+                        or PROV_ABSENT)))
+
+    raw = snapshot.broker_snapshot if isinstance(snapshot.broker_snapshot, dict) else None
+    positions = (raw or {}).get("positions")
+    orders = (raw or {}).get("orders")
+    totals = recommendation_totals if isinstance(recommendation_totals, dict) else None
+    execution = ExecutionRuntimeView(
+        active_positions=len(positions or ()),
+        pending_orders=len(orders or ()),
+        open_recommendations=int((totals or {}).get("activeCount") or 0),
+        active_scenarios=int(scenario_count or 0),
+        positions_available=raw is not None,
+        recommendations_available=totals is not None,
+        scenarios_available=scenario_count is not None)
+
+    runtime = RuntimeStatusView(
+        state=resolved_health.state,
+        projection_age_seconds=resolved_health.projection_age_seconds,
+        broker_age_seconds=(resolved_health.broker_age_seconds
+                            if resolved_health.broker_age_seconds is not None
+                            else heartbeat_age),
+        last_tick_at=resolved_health.last_tick_at,
+        last_success_at=resolved_health.last_success_at,
+        tick_count=resolved_health.tick_count,
+        consecutive_failures=resolved_health.consecutive_failures,
+        interval_seconds=resolved_health.interval_s,
+        running=resolved_health.running,
+        warnings=tuple(resolved_health.warnings))
+
+    return LiveRuntimeView(
+        projection_timestamp=str(now), runtime=runtime, broker=broker,
+        symbols=tuple(symbols), execution=execution, available=True,
+        warnings=tuple(snapshot.warnings))
+
+
+def snapshot_adapter(snapshot) -> str | None:
+    market = getattr(snapshot, "market", None)
+    return getattr(market, "adapter_kind", None) if market is not None else None
+
+
+def _num(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
