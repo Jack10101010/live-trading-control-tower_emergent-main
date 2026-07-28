@@ -36,6 +36,11 @@ class OrderIntent:
     stop: float | None = None
     target: float | None = None
     reason: str = ""
+    # Engine-realised R (cost-inclusive `net_r`), carried on CLOSE_POSITION only.
+    # This is the sole production source for the daily-loss counter — the engine
+    # is the state machine, so its own realised R is authoritative rather than a
+    # broker P&L round-trip that the mirror model never performs.
+    realized_r: float | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -106,7 +111,7 @@ def diff_frontier(prev_frame, cur_frame, frontier_bar: str) -> list[OrderIntent]
             intents.append(OrderIntent(
                 intent_id=_intent_id(tid, f"exit_{outcome}", frontier_bar), action=CLOSE_POSITION,
                 trade_id=tid, side=_side(row), frontier_bar=frontier_bar,
-                reason=f"engine_exit_{outcome.lower()}"))
+                reason=f"engine_exit_{outcome.lower()}", realized_r=_f(row, "net_r")))
             continue
 
         # 3) stop moved on a still-open position (BE / move-stop)

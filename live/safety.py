@@ -29,13 +29,26 @@ class SafetyRails:
     def _kill_switch_on(self) -> bool:
         return self.config.kill_file.exists()
 
+    def _instrument_allowed(self) -> bool:
+        """The instrument check that can actually fail.
+
+        The previous per-intent test was `symbol != SYMBOL` where the caller
+        passed the SYMBOL constant itself — a value compared with itself, which
+        could never fire. What IS operator-configurable is the resolved broker
+        symbol (SYMBOL + MT5_SYMBOL_SUFFIX), so that is what is validated.
+        """
+        return str(getattr(self.config, "broker_symbol", SYMBOL)).startswith(SYMBOL)
+
     def evaluate(self, intent, symbol: str, today: str) -> RailVerdict:
+        # `symbol` is kept in the signature for call-site/back-compat; the
+        # meaningful instrument gate is _instrument_allowed() (see above).
         # 1) global kill switch — blocks everything except engine-driven closes
         if self._kill_switch_on() and intent.action != CLOSE_POSITION:
             return RailVerdict(False, "kill_switch", str(self.config.kill_file))
-        # 2) symbol whitelist — this instance trades EURUSD only
-        if symbol != SYMBOL:
-            return RailVerdict(False, "symbol_whitelist", f"{symbol} != {SYMBOL}")
+        # 2) instrument whitelist — resolved broker symbol must be the whitelisted one
+        if not self._instrument_allowed():
+            return RailVerdict(False, "symbol_whitelist",
+                               f"{getattr(self.config, 'broker_symbol', '?')} is not {SYMBOL}")
         # 3) duplicate-order protection — idempotent ledger
         status = self.state.ledger_status(intent.intent_id)
         if status in (LEDGER_SENT, LEDGER_CONFIRMED, LEDGER_SIMULATED):

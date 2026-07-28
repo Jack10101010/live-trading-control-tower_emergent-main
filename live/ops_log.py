@@ -25,7 +25,20 @@ class OpsLog:
         self.heartbeat_path = self.dir / "heartbeat.json"
 
     def cycle_start(self) -> dict:
-        return {"cycle_start": _now()}
+        """Open a cycle record and emit a `cycle_running` liveness beat.
+
+        A cycle legitimately runs for many minutes (full-history recompute),
+        which exceeds any idle staleness threshold. Beating at the START with an
+        explicit phase lets a monitor distinguish "working" from "hung" instead
+        of inferring death from silence; consumers apply a longer allowance
+        while the phase is `cycle_running` (see deploy_check.runtime).
+        """
+        record = {"cycle_start": _now()}
+        self.heartbeat_path.write_text(json.dumps({
+            "at": record["cycle_start"], "phase": "cycle_running",
+            "status": "running", "boundary": None, "error": "",
+        }))
+        return record
 
     def cycle_end(self, record: dict, *, boundary=None, last_bar=None, appended=0,
                   status="", intents=0, applied=0, blocked=0, skipped=0,
@@ -45,8 +58,8 @@ class OpsLog:
         with self.cycles_path.open("a") as fh:
             fh.write(json.dumps(record, default=str) + "\n")
         self.heartbeat_path.write_text(json.dumps({
-            "at": record["cycle_end"], "boundary": boundary, "status": status,
-            "error": error, "duration_s": record["duration_s"],
+            "at": record["cycle_end"], "phase": "idle", "boundary": boundary,
+            "status": status, "error": error, "duration_s": record["duration_s"],
         }))
         return record
 

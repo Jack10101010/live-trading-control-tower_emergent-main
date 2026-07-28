@@ -15,7 +15,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from live.config import DATA_SEAM, SYMBOL
+from live.config import DATA_SEAM, SYMBOL, TIME_BASE
 
 COLUMNS = ["time", "open", "high", "low", "close", "volume"]
 
@@ -39,8 +39,34 @@ class MT5BarBridge:
                               "(sha256 314a0efa…, Dukascopy-derived, ends 2026-06-19)",
             "live_vendor": "MT5 terminal feed (broker symbol %s)" % self.config.broker_symbol,
             "seam_policy": "frozen rows win at or before frozen end; live rows win after",
+            "time_base": TIME_BASE,
+            "server_tz": self.config.mt5_server_tz,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }, indent=1))
+
+    def verify_time_base(self) -> tuple[bool, str]:
+        """Refuse to extend a segment recorded under a different time base.
+
+        Segments written before the server-time fix carry broker wall-clock
+        labels, so appending canonical-UTC rows to them would interleave two
+        bases in one file and silently mis-assign trading sessions. Mixing is
+        undetectable downstream, so it fails closed here and the operator
+        archives + re-backfills instead.
+        """
+        path = self.config.market_data_dir / "provenance.json"
+        if not path.exists():
+            return True, "no provenance yet (fresh segment)"
+        try:
+            stored = json.loads(path.read_text()).get("time_base")
+        except (OSError, ValueError) as exc:
+            return False, f"provenance.json unreadable: {exc}"
+        if stored == TIME_BASE:
+            return True, f"time_base {stored}"
+        if not self.config.live_segment_csv.exists():
+            return True, f"time_base {stored!r} superseded, segment absent — will rebuild as {TIME_BASE}"
+        return False, (f"live segment written under time_base {stored!r} but this build emits "
+                       f"{TIME_BASE!r} — timestamps are not comparable. Archive "
+                       f"{self.config.live_segment_csv.name} + provenance.json and re-backfill.")
 
     def _heartbeat(self, last_bar_time: str | None, appended: int, error: str = "") -> None:
         (self.config.market_data_dir / "heartbeat.json").write_text(json.dumps({

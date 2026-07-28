@@ -87,8 +87,15 @@ def preflight(cfg: LiveConfig) -> int:
     if ok:
         now = gateway.server_time_utc()
         check("mt5_symbol_resolves", now is not None,
-              f"{cfg.broker_symbol} server time {now}")
+              f"{cfg.broker_symbol} server time {now} UTC")
+        # Time base: a converted tick must never be in the future. Catches a
+        # wrong/absent MT5_SERVER_TZ before it can mislabel live bars.
+        tz_ok, tz_detail = gateway.verify_time_base()
+        check("mt5_time_base", tz_ok, tz_detail)
         gateway.disconnect()
+    from live.mt5_bridge import MT5BarBridge
+    seg_ok, seg_detail = MT5BarBridge(cfg, MT5Gateway(cfg)).verify_time_base()
+    check("live_segment_time_base", seg_ok, seg_detail)
     return finish()
 
 
@@ -104,7 +111,13 @@ def runtime(cfg: LiveConfig) -> int:
     hb = _heartbeat(cfg)
     if check("heartbeat_present", hb is not None):
         age = (datetime.now(timezone.utc) - datetime.fromisoformat(hb["at"])).total_seconds()
-        check("heartbeat_fresh", age < 120, f"{age:.0f}s old")
+        # Phase-aware: a full-history recompute legitimately runs for minutes, so
+        # a flat 120s allowance failed a HEALTHY engine mid-cycle. Idle keeps the
+        # tight bound; an in-flight cycle is allowed the bar budget.
+        phase = hb.get("phase", "")
+        limit = 900 if phase == "cycle_running" else 120
+        check("heartbeat_fresh", age < limit,
+              f"{age:.0f}s old (phase={phase or 'n/a'}, limit {limit}s)")
         check("heartbeat_no_error", not hb.get("error"), hb.get("error", ""))
     state = RunnerState(cfg.state_dir)
     check("boundary_processed", bool(state.data.get("last_boundary")),

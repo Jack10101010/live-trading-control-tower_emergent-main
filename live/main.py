@@ -52,10 +52,18 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops) -> dict:
     executor_result = None
     delivery = None
     try:
+        # Re-establish the MT5 link if the terminal restarted since last cycle.
+        conn_ok, conn_detail = gateway.ensure_connected()
+        if not conn_ok:
+            raise RuntimeError(f"MT5 gateway unavailable: {conn_detail}")
         bridge_result = bridge.poll_once()
-        runner_result = runner.run_once()
+        runner_result = runner.run_once(defer_commit=True)
         if runner_result.get("status") == "ok" and runner_result.get("intents"):
             executor_result = executor.apply(runner_result["intents"])
+        # LR-1 COMMIT POINT: the boundary/frame advance only once execution is
+        # durable. A crash before here replays the cycle; the ledger suppresses
+        # anything already applied, so nothing is duplicated or lost.
+        runner.commit_cycle()
         payload = publisher.build_payload(
             runner_result, executor_result,
             engine_version=runner.session.engine_version if runner.session else "n/a",
@@ -90,6 +98,22 @@ def main() -> None:  # pragma: no cover - VPS loop
     print(f"[{datetime.now(timezone.utc).isoformat()}] gateway: {detail} | mode={config.mode}")
     if not ok:
         raise SystemExit("MT5 gateway unavailable — refusing to start")
+
+    # ── startup validation: both halves of the time base must agree ──────────
+    # A wrong/absent server-zone conversion mislabels every live bar by the
+    # broker offset and silently mis-assigns trading sessions, so both checks
+    # fail closed rather than trade on unusable timestamps.
+    tz_ok, tz_detail = gateway.verify_time_base()
+    print(f"[{datetime.now(timezone.utc).isoformat()}] server_tz "
+          f"({config.mt5_server_tz}): {tz_detail}")
+    if not tz_ok:
+        gateway.disconnect()
+        raise SystemExit(f"REFUSED: {tz_detail}")
+    seg_ok, seg_detail = bridge.verify_time_base()
+    print(f"[{datetime.now(timezone.utc).isoformat()}] live segment: {seg_detail}")
+    if not seg_ok:
+        gateway.disconnect()
+        raise SystemExit(f"REFUSED: {seg_detail}")
     consecutive_errors = 0
     try:
         while True:

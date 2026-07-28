@@ -92,6 +92,7 @@ class LiveRunner:
         self.state = RunnerState(config.state_dir)
         self._pipeline = pipeline                    # injectable for tests
         self._candles_provider = candles_provider    # injectable for rehearsal (P0)
+        self._pending_commit: tuple | None = None    # LR-1: see commit_cycle()
 
     # ── pipeline (mirrors the Golden driver stage-for-stage) ─────────────────
     def golden_pipeline(self, candles_raw: pd.DataFrame, frontier_date: str,
@@ -134,8 +135,34 @@ class LiveRunner:
                               "news_cache": news_cache, "summary": result["summary"]})
         return result["trades"]
 
+    # ── commit (LR-1) ────────────────────────────────────────────────────────
+    def commit_cycle(self) -> str | None:
+        """Promote the frame/boundary staged by a deferred `run_once`.
+
+        LR-1 was this: `run_once` advanced `last_boundary` AND replaced
+        `prev_frame` before the executor ran. A crash in that window left the
+        boundary marked processed while the intents had never been applied, and
+        because prev_frame already contained the fill, the next diff saw it as
+        already-known and never re-emitted it — the order was lost permanently
+        and silently.
+
+        Deferring the commit until execution is durable makes a crash simply
+        replay the cycle: the pipeline is deterministic, so the identical
+        intent_ids are regenerated and the ledger's duplicate rail suppresses
+        whatever already executed. No duplicates, no silent loss, no change to
+        the mirror model. Returns the committed boundary, or None if nothing
+        was staged (`no_new_bar`).
+        """
+        if self._pending_commit is None:
+            return None
+        frame, boundary = self._pending_commit
+        self.state.store_frame(frame, boundary)
+        self.state.save()
+        self._pending_commit = None
+        return boundary
+
     # ── one cycle ────────────────────────────────────────────────────────────
-    def run_once(self, now_utc: datetime | None = None) -> dict:
+    def run_once(self, now_utc: datetime | None = None, defer_commit: bool = False) -> dict:
         if self._candles_provider is not None:
             candles = self._candles_provider()
         else:
@@ -159,8 +186,12 @@ class LiveRunner:
         intents = diff_frontier(prev, trades_str, frontier_bar) if prev is not None else []
 
         first_run = prev is None
-        self.state.store_frame(trades_str, boundary_str)
-        self.state.save()
+        if defer_commit:
+            # LR-1: stage only — main.cycle commits after the executor is durable.
+            self._pending_commit = (trades_str, boundary_str)
+        else:
+            self.state.store_frame(trades_str, boundary_str)
+            self.state.save()
         return {
             "status": "bootstrap" if first_run else "ok",
             "boundary": boundary_str,

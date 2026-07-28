@@ -24,9 +24,26 @@ setx MT5_LOGIN "<account>" /M
 setx MT5_PASSWORD "<password>" /M
 setx MT5_SERVER "<broker-server>" /M
 setx MT5_SYMBOL_SUFFIX "" /M          :: e.g. ".r" if the broker lists EURUSD.r
+setx MT5_SERVER_TZ "Europe/Athens" /M :: broker server timezone — see §2.1
 setx CT_BASE_URL "http://<ct-host>:8000/api" /M
 setx PYTHONPATH "C:\trading\live-trading-control-tower" /M
 ```
+
+## 2.1 Broker server timezone (MT5_SERVER_TZ) — required
+MetaTrader 5 encodes tick and bar times as the **broker server's wall clock
+stamped as if it were UTC** (the vendor docs call this "UTC without the shift").
+On an EEST server that makes every timestamp read 3 hours in the future. The API
+exposes no timezone, so the zone must be declared here; the gateway converts and
+**everything above it runs on canonical UTC**. Never substitute a fixed offset —
+the value changes at the DST boundaries, which `zoneinfo` handles.
+
+* FTMO runs EET/EEST → `Europe/Athens` (the default).
+* Verify after any broker change: `python -m live.deploy_check preflight` must
+  report `mt5_time_base ... verified against live tick`. A converted tick in the
+  future fails the gate closed.
+* The live segment records its `time_base` in `market_data/provenance.json`.
+  A segment written under an older base is **refused at startup** — archive
+  `EURUSD_1m_live.csv` + `provenance.json` and let the bridge re-backfill.
 
 ## 3. Preflight (must be ALL PASS before installing the service)
 ```bat
@@ -66,9 +83,25 @@ python -m live.deploy_check restart      :: verifies resume/no-dupes/no-gap
 ```
 
 ## 7. Daily glance
-`type C:\trading\live_state\ops\heartbeat.json` — staleness > 5 min ⇒ investigate
-(`service.err.log` first). Kill switch (blocks new opens instantly):
-`type nul > C:\trading\live_state\KILL` — delete the file to clear.
+`type C:\trading\live_state\ops\heartbeat.json` — the beat carries a `phase`:
+`cycle_running` (a recompute is in flight; these legitimately run for minutes)
+or `idle` (waiting for the next boundary). Investigate when `idle` is older than
+5 min, or `cycle_running` exceeds the 900s bar budget. `deploy_check runtime`
+applies the same phase-aware thresholds. Kill switch (blocks new opens
+instantly): `type nul > C:\trading\live_state\KILL` — delete the file to clear.
+
+## 7.1 Safety rails in force (all verified by tests)
+| Rail | Blocks | Backed by |
+|---|---|---|
+| kill_switch | all but engine closes | `LIVE_KILL_FILE` presence |
+| symbol_whitelist | non-whitelisted resolved broker symbol | `config.broker_symbol` |
+| duplicate_intent | replayed intent ids | intent ledger |
+| daily_loss_limit | new opens after −`LIVE_DAILY_LOSS_LIMIT_R` | realised `net_r` accrued on every mirrored close (also in dry_run) |
+| max_open_positions | opens beyond `LIVE_MAX_OPEN_POSITIONS` | mirror count |
+| unknown_position | modify/close without a mirrored ticket | mirror map |
+
+Realised R accrues on **mirrored closes only** — an intra-window fill+exit is
+never sent to the broker and must not consume the loss budget.
 
 ## 8. Promotion report (any time; evidence gates, no calendar requirement)
 ```bat

@@ -93,20 +93,38 @@ class Executor:
                 self.rails.record_block(intent, verdict)
                 blocked.append({**intent.to_dict(), "rail": verdict.rail, "detail": verdict.detail})
                 continue
-            result = self._execute(intent)
+            result = self._execute(intent, today)
             applied.append({**intent.to_dict(), **result})
 
         self.state.save()
         return {"frozen": False, "reconcile": report.to_dict(),
                 "applied": applied, "blocked": blocked, "skipped": skipped}
 
-    def _execute(self, intent) -> dict:
+    def _record_realized(self, intent, today: str) -> float | None:
+        """Feed the engine's realised R into the daily-loss counter.
+
+        Only MIRRORED closes count. An intra-window fill+exit is recorded as
+        SKIP_INTRA_WINDOW and never reaches the broker, so it moved no money and
+        must not consume the loss budget. Double-counting on replay is
+        impossible: the duplicate-intent rail rejects an already-ledgered
+        intent_id before `_execute` is ever reached, and the counter is
+        persisted in the same atomic state write as the ledger.
+        """
+        r = getattr(intent, "realized_r", None)
+        if r is None:
+            return None
+        return self.state.add_realized_r(float(r), today)
+
+    def _execute(self, intent, today: str) -> dict:
         if self.config.mode != "live":
             self.state.ledger_set(intent.intent_id, LEDGER_SIMULATED, {"mode": self.config.mode})
             if intent.action == OPEN_POSITION:
                 self.state.mirror_set(intent.trade_id, -1)   # simulated ticket
             elif intent.action == CLOSE_POSITION:
                 self.state.mirror_set(intent.trade_id, None)
+                # dry_run accrues realised R too: the daily-loss rail must be
+                # genuinely exercised in shadow, not first armed on live money.
+                self._record_realized(intent, today)
             return {"result": "simulated"}
 
         self.state.ledger_set(intent.intent_id, LEDGER_SENT)
@@ -124,6 +142,7 @@ class Executor:
             ok, res = self.gateway.close_position(ticket)
             if ok:
                 self.state.mirror_set(intent.trade_id, None)
+                self._record_realized(intent, today)
         else:
             ok, res = False, f"unknown action {intent.action}"
 

@@ -10,6 +10,12 @@ from pathlib import Path
 DEPLOYMENT_PROFILE = "GOLDEN_COMPATIBLE"
 PORTFOLIO_INCLUDE_DISABLED_COHORTS = True          # Golden Research Profile semantics
 DATA_SEAM = "dukascopy-frozen->mt5-live (v1: accepted, monitored; no re-baseline)"
+# Canonical time base of every timestamp ABOVE the MT5 gateway. MT5 encodes tick
+# and bar times as the broker server's wall clock with NO UTC shift applied, so
+# the gateway converts on the way in/out; nothing above it ever sees server time.
+# Stamped into market_data/provenance.json — a stored segment written under a
+# different base is refused at startup (see MT5BarBridge.verify_time_base).
+TIME_BASE = "utc-v2"
 SYMBOL = "EURUSD"                                   # hard whitelist — single symbol
 GOLDEN_CONFIG_RELPATH = "generated_configs/d6cdae589b1e4c37a67763253c466067.json"
 ENGINE_VERSION_EXPECTED = "5bb6372c092cc65ae0d30c4a40bed26ed5e074aef2459de9e199b902849305be"
@@ -39,6 +45,10 @@ class LiveConfig:
     mt5_password: str = field(default_factory=lambda: _env("MT5_PASSWORD", ""))
     mt5_server: str = field(default_factory=lambda: _env("MT5_SERVER", ""))
     mt5_symbol_suffix: str = field(default_factory=lambda: _env("MT5_SYMBOL_SUFFIX", ""))
+    # Broker server timezone (IANA name). MT5 exposes no timezone via its API, so
+    # the zone must be declared. FTMO servers run EET/EEST; Europe/Athens tracks
+    # both, including the DST transitions — never hardcode a fixed hour offset.
+    mt5_server_tz: str = field(default_factory=lambda: _env("MT5_SERVER_TZ", "Europe/Athens"))
 
     # Control Tower
     ct_base_url: str = field(default_factory=lambda: _env("CT_BASE_URL", "http://127.0.0.1:8000/api"))

@@ -430,8 +430,13 @@ def test_main_cycle_logs_and_survives_component_failure(tmp_path):
         def poll_once(self):
             raise RuntimeError("terminal offline")
 
+    class OkGateway:
+        """cycle() now re-establishes the MT5 link first (reconnect hardening)."""
+        def ensure_connected(self):
+            return True, "connected"
+
     ops = OpsLog(cfg.state_dir)
-    rec = live_main.cycle(cfg, None, BoomBridge(), None, None, None, ops)
+    rec = live_main.cycle(cfg, OkGateway(), BoomBridge(), None, None, None, ops)
     assert "terminal offline" in rec["error"]                 # logged, not raised
     assert ops.read_cycles()[0]["status"] == "error"
     hb = json.loads((cfg.state_dir / "ops" / "heartbeat.json").read_text())
@@ -440,7 +445,11 @@ def test_main_cycle_logs_and_survives_component_failure(tmp_path):
 
 # ── gateway degradation + CT adapter ───────────────────────────────────────────
 def test_gateway_degrades_without_sdk(tmp_path):
-    g = MT5Gateway(_cfg(tmp_path), sdk=None)
+    # `sdk=None` means "use the default", which resolves to the real package on a
+    # host that HAS MetaTrader5 installed (i.e. the VPS) — so the absent-package
+    # state is asserted explicitly instead of depending on the host.
+    g = MT5Gateway(_cfg(tmp_path))
+    g.sdk = None
     assert g.available is False
     ok, detail = g.connect()
     assert ok is False and "not available" in detail
