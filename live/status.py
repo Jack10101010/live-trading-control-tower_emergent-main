@@ -147,6 +147,38 @@ def collect(cfg: LiveConfig, probe_mt5: bool = True) -> None:
         row("replay occurring?", WARN if replays > 10 else OK,
             f"{replays} suppressed annotations, {dupes} blocked intents in recent cycles")
 
+    # ── runtime lifecycle / recovery ─────────────────────────────────────────
+    lc = _read_json(ops / "lifecycle.json")
+    if lc is None:
+        row("lifecycle state?", NA, "no lifecycle.json — process has never started")
+        row("reconciliation complete?", NA, "unknown")
+        row("last shutdown clean?", NA, "unknown")
+    else:
+        phase = lc.get("phase", "?")
+        # Only RUNNING may trade. STOPPED is a correct resting state, not a fault.
+        healthy_phase = phase in ("RUNNING", "STOPPED")
+        row("lifecycle state?", OK if healthy_phase else WARN if phase == "READY" else FAIL,
+            f"{phase} since {lc.get('since', '?')}"
+            + (f" — {lc['phase_detail']}" if lc.get("phase_detail") and not healthy_phase else ""))
+
+        rec = lc.get("reconcile", {})
+        rec_status = rec.get("status", "?")
+        row("reconciliation complete?",
+            OK if rec_status == "complete" else FAIL if rec_status == "failed" else WARN,
+            f"{rec_status}, {rec.get('runs', 0)} runs, last complete "
+            f"{rec.get('completed_at') or 'never'} ({rec.get('detail') or 'n/a'})")
+
+        # "Did we crash, and did we come back?" — previously unanswerable.
+        crash = lc.get("last_crash")
+        reason = lc.get("restart_reason", "?")
+        row("last shutdown clean?",
+            OK if not str(reason).startswith("crash_recovery") else WARN,
+            f"restart_reason={reason}; last clean {lc.get('last_clean_shutdown') or 'never'}"
+            + (f"; last crash {crash.get('at')} in {crash.get('phase')}" if crash else ""))
+        row("recovery duration", NA if lc.get("recovery_duration_s") is None else OK,
+            f"{lc.get('recovery_duration_s')}s to reach RUNNING"
+            if lc.get("recovery_duration_s") is not None else "not yet RUNNING")
+
     # ── engine identity ──────────────────────────────────────────────────────
     # Answers "is the deployed engine still the qualified one?" — a question the
     # operator previously had no read-only surface for at all.

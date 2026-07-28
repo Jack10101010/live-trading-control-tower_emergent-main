@@ -32,6 +32,7 @@ from live.config import LiveConfig                                    # noqa: E4
 from live.mt5_bridge import MT5BarBridge, verify_segment_time_base    # noqa: E402
 from live.mt5_gateway import MT5Gateway                               # noqa: E402
 from live.ops_log import OpsLog                                       # noqa: E402
+from live.executor import Executor                                    # noqa: E402
 from live.runner import LiveRunner                                    # noqa: E402
 from live.state import RunnerState                                    # noqa: E402
 
@@ -299,11 +300,17 @@ def _runner_with(cfg, pipeline):
                       candles_provider=lambda: pd.DataFrame({"time": ["2026-07-28 08:14:00"]}))
 
 
+def _exec(cfg, runner=None):
+    """A REAL Executor. In dry_run `reconcile()` pulls no broker snapshot, so no
+    gateway is needed and the genuine reconcile path is still exercised."""
+    return Executor(cfg, runner.state if runner else RunnerState(cfg.state_dir), gateway=None)
+
 def test_lux_exception_is_contained_and_does_not_advance_the_boundary(tmp_path):
     cfg = _cfg(tmp_path)
     def boom(candles, frontier): raise RuntimeError("Lux pipeline exploded")
     ops = OpsLog(cfg.state_dir)
-    rec = live_main.cycle(cfg, _OkGW(), _BridgeStub(), _runner_with(cfg, boom), None, None, ops)
+    r = _runner_with(cfg, boom)
+    rec = live_main.cycle(cfg, _OkGW(), _BridgeStub(), r, _exec(cfg, r), None, ops)
     assert rec["status"] == "error" and "Lux pipeline exploded" in rec["error"]
     assert RunnerState(cfg.state_dir).data["last_boundary"] is None      # replays
     hb = json.loads((cfg.state_dir / "ops" / "heartbeat.json").read_text())
@@ -315,7 +322,7 @@ def test_mt5_unavailable_is_contained_as_a_cycle_error(tmp_path):
     class DeadGW:
         def ensure_connected(self): return False, "mt5.initialize failed"
     ops = OpsLog(cfg.state_dir)
-    rec = live_main.cycle(cfg, DeadGW(), _BridgeStub(), None, None, None, ops)
+    rec = live_main.cycle(cfg, DeadGW(), _BridgeStub(), None, _exec(cfg), None, ops)
     assert rec["status"] == "error" and "MT5 gateway unavailable" in rec["error"]
 
 
@@ -323,7 +330,7 @@ def test_bridge_exception_is_contained(tmp_path):
     cfg = _cfg(tmp_path)
     ops = OpsLog(cfg.state_dir)
     rec = live_main.cycle(cfg, _OkGW(), _BridgeStub(boom=RuntimeError("terminal offline")),
-                          None, None, None, ops)
+                          None, _exec(cfg), None, ops)
     assert "terminal offline" in rec["error"]
 
 
@@ -333,7 +340,7 @@ def test_ops_log_failure_does_not_kill_the_trading_loop(tmp_path):
     class BoomOps(OpsLog):
         def cycle_end(self, *a, **k):
             raise OSError(28, "No space left on device")
-    rec = live_main.cycle(cfg, _OkGW(), _BridgeStub(), None, None, None, BoomOps(cfg.state_dir))
+    rec = live_main.cycle(cfg, _OkGW(), _BridgeStub(), None, _exec(cfg), None, BoomOps(cfg.state_dir))
     assert "ops_log_failed" in rec["error"]          # recorded, not raised
 
 

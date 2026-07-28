@@ -436,7 +436,12 @@ def test_main_cycle_logs_and_survives_component_failure(tmp_path):
             return True, "connected"
 
     ops = OpsLog(cfg.state_dir)
-    rec = live_main.cycle(cfg, OkGateway(), BoomBridge(), None, None, None, ops)
+    # cycle() now reconciles FIRST every cycle, so a real Executor is required;
+    # in dry_run it pulls no broker snapshot, so no gateway is needed.
+    from live.executor import Executor
+    from live.state import RunnerState
+    ex = Executor(cfg, RunnerState(cfg.state_dir), gateway=None)
+    rec = live_main.cycle(cfg, OkGateway(), BoomBridge(), None, ex, None, ops)
     assert "terminal offline" in rec["error"]                 # logged, not raised
     assert ops.read_cycles()[0]["status"] == "error"
     hb = json.loads((cfg.state_dir / "ops" / "heartbeat.json").read_text())

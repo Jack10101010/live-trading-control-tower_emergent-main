@@ -160,6 +160,50 @@ a new identity means a new engine.
 `python -m live.status` reports **`engine identity intact?`** so drift is visible
 day to day, not only at startup.
 
+## 6.3 Runtime lifecycle and recovery
+The process moves through explicit phases; illegal transitions raise rather than
+being logged and ignored. **Only `RUNNING` may execute intents.**
+
+```
+INITIALIZING → VALIDATING → CONNECTING → RECONCILING → READY → RUNNING
+                    ↓            ↓            ↓          ↓        ↓
+                        DEGRADED → RECOVERING          STOPPING → STOPPED
+```
+
+Reconciliation now runs **at startup before `READY`, and at the head of every
+cycle**. It previously ran only inside `executor.apply()` — i.e. only on a cycle
+that produced intents, measured as 1 of 6 realistic cycle outcomes, and never at
+startup. A broker-side stop-out therefore stayed invisible for as long as the
+engine was quiet, leaving the mirror (and with it `max_open_positions` and the
+daily-loss counter) stale. Broker truth now leads the cycle.
+
+**One process per state directory**, enforced by an OS lock at
+`ops\runtime.lock`. A second start is refused and names the holder. The lock is
+released by the kernel on crash or power loss, so there is no stale-lock
+recovery step.
+
+`ops\lifecycle.json` records phase, reconciliation status, restart reason, last
+clean shutdown, last crash (time + phase + pid) and recovery duration. All of it
+surfaces in `python -m live.status`.
+
+### Shutdown — and its measured limit
+A stop signal (`SIGINT`/`SIGBREAK`) is turned into a clean stop **after the
+current cycle**, which writes a `STOPPED` marker so the next start reports
+`clean_restart` instead of a crash.
+
+> **This works only while the loop is between cycles.** Verified directly on this
+> host: an idle loop exits `rc=0` with `reason=SIGBREAK`, but a signal delivered
+> during a long C-bound Lux recompute kills the process with
+> `STATUS_CONTROL_C_EXIT (0xC000013A)` before Python can run the handler. Since a
+> full recompute runs for minutes, **assume any stop during a cycle is a hard
+> kill.** That case is covered by atomic writes plus crash detection, not by a
+> graceful stop. Making the recompute interruptible is checkpointing work and is
+> deliberately out of scope.
+
+Practical consequence for operators: prefer stopping the task when
+`heartbeat.json` shows `phase=idle`. Stopping during `cycle_running` is safe —
+the cycle replays — but it will be reported as a crash.
+
 ## 7.1 Safety rails in force (all verified by tests)
 | Rail | Blocks | Backed by |
 |---|---|---|
@@ -188,6 +232,11 @@ never sent to the broker and must not consume the loss budget.
 | Missing/mismatched provenance | refuses to start | **operator** (archive + re-backfill) |
 | Invalid config (negative lots etc.) | `build()` refuses before any broker contact | **operator** |
 | Modified strategy/engine file | refuses to start, names the changed file | **operator** (restore the pinned tree, or re-approve per §6.2) |
+| Crash during the frame write | next start refuses, quarantines `prev_trades.corrupt.csv`, then re-bootstraps the baseline and emits no intents | **automatic** (one cycle) |
+| Hard kill / power loss mid-cycle | boundary never advanced → cycle replays; ledger suppresses anything already applied | **automatic** |
+| Second process started on one state dir | refused at startup, names the holder | **operator** (stop the duplicate) |
+| Startup reconciliation freezes | refuses to enter RUNNING, stays `DEGRADED` and observable | **operator** (resolve the unknown position) |
+| Broker unreachable during reconcile | freezes; mirror is NOT assumed empty | **automatic** on reconnect |
 | Engine module loaded from an unhashed path | refuses to start, names the module | **operator** (remove the stray copy / fix `PYTHONPATH`) |
 | VPS clock drift > 5 min | refuses to start, message names **NTP** not config | **operator** |
 | Market closed at startup | permitted (`unverified` time base) | n/a |

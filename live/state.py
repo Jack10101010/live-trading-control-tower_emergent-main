@@ -35,6 +35,23 @@ def frame_hash(frame) -> str:
     return hashlib.sha256(frame.to_csv(index=False).encode()).hexdigest() if frame is not None else ""
 
 
+def atomic_write_text(path: Path, text: str) -> None:
+    """Durably replace a file's contents: write temp, fsync, rename.
+
+    `os.replace` alone is not enough. It makes the *rename* atomic, but without
+    an fsync the file's DATA may still be in the page cache when power is lost,
+    leaving a correctly-named file with truncated or zero-length content. This
+    module's contract is crash safety, so the flush is not optional.
+    """
+    path = Path(path)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8", newline="") as fh:
+        fh.write(text)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+
+
 class RunnerState:
     def __init__(self, state_dir: Path):
         self.path = Path(state_dir) / "runner_state.json"
@@ -69,24 +86,62 @@ class RunnerState:
 
     def save(self) -> None:
         self.data["updated_at"] = datetime.now(timezone.utc).isoformat()
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.data, indent=1))
-        os.replace(tmp, self.path)
+        atomic_write_text(self.path, json.dumps(self.data, indent=1))
 
     # ── frames ───────────────────────────────────────────────────────────────
     def store_frame(self, frame, boundary: str) -> None:
+        """Persist the diff baseline atomically.
+
+        This used to be a bare `frame.to_csv(path)` — a direct, non-atomic
+        write of the very file the next cycle diffs against. A crash mid-write
+        left a truncated CSV that `load_prev_frame` parsed happily, so the next
+        diff compared live trades against a partial baseline and emitted intents
+        for trades that were already open. Measured: a half-written frame
+        produced a spurious OPEN_POSITION for an already-open trade.
+        """
         f = self.frames_dir / "prev_trades.csv"
-        frame.to_csv(f, index=False)
+        csv_text = frame.to_csv(index=False)
+        atomic_write_text(f, csv_text)
         self.data["prev_frame_file"] = str(f)
         self.data["prev_frame_hash"] = frame_hash(frame)
         self.data["last_boundary"] = boundary
 
     def load_prev_frame(self):
+        """Load the diff baseline, refusing to proceed on a corrupt one.
+
+        The hash was recorded but never checked. Verifying it turns a silently
+        wrong diff — which invents or loses orders — into a loud, actionable
+        stop. Recovery is deliberate: delete the frame to re-bootstrap (the next
+        cycle re-establishes the baseline and emits no intents, and
+        reconciliation then converges the mirror back to broker truth).
+        """
         import pandas as pd
         f = self.data.get("prev_frame_file")
         if not f or not Path(f).exists():
             return None
-        return pd.read_csv(f, dtype=str, keep_default_na=False)
+        try:
+            frame = pd.read_csv(f, dtype=str, keep_default_na=False)
+        except (ValueError, OSError) as exc:
+            raise RuntimeError(
+                f"previous trades frame at {f} is unreadable ({exc}). Delete it to "
+                f"re-bootstrap the baseline; the next cycle emits no intents.") from exc
+        expected = self.data.get("prev_frame_hash") or ""
+        actual = frame_hash(frame)
+        if expected and actual != expected:
+            quarantine = Path(f).with_suffix(".corrupt.csv")
+            try:
+                Path(f).replace(quarantine)
+                self.data["prev_frame_file"] = None
+                self.save()
+            except OSError:
+                quarantine = Path(f)
+            raise RuntimeError(
+                f"previous trades frame is corrupt: hash {actual[:16]}… != recorded "
+                f"{expected[:16]}… (likely a crash during the frame write). "
+                f"Quarantined at {quarantine}. The next start re-bootstraps the "
+                f"baseline and emits no intents; reconciliation restores the mirror "
+                f"from broker truth.")
+        return frame
 
     # ── ledger / mirror ──────────────────────────────────────────────────────
     def ledger_status(self, intent_id: str) -> str | None:

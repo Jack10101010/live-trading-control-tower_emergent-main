@@ -30,14 +30,47 @@ class ReconcileReport:
 
 
 class Executor:
-    def __init__(self, config, state, gateway):
+    def __init__(self, config, state, gateway, lifecycle=None):
         self.config = config
         self.state = state
         self.gateway = gateway
+        self.lifecycle = lifecycle
         self.rails = SafetyRails(config, state)
+        self._reconciling = False       # single-flight guard
 
     # ── reconciliation ───────────────────────────────────────────────────────
     def reconcile(self) -> ReconcileReport:
+        """Establish broker truth. Single-flight, and never nested.
+
+        Reconciliation reads the broker snapshot and MUTATES the mirror
+        (`mark_broker_closed` drops entries). Running it twice concurrently, or
+        re-entering it from `apply`, would let one pass observe a mirror the
+        other is halfway through rewriting — a torn view of broker truth. The
+        guard makes re-entry an explicit error rather than a silent race.
+        """
+        if self._reconciling:
+            raise RuntimeError("reconcile() re-entered — concurrent reconciliation "
+                               "would read a partially rewritten mirror")
+        self._reconciling = True
+        if self.lifecycle is not None:
+            self.lifecycle.reconcile_started()
+        try:
+            report = self._reconcile_inner()
+        except Exception as exc:
+            if self.lifecycle is not None:
+                self.lifecycle.reconcile_finished(False, f"{type(exc).__name__}: {exc}")
+            raise
+        finally:
+            self._reconciling = False
+        if self.lifecycle is not None:
+            # A frozen report is NOT a completed reconciliation: broker truth was
+            # not established, so the scheduler must not be released to trade.
+            self.lifecycle.reconcile_finished(
+                not report.frozen,
+                "; ".join(f["code"] for f in report.findings) or "clean")
+        return report
+
+    def _reconcile_inner(self) -> ReconcileReport:
         report = ReconcileReport()
         if self.config.mode != "live":
             report.add("info", "dry_run", "no broker snapshot pulled in dry_run mode")
@@ -73,9 +106,18 @@ class Executor:
         return report
 
     # ── apply ────────────────────────────────────────────────────────────────
-    def apply(self, intents: list, today: str | None = None) -> dict:
+    def apply(self, intents: list, today: str | None = None,
+              report: ReconcileReport | None = None) -> dict:
+        """Apply intents against an established broker truth.
+
+        `report` accepts the reconciliation the caller already ran this cycle.
+        Reconciliation is now performed once per cycle BEFORE the engine runs
+        (see main.cycle), so re-running it here would both waste a broker
+        round-trip and reconcile against a mirror the first pass had already
+        rewritten. Callers that pass nothing keep the original behaviour.
+        """
         today = today or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        report = self.reconcile()
+        report = report if report is not None else self.reconcile()
         applied, blocked, skipped = [], [], []
 
         if report.frozen:
