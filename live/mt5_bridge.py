@@ -119,7 +119,15 @@ class MT5BarBridge:
                 last = row["time"]
         if last is None:
             return None
-        return datetime.strptime(last, "%Y-%m-%d %H:%M:%S+00:00").replace(tzinfo=timezone.utc)
+        try:
+            return datetime.strptime(last, "%Y-%m-%d %H:%M:%S+00:00").replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError) as exc:
+            # A malformed tail row previously raised a bare ValueError every cycle,
+            # producing an endless identical error with no hint of the cause.
+            raise RuntimeError(
+                f"live segment {self.config.live_segment_csv.name} has an unparseable "
+                f"last row ({last!r}: {exc}). Truncate the bad tail rows or archive "
+                f"the segment + provenance.json and let the bridge re-backfill.") from exc
 
     def append_bars(self, bars: list[dict]) -> int:
         """Append chronological, deduplicated closed bars. Returns rows written."""

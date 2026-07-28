@@ -136,8 +136,16 @@ class MT5Gateway:
         shoulder = self.dst_disagreement(now)
         suffix = f" [{shoulder}]" if shoulder else ""
         if skew > tolerance_minutes * 60:
-            return False, (f"tick {skew/3600:+.2f}h in the FUTURE after conversion — "
-                           f"server clock model ({model}) is wrong{suffix}")
+            # Distinguish the two causes, because the remedies are opposite: a
+            # whole-hour error means the CLOCK MODEL is wrong; a small ragged
+            # offset means this VPS's own clock has drifted (fix NTP, not config).
+            hours = skew / 3600.0
+            off_hour = abs(hours - round(hours))
+            cause = (f"server clock model ({model}) is wrong"
+                     if off_hour < 0.05 and abs(hours) >= 0.5 else
+                     f"THIS HOST's clock looks wrong — check w32time/NTP sync "
+                     f"(model {model} is a whole-hour offset, this error is not)")
+            return False, (f"tick {hours:+.2f}h in the FUTURE after conversion — {cause}{suffix}")
         if abs(skew) <= tolerance_minutes * 60:
             return True, f"verified against live tick ({model}, skew {skew:+.0f}s){suffix}"
         # Stale tick (market closed): the model cannot be confirmed, but a live

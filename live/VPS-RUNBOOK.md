@@ -98,6 +98,20 @@ nssm restart live-shadow
 python -m live.deploy_check restart      :: verifies resume/no-dupes/no-gap
 ```
 
+## 6.1 Daily health check — one command
+```bat
+python -m live.status              :: includes a read-only MT5 probe
+python -m live.status --no-mt5     :: filesystem only (safe when MT5 is down)
+```
+Answers, in one read-only pass: bot healthy · MT5 healthy · reconciliation ·
+ledger (and **zero sent/confirmed in dry_run**) · market data · time base ·
+engine progressing · heartbeat current · replay occurring · stalled ·
+intervention required. Exit 0 = healthy, 1 = attention. Writes nothing, opens
+no orders, and is safe to run while the shadow loop is live.
+
+Verdicts: `HEALTHY` · `DEGRADED` (review the WARN rows) · `UNHEALTHY`
+(intervention required).
+
 ## 7. Daily glance
 `type C:\trading\live_state\ops\heartbeat.json` — the beat carries a `phase`:
 `cycle_running` (a recompute is in flight; these legitimately run for minutes)
@@ -118,6 +132,24 @@ instantly): `type nul > C:\trading\live_state\KILL` — delete the file to clear
 
 Realised R accrues on **mirrored closes only** — an intra-window fill+exit is
 never sent to the broker and must not consume the loss budget.
+
+## 7.2 Fault behaviour (qualified by test, see test_production_qualification.py)
+| Fault | Behaviour | Recovery |
+|---|---|---|
+| MT5 terminal crash / IPC drop | cycle error, `ensure_connected` retries next cycle | **automatic** |
+| Broker returns no tick / no rates | structured error, no bars appended, boundary unchanged | **automatic** |
+| Duplicate / out-of-order bars | deduplicated + sorted; re-poll appends nothing | **automatic** |
+| Lux raises mid-cycle | cycle logged `status=error`, **boundary NOT advanced** → replays | **automatic** |
+| Disk full at commit | commit raises, boundary unchanged → cycle replays | automatic once space is freed |
+| Disk full while writing ops log | recorded as `ops_log_failed`, loop survives | automatic |
+| 10 consecutive errors | process exits non-zero **by design** for the supervisor | **operator/supervisor** |
+| Corrupt `runner_state.json` | refuses to start, file quarantined to `.corrupt` | **operator** (restore backup or delete to re-bootstrap) |
+| Corrupt live segment tail | actionable error naming the bad row | **operator** (truncate or re-backfill) |
+| Missing/mismatched provenance | refuses to start | **operator** (archive + re-backfill) |
+| Invalid config (negative lots etc.) | `build()` refuses before any broker contact | **operator** |
+| VPS clock drift > 5 min | refuses to start, message names **NTP** not config | **operator** |
+| Market closed at startup | permitted (`unverified` time base) | n/a |
+| Unknown magic-tagged position | reconcile **FREEZES**, never auto-closes | **operator** |
 
 ## 8. Promotion report (any time; evidence gates, no calendar requirement)
 ```bat

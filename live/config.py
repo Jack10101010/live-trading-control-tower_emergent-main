@@ -61,6 +61,34 @@ class LiveConfig:
     # Control Tower
     ct_base_url: str = field(default_factory=lambda: _env("CT_BASE_URL", "http://127.0.0.1:8000/api"))
 
+    def validate(self) -> None:
+        """Reject nonsensical risk/runtime configuration, loudly.
+
+        Numeric env vars were previously coerced with a bare int()/float() and
+        never range-checked, so `LIVE_FIXED_RISK_LOTS=-0.5` was accepted and
+        would have been handed to order_send as a volume, and
+        `LIVE_MAX_OPEN_POSITIONS=-5` silently blocked every open. Both are
+        operator typos that must fail closed at startup, not at trade time.
+        """
+        problems = []
+        if self.fixed_risk_lots <= 0:
+            problems.append(f"LIVE_FIXED_RISK_LOTS must be > 0 (got {self.fixed_risk_lots})")
+        if self.max_open_positions < 1:
+            problems.append(f"LIVE_MAX_OPEN_POSITIONS must be >= 1 (got {self.max_open_positions})")
+        if self.daily_loss_limit_r <= 0:
+            problems.append(f"LIVE_DAILY_LOSS_LIMIT_R must be > 0 (got {self.daily_loss_limit_r})")
+        if self.magic_number <= 0:
+            problems.append(f"LIVE_MT5_MAGIC must be > 0 (got {self.magic_number})")
+        if self.mode not in ("dry_run", "live"):
+            problems.append(f"LIVE_MODE must be dry_run|live (got {self.mode!r})")
+        if not -12 <= self.mt5_server_base_utc_offset_hours <= 14:
+            problems.append("MT5_SERVER_BASE_UTC_OFFSET_HOURS must be within [-12, 14] "
+                            f"(got {self.mt5_server_base_utc_offset_hours})")
+        if self.mt5_server_dst_rule not in ("us", "eu", "none"):
+            problems.append(f"MT5_SERVER_DST_RULE must be us|eu|none (got {self.mt5_server_dst_rule!r})")
+        if problems:
+            raise ValueError("invalid live configuration: " + "; ".join(problems))
+
     def __post_init__(self) -> None:
         # Resolve ALL paths to absolute at construction time (against the
         # launch CWD). LuxSession later chdirs into the Lux repo root — the

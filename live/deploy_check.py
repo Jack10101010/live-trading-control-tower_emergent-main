@@ -58,6 +58,11 @@ def _heartbeat(cfg: LiveConfig) -> dict | None:
 
 # ── phase: preflight ────────────────────────────────────────────────────────────
 def preflight(cfg: LiveConfig) -> int:
+    try:
+        cfg.validate()
+        check("config_valid", True, "risk + clock settings within range")
+    except ValueError as exc:
+        check("config_valid", False, str(exc))
     check("live_mode_is_dry_run", cfg.mode == "dry_run", cfg.mode)
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=cfg.lux_root,
                           capture_output=True, text=True).stdout.strip()

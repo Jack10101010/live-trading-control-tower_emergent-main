@@ -32,6 +32,7 @@ MAX_CONSECUTIVE_ERRORS = 10
 
 def build() -> tuple:
     config = LiveConfig()
+    config.validate()          # reject nonsensical risk/runtime config before anything starts
     config.ensure_dirs()
     gateway = MT5Gateway(config)
     bridge = MT5BarBridge(config, gateway)
@@ -73,6 +74,20 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops) -> dict:
     except Exception as exc:  # logged, loop continues; supervisor handles repeats
         error = f"{type(exc).__name__}: {exc}"
     ex = executor_result or {}
+    # Ops logging sits OUTSIDE the trading try/except by design (it must record
+    # failures too), so it needs its own guard: a full disk or a permission fault
+    # while writing cycles.jsonl used to propagate out of cycle() past the
+    # loop's error counter and kill the process outright.
+    try:
+        _write_cycle_record(ops, record, bridge_result, runner_result, ex, delivery, error)
+    except Exception as exc:
+        record.setdefault("status", runner_result.get("status", "error"))
+        record["error"] = (record.get("error") or "") + f" | ops_log_failed: {exc}"
+        print(f"OPS LOG WRITE FAILED (continuing): {exc}")
+    return record
+
+
+def _write_cycle_record(ops, record, bridge_result, runner_result, ex, delivery, error) -> None:
     ops.cycle_end(
         record,
         boundary=runner_result.get("boundary"),
@@ -104,8 +119,9 @@ def main() -> None:  # pragma: no cover - VPS loop
     # broker offset and silently mis-assigns trading sessions, so both checks
     # fail closed rather than trade on unusable timestamps.
     tz_ok, tz_detail = gateway.verify_time_base()
-    print(f"[{datetime.now(timezone.utc).isoformat()}] server_tz "
-          f"({config.mt5_server_tz}): {tz_detail}")
+    print(f"[{datetime.now(timezone.utc).isoformat()}] server clock "
+          f"(base{config.mt5_server_base_utc_offset_hours:+d}h "
+          f"dst={config.mt5_server_dst_rule}): {tz_detail}")
     if not tz_ok:
         gateway.disconnect()
         raise SystemExit(f"REFUSED: {tz_detail}")

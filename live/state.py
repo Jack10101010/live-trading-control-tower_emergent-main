@@ -44,7 +44,25 @@ class RunnerState:
 
     def _load(self) -> dict:
         if self.path.exists():
-            return json.loads(self.path.read_text())
+            try:
+                return json.loads(self.path.read_text())
+            except (ValueError, OSError) as exc:
+                # Fail CLOSED with an actionable message. Raw JSONDecodeError out
+                # of __init__ crashed the process before any logging existed, and
+                # the supervisor then restarted it into the same crash forever.
+                # The corrupt file is preserved for forensics; recovery is a
+                # deliberate operator action (restore a backup, or delete the file
+                # to bootstrap a fresh baseline) — never silent data invention.
+                quarantine = self.path.with_suffix(".corrupt")
+                try:
+                    self.path.replace(quarantine)
+                except OSError:
+                    quarantine = self.path
+                raise RuntimeError(
+                    f"runner_state.json is unreadable ({exc}). Quarantined at "
+                    f"{quarantine}. Restore the last good state from backup, or "
+                    f"delete it to re-bootstrap (the next cycle then rebuilds the "
+                    f"baseline frame and emits no intents).") from exc
         return {"last_boundary": None, "prev_frame_hash": "", "prev_frame_file": None,
                 "ledger": {}, "mirror": {}, "broker_closed": {},
                 "daily": {"date": None, "realized_r": 0.0}, "updated_at": None}
