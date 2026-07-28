@@ -483,3 +483,219 @@ def test_overlay_status_discloses_no_host_layout(tmp_path):
     assert status["available"] is True
     assert status["source"] == "ov3.db"             # NAME only
     assert status["kinds"] == {"deployment": 1}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# FIX — regressions found by the forensic audit of the HARDEN milestone.
+# Each test names the regression it pins, so a reintroduction is unambiguous.
+# ═══════════════════════════════════════════════════════════════════════════
+
+import state_dir as sd                                          # noqa: E402
+import fixture_surfaces as fsurf                                 # noqa: E402
+
+
+# ── FIX-1: a configured state root that does not exist ───────────────────────
+
+def test_a_missing_state_root_is_created(tmp_path):
+    """THE regression: HARDEN-3 added CONTROL_TOWER_STATE_DIR but never created
+    the directory, so every durable store failed with
+    `unable to open database file` — execution denied, ledger empty."""
+    target = tmp_path / "nested" / "deep" / "state"
+    assert not target.exists()
+    status = sd.prepare(target)
+    assert status.ok is True
+    assert status.code == sd.STATE_CREATED
+    assert status.created is True
+    assert target.is_dir()
+
+
+def test_preparing_an_existing_root_is_idempotent(tmp_path):
+    first = sd.prepare(tmp_path)
+    second = sd.prepare(tmp_path)
+    assert first.ok and second.ok
+    assert first.code == sd.STATE_OK        # already existed
+    assert second.created is False
+
+
+def test_a_state_root_that_is_a_file_is_reported_not_guessed(tmp_path):
+    target = tmp_path / "not-a-dir"
+    target.write_text("x")
+    status = sd.prepare(target)
+    assert status.ok is False
+    assert status.code == sd.STATE_NOT_A_DIRECTORY
+    assert status.detail and status.fix
+
+
+def test_an_unwritable_state_root_is_detected_by_writing(tmp_path):
+    """`os.access` reports permission bits; a read-only mount, a full disk and a
+    uid mismatch all pass that check and fail the write."""
+    target = tmp_path / "readonly"
+    target.mkdir()
+    target.chmod(0o500)
+    try:
+        status = sd.prepare(target)
+    finally:
+        target.chmod(0o700)
+    assert status.ok is False
+    assert status.code == sd.STATE_NOT_WRITABLE
+    assert "write access" in status.fix
+
+
+def test_preparation_never_raises(tmp_path):
+    """Total by contract: a caller decides whether to stop or degrade."""
+    for candidate in (tmp_path / "a", tmp_path, Path("/proc/nope/deep")):
+        result = sd.prepare(candidate)
+        assert isinstance(result, sd.StateDirStatus)
+
+
+def test_the_probe_file_is_not_left_behind(tmp_path):
+    sd.prepare(tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_resolve_defaults_when_unset(monkeypatch, tmp_path):
+    monkeypatch.delenv(sd.VAR_STATE_DIR, raising=False)
+    assert sd.resolve(default=tmp_path) == tmp_path
+    monkeypatch.setenv(sd.VAR_STATE_DIR, "   ")
+    assert sd.resolve(default=tmp_path) == tmp_path      # blank == unset
+    monkeypatch.setenv(sd.VAR_STATE_DIR, "/somewhere")
+    assert sd.resolve(default=tmp_path) == Path("/somewhere")
+
+
+def test_the_running_server_prepared_its_state_root():
+    assert server.STATE_DIR_STATUS.ok is True
+    assert Path(server.STATE_DIR).is_dir()
+
+
+def test_stores_open_against_a_freshly_created_root(tmp_path):
+    """End to end: the exact production failure, now working."""
+    root = tmp_path / "brand" / "new"
+    assert sd.prepare(root).ok
+    import trade_ledger_store as tls
+    store = tls.TradeLedgerStore(root / "trade_ledger.db")
+    assert store.schema_version() >= 1
+
+
+# ── FIX-2: fixture surfaces derived, not hand-listed ─────────────────────────
+
+def test_the_gated_set_is_derived_from_the_source():
+    surfaces = fsurf.analyse(BACKEND_DIR / "server.py")
+    assert surfaces, "analysis found no fixture-reading routes at all"
+    gated = fsurf.gated_paths(surfaces)
+    # The regression was under-refusal: five gated, sixteen missed.
+    assert len(gated) > 10
+    assert "/api/deployments" in gated
+    assert "/api/recommendations" in gated
+    assert "/api/world" in gated
+
+
+def test_the_runtime_gate_matches_the_derived_analysis():
+    """The property that stops drift: if someone adds a fixture-reading route
+    without gating it, the derived set and the runtime set diverge and this
+    fails."""
+    derived = fsurf.gated_paths(fsurf.analyse(BACKEND_DIR / "server.py"))
+    assert server.FIXTURE_ONLY_PATHS == derived
+
+
+def test_production_backed_exemptions_all_carry_a_reason():
+    """The one hand-maintained list. It exists to prevent OVER-refusal, so every
+    entry must justify itself."""
+    for path, reason in fsurf.PRODUCTION_BACKED.items():
+        assert path.startswith("/api"), path
+        assert len(reason) > 25, f"{path} has no real justification"
+
+
+def test_boundary_helpers_are_justified():
+    assert "_broker_context" in fsurf.BOUNDARY_HELPERS
+    surfaces = fsurf.analyse(BACKEND_DIR / "server.py")
+    # Operations routes are adapter-backed; gating them would be over-refusal.
+    for path in ("/api/operations/positions", "/api/operations/summary"):
+        assert path not in fsurf.gated_paths(surfaces), path
+
+
+def test_no_collection_endpoint_returns_a_misleading_empty_list(monkeypatch):
+    """The regression itself: `/api/broker/positions -> []` read as "no open
+    positions". Every gated surface must refuse explicitly instead."""
+    monkeypatch.setattr(server, "WORLD", fixture_world.FixtureWorld(None))
+    for path in sorted(server.FIXTURE_ONLY_PATHS):
+        if "{" in path:
+            continue                       # parametrised: handler 404s honestly
+        response = client.get(path)
+        assert response.status_code == 501, f"{path} answered {response.status_code}"
+        body = response.json()
+        assert body["code"] == fixture_world.CODE_FIXTURE_ABSENT, path
+        assert not isinstance(body, list), path
+
+
+def test_gated_surfaces_still_serve_when_the_fixture_is_present():
+    """API compatibility: the gate must be invisible in normal operation."""
+    assert server.WORLD.available is True
+    for path in ("/api/deployments", "/api/packages", "/api/fleet"):
+        assert client.get(path).status_code == 200, path
+
+
+def test_the_analysis_failing_does_not_stop_the_process():
+    """It is guarded, because an import-time analysis error must never be fatal."""
+    from test_recommendation_domain import statements_only
+    code = statements_only("server.py")
+    assert "FIXTURE_ONLY_PATHS = set()" in code       # the documented fallback
+
+
+# ── FIX-3: ledger ingestion health is visible ────────────────────────────────
+
+def test_diagnostics_fail_when_ingestion_has_never_run(monkeypatch, tmp_path):
+    """A dead ingester used to report PASS because the row only checked whether
+    the STORE opened."""
+    monkeypatch.setattr(server, "LEDGER_DB_PATH", tmp_path / "l.db")
+    monkeypatch.setattr(server, "_LEDGER_STORE", None)
+    monkeypatch.setattr(server, "_LEDGER_STORE_FAILED", False)
+    fresh = li.LedgerIngestionService(refresh_fn=lambda: {"ingested": 0,
+                                                         "available": True},
+                                      now_iso_fn=lambda: T0)
+    monkeypatch.setattr(server, "_LEDGER_INGESTION", fresh)
+    row = _ledger_row()
+    assert row["status"] == "fail"
+    assert "never run" in row["detail"]
+
+
+def test_diagnostics_pass_once_ingestion_succeeds(monkeypatch, tmp_path):
+    monkeypatch.setattr(server, "LEDGER_DB_PATH", tmp_path / "l2.db")
+    monkeypatch.setattr(server, "_LEDGER_STORE", None)
+    monkeypatch.setattr(server, "_LEDGER_STORE_FAILED", False)
+    server._LEDGER_INGESTION.sweep(reason=li.REASON_FORCED)
+    row = _ledger_row()
+    assert row["status"] == "pass"
+    assert row["lastSuccess"] is not None
+    assert "sweeps" in row["detail"]
+
+
+def test_diagnostics_report_a_failing_ingester(monkeypatch, tmp_path):
+    monkeypatch.setattr(server, "LEDGER_DB_PATH", tmp_path / "l3.db")
+    monkeypatch.setattr(server, "_LEDGER_STORE", None)
+    monkeypatch.setattr(server, "_LEDGER_STORE_FAILED", False)
+
+    def explode():
+        raise RuntimeError("history read failed")
+
+    broken = li.LedgerIngestionService(refresh_fn=explode, now_iso_fn=lambda: T0)
+    broken.sweep(reason=li.REASON_FORCED)
+    monkeypatch.setattr(server, "_LEDGER_INGESTION", broken)
+    row = _ledger_row()
+    assert row["status"] == "fail"
+    assert "none succeeded" in row["detail"]
+    assert row["lastFailure"] is not None
+    assert row["warnings"]
+
+
+def _ledger_row() -> dict:
+    body = client.get("/api/integration/diagnostics").json()
+    return next(r for r in body["subsystems"] if r["name"] == "ledger")
+
+
+# ── FIX-4: one source of truth for the snapshot kind ─────────────────────────
+
+def test_the_snapshot_kind_has_a_single_owner():
+    assert server._LIVE_SNAPSHOT_KIND == ro.LIVE_SNAPSHOT_KIND
+    from test_recommendation_domain import statements_only
+    code = statements_only("server.py")
+    assert '_LIVE_SNAPSHOT_KIND = "live_snapshot"' not in code

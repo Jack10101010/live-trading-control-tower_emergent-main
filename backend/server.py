@@ -59,6 +59,7 @@ import trade_ledger_store as ledger_store_layer
 import trade_reconstruction as reconstruction_layer
 import live_pipeline as live_pipeline_layer
 import live_preflight as live_preflight_layer
+import fixture_surfaces
 import fixture_world
 import ledger_ingestion as ledger_ingestion_layer
 import market_runtime as market_runtime_layer
@@ -71,6 +72,7 @@ import recommendation_service as recommendation_service_layer
 import recommendation_store as recommendation_store_layer
 import runtime_overlay as runtime_overlay_layer
 import runtime_supervisor as runtime_supervisor_layer
+import state_dir
 import reconciliation as reconciliation_layer
 import ops_status as ops_status_layer
 import security_config
@@ -166,7 +168,18 @@ def _fixture_unavailable(surface: str, extra: dict | None = None) -> JSONRespons
 #: wrote to the same six files no matter who owned them. State location is
 #: deployment configuration, so it is now a single env-overridable root that
 #: DEFAULTS to the previous behaviour (unchanged for existing deployments).
-STATE_DIR = Path(os.environ.get("CONTROL_TOWER_STATE_DIR") or ROOT_DIR)
+#: FIX-1: the root is CREATED and its writability PROVEN before any store is
+#: constructed. HARDEN-3 introduced the variable but never made the directory,
+#: so pointing it at a not-yet-existing path made every durable store fail to
+#: open — execution denied, ledger empty — with only an opaque
+#: "unable to open database file" to go on. Preparation is total; the status is
+#: recorded and reported by diagnostics rather than crashing the import.
+STATE_DIR = state_dir.resolve(default=ROOT_DIR)
+STATE_DIR_STATUS = state_dir.prepare(STATE_DIR)
+if not STATE_DIR_STATUS.ok:
+    logger.error(
+        "durable state root unusable (%s): %s — %s",
+        STATE_DIR_STATUS.code, STATE_DIR_STATUS.detail, STATE_DIR_STATUS.fix)
 
 EVENTS_DB_PATH = STATE_DIR / 'events.db'
 _events_lock = threading.Lock()
@@ -472,7 +485,9 @@ def _put_overlay(kind: str, entity_id: str, overlay: dict) -> None:
 # and silently skips writes, which is correct for simulated broker effects and
 # wrong for observed node facts — a dry-run execution must never make real
 # telemetry vanish. Same table, dedicated kind, its own read/write pair.
-_LIVE_SNAPSHOT_KIND = "live_snapshot"
+#: FIX-4: re-exported from the store that owns it. HARDEN-3 left a duplicate
+#: literal here, giving the same concept two sources of truth.
+_LIVE_SNAPSHOT_KIND = runtime_overlay_layer.LIVE_SNAPSHOT_KIND
 
 
 def _put_live_snapshot(instance_id: str, record: dict) -> bool:
@@ -3827,12 +3842,33 @@ def _domain_subsystems() -> list:
                                detail=type(exc).__name__))
     try:
         store = _ledger_store()
+        ingestion = _LEDGER_INGESTION.status
+        if store is None:
+            status, detail = (mt5_diagnostics_layer.FAIL,
+                              "ledger store unavailable")
+        elif ingestion.sweeps == 0:
+            # The store opens but nothing has ever ingested. Reporting PASS here
+            # is what let a permanently-empty ledger look healthy.
+            status, detail = (mt5_diagnostics_layer.FAIL,
+                              "ingestion has never run")
+        elif ingestion.last_success_at is None:
+            status, detail = (mt5_diagnostics_layer.FAIL,
+                              f"{ingestion.sweeps} sweeps, none succeeded: "
+                              f"{ingestion.last_failure_detail}")
+        elif ingestion.last_failure_at and (
+                ingestion.last_failure_at > (ingestion.last_success_at or "")):
+            status, detail = (mt5_diagnostics_layer.WARN,
+                              f"last sweep failed: {ingestion.last_failure_detail}")
+        else:
+            status, detail = (mt5_diagnostics_layer.PASS,
+                              f"{ingestion.sweeps} sweeps, "
+                              f"{ingestion.entries_touched_total} entries touched")
         rows.append(_subsystem(
-            "ledger",
-            status=(mt5_diagnostics_layer.PASS if store
-                    else mt5_diagnostics_layer.FAIL),
-            detail=("ledger store available" if store
-                    else "ledger store unavailable")))
+            "ledger", status=status, detail=detail,
+            last_success=ingestion.last_success_at,
+            last_failure=ingestion.last_failure_at,
+            warnings=([ingestion.last_failure_detail]
+                      if ingestion.last_failure_detail else ())))
     except Exception as exc:                                # noqa: BLE001
         rows.append(_subsystem("ledger", status=mt5_diagnostics_layer.FAIL,
                                detail=type(exc).__name__))
@@ -5012,6 +5048,44 @@ _AUTH_POLICY = auth_policy.load_policy()
 # ARCH-3: the NODE-INGEST principal — a distinct credential, distinct policy object,
 # scoped solely to auth_policy.INGEST_ROUTES.
 _INGEST_POLICY = auth_policy.load_ingest_policy()
+
+
+#: FIX-2: routes whose payload comes ONLY from the development fixture, DERIVED
+#: from the source rather than hand-listed. HARDEN-1 gated five surfaces by
+#: inspection and missed sixteen, which then answered 200-with-empty when the
+#: fixture was absent — `/api/broker/positions -> []` reading as "no open
+#: positions". Deriving the set means a new fixture-reading route is refused
+#: automatically, and the completeness test fails if the analysis and the
+#: runtime ever disagree.
+try:
+    FIXTURE_ONLY_PATHS = fixture_surfaces.gated_paths(
+        fixture_surfaces.analyse(Path(__file__)))
+except Exception:                                           # noqa: BLE001
+    # Analysis must never stop the process. It failing is itself notable, so it
+    # is logged loudly and reported by diagnostics; the surfaces stay ungated,
+    # which is the pre-FIX-2 behaviour rather than a new failure mode.
+    logger.exception("fixture-surface analysis failed; surfaces are UNGATED")
+    FIXTURE_ONLY_PATHS = set()
+
+
+@app.middleware("http")
+async def _fixture_surface_boundary(request: Request, call_next):
+    """Refuse fixture-only surfaces explicitly when the fixture is absent.
+
+    501 rather than 404 (the resource exists as a concept) or an empty 200 (which
+    would imply real system state).
+
+    Matching is on the EXACT path. Middleware runs before routing, so
+    `scope["route"]` is not yet populated and a parametrised route
+    (`/api/deployments/{id}`) cannot be matched here. Those fall through to their
+    own handler, which answers 404 for an id it cannot find — honest, since with
+    no fixture no such deployment exists. Collection endpoints, which are the
+    ones that returned a misleading empty list, are covered.
+    """
+    if not WORLD.available and request.url.path.startswith("/api"):
+        if request.url.path in FIXTURE_ONLY_PATHS:
+            return _fixture_unavailable(request.url.path)
+    return await call_next(request)
 
 
 @app.middleware("http")
