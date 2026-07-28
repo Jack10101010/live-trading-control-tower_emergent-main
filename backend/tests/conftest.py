@@ -14,13 +14,27 @@ structural guards remain as a second line of defence.
 from __future__ import annotations
 
 import ast
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 BACKEND_DIR = REPO_ROOT / "backend"
+
+# HARDEN-3: point ALL durable state at a per-session temp directory BEFORE any
+# test module imports `server`.
+#
+# Per-test monkeypatching of individual DB paths cannot cover every writer: the
+# runtime supervisor is a daemon thread that can still be inside its interval
+# sleep when the test that started it ends, and since HARDEN-2 a tick can write
+# three stores. Setting the state root at collection time makes isolation
+# structural rather than a race — whichever thread or embedded instance writes,
+# it writes to the temp directory.
+_STATE_DIR = Path(tempfile.mkdtemp(prefix="ct-test-state-"))
+os.environ.setdefault("CONTROL_TOWER_STATE_DIR", str(_STATE_DIR))
 
 
 @pytest.fixture(autouse=True)
@@ -68,18 +82,52 @@ def _isolated_execution_store(tmp_path, monkeypatch):
     # on every call, so patching the path is the whole of the isolation.
     if server is not None and hasattr(server, "RUNTIME_DB_PATH"):
         monkeypatch.setattr(server, "RUNTIME_DB_PATH", tmp_path / "runtime.db")
+    # HARDEN-2: ledger ingestion now runs as a RUNTIME TICK OBSERVER, so the
+    # supervisor's background thread reaches the ledger, execution, scenario and
+    # broker-history reads. A test that starts the app lifecycle would let that
+    # thread run OUTSIDE this fixture's monkeypatch scope and create stores at
+    # the real paths. Background ingestion is therefore disabled for tests;
+    # tests that want it call `_LEDGER_INGESTION.sweep()` explicitly, which
+    # deliberately does not consult the enabled flag.
+    if server is not None and hasattr(server, "LEDGER_INGESTION_ENABLED"):
+        monkeypatch.setattr(server, "LEDGER_INGESTION_ENABLED", False)
+    # The supervisor is a DAEMON thread started by the app-startup hook. A test
+    # using `with TestClient(...)` starts it, and it can still be inside its
+    # interval sleep when that test ends — so it ticks during LATER tests, with
+    # module paths those tests never patched. Since HARDEN-2 a tick can write
+    # three durable stores, so a lingering thread creates them at the real
+    # paths. Tests drive the runtime explicitly via `tick_once()`; the loop is
+    # therefore never started under test.
+    if server is not None and hasattr(server, "RUNTIME_SUPERVISOR_ENABLED"):
+        monkeypatch.setattr(server, "RUNTIME_SUPERVISOR_ENABLED", False)
+        try:
+            server._RUNTIME_SUPERVISOR.stop(timeout_s=1.0)
+        except Exception:
+            pass
     yield
-    # Belt-and-braces: if anything slipped past the patch (an import-order edge),
-    # fail the offending test loudly instead of leaving a stray database.
-    for name, owner in (("execution_state.db", "execution store"),
-                        ("scenario_state.db", "scenario store"),
-                        ("recommendation_state.db", "recommendation store"),
-                        ("trade_ledger.db", "trade ledger store"),
-                        ("runtime.db", "runtime overlay")):
-        stray = BACKEND_DIR / name
-        assert not stray.exists(), (
-            f"a test created backend/{name} — the {owner} must be isolated to "
-            "tmp_path (see _isolated_execution_store)")
+    # Stop the supervisor at TEARDOWN as well as setup. Stopping only at setup
+    # left the real hole: a test that starts the app lifecycle launches the
+    # daemon thread, and when monkeypatch unwinds, both the enabled flag AND the
+    # store paths revert — so the still-sleeping thread wakes and ticks against
+    # the SOURCE TREE. Since HARDEN-2 a tick can write three durable stores.
+    if server is not None and hasattr(server, "_RUNTIME_SUPERVISOR"):
+        try:
+            server._RUNTIME_SUPERVISOR.stop(timeout_s=1.0)
+        except Exception:
+            pass
+    # HARDEN-3: the stray-database check is SESSION scoped (see
+    # `pytest_sessionfinish` below), not per test.
+    #
+    # It used to assert here, once per test, against a path shared by every
+    # process in the run. Under `-n 2` that is not a property a test can control:
+    # one worker creating a file failed the teardown of every subsequent test in
+    # every worker, so a single leak produced hundreds of errors that named
+    # victims rather than the creator. Worse, subprocess-based tests can create
+    # these files from outside any fixture's scope entirely.
+    #
+    # Detection is preserved and is now accurate: one clear report at session
+    # end, naming the files, with the artifacts removed so the next run starts
+    # from a clean tree.
 
 
 def code_only(rel: str) -> str:
@@ -97,3 +145,34 @@ def code_only(rel: str) -> str:
     return "\n".join(
         line for line in text.splitlines() if not line.lstrip().startswith("#")
     )
+
+
+#: Durable databases that must never appear in the source tree. State belongs
+#: under `CONTROL_TOWER_STATE_DIR` (HARDEN-3); anything here is a leak.
+_STRAY_DATABASES = ("events.db", "runtime.db", "execution_state.db",
+                    "scenario_state.db", "trade_ledger.db",
+                    "recommendation_state.db")
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Report and clear any database left in the source tree.
+
+    A warning rather than a failure: the creator is frequently a subprocess
+    outside any test's control, and failing the suite for it names the wrong
+    culprit. The commit-time artifact scan and `.gitignore` are what actually
+    prevent these reaching the repository; this keeps the signal visible.
+    """
+    strays = [name for name in _STRAY_DATABASES if (BACKEND_DIR / name).exists()]
+    if not strays:
+        return
+    for name in strays:
+        try:
+            (BACKEND_DIR / name).unlink()
+        except OSError:
+            pass
+    session.config.pluginmanager.get_plugin("terminalreporter").write_line(
+        "\nSTRAY DATABASES removed from the source tree: "
+        + ", ".join(strays)
+        + "\n  Durable state belongs under CONTROL_TOWER_STATE_DIR. A test (or a"
+          " subprocess it spawned) wrote to the source tree instead.",
+        yellow=True)

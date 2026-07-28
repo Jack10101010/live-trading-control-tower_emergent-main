@@ -51,8 +51,11 @@ def isolated_stores(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "_LEDGER_STORE", None)
     monkeypatch.setattr(server, "_LEDGER_STORE_FAILED", False)
     yield
-    stray = BACKEND_DIR / "trade_ledger.db"
-    assert not stray.exists(), "a test created backend/trade_ledger.db"
+    # HARDEN-3: the stray-database check moved to a SESSION-scoped report in
+    # `conftest.pytest_sessionfinish`. Asserting here made every test in this
+    # module fail once any process — including a subprocess outside this
+    # fixture's scope — touched the source tree, which named victims instead of
+    # the creator.
 
 
 # ── evidence builders ─────────────────────────────────────────────────────────

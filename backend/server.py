@@ -59,13 +59,17 @@ import trade_ledger_store as ledger_store_layer
 import trade_reconstruction as reconstruction_layer
 import live_pipeline as live_pipeline_layer
 import live_preflight as live_preflight_layer
+import fixture_world
+import ledger_ingestion as ledger_ingestion_layer
 import market_runtime as market_runtime_layer
+import operator_identity
 import mt5_diagnostics as mt5_diagnostics_layer
 import recommendation_authorization as recommendation_auth_layer
 import recommendation_decision_service as recommendation_decision_layer
 import recommendation_domain as recommendation_layer
 import recommendation_service as recommendation_service_layer
 import recommendation_store as recommendation_store_layer
+import runtime_overlay as runtime_overlay_layer
 import runtime_supervisor as runtime_supervisor_layer
 import reconciliation as reconciliation_layer
 import ops_status as ops_status_layer
@@ -111,25 +115,40 @@ app = FastAPI(title="Control Tower API", version="0.1.0")
 api_router = APIRouter(prefix="/api")
 
 
-def _load_world() -> dict:
-    """Load the frozen world.v1.json fixture from the repo.
+#: HARDEN-1: the fixture world is now an EXPLICITLY OPTIONAL source.
+#:
+#: This used to be `raise FileNotFoundError` at module scope, which made a
+#: development fixture a hard boot dependency of the whole backend — deleting
+#: `backend/fixtures/` stopped the process from starting at all. Loading is now
+#: total: an absent or malformed fixture yields an empty world with
+#: `available == False`, and surfaces that have no production source say so
+#: explicitly via `fixture_world.unavailable(...)` rather than returning an
+#: empty collection that reads as "nothing is happening".
+#:
+#: When the fixture IS present every reader sees exactly what it saw before.
+FIXTURE_SEARCH_PATHS = (
+    ROOT_DIR / 'fixtures' / 'world.v1.json',
+    Path('/app/frontend/src/data/world.v1.json'),
+    Path('/app/_fixtures/world.v1.json'),
+)
 
-    Later this becomes: `await db.world.find_one(...)` — but the caller shape
-    (typed hooks) stays identical.
-    """
-    fixture_paths = [
-        ROOT_DIR / 'fixtures' / 'world.v1.json',
-        Path('/app/frontend/src/data/world.v1.json'),
-        Path('/app/_fixtures/world.v1.json'),
-    ]
-    for p in fixture_paths:
-        if p.exists():
-            with open(p, 'r') as f:
-                return json.load(f)
-    raise FileNotFoundError("world.v1.json fixture not found")
+WORLD = fixture_world.load(FIXTURE_SEARCH_PATHS)
 
 
-WORLD = _load_world()
+def _fixture_available() -> bool:
+    """Whether the development fixture world is present."""
+    return bool(WORLD.available)
+
+
+def _fixture_unavailable(surface: str, extra: dict | None = None) -> JSONResponse:
+    """A 501 for a surface backed only by the fixture world.
+
+    501 (not 404, not 200-with-empty) because the resource is not implemented
+    against a production source — the honest status for "this exists as a
+    concept but has no real backing yet"."""
+    return JSONResponse(
+        content=fixture_world.unavailable(surface, extra=extra),
+        status_code=501, headers={"Cache-Control": "no-store"})
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +158,17 @@ WORLD = _load_world()
 # actions append here and GET /api/events returns the merged stream.
 # ---------------------------------------------------------------------------
 
-EVENTS_DB_PATH = ROOT_DIR / 'events.db'
+#: HARDEN-3: where durable state lives.
+#:
+#: Every store previously hardcoded its file into the SOURCE TREE
+#: (`ROOT_DIR / '*.db'`), which meant a running process wrote databases next to
+#: its own code — and any second instance, embedded server or background thread
+#: wrote to the same six files no matter who owned them. State location is
+#: deployment configuration, so it is now a single env-overridable root that
+#: DEFAULTS to the previous behaviour (unchanged for existing deployments).
+STATE_DIR = Path(os.environ.get("CONTROL_TOWER_STATE_DIR") or ROOT_DIR)
+
+EVENTS_DB_PATH = STATE_DIR / 'events.db'
 _events_lock = threading.Lock()
 
 # ARCH-1: the command vocabulary and per-command audit categories are DERIVED from the
@@ -359,10 +388,15 @@ def _append_event(event: dict, idempotency_key: str | None) -> tuple[dict, bool]
 
 
 def _operator_id() -> str:
-    ops = WORLD.get("operators", [])
-    if ops and isinstance(ops[0], dict) and ops[0].get("operatorId"):
-        return str(ops[0]["operatorId"])
-    return "system"
+    """HARDEN-1: the acting operator, from a REAL source.
+
+    This used to return `WORLD["operators"][0]["operatorId"]` — the first entry
+    of a test fixture — falling back to the literal `"system"`. Every audit
+    record, broker context and safety `operator_ref` therefore attributed itself
+    to a fixture. It now resolves from deployment configuration
+    (`CONTROL_TOWER_OPERATOR_ID`) and reports `UNATTRIBUTED` when no operator can
+    be established, which is a truthful answer rather than a plausible one."""
+    return operator_identity.resolve()
 
 
 def _active_package_hash() -> str:
@@ -392,54 +426,27 @@ def _snake_upper(name: str) -> str:
 # status remembered for Resume) and are stripped before the entity is returned.
 # ---------------------------------------------------------------------------
 
-RUNTIME_DB_PATH = ROOT_DIR / 'runtime.db'
-_runtime_lock = threading.Lock()
+RUNTIME_DB_PATH = STATE_DIR / 'runtime.db'
 
-
-def _runtime_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(RUNTIME_DB_PATH)
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS runtime_overlay (
-            kind TEXT NOT NULL,
-            entity_id TEXT NOT NULL,
-            overlay TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            PRIMARY KEY (kind, entity_id)
-        )
-        """
-    )
-    return conn
+# HARDEN-3: the overlay store is now OWNED by `runtime_overlay`, which holds the
+# schema, the connection handling and the process lock. It was the only durable
+# store in the repository with no module of its own — the 5,167-line HTTP module
+# owned a database, which is also why the test-isolation guard missed it longest.
+#
+# The wrappers below are thin delegation so the existing ~19 call sites are
+# unchanged. The path is read through a callable so tests can repoint
+# `RUNTIME_DB_PATH` exactly as before.
+_RUNTIME_OVERLAY = runtime_overlay_layer.RuntimeOverlayStore(
+    path_fn=lambda: RUNTIME_DB_PATH)
 
 
 def _load_overlays(kind: str) -> dict[str, dict]:
     """All overlays for a kind, keyed by entity id. Empty before first write."""
-    if not RUNTIME_DB_PATH.exists():
-        return {}
-    with _runtime_lock:
-        conn = _runtime_db()
-        try:
-            rows = conn.execute(
-                "SELECT entity_id, overlay FROM runtime_overlay WHERE kind = ?", (kind,)
-            ).fetchall()
-        finally:
-            conn.close()
-    return {eid: json.loads(ov) for eid, ov in rows}
+    return _RUNTIME_OVERLAY.load(kind)
 
 
 def _get_overlay(kind: str, entity_id: str) -> dict:
-    if not RUNTIME_DB_PATH.exists():
-        return {}
-    with _runtime_lock:
-        conn = _runtime_db()
-        try:
-            row = conn.execute(
-                "SELECT overlay FROM runtime_overlay WHERE kind = ? AND entity_id = ?",
-                (kind, entity_id),
-            ).fetchone()
-        finally:
-            conn.close()
-    return json.loads(row[0]) if row else {}
+    return _RUNTIME_OVERLAY.get(kind, entity_id)
 
 
 # Dry-run guard (Phase 8): when an execution is a dry-run the effect code runs
@@ -450,20 +457,14 @@ _DRY_RUN = contextvars.ContextVar("_dry_run", default=False)
 
 
 def _put_overlay(kind: str, entity_id: str, overlay: dict) -> None:
+    """Persist an overlay unless this execution is a dry run.
+
+    The dry-run guard stays HERE, not in the store: suppressing a write is a
+    decision about simulated broker effects, and the store must not be in the
+    business of second-guessing its callers."""
     if _DRY_RUN.get():
         return
-    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    with _runtime_lock:
-        conn = _runtime_db()
-        try:
-            conn.execute(
-                "INSERT INTO runtime_overlay (kind, entity_id, overlay, updated_at) VALUES (?, ?, ?, ?) "
-                "ON CONFLICT(kind, entity_id) DO UPDATE SET overlay = excluded.overlay, updated_at = excluded.updated_at",
-                (kind, entity_id, json.dumps(overlay), now),
-            )
-            conn.commit()
-        finally:
-            conn.close()
+    _RUNTIME_OVERLAY.put(kind, entity_id, overlay)
 
 
 # ── UI-2: durable latest node-telemetry snapshot store ───────────────────────
@@ -477,20 +478,11 @@ _LIVE_SNAPSHOT_KIND = "live_snapshot"
 def _put_live_snapshot(instance_id: str, record: dict) -> bool:
     """Persist the latest VALID snapshot for an instance. Returns False if the
     write failed — persistence is best-effort and must never fail an ingest."""
-    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     try:
-        with _runtime_lock:
-            conn = _runtime_db()
-            try:
-                conn.execute(
-                    "INSERT INTO runtime_overlay (kind, entity_id, overlay, updated_at) "
-                    "VALUES (?, ?, ?, ?) ON CONFLICT(kind, entity_id) DO UPDATE SET "
-                    "overlay = excluded.overlay, updated_at = excluded.updated_at",
-                    (_LIVE_SNAPSHOT_KIND, instance_id, json.dumps(record), now),
-                )
-                conn.commit()
-            finally:
-                conn.close()
+        # Deliberately the STORE's put, not `_put_overlay`: the latter honours
+        # the dry-run guard, and a dry-run execution must never make observed
+        # node telemetry vanish.
+        _RUNTIME_OVERLAY.put(_LIVE_SNAPSHOT_KIND, instance_id, record)
         return True
     except Exception:
         logger.exception("live snapshot persist failed for %s", instance_id)
@@ -1204,7 +1196,7 @@ def _execution_env() -> execution_layer.ExecutionEnv:
 # execution context (assembled ONCE per command at this boundary).
 # ---------------------------------------------------------------------------
 
-EXECUTION_DB_PATH = ROOT_DIR / 'execution_state.db'
+EXECUTION_DB_PATH = STATE_DIR / 'execution_state.db'
 _EXECUTION_STORE: execution_store_layer.ExecutionStore | None = None
 _EXECUTION_STORE_FAILED = False
 
@@ -1235,7 +1227,7 @@ def _execution_store() -> execution_store_layer.ExecutionStore | None:
 # it owns scenarios only and never touches execution tables. Lazy + fail-soft:
 # an unavailable store makes scenario reads explicitly unavailable and changes
 # NO execution behaviour (scenarios are not on any execution path).
-SCENARIO_DB_PATH = ROOT_DIR / 'scenario_state.db'
+SCENARIO_DB_PATH = STATE_DIR / 'scenario_state.db'
 _SCENARIO_STORE: scenario_store_layer.ScenarioStore | None = None
 _SCENARIO_STORE_FAILED = False
 
@@ -1259,7 +1251,7 @@ def _scenario_store() -> scenario_store_layer.ScenarioStore | None:
 # owns ledger facts only and never touches execution or scenario tables. Lazy +
 # fail-soft: an unavailable ledger makes ledger reads explicitly unavailable and
 # changes NO execution behaviour (the ledger is never an execution authority).
-LEDGER_DB_PATH = ROOT_DIR / 'trade_ledger.db'
+LEDGER_DB_PATH = STATE_DIR / 'trade_ledger.db'
 _LEDGER_STORE: ledger_store_layer.TradeLedgerStore | None = None
 _LEDGER_STORE_FAILED = False
 
@@ -1283,7 +1275,7 @@ def _ledger_store() -> ledger_store_layer.TradeLedgerStore | None:
 # and schema version; owns proposals and decisions only. The service can never
 # submit an order, grant authorization or change execution mode — accepting a
 # Recommendation records a decision and stops.
-RECOMMENDATION_DB_PATH = ROOT_DIR / 'recommendation_state.db'
+RECOMMENDATION_DB_PATH = STATE_DIR / 'recommendation_state.db'
 _RECOMMENDATION_STORE: recommendation_store_layer.RecommendationStore | None = None
 _RECOMMENDATION_STORE_FAILED = False
 
@@ -1833,11 +1825,15 @@ async def health(request: Request):
 @api_router.get("/world")
 async def world():
     """Return the full frozen world fixture. Used by the fixture provider fallback."""
-    return WORLD
+    if not _fixture_available():
+        return _fixture_unavailable("world")
+    return WORLD.as_dict()
 
 
 @api_router.get("/fleet")
 async def fleet():
+    if not _fixture_available():
+        return _fixture_unavailable("fleet")
     return {
         "deployments": _deployments_view(),
         "brokers": WORLD.get("brokers", []),
@@ -1861,6 +1857,8 @@ async def deployment(deployment_id: str):
 
 @api_router.get("/packages")
 async def packages():
+    if not _fixture_available():
+        return _fixture_unavailable("packages")
     return WORLD.get("packages", [])
 
 
@@ -2801,12 +2799,44 @@ _RUNTIME_SUPERVISOR = runtime_supervisor_layer.RuntimeSupervisor(
     account_fn=lambda: _guarded_account_snapshot(),
     server_time_fn=lambda: None,
     now_iso_fn=_now_iso, interval_s=RUNTIME_TICK_SECONDS,
-    on_tick=lambda snapshot: _LIVE_PRODUCER.on_tick(snapshot),
+    on_tick=lambda snapshot: _observe_tick(snapshot),
     # LIVE-5B: safe automatic recovery. `connect()` is a READ-PATH repair —
     # it opens a terminal session and places no order — so automating it cannot
     # cause a trade. Anything that could affect a position stays manual.
     reconnect_fn=lambda: _reconnect_broker(),
     logger=logger)
+
+
+#: HARDEN-2: the ledger's missing ownership point. Ingestion is a READ plus a
+#: write to the ledger's own store — it places no order and touches no execution
+#: state — so it runs by default. Leaving it unowned is what produced six
+#: endpoints serving a permanently empty ledger.
+LEDGER_INGESTION_ENABLED = (os.environ.get("LEDGER_INGESTION_ENABLED")
+                            or "1").strip() not in ("0", "false", "no", "off")
+LEDGER_INGESTION_INTERVAL_S = float(
+    os.environ.get("LEDGER_INGESTION_INTERVAL_S")
+    or ledger_ingestion_layer.DEFAULT_INTERVAL_S)
+
+_LEDGER_INGESTION = ledger_ingestion_layer.LedgerIngestionService(
+    refresh_fn=lambda: refresh_trade_ledger(),
+    now_iso_fn=_now_iso, interval_s=LEDGER_INGESTION_INTERVAL_S,
+    enabled_fn=lambda: LEDGER_INGESTION_ENABLED, logger=logger)
+
+
+def _observe_tick(snapshot) -> None:
+    """Fan the runtime tick out to its observers.
+
+    Each observer is independently guarded: a failing producer must not stop
+    ledger ingestion, and neither may break the tick. The supervisor already
+    runs this outside its lock and swallows exceptions; this second layer keeps
+    the two observers isolated from EACH OTHER.
+    """
+    for name, observer in (("live_producer", _LIVE_PRODUCER.on_tick),
+                           ("ledger_ingestion", _LEDGER_INGESTION.on_tick)):
+        try:
+            observer(snapshot)
+        except Exception:                                       # noqa: BLE001
+            logger.exception("runtime tick observer %s failed", name)
 
 
 def _reconnect_broker() -> tuple:
@@ -4142,6 +4172,8 @@ async def policy_matrix(instrument: str, version: int | None = None):
     """Return the (representative) policy matrix stored in the fixture.
     The frontend fixture provider expands it to full 24×6=144 cells.
     """
+    if not _fixture_available():
+        return _fixture_unavailable("policy_matrix")
     pkgs = WORLD.get("packages", [])
     if version is not None:
         pkg = next((p for p in pkgs if p.get("version") == version), None)
@@ -4157,6 +4189,8 @@ async def policy_matrix(instrument: str, version: int | None = None):
 
 @api_router.get("/trades")
 async def trades(pair: str | None = None, lane: str | None = None):
+    if not _fixture_available():
+        return _fixture_unavailable("trades")
     lt = _live_trades_view()
     gt = WORLD.get("ghostTrades", [])
     bi = WORLD.get("blockedIntents", [])
@@ -4354,16 +4388,7 @@ async def runtime_reset() -> dict[str, Any]:
     """Clear all runtime overlays, reverting reads to the pristine fixture.
     The append-only event log is NOT cleared (audit history is preserved
     within the EVENTS_RETENTION_MAX retention window)."""
-    count = 0
-    if RUNTIME_DB_PATH.exists():
-        with _runtime_lock:
-            conn = _runtime_db()
-            try:
-                count = conn.execute("SELECT COUNT(*) FROM runtime_overlay").fetchone()[0]
-                conn.execute("DELETE FROM runtime_overlay")
-                conn.commit()
-            finally:
-                conn.close()
+    count = _RUNTIME_OVERLAY.clear()
     return {"ok": True, "clearedOverlays": count}
 
 

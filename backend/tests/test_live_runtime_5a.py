@@ -54,6 +54,20 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "RECOMMENDATION_DB_PATH", tmp_path / "rec.db")
     monkeypatch.setattr(server, "_RECOMMENDATION_STORE", None)
     monkeypatch.setattr(server, "_RECOMMENDATION_STORE_FAILED", False)
+    # HARDEN-3: this module drives the REAL runtime tick and the real
+    # /api/live-runtime projection, both of which reach the execution, scenario
+    # and ledger stores. Patching only two of the six left the others resolving
+    # to the source tree, so the module leaked three databases when run on its
+    # own. Every store this module can reach is now isolated here.
+    monkeypatch.setattr(server, "EXECUTION_DB_PATH", tmp_path / "execution.db")
+    monkeypatch.setattr(server, "_EXECUTION_STORE", None)
+    monkeypatch.setattr(server, "_EXECUTION_STORE_FAILED", False)
+    monkeypatch.setattr(server, "SCENARIO_DB_PATH", tmp_path / "scenario.db")
+    monkeypatch.setattr(server, "_SCENARIO_STORE", None)
+    monkeypatch.setattr(server, "_SCENARIO_STORE_FAILED", False)
+    monkeypatch.setattr(server, "LEDGER_DB_PATH", tmp_path / "ledger.db")
+    monkeypatch.setattr(server, "_LEDGER_STORE", None)
+    monkeypatch.setattr(server, "_LEDGER_STORE_FAILED", False)
     yield
 
 
