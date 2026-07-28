@@ -147,6 +147,18 @@ def collect(cfg: LiveConfig, probe_mt5: bool = True) -> None:
         row("replay occurring?", WARN if replays > 10 else OK,
             f"{replays} suppressed annotations, {dupes} blocked intents in recent cycles")
 
+    # ── engine identity ──────────────────────────────────────────────────────
+    # Answers "is the deployed engine still the qualified one?" — a question the
+    # operator previously had no read-only surface for at all.
+    try:
+        from live.config import ENGINE_MANIFEST_ID_EXPECTED, ENGINE_MANIFEST_PATH
+        from live.engine_identity import load_manifest, verify
+        eng_ok, eng_detail, eng_actual = verify(cfg.lux_root, load_manifest(ENGINE_MANIFEST_PATH))
+        eng_ok = eng_ok and eng_actual["engine_manifest_id"] == ENGINE_MANIFEST_ID_EXPECTED
+        row("engine identity intact?", OK if eng_ok else FAIL, eng_detail[:90])
+    except Exception as exc:  # never let diagnostics throw
+        row("engine identity intact?", FAIL, f"{type(exc).__name__}: {exc}"[:90])
+
     # ── kill switch / mode ───────────────────────────────────────────────────
     row("mode + kill switch", FAIL if cfg.mode == "live" else OK,
         f"LIVE_MODE={cfg.mode}, KILL {'PRESENT (opens blocked)' if cfg.kill_file.exists() else 'absent'}")

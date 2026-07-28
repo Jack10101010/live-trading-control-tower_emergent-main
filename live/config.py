@@ -19,6 +19,15 @@ TIME_BASE = "utc-v2"
 SYMBOL = "EURUSD"                                   # hard whitelist — single symbol
 GOLDEN_CONFIG_RELPATH = "generated_configs/d6cdae589b1e4c37a67763253c466067.json"
 ENGINE_VERSION_EXPECTED = "5bb6372c092cc65ae0d30c4a40bed26ed5e074aef2459de9e199b902849305be"
+# Lux's own engine_version() hashes only src/execution.py, scripts/run_backtest.py
+# and src/resume_support.py. That list predates M2, which moved every strategy
+# subsystem into strategy_core/ and left src/execution.py a re-export shim — so
+# 20 of the 23 modules in the measured production import closure, including the
+# entire walk, can change without moving that digest. ENGINE_MANIFEST_ID_EXPECTED
+# is the complete identity over the governed tree (live/engine_manifest.json
+# lists every file and digest). Both are gated; neither replaces the other.
+ENGINE_MANIFEST_ID_EXPECTED = "6cb6cbcd2ef572b558cb518e0ebdb69dd69802356a743ba520df13b329f9854b"
+ENGINE_MANIFEST_PATH = Path(__file__).resolve().parent / "engine_manifest.json"
 
 
 def _env(name: str, default: str) -> str:

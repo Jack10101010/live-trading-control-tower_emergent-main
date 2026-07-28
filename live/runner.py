@@ -18,7 +18,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from live.config import ENGINE_VERSION_EXPECTED, PORTFOLIO_INCLUDE_DISABLED_COHORTS
+from live.config import (ENGINE_MANIFEST_ID_EXPECTED, ENGINE_MANIFEST_PATH,
+                         ENGINE_VERSION_EXPECTED, PORTFOLIO_INCLUDE_DISABLED_COHORTS)
+from live.engine_identity import load_manifest, manifest_id, verify, verify_loaded_modules
 from live.intents import diff_frontier
 from live.state import RunnerState
 
@@ -47,12 +49,30 @@ class LuxSession:
         self.rb, self.core = rb, core
         self.prepare_news_cache = prepare_news_cache
         self.engine_version = engine_version()
+        self.engine_manifest_id = manifest_id(self.lux_root)
 
     def verify_engine(self) -> None:
+        """Refuse to trade unless BOTH identities match.
+
+        `engine_version` is Lux's own 3-file digest, kept for continuity with the
+        Golden Run pin. It is not sufficient on its own: it covers 3 of the 23
+        modules the production path actually imports. The manifest covers all of
+        them, so it is the gate that would actually catch a strategy edit.
+        """
         if self.engine_version != ENGINE_VERSION_EXPECTED:
             raise RuntimeError(
                 f"engine_version mismatch: {self.engine_version} != expected "
                 f"{ENGINE_VERSION_EXPECTED} — refusing to trade on an unverified engine")
+        ok, detail, actual = verify(self.lux_root, load_manifest(ENGINE_MANIFEST_PATH))
+        if not ok or actual["engine_manifest_id"] != ENGINE_MANIFEST_ID_EXPECTED:
+            raise RuntimeError(
+                f"engine manifest mismatch: {detail} (computed "
+                f"{actual['engine_manifest_id']}, expected {ENGINE_MANIFEST_ID_EXPECTED}) "
+                "— refusing to trade on an unverified engine")
+        loaded_ok, loaded_detail = verify_loaded_modules(self.lux_root, actual)
+        if not loaded_ok:
+            raise RuntimeError(f"engine module provenance: {loaded_detail} "
+                               "— refusing to trade on an unverified engine")
 
     def golden_config(self, golden_config_path: Path, end_date: str):
         overrides, _ = self.rb.load_config_overrides(str(golden_config_path))

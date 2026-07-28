@@ -357,6 +357,13 @@ def test_failed_commit_leaves_the_boundary_unadvanced(tmp_path):
 def test_status_reports_healthy_on_a_clean_idle_deployment(tmp_path):
     from live import status as live_status
     cfg = _cfg(tmp_path)
+    # A clean deployment has a real, verified engine tree. The other fixtures use
+    # a synthetic lux_root, which the engine-identity row correctly reports as
+    # FAIL — so this test, which asserts zero FAILs, must supply the pinned tree.
+    real_lux = Path(__file__).resolve().parents[2].parent / "Lux-OB-Backtester"
+    if not real_lux.exists():
+        pytest.skip("pinned Lux tree not present")
+    cfg.lux_root = real_lux
     ops = OpsLog(cfg.state_dir)
     ops.cycle_end(ops.cycle_start(), boundary="2026-07-28 08:15:00+00:00", status="no_new_bar")
     RunnerState(cfg.state_dir).save()
@@ -365,9 +372,20 @@ def test_status_reports_healthy_on_a_clean_idle_deployment(tmp_path):
     answered = {q for q, _, _ in live_status.ROWS}
     for q in ("bot healthy?", "heartbeat current?", "system stalled?", "time base valid?",
               "reconciliation healthy?", "ledger healthy?", "replay occurring?",
-              "engine progressing?", "MT5 healthy?"):
+              "engine progressing?", "MT5 healthy?", "engine identity intact?"):
         assert q in answered, f"status does not answer {q!r}"
     assert not [r for r in live_status.ROWS if r[1] == "FAIL"]
+
+
+def test_status_flags_a_tampered_engine_tree(tmp_path):
+    """The governance gate must be visible to the operator, not just at startup."""
+    from live import status as live_status
+    cfg = _cfg(tmp_path)          # synthetic lux_root == engine tree cannot be certified
+    RunnerState(cfg.state_dir).save()
+    live_status.ROWS.clear()
+    live_status.collect(cfg, probe_mt5=False)
+    identity = [r for r in live_status.ROWS if r[0] == "engine identity intact?"]
+    assert identity and identity[0][1] == "FAIL"
 
 
 def test_status_flags_sent_orders_in_dry_run(tmp_path):

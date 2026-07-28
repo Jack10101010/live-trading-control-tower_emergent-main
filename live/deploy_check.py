@@ -31,7 +31,10 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-from live.config import ENGINE_VERSION_EXPECTED, LiveConfig
+from live.config import (ENGINE_MANIFEST_ID_EXPECTED, ENGINE_MANIFEST_PATH,
+                         ENGINE_VERSION_EXPECTED, LiveConfig)
+from live.engine_identity import (environment_fingerprint, load_manifest, verify,
+                                  verify_loaded_modules)
 from live.mt5_gateway import MT5Gateway
 from live.state import RunnerState
 
@@ -72,13 +75,23 @@ def preflight(cfg: LiveConfig) -> int:
         session = LuxSession(cfg.lux_root)
         check("engine_version", session.engine_version == ENGINE_VERSION_EXPECTED,
               session.engine_version)
+        # engine_version covers 3 files; the manifest covers all 30 governed ones.
+        # Without this gate a strategy_core edit passes every other check.
+        m_ok, m_detail, m_actual = verify(cfg.lux_root, load_manifest(ENGINE_MANIFEST_PATH))
+        check("engine_manifest",
+              m_ok and m_actual["engine_manifest_id"] == ENGINE_MANIFEST_ID_EXPECTED,
+              f"{m_actual['engine_manifest_id'][:16]}… — {m_detail}")
+        check("engine_modules_governed", *verify_loaded_modules(cfg.lux_root, m_actual))
         gc = session.golden_config(cfg.golden_config_path, "2026-06-19")
         check("golden_config_include_disabled", gc.portfolio_include_disabled_cohorts is True)
     except Exception as exc:
         check("lux_session", False, f"{type(exc).__name__}: {exc}")
-    import pandas, numpy
+    # Recorded, not gated: dependency versions move governed floats (a measured
+    # ~220 ULP bbw_value shift between hosts), so the fingerprint is provenance
+    # for a parity investigation. Parity Policy v2 decides tolerability.
+    env = environment_fingerprint()
     check("python_env", sys.version_info >= (3, 10),
-          f"py {sys.version.split()[0]} pandas {pandas.__version__} numpy {numpy.__version__}")
+          f"py {env['python']} pandas {env['pandas']} numpy {env['numpy']} on {env['platform']}")
     check("mt5_credentials_present", bool(cfg.mt5_login and cfg.mt5_server),
           "MT5_LOGIN/MT5_SERVER set" if cfg.mt5_login else "MT5_LOGIN or MT5_SERVER missing")
     check("frozen_dataset_present",

@@ -120,6 +120,46 @@ or `idle` (waiting for the next boundary). Investigate when `idle` is older than
 applies the same phase-aware thresholds. Kill switch (blocks new opens
 instantly): `type nul > C:\trading\live_state\KILL` — delete the file to clear.
 
+## 6.2 Engine identity — what is governed, and how to change it
+Two independent identities are gated at **startup and in preflight**; a mismatch
+in either refuses to trade.
+
+| Identity | Covers | Constant |
+|---|---|---|
+| `engine_version` | Lux's own 3-file digest (`src/execution.py`, `scripts/run_backtest.py`, `src/resume_support.py`) | `ENGINE_VERSION_EXPECTED` |
+| `engine_manifest_id` | **all 30 governed files** — `strategy_core/**`, `src/**`, `scripts/run_backtest.py` | `ENGINE_MANIFEST_ID_EXPECTED` |
+
+`engine_version` alone is **not sufficient**. Its file list predates Milestone 2,
+which relocated every strategy subsystem into `strategy_core/` and left
+`src/execution.py` a re-export shim. Measured on the pinned tree, the production
+import closure is 23 local modules and that digest covers **3** — the walk,
+order-block detection, swings, regime, policy, sessions, news and the ghost
+tracker could all be edited without moving it. The manifest closes that gap. Both
+are kept: `engine_version` preserves continuity with the Golden Run pin.
+
+`live/engine_manifest.json` lists every governed file and its digest, so a failure
+names the exact file. Digests are taken over LF-normalised content, so a Windows
+`autocrlf` checkout and a macOS checkout of the same commit agree.
+
+Inspect at any time (writes nothing):
+```bat
+python -m live.engine_identity
+```
+
+**Re-approving the manifest is a governance act, not a build step.** It is the
+only thing standing between an edited strategy and a live account. Regenerate
+*only* alongside a deliberate, reviewed engine change:
+```bat
+python -m live.engine_identity --write live\engine_manifest.json
+```
+then copy the printed `engine_manifest_id` into `ENGINE_MANIFEST_ID_EXPECTED` in
+`live/config.py` and commit both together. The constant is a second lock: editing
+the manifest JSON alone still fails the gate. Re-run Phase 0 parity afterwards —
+a new identity means a new engine.
+
+`python -m live.status` reports **`engine identity intact?`** so drift is visible
+day to day, not only at startup.
+
 ## 7.1 Safety rails in force (all verified by tests)
 | Rail | Blocks | Backed by |
 |---|---|---|
@@ -147,6 +187,8 @@ never sent to the broker and must not consume the loss budget.
 | Corrupt live segment tail | actionable error naming the bad row | **operator** (truncate or re-backfill) |
 | Missing/mismatched provenance | refuses to start | **operator** (archive + re-backfill) |
 | Invalid config (negative lots etc.) | `build()` refuses before any broker contact | **operator** |
+| Modified strategy/engine file | refuses to start, names the changed file | **operator** (restore the pinned tree, or re-approve per §6.2) |
+| Engine module loaded from an unhashed path | refuses to start, names the module | **operator** (remove the stray copy / fix `PYTHONPATH`) |
 | VPS clock drift > 5 min | refuses to start, message names **NTP** not config | **operator** |
 | Market closed at startup | permitted (`unverified` time base) | n/a |
 | Unknown magic-tagged position | reconcile **FREEZES**, never auto-closes | **operator** |
