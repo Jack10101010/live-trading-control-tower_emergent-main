@@ -75,11 +75,18 @@ PRODUCTION_BACKED: dict[str, str] = {
         "same durable event stream, filtered; genuinely empty means no events"),
     "/api/health": (
         "liveness must answer even when every data source is unavailable"),
+    # CORRECTED. The earlier reason claimed "with a live adapter it is genuine
+    # broker truth", which was FALSE: with the MT5 adapter DISCONNECTED these
+    # answered `200 []`, i.e. Class B (UNAVAILABLE) reported as Class A
+    # (TRUTHFUL EMPTY). They now return 503 `broker_unavailable` unless the
+    # adapter is genuinely connected, so an empty list means CONNECTED-and-flat
+    # and nothing else. They stay out of the fixture gate because their owner is
+    # the adapter, not the fixture.
     "/api/broker/positions": (
-        "served by the ACTIVE broker adapter; with the mock that happens to read "
-        "fixture trades, but with a live adapter it is genuine broker truth"),
-    "/api/broker/orders": "same broker-adapter path as positions",
-    "/api/broker/accounts": "same broker-adapter path as positions",
+        "adapter-owned; returns 503 broker_unavailable unless connected, so an "
+        "empty list means connected-and-flat rather than unreachable"),
+    "/api/broker/orders": "adapter-owned; same connected-or-503 rule as positions",
+    "/api/broker/accounts": "adapter-owned; same connected-or-503 rule as positions",
     "/api/broker-health": "reports adapter connection state, not fixture content",
     "/api/execution/dry-run": (
         "simulates against the active adapter; a dry run with no fixture is a "

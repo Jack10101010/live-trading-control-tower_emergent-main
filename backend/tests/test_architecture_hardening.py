@@ -699,3 +699,105 @@ def test_the_snapshot_kind_has_a_single_owner():
     from test_recommendation_domain import statements_only
     code = statements_only("server.py")
     assert '_LIVE_SNAPSHOT_KIND = "live_snapshot"' not in code
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# OPS — broker read surfaces distinguish UNAVAILABLE from TRUTHFUL EMPTY.
+# ═══════════════════════════════════════════════════════════════════════════
+
+BROKER_READ_PATHS = ("/api/broker/positions", "/api/broker/orders",
+                     "/api/broker/accounts")
+
+
+class _Conn:
+    def __init__(self, state, detail=""):
+        self.state = state
+        self.detail = detail
+
+
+class _Brk:
+    kind = "mt5"
+
+    def __init__(self, state):
+        self._c = _Conn(state, "MetaTrader5 unavailable on this host")
+
+    def connection(self):
+        return self._c
+
+    def positions(self, _ctx):
+        return []
+
+    def orders(self, _ctx):
+        return []
+
+    def accounts(self, _ctx):
+        return []
+
+
+def test_a_disconnected_broker_never_reports_an_empty_position_list(monkeypatch):
+    """THE defect: with the MT5 adapter DISCONNECTED these answered `200 []`,
+    which a dashboard reads as "broker connected, no open positions". An empty
+    position list is the most consequential lie this API can tell."""
+    monkeypatch.setattr(server.broker_layer, "get_broker",
+                        lambda *a, **k: _Brk("Disconnected"))
+    for path in BROKER_READ_PATHS:
+        response = client.get(path)
+        assert response.status_code == 503, f"{path} answered {response.status_code}"
+        body = response.json()
+        assert body["code"] == "broker_unavailable", path
+        assert body["connection"] == "Disconnected", path
+        # It must explicitly deny the "flat account" reading.
+        assert "NOT a claim that the account is flat" in body["detail"], path
+        assert not isinstance(body, list), path
+
+
+def test_a_connected_broker_still_returns_a_truthful_empty_list(monkeypatch):
+    """Class A must be preserved: connected-and-genuinely-flat stays 200."""
+    monkeypatch.setattr(server.broker_layer, "get_broker",
+                        lambda *a, **k: _Brk("Connected"))
+    for path in BROKER_READ_PATHS:
+        response = client.get(path)
+        assert response.status_code == 200, path
+        assert response.json() == [], path
+
+
+def test_the_live_mock_adapter_is_connected_and_answers_200():
+    """Compatibility: the default mock adapter is connected, so the normal
+    development experience is unchanged."""
+    for path in BROKER_READ_PATHS:
+        assert client.get(path).status_code == 200, path
+
+
+def test_an_unreadable_connection_is_treated_as_unavailable(monkeypatch):
+    """Fail closed: if the connection cannot even be probed, the surface is
+    unavailable rather than empty."""
+    class _Boom:
+        def connection(self):
+            raise RuntimeError("adapter exploded")
+
+    monkeypatch.setattr(server.broker_layer, "get_broker", lambda *a, **k: _Boom())
+    for path in BROKER_READ_PATHS:
+        response = client.get(path)
+        assert response.status_code == 503, path
+        assert response.json()["code"] == "broker_unavailable", path
+
+
+def test_the_unavailable_envelope_matches_repository_conventions():
+    """No parallel error model: same shape as the fixture-unavailable body."""
+    conn = _Conn("Disconnected", "detail")
+    body = server._broker_read_unavailable("broker/positions", conn).body
+    import json
+    parsed = json.loads(body)
+    assert set(parsed) >= {"error", "code", "surface", "detail"}
+    assert parsed["error"] == "unavailable"
+
+
+def test_broker_read_classification_is_documented():
+    """The classification reason must state the connected-or-503 rule, so the
+    corrected semantics cannot silently revert to the old false claim."""
+    import fixture_surfaces as fsurf2
+    for path in BROKER_READ_PATHS:
+        reason = fsurf2.PRODUCTION_BACKED[path]
+        assert "503" in reason or "connected" in reason, path
+        assert "genuine broker truth" not in reason, (
+            f"{path} still carries the refuted justification")

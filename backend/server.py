@@ -1924,20 +1924,69 @@ async def broker_capabilities():
     return broker_layer.capability_dict(broker_layer.get_broker().capabilities())
 
 
+#: Broker READ surfaces whose empty result is only truthful when the adapter is
+#: actually connected.
+#:
+#: AUDIT FINDING (this milestone): with the MT5 adapter selected and
+#: DISCONNECTED, `/api/broker/positions` answered `200 []`. A dashboard reads
+#: that as "broker connected, no open positions"; the truth is "unreachable — we
+#: do not know". The previous classification called this "genuine broker truth",
+#: which was wrong: it is Class B (UNAVAILABLE) reported as Class A (TRUTHFUL
+#: EMPTY). An empty position list is one of the most consequential lies this API
+#: can tell, because it is indistinguishable from flat.
+def _broker_read_unavailable(surface: str, connection) -> JSONResponse:
+    """503 for a broker read that cannot be answered truthfully."""
+    return JSONResponse(
+        status_code=503,
+        headers={"Cache-Control": "no-store"},
+        content={
+            "error": "unavailable",
+            "code": "broker_unavailable",
+            "surface": surface,
+            "adapter": broker_layer.active_kind(),
+            "connection": getattr(connection, "state", "Unknown"),
+            "detail": (
+                "the broker adapter is not connected, so this surface cannot be "
+                "reported. This is NOT a claim that the account is flat or that "
+                "there are no open positions — the broker was not reachable. "
+                + (getattr(connection, "detail", "") or "")).strip(),
+        })
+
+
+def _broker_connection():
+    try:
+        return broker_layer.get_broker().connection()
+    except Exception:                                           # noqa: BLE001
+        return None
+
+
+def _broker_is_connected(connection) -> bool:
+    return getattr(connection, "state", None) == "Connected"
+
+
 @api_router.get("/broker/accounts")
 async def broker_accounts():
+    connection = _broker_connection()
+    if not _broker_is_connected(connection):
+        return _broker_read_unavailable("broker/accounts", connection)
     brk = broker_layer.get_broker()
     return brk.accounts(_broker_context({}, _now_iso()))
 
 
 @api_router.get("/broker/positions")
 async def broker_positions():
+    connection = _broker_connection()
+    if not _broker_is_connected(connection):
+        return _broker_read_unavailable("broker/positions", connection)
     brk = broker_layer.get_broker()
     return brk.positions(_broker_context({}, _now_iso()))
 
 
 @api_router.get("/broker/orders")
 async def broker_orders():
+    connection = _broker_connection()
+    if not _broker_is_connected(connection):
+        return _broker_read_unavailable("broker/orders", connection)
     brk = broker_layer.get_broker()
     return brk.orders(_broker_context({}, _now_iso()))
 
