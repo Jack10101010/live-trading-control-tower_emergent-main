@@ -1464,6 +1464,19 @@ def _account_identity_state(node: execution_context_layer.NodeFacts) -> str:
             else execution_safety.ACCOUNT_MISMATCH)
 
 
+def _financial_rails_factory(instrument: str | None):
+    """UES — the per-command financial-rail evaluator for a LIVE adapter.
+
+    A one-line delegation on purpose. Every `live.*` import lives behind
+    `manual_financial_rails`, so this composition root names one module and the
+    adapter boundary (structurally enforced: `server.py` may not import from
+    `live.`) stays intact.
+    """
+    import manual_financial_rails
+    return manual_financial_rails.factory_for(
+        datetime.now(timezone.utc))(instrument)
+
+
 def _execution_context() -> execution_context_layer.ExecutionContext:
     """The canonical ExecutionContext, assembled ONCE at the execution boundary.
     The safety gate and the orchestrator both consume this one assembly.
@@ -1517,6 +1530,11 @@ def _execution_context() -> execution_context_layer.ExecutionContext:
                         ("broker", broker_layer.active_kind()),
                         ("reconciliation", execution_context_layer.PROV_DURABLE_STORE)),
             observed_at=_now_iso(),
+            # UES: a non-mock adapter can reach a real terminal, so manual
+            # commands are judged by the SAME financial rails the autonomous
+            # runner uses. Injected only here: the mock world has no live state,
+            # no kill file and no account to protect.
+            financial_rails_factory=_financial_rails_factory,
         )
 
     # Mock world: real telemetry is used when a node has actually published;

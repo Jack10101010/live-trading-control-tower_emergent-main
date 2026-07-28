@@ -90,6 +90,21 @@ class SafetyRails:
     def _kill_switch_on(self) -> bool:
         return self.config.kill_file.exists()
 
+    def kill_switch_engaged(self) -> bool:
+        """The kill-switch state, readable by callers that gate a SINGLE action.
+
+        A pure delegation to `_kill_switch_on` — no second predicate and no
+        second definition of "engaged". The Control Tower's manual MODIFY path
+        needs exactly this one rail and cannot call `evaluate()`, because a
+        manually managed position has no entry in the runner's intent mirror and
+        would be refused as `unknown_position` (step 6) for reasons that have
+        nothing to do with safety.
+
+        `evaluate()` is deliberately untouched, so autonomous behaviour is
+        byte-identical to before this method existed.
+        """
+        return self._kill_switch_on()
+
     def evaluate(self, intent, symbol: str, today: str,
                  market=MARKET_NOT_EVALUATED, health=HEALTH_NOT_EVALUATED) -> RailVerdict:
         # 1) global kill switch — blocks everything except engine-driven closes

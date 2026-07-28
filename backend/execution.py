@@ -558,14 +558,22 @@ class ExecutionOrchestrator:
         return ValidationResult(True)
 
     # ── Safety (the authorization gate — always consulted) ───────────────────────
-    def _safety(self, name, now: str) -> "safety.SafetyDecision":
+    def _safety(self, name, now: str, payload: dict | None = None) -> "safety.SafetyDecision":
         ctx = self._safety_context_factory()
         # ARCH-2/3: the canonical ExecutionContext is assembled ONCE at the boundary;
         # the safety gate consumes a view derived from that same context, including
         # the per-command authorization window (grant coverage is command-scoped).
         # A bare SafetyContext is accepted for unit-test harnesses.
+        #
+        # UES: the requested INSTRUMENT is threaded through because the financial
+        # symbol-whitelist rail must judge the operator's actual symbol. Deriving
+        # it any other way (or defaulting it to the runner's configured symbol)
+        # would make the whitelist compare a constant with itself and pass
+        # unconditionally.
         if hasattr(ctx, "to_safety_context"):
-            ctx = ctx.to_safety_context(command_type=name, now=_parse_now(now))
+            ctx = ctx.to_safety_context(
+                command_type=name, now=_parse_now(now),
+                instrument=(payload or {}).get("instrument"))
         request = safety.CommandRequest(command_type=name)
         return safety.evaluate(request, ctx, now=_parse_now(now))
 
@@ -690,7 +698,7 @@ class ExecutionOrchestrator:
         # 2) Safety — every command passes through execution_safety.evaluate(). There
         #    is no code path to broker dispatch that skips this gate.
         t = time.perf_counter()
-        decision = self._safety(name, now)
+        decision = self._safety(name, now, payload)
         timeline["safetyMs"] = round((time.perf_counter() - t) * 1000, 3)
         safety_view = decision.safe_view()
         stages.append({"stage": STAGE_SAFETY, "ok": decision.allowed,

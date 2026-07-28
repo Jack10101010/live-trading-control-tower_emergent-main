@@ -109,6 +109,10 @@ DENY_RECONCILIATION_REQUIRED = "reconciliation_unresolved"
 DENY_ACCOUNT_MISMATCH = "account_identity_mismatch"
 DENY_ACCOUNT_UNKNOWN = "account_identity_unknown"
 DENY_POLICY_ERROR = "policy_evaluation_error"
+#: UES: a FINANCIAL rail refused the command. The specific rail is appended
+#: (`financial_rail_kill_switch`, `financial_rail_daily_loss_limit`, …) so an
+#: operator sees which limit stopped them, not merely that something did.
+DENY_FINANCIAL_RAIL = "financial_rail"
 
 # ── ARCH-3: account-identity evaluation states ────────────────────────────────
 #: `not_evaluated` — no account evaluation was performed (pure-engine callers /
@@ -229,15 +233,38 @@ class AccountSafety:
 
 
 @dataclass(frozen=True)
+class FinancialRailVerdict:
+    """One financial-rail outcome, injected from outside this module.
+
+    This module owns AUTHORIZATION policy — mode, arming, identity, node health,
+    account binding, reconciliation. It deliberately owns no financial policy and
+    no risk arithmetic: those live in the rails the autonomous runner already
+    trusts, and duplicating them here would create exactly the second source of
+    truth this milestone exists to remove.
+    """
+    allowed: bool
+    rail: str = ""
+    detail: str | None = None
+
+
+@dataclass(frozen=True)
 class SafetyContext:
     """The environment a command is evaluated against. Every default is the safe one:
-    observe mode, disarmed, unknown node, no operator."""
+    observe mode, disarmed, unknown node, no operator.
+
+    `financial` is the injected financial-rail evaluator: a callable taking the
+    command type and returning a `FinancialRailVerdict`. It defaults to None,
+    which applies NO financial gate — the same "not evaluated" convention the
+    account gate uses, so pure-engine callers and existing tests are unaffected.
+    The production assembler always supplies one when a live adapter is active.
+    """
     mode: str = MODE_OBSERVE
     arming: ArmingState = field(default_factory=ArmingState)
     node: NodeSafety = field(default_factory=NodeSafety)
     operator: OperatorAuthorization = field(default_factory=OperatorAuthorization)
     reconciliation: ReconciliationSafety = field(default_factory=ReconciliationSafety)
     account: AccountSafety = field(default_factory=AccountSafety)
+    financial: Any = None
 
 
 @dataclass(frozen=True)
@@ -407,6 +434,33 @@ def evaluate(request: CommandRequest, context: SafetyContext | None = None, *,
             if not ctx.arming.is_active(clock):
                 return _decision(request, ctx, risk_class, allowed=False,
                                  reason=DENY_DISARMED, now=clock)
+
+        # 9b) UES — FINANCIAL rails, evaluated by the SAME implementation the
+        #     autonomous runner uses (`live.safety.SafetyRails`), injected rather
+        #     than imported so this module stays pure and dependency-free.
+        #
+        #     Before this gate the Control Tower could submit a live order that
+        #     the runner would have refused: the kill switch, daily-loss limit,
+        #     max-open cap and symbol whitelist were enforced on the autonomous
+        #     path only, while both paths reach the same broker submission call.
+        #
+        #     Deliberately LAST, immediately before allow. Every authorization
+        #     reason above keeps its priority, so an unarmed or unidentified
+        #     operator still sees that reason rather than a financial one — and
+        #     the existing deny ordering is unchanged.
+        #
+        #     Which commands are gated is decided by the evaluator itself (it
+        #     reads the canonical registry's `risk_reducing` flag), so closing or
+        #     cancelling to REDUCE risk is never blocked by a financial limit.
+        if risk_class == RISK_EXECUTION_AFFECTING and ctx.financial is not None:
+            verdict = ctx.financial(request.command_type)
+            if verdict is not None and not verdict.allowed:
+                rail = getattr(verdict, "rail", "") or ""
+                return _decision(
+                    request, ctx, risk_class, allowed=False,
+                    reason=(f"{DENY_FINANCIAL_RAIL}_{rail}" if rail
+                            else DENY_FINANCIAL_RAIL),
+                    now=clock, detail=getattr(verdict, "detail", None))
 
         # 10) Every precondition for this class is satisfied.
         return _decision(request, ctx, risk_class, allowed=True, reason=ALLOW, now=clock)

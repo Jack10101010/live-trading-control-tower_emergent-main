@@ -103,6 +103,17 @@ curl -X POST http://127.0.0.1:8000/api/execution/market-order \
 The Idempotency-Key is **required**. A retry with the same key returns the
 original outcome and never creates a second order.
 
+> **Financial rails apply to this command (UES).** Until the UES milestone this
+> manual submission was gated only on authorization — mode, arming, identity,
+> confirmation, account binding, reconciliation — and *not* on the kill switch,
+> daily-loss limit, max-open cap or symbol whitelist, which were enforced on the
+> autonomous runner alone. Both paths now consult the same `live/safety.py`
+> rails, so this order is refused with a `financial_rail_<name>` reason if any
+> limit is breached. If you have engaged the kill file (`LIVE_KILL_FILE`), this
+> submission will be denied — that is intended. **Closing and cancelling are
+> deliberately exempt** and remain available at all times, so you can always
+> reduce exposure.
+
 ---
 
 ## 5. Monitor, close, verify

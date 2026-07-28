@@ -112,6 +112,11 @@ class ExecutionContext:
     observed_at: str | None = None
     expires_at: str | None = None
 
+    #: UES: injected `(instrument) -> financial evaluator` factory, supplied by
+    #: the composition root for a LIVE adapter. Kept as an opaque callable so
+    #: this module imports no rails and owns no financial policy.
+    financial_rails_factory: Any = None
+
     def _authorization_window(self, command_type: str | None,
                               now: datetime) -> safety.ArmingState:
         """Derive the safety-gate authorization window for THIS command from the
@@ -133,10 +138,18 @@ class ExecutionContext:
         return safety.ArmingState()
 
     def to_safety_context(self, command_type: str | None = None,
-                          now: datetime | None = None) -> safety.SafetyContext:
+                          now: datetime | None = None,
+                          instrument: str | None = None) -> safety.SafetyContext:
         """Derive the safety-gate view of THIS context (the gate and the
         orchestrator therefore evaluate identical facts). Stale node telemetry
-        maps to the STALE node state — stale facts can never authorize."""
+        maps to the STALE node state — stale facts can never authorize.
+
+        UES: `financial_rails_factory` — when the runtime supplied one — is
+        invoked here with the command's instrument to produce the financial-rail
+        evaluator. It is a callable injected by the composition root, so this
+        module keeps importing nothing from `live/` and stays a pure derivation
+        of facts it was handed.
+        """
         clock = now or datetime.now(timezone.utc)
         node_health = self.node.health or safety.NODE_UNKNOWN
         if self.node.provenance == PROV_NODE_TELEMETRY and self.node.stale \
@@ -152,7 +165,26 @@ class ExecutionContext:
                 stale=self.reconciliation.stale,
             ),
             account=safety.AccountSafety(self.account_identity_state),
+            financial=self._financial_evaluator(instrument),
         )
+
+    def _financial_evaluator(self, instrument: str | None):
+        """The injected financial-rail evaluator for this command, or None.
+
+        Total by construction: if the factory is absent or raises, this returns
+        None, which applies NO financial gate. That is deliberate — the factory
+        only exists on a host with live config, and a Control Tower running
+        against the mock world must not be denied because rails it never needed
+        could not be built. The refusal for a LIVE adapter whose rails failed to
+        construct is made inside the evaluator itself, where it can be explicit.
+        """
+        factory = self.financial_rails_factory
+        if factory is None:
+            return None
+        try:
+            return factory(instrument)
+        except Exception:                                       # noqa: BLE001
+            return None
 
     def safe_view(self) -> dict:
         """Redaction-safe audit representation."""

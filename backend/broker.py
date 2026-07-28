@@ -478,9 +478,23 @@ def _load_live_gateway():
 
 class MT5Adapter(Broker):
     """Real MT5 connectivity via the live-slice gateway when the MetaTrader5
-    package is present (Windows VPS); graceful skeleton behaviour everywhere
-    else. CT-side execution commands remain unsupported in M3 Phase 1 — the VPS
-    executor owns order operations; CT observes positions/orders/health."""
+    package is present (Windows VPS); graceful skeleton behaviour everywhere else.
+
+    CORRECTED (UES). This previously claimed "CT-side execution commands remain
+    unsupported in M3 Phase 1 — the VPS executor owns order operations; CT
+    observes positions/orders/health". That was true of the LEGACY command
+    surface (`submit_command`, `cancel_order`, `modify_order`, `flatten` — still
+    inert below) and was never updated when LIVE-2/LIVE-3 added the canonical
+    writes. It was false for two milestones, and an architecture audit that
+    trusted it would have concluded this adapter cannot trade.
+
+    PRODUCTION REALITY: four canonical writes reach the terminal —
+    `submit_market_order`, `modify_position_protection`, `cancel_pending_order`
+    and `close_position`. Each is dispatched only through the Execution
+    Orchestrator, and since UES each is judged by the SAME financial rails the
+    autonomous runner uses (kill switch, daily loss, max open, symbol
+    whitelist), with risk-REDUCING commands exempt so an operator can always
+    de-risk."""
 
     kind = "mt5"
     broker_id = "brk_mt5_live"
@@ -723,8 +737,11 @@ class MT5Adapter(Broker):
         object never escapes; an exception in this path means the outcome is
         UNKNOWABLE and maps to `communication_failed` (reconcile — never guess).
 
-        This is the ONLY write the adapter implements. Every other mutation
-        (pending orders, modify, cancel, close, flatten) remains inert."""
+        CORRECTED (UES): this previously claimed to be "the ONLY write the
+        adapter implements", with "every other mutation (pending orders, modify,
+        cancel, close, flatten) remains inert". Only the LEGACY surface is inert.
+        `modify_position_protection`, `cancel_pending_order` and `close_position`
+        are all implemented below and all reach the terminal."""
         gw = self._gateway
         if gw is None:
             reason = getattr(self, "_policy_denied_reason", None)
