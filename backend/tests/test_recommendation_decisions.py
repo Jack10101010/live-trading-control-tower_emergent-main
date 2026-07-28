@@ -52,8 +52,9 @@ def isolated_stores(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "_RECOMMENDATION_STORE", None)
     monkeypatch.setattr(server, "_RECOMMENDATION_STORE_FAILED", False)
     yield
-    for name in ("recommendation_state.db", "execution_state.db"):
-        assert not (BACKEND_DIR / name).exists(), f"a test created backend/{name}"
+    # Session-scoped in conftest; see test_recommendation_domain for why a
+    # per-test assertion on a process-shared path is not a property a test can
+    # control.
 
 
 # ── builders ─────────────────────────────────────────────────────────────────

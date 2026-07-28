@@ -73,8 +73,9 @@ def isolated_stores(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "_RECOMMENDATION_STORE", None)
     monkeypatch.setattr(server, "_RECOMMENDATION_STORE_FAILED", False)
     yield
-    stray = BACKEND_DIR / "recommendation_state.db"
-    assert not stray.exists(), "a test created backend/recommendation_state.db"
+    # The stray-database check is SESSION scoped (conftest). Asserting per test
+    # against a process-shared path fails on state this test cannot control —
+    # including files left by a previous interrupted run.
 
 
 # ── builders ──────────────────────────────────────────────────────────────────

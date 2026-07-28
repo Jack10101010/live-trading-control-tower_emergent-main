@@ -662,9 +662,23 @@ class MT5Adapter(Broker):
                 return BrokerResult(ok=False, code=RESULT_UNAVAILABLE,
                                     detail="deal history not available from this terminal")
             end = datetime.now(timezone.utc)
-            deals = history(end - timedelta(days=1), end) or []
+            raw = history(end - timedelta(days=1), end)
+            if raw is None:
+                # `None` is how the SDK reports a FAILED read. Coercing it to an
+                # empty list reported a failure as "no executions today".
+                return BrokerResult(ok=False, code=RESULT_UNAVAILABLE,
+                                    detail="deal history read failed")
+            # `history_deals_get` is UNORDERED, so the previous `deals[:50]` kept
+            # an ARBITRARY fifty and presented them as the recent ones. Order
+            # first — most recent first — so the cap keeps what the name promises.
+            deals = sorted(raw, key=lambda d: (getattr(d, "time", 0) or 0,
+                                               str(getattr(d, "ticket", ""))),
+                           reverse=True)
+            #: A display bound, not an exhaustiveness claim. Stated in `detail`
+            #: so a truncated view can never be mistaken for the whole day.
+            cap = 50
             out = []
-            for d in deals[:50]:
+            for d in deals[:cap]:
                 out.append(BrokerDeal(
                     deal_id=str(getattr(d, "ticket", "")),
                     order_ref=str(getattr(d, "order", "")) or None,
@@ -677,7 +691,10 @@ class MT5Adapter(Broker):
                        datetime.fromtimestamp(d.time, tz=timezone.utc)
                        .isoformat().replace("+00:00", "Z"),
                 ).as_dict())
-            return BrokerResult(ok=True, code="ok", data=out)
+            return BrokerResult(
+                ok=True, code="ok", data=out,
+                detail=(f"showing {cap} most recent of {len(deals)} deals in the "
+                        "last 24h" if len(deals) > cap else ""))
         return self._guarded("recent_executions", read)
 
     def reconcile_snapshot(self, ctx: BrokerContext) -> BrokerResult:

@@ -3198,6 +3198,17 @@ def refresh_trade_ledger(*, days: int = 7) -> dict:
     if not history.usable:
         return {"ingested": 0, "available": False,
                 "code": "broker_history_unavailable", "detail": history.detail}
+    # A read can SUCCEED and still be incomplete. Persisting a truncated window
+    # is the failure this guard exists for: the ledger would gain a plausible
+    # partial history, and a watermark advanced past the discarded deals would
+    # make the loss permanent and undetectable. Reporting nothing ingested is
+    # recoverable; reporting a partial window as ingested is not.
+    if not history.ingestable:
+        return {"ingested": 0, "available": True, "complete": False,
+                "code": "broker_history_incomplete",
+                "detail": (history.incomplete_reason
+                           or "history read could not be proven exhaustive"),
+                "readEvidence": history.read_evidence}
     exec_store = _execution_store()
     scenario_store = _scenario_store()
     try:
@@ -3224,7 +3235,7 @@ def refresh_trade_ledger(*, days: int = 7) -> dict:
             broker=history.provenance, deployment=None))
     entries = store.ingest_broker_history(results, now=_now_iso(),
                                           provenance=history.provenance)
-    return {"ingested": len(entries), "available": True,
+    return {"ingested": len(entries), "available": True, "complete": True,
             "accountMode": history.account_mode,
             "readyToFinalize": sum(1 for e in entries
                                    if e.status == ledger_domain.TradeLedgerStatus.READY_TO_FINALIZE)}

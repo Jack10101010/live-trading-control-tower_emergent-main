@@ -154,6 +154,25 @@ _STRAY_DATABASES = ("events.db", "runtime.db", "execution_state.db",
                     "recommendation_state.db")
 
 
+def pytest_sessionstart(session):
+    """Clear databases left by a PREVIOUS interrupted run.
+
+    Root cause of the 76-error incident, reproduced deterministically: a run
+    that is interrupted never reaches `pytest_sessionfinish`, so zero-byte
+    databases survive in the source tree. The NEXT run then failed 76 teardowns
+    in modules that assert on that shared path — and because the finish hook
+    then cleaned up, a rerun always passed, which made it look transient.
+
+    Clearing at session START makes each run independent of how the previous one
+    ended.
+    """
+    for name in _STRAY_DATABASES:
+        try:
+            (BACKEND_DIR / name).unlink()
+        except OSError:
+            pass
+
+
 def pytest_sessionfinish(session, exitstatus):
     """Report and clear any database left in the source tree.
 
