@@ -429,6 +429,12 @@ class BrokerAccountInfo:
     margin_level: float | None
     leverage: int | None
     at: str | None = None
+    #: LIVE-5B: "demo" | "contest" | "real", or None when the terminal did not
+    #: report a mode it could classify. Additive and read-only: it comes from the
+    #: AccountIdentity the adapter ALREADY reads for the fingerprint, so no extra
+    #: broker call is made. It exists because an operator about to enable LIVE
+    #: must be able to see, on the dashboard, whether the account is real.
+    trade_mode: str | None = None
 
     def as_dict(self) -> dict:
         from dataclasses import asdict

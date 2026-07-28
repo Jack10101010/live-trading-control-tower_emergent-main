@@ -104,8 +104,12 @@ def test_mock_account_identity_is_explicitly_mock_provenance():
 def test_mt5_construction_performs_no_gateway_work(monkeypatch):
     monkeypatch.setattr(ba, "_CACHE", {})
     calls = []
-    monkeypatch.setattr(broker_layer, "_load_live_gateway",
-                        lambda: calls.append(1) or None)
+    # LIVE-5B moved the lazy-load seam: the adapter now calls
+    # `load_live_gateway_diagnostic()` so it can report WHY the gateway is
+    # unavailable instead of blaming the package. The PROPERTY under test is
+    # unchanged — construction does no gateway work, the first use does.
+    monkeypatch.setattr(broker_layer, "load_live_gateway_diagnostic",
+                        lambda: (calls.append(1), (None, "test"))[1])
     adapter = ba.get_adapter("mt5")
     assert calls == [], "construction loaded the gateway"
     adapter.connection()                              # first USE loads (and gets None)

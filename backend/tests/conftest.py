@@ -54,6 +54,14 @@ def _isolated_execution_store(tmp_path, monkeypatch):
                             tmp_path / "recommendation_state.db")
         monkeypatch.setattr(server, "_RECOMMENDATION_STORE", None)
         monkeypatch.setattr(server, "_RECOMMENDATION_STORE_FAILED", False)
+    # LIVE-5B: the trade ledger is a fifth durable file. The LIVE-5B integration
+    # diagnostics endpoint probes every store, so it is the first code path that
+    # opens this one from a request — which is how the gap surfaced.
+    if server is not None and hasattr(server, "LEDGER_DB_PATH"):
+        monkeypatch.setattr(server, "LEDGER_DB_PATH", tmp_path / "trade_ledger.db")
+        monkeypatch.setattr(server, "_LEDGER_STORE", None)
+        if hasattr(server, "_LEDGER_STORE_FAILED"):
+            monkeypatch.setattr(server, "_LEDGER_STORE_FAILED", False)
     # The runtime OVERLAY database (entity pause/resume state and operator
     # preferences). Unlike the three stores above it has NO lazy cache to reset:
     # `server._runtime_db()` opens a fresh connection from the module-level path
@@ -66,6 +74,7 @@ def _isolated_execution_store(tmp_path, monkeypatch):
     for name, owner in (("execution_state.db", "execution store"),
                         ("scenario_state.db", "scenario store"),
                         ("recommendation_state.db", "recommendation store"),
+                        ("trade_ledger.db", "trade ledger store"),
                         ("runtime.db", "runtime overlay")):
         stray = BACKEND_DIR / name
         assert not stray.exists(), (

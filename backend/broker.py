@@ -426,22 +426,54 @@ class MockBroker(Broker):
 # placeholders. Never connects.
 # ---------------------------------------------------------------------------
 
-def _load_live_gateway():
-    """Import the live-slice MT5 gateway (repo-root `live/` package). Returns a
-    connected-capable gateway or None. All broker-specific logic stays in the
-    gateway + this adapter; import is guarded so CT runs unchanged off-VPS."""
+def load_live_gateway_diagnostic():
+    """Import the live-slice MT5 gateway, returning `(gateway, reason)`.
+
+    LIVE-5B: the reason is the point. This function used to be a bare
+    `except Exception: return None`, which meant that on the VPS a
+    `live.config` failure, a bad LUX_ROOT or a partially-installed SDK were all
+    reported to the operator as "MetaTrader5 package unavailable on this host" —
+    a statement that was simply false and gave them nothing to act on.
+
+    `reason` is None on success and otherwise a specific, machine-readable
+    string naming the failing STEP. It never contains a credential.
+    """
+    import os
+    import sys
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if root not in sys.path:
+        sys.path.insert(0, root)
     try:
-        import os
-        import sys
-        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        if root not in sys.path:
-            sys.path.insert(0, root)
         from live.config import LiveConfig
+    except Exception as exc:                                # noqa: BLE001
+        return None, (f"live.config could not be imported "
+                      f"({type(exc).__name__}); check LUX_ROOT and the LIVE_* "
+                      f"environment variables")
+    try:
         from live.mt5_gateway import MT5Gateway
-        gateway = MT5Gateway(LiveConfig())
-        return gateway if gateway.available else None
-    except Exception:  # pragma: no cover - any import/env failure ⇒ skeleton mode
-        return None
+    except Exception as exc:                                # noqa: BLE001
+        return None, (f"live.mt5_gateway could not be imported "
+                      f"({type(exc).__name__})")
+    try:
+        config = LiveConfig()
+    except Exception as exc:                                # noqa: BLE001
+        return None, (f"LiveConfig could not be constructed "
+                      f"({type(exc).__name__}); a LIVE_* variable is malformed")
+    try:
+        gateway = MT5Gateway(config)
+    except Exception as exc:                                # noqa: BLE001
+        return None, f"MT5Gateway could not be constructed ({type(exc).__name__})"
+    if not gateway.available:
+        return None, ("the MetaTrader5 package is not importable on this host "
+                      "(it ships as a Windows wheel only)")
+    return gateway, None
+
+
+def _load_live_gateway():
+    """Back-compat shape: the gateway or None. Callers wanting the REASON should
+    use `load_live_gateway_diagnostic()`."""
+    gateway, _reason = load_live_gateway_diagnostic()
+    return gateway
 
 
 class MT5Adapter(Broker):
@@ -479,13 +511,27 @@ class MT5Adapter(Broker):
                 self._gateway_cache = None
             else:
                 self._policy_denied_reason = None
-                self._gateway_cache = _load_live_gateway()
+                gateway, reason = load_live_gateway_diagnostic()
+                # LIVE-5B: keep the SPECIFIC reason so every read can explain
+                # itself instead of blaming the package.
+                self._gateway_unavailable_reason = reason
+                self._gateway_cache = gateway
+                if reason:
+                    import logging
+                    logging.getLogger("broker").warning(
+                        "AUDIT mt5_gateway_unavailable reason=%s", reason)
             self._gateway_loaded = True
         return self._gateway_cache
 
+    def _unavailable_detail(self) -> str:
+        """The most specific reason this adapter cannot reach a terminal."""
+        return (getattr(self, "_policy_denied_reason", None)
+                or getattr(self, "_gateway_unavailable_reason", None)
+                or "MetaTrader5 package unavailable on this host")
+
     def _state(self) -> tuple[str, str]:
         if self._gateway is None:
-            return ConnectionState.DISCONNECTED, "MetaTrader5 package unavailable on this host"
+            return ConnectionState.DISCONNECTED, self._unavailable_detail()
         if self._gateway.connected:
             return ConnectionState.CONNECTED, "MT5 terminal connected"
         return ConnectionState.DISCONNECTED, "gateway available; not connected"
@@ -601,6 +647,7 @@ class MT5Adapter(Broker):
                 margin_level=getattr(acct, "margin_level", None),
                 leverage=getattr(acct, "leverage", None),
                 at=server_time.isoformat().replace("+00:00", "Z") if server_time else None,
+                trade_mode=getattr(ident, "trade_mode", None) if ident else None,
             )
             return BrokerResult(ok=True, code="ok", data=info.as_dict())
         return self._guarded("account_snapshot", read)

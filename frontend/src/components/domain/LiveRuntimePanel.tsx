@@ -90,9 +90,25 @@ function BrokerCard({ broker }: { broker: LiveBrokerRuntime }) {
           <span className={BADGE} style={C.muted}>{broker.executionMode.toUpperCase()}</span>
         )}
       </div>
+      <div className="flex flex-wrap gap-1 mb-1">
+        {/* Demo-vs-real is the single most important thing to see before
+            trading. Absent evidence renders UNKNOWN — never assumed demo. */}
+        <span className={BADGE}
+              style={broker.accountType === 'real' ? C.bad
+                     : broker.accountType ? C.ok : C.warn}
+              data-testid="broker-account-type">
+          {(broker.accountType ?? 'account type unknown').toUpperCase()}
+        </span>
+      </div>
       <Row label="Ping" value={ms(broker.pingMs)} testId="broker-ping" />
+      <Row label="Gateway latency" value={ms(broker.gatewayLatencyMs)}
+           testId="broker-gateway-latency" />
       <Row label="Server" value={txt(broker.server)} />
+      <Row label="Broker" value={txt(broker.brokerCompany)} />
+      <Row label="Login" value={txt(broker.login)} testId="broker-login" />
       <Row label="Account" value={txt(broker.accountFingerprint)} />
+      <Row label="Leverage"
+           value={broker.leverage === null ? '—' : `1:${broker.leverage}`} />
       <Row label="Currency" value={txt(broker.accountCurrency)} />
       <Row label="Balance" value={money(broker.balance)} testId="broker-balance" />
       <Row label="Equity" value={money(broker.equity)} testId="broker-equity" />
@@ -169,6 +185,13 @@ function RuntimeCard({ runtime }: { runtime: LiveRuntimeStatus }) {
            value={runtime.intervalSeconds === null ? '—' : `${runtime.intervalSeconds}s`} />
       <Row label="Ticks" value={String(runtime.tickCount)} />
       <Row label="Failures" value={String(runtime.consecutiveFailures)} />
+      <Row label="Reconnects"
+           value={`${runtime.reconnectSuccesses}/${runtime.reconnectAttempts}`}
+           testId="runtime-reconnects" />
+      {runtime.lastFailureDetail && (
+        <Row label="Last failure" value={runtime.lastFailureDetail}
+             testId="runtime-last-failure" />
+      )}
       {runtime.warnings.length > 0 && (
         <ul className="pt-1 space-y-0.5" data-testid="runtime-warnings">
           {runtime.warnings.map((w) => (

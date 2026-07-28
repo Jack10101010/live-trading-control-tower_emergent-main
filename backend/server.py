@@ -60,6 +60,7 @@ import trade_reconstruction as reconstruction_layer
 import live_pipeline as live_pipeline_layer
 import live_preflight as live_preflight_layer
 import market_runtime as market_runtime_layer
+import mt5_diagnostics as mt5_diagnostics_layer
 import recommendation_authorization as recommendation_auth_layer
 import recommendation_decision_service as recommendation_decision_layer
 import recommendation_domain as recommendation_layer
@@ -2801,7 +2802,21 @@ _RUNTIME_SUPERVISOR = runtime_supervisor_layer.RuntimeSupervisor(
     server_time_fn=lambda: None,
     now_iso_fn=_now_iso, interval_s=RUNTIME_TICK_SECONDS,
     on_tick=lambda snapshot: _LIVE_PRODUCER.on_tick(snapshot),
+    # LIVE-5B: safe automatic recovery. `connect()` is a READ-PATH repair —
+    # it opens a terminal session and places no order — so automating it cannot
+    # cause a trade. Anything that could affect a position stays manual.
+    reconnect_fn=lambda: _reconnect_broker(),
     logger=logger)
+
+
+def _reconnect_broker() -> tuple:
+    """Attempt to restore the broker link. Returns `(ok, detail)`."""
+    try:
+        connection = broker_layer.get_broker().connect()
+        return (connection.state == "Connected",
+                connection.detail or connection.state)
+    except Exception as exc:                                # noqa: BLE001
+        return False, type(exc).__name__
 
 
 def _guarded_account_snapshot() -> dict | None:
@@ -3643,6 +3658,155 @@ def runtime_tick_route():
         logger.exception("runtime tick failed")
         return _projection_response(
             {"ticked": False, "code": "runtime_tick_failed"}, 503)
+
+
+# ── LIVE-5B: integration diagnostics (read-only, no secrets) ─────────────────
+
+def _subsystem(name: str, *, status: str, detail=None, last_success=None,
+               last_failure=None, latency_ms=None, freshness=None,
+               warnings=()) -> dict:
+    """One subsystem row, in a fixed shape so the UI and the runbooks can rely
+    on it. `status` uses the diagnostics vocabulary (pass/warn/fail/unknown)."""
+    return {"name": name, "status": status, "detail": detail,
+            "lastSuccess": last_success, "lastFailure": last_failure,
+            "latencyMs": latency_ms, "freshness": freshness,
+            "warnings": list(warnings)}
+
+
+@api_router.get("/integration/diagnostics")
+def integration_diagnostics_route():
+    """PART 7 — one place that says which link in the chain is broken.
+
+    Read-only and value-free: it performs no write, places no order and returns
+    no credential (logins and server names are masked). Every failing check
+    carries what failed, why, and the likely fix.
+    """
+    now = _now_iso()
+    try:
+        # ── the MT5 chain, in dependency order ───────────────────────────────
+        gateway_diag = mt5_diagnostics_layer.diagnose(
+            now=now, symbol=(RUNTIME_SYMBOLS[0] if RUNTIME_SYMBOLS else "EURUSD"),
+            execution_mode=_EXECUTION_MODE.current_mode(),
+            connect_fn=_diagnostic_connect, tick_fn=_diagnostic_tick)
+
+        health = _RUNTIME_SUPERVISOR.health(now=now)
+        snapshot = _RUNTIME_SUPERVISOR.last
+        subsystems = [
+            _subsystem(
+                "gateway",
+                status=(mt5_diagnostics_layer.PASS if gateway_diag.ready
+                        else mt5_diagnostics_layer.FAIL),
+                detail=(gateway_diag.first_blocker().detail
+                        if gateway_diag.first_blocker() else "chain ready"),
+                warnings=gateway_diag.blocking),
+            _subsystem(
+                "runtime", status=_runtime_status_word(health.state),
+                detail=health.state, last_success=health.last_success_at,
+                last_failure=health.last_failure_at,
+                latency_ms=health.latency_ms,
+                freshness=health.projection_age_seconds,
+                warnings=health.warnings),
+            _subsystem(
+                "broker",
+                status=(mt5_diagnostics_layer.PASS
+                        if health.connection == "Connected"
+                        else mt5_diagnostics_layer.FAIL),
+                detail=health.connection, last_success=health.last_success_at,
+                latency_ms=health.latency_ms),
+            _subsystem(
+                "projection",
+                status=(mt5_diagnostics_layer.PASS if snapshot is not None
+                        else mt5_diagnostics_layer.FAIL),
+                detail=("cached snapshot available" if snapshot is not None
+                        else "no tick recorded"),
+                freshness=health.projection_age_seconds),
+        ]
+        subsystems.extend(_domain_subsystems())
+        return _projection_response({
+            "at": now, "adapter": broker_layer.active_kind(),
+            "ready": gateway_diag.ready,
+            "gateway": gateway_diag.as_dict(),
+            "subsystems": subsystems,
+            "projectionTimestamp": now})
+    except Exception:
+        logger.exception("integration diagnostics failed")
+        return _projection_response(
+            {"at": now, "ready": False, "code": "diagnostics_failed"}, 503)
+
+
+def _runtime_status_word(state: str) -> str:
+    if state == runtime_supervisor_layer.CONNECTED:
+        return mt5_diagnostics_layer.PASS
+    if state in (runtime_supervisor_layer.DEGRADED,
+                 runtime_supervisor_layer.STARTING):
+        return mt5_diagnostics_layer.WARN
+    return mt5_diagnostics_layer.FAIL
+
+
+def _diagnostic_connect() -> tuple:
+    """Probe the broker link for diagnostics. A read: it opens a session and
+    places no order."""
+    connection = broker_layer.get_broker().connect()
+    return connection.state == "Connected", connection.detail or connection.state
+
+
+def _diagnostic_tick(symbol: str):
+    return _runtime_quote(symbol)
+
+
+def _domain_subsystems() -> list:
+    """Execution, Recommendation, Scenario and Ledger readiness. Each store is
+    probed independently, and an unreadable store is reported as such rather
+    than as an empty one."""
+    rows = []
+    try:
+        store = _execution_store()
+        count = len(store.intents_by_state(limit=500) or []) if store else 0
+        rows.append(_subsystem(
+            "execution",
+            status=(mt5_diagnostics_layer.PASS if store
+                    else mt5_diagnostics_layer.FAIL),
+            detail=(f"{count} tracked intents" if store
+                    else "execution store unavailable")))
+    except Exception as exc:                                # noqa: BLE001
+        rows.append(_subsystem("execution", status=mt5_diagnostics_layer.FAIL,
+                               detail=type(exc).__name__))
+    try:
+        store = _recommendation_store()
+        summary = store.summary().as_dict() if store else None
+        rows.append(_subsystem(
+            "recommendation",
+            status=(mt5_diagnostics_layer.PASS if summary
+                    else mt5_diagnostics_layer.FAIL),
+            detail=(f"{summary.get('activeCount', 0)} active" if summary
+                    else "recommendation store unavailable")))
+    except Exception as exc:                                # noqa: BLE001
+        rows.append(_subsystem("recommendation", status=mt5_diagnostics_layer.FAIL,
+                               detail=type(exc).__name__))
+    try:
+        store = _scenario_store()
+        active = len(store.list_active_scenarios(limit=500)) if store else None
+        rows.append(_subsystem(
+            "scenario",
+            status=(mt5_diagnostics_layer.PASS if active is not None
+                    else mt5_diagnostics_layer.FAIL),
+            detail=(f"{active} active" if active is not None
+                    else "scenario store unavailable")))
+    except Exception as exc:                                # noqa: BLE001
+        rows.append(_subsystem("scenario", status=mt5_diagnostics_layer.FAIL,
+                               detail=type(exc).__name__))
+    try:
+        store = _ledger_store()
+        rows.append(_subsystem(
+            "ledger",
+            status=(mt5_diagnostics_layer.PASS if store
+                    else mt5_diagnostics_layer.FAIL),
+            detail=("ledger store available" if store
+                    else "ledger store unavailable")))
+    except Exception as exc:                                # noqa: BLE001
+        rows.append(_subsystem("ledger", status=mt5_diagnostics_layer.FAIL,
+                               detail=type(exc).__name__))
+    return rows
 
 
 @api_router.get("/trade-recommendations/{recommendation_id}/preflight")

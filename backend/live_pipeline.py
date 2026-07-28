@@ -345,6 +345,12 @@ class LivePipelineProducer:
         stored = store.create_scenario(scenario) if existing is None else existing
         if existing is None:
             result.scenarios_created.append(stored.scenario_id)
+            if self._logger is not None:
+                self._logger.info(
+                    "pipeline.scenario_created at=%s scenario=%s instrument=%s "
+                    "direction=%s structure=%s candle_closed=%s",
+                    self._now(), stored.scenario_id, stored.instrument,
+                    stored.direction, stored.structure, signal.closed_at)
 
         service = self._recommendations()
         if service is None:
@@ -359,6 +365,15 @@ class LivePipelineProducer:
             service.propose(created.recommendation_id,
                             reason="live-5a candle break")
             result.recommendations_created.append(created.recommendation_id)
+            if self._logger is not None:
+                self._logger.info(
+                    "pipeline.recommendation_created at=%s recommendation=%s "
+                    "scenario=%s entry=%s stop=%s target=%s quantity=%s",
+                    self._now(), created.recommendation_id, stored.scenario_id,
+                    recommendation.terms.execution.requested_entry_price,
+                    recommendation.terms.risk.stop_loss,
+                    recommendation.terms.risk.take_profit,
+                    recommendation.terms.execution.quantity)
         except Exception as exc:                                # noqa: BLE001
             # A duplicate is the normal case on replay, not an error.
             reason = getattr(exc, "reason", type(exc).__name__)

@@ -94,6 +94,12 @@ class RuntimeHealth:
     connection: str = mr.CONN_UNKNOWN
     running: bool = False
     interval_s: float | None = None
+    #: LIVE-5B recovery evidence.
+    reconnect_attempts: int = 0        # times a reconnect was ATTEMPTED
+    reconnect_successes: int = 0       # times one restored the link
+    last_reconnect_at: str | None = None
+    last_failure_at: str | None = None
+    last_failure_detail: str | None = None
     warnings: tuple = field(default_factory=tuple)
 
     def as_dict(self) -> dict:
@@ -107,6 +113,11 @@ class RuntimeHealth:
             "brokerAgeSeconds": self.broker_age_seconds,
             "latencyMs": self.latency_ms, "connection": self.connection,
             "running": self.running, "intervalSeconds": self.interval_s,
+            "reconnectAttempts": self.reconnect_attempts,
+            "reconnectSuccesses": self.reconnect_successes,
+            "lastReconnectAt": self.last_reconnect_at,
+            "lastFailureAt": self.last_failure_at,
+            "lastFailureDetail": self.last_failure_detail,
             "warnings": list(self.warnings),
         })
 
@@ -155,6 +166,7 @@ class RuntimeSupervisor:
                  interval_s: float = 5.0,
                  stale_after_s: float = DEFAULT_STALE_AFTER_S,
                  on_tick: Callable[[RuntimeSnapshot], None] | None = None,
+                 reconnect_fn: Callable[[], tuple] | None = None,
                  monotonic_fn: Callable[[], float] = time.monotonic,
                  logger: Any = None):
         self._market = market
@@ -168,6 +180,12 @@ class RuntimeSupervisor:
         #: scenario producer — the supervisor itself knows nothing about
         #: scenarios, and a failing observer can never break a tick.
         self._on_tick = on_tick
+        #: LIVE-5B: called when the link is DOWN, to attempt recovery. Returns
+        #: `(ok, detail)`. Reconnecting is SAFE to automate — it is a read-path
+        #: repair that places no order and changes no state. Anything that could
+        #: affect a position is deliberately NOT auto-recovered: the runtime
+        #: fails closed and reports, so a human decides.
+        self._reconnect = reconnect_fn
         self._monotonic = monotonic_fn
         self._logger = logger
 
@@ -180,6 +198,15 @@ class RuntimeSupervisor:
         self._last: RuntimeSnapshot | None = None
         self._last_tick_at: str | None = None
         self._last_success_at: str | None = None
+        self._reconnect_attempts = 0
+        self._reconnect_successes = 0
+        self._last_reconnect_at: str | None = None
+        self._last_failure_at: str | None = None
+        self._last_failure_detail: str | None = None
+        #: LIVE-5B structured logging. Only STATE CHANGES are logged, never
+        #: every tick: at a 5s cadence a per-tick log line is 17k lines a day of
+        #: pure noise, which buries the transitions that actually matter.
+        self._logged_state: str | None = None
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     def start(self) -> None:
@@ -246,6 +273,49 @@ class RuntimeSupervisor:
             connected = bool(market and market.heartbeat.connection
                              == mr.CONN_CONNECTED)
             ok = bool(connected and snapshot is not None)
+
+            # ── LIVE-5B: safe automatic recovery ────────────────────────────
+            # Reconnecting is a READ-PATH repair: it places no order and moves
+            # no position, so automating it is safe. Anything that could affect
+            # a position is deliberately NOT auto-recovered — the runtime fails
+            # closed, reports, and a human decides.
+            if not ok and self._reconnect is not None:
+                self._reconnect_attempts += 1
+                self._last_reconnect_at = now
+                try:
+                    reconnected, detail = self._reconnect()
+                except Exception as exc:                    # noqa: BLE001
+                    reconnected, detail = False, type(exc).__name__
+                if reconnected:
+                    self._reconnect_successes += 1
+                    if self._logger is not None:
+                        self._logger.info(
+                            "runtime.reconnect ok attempt=%d detail=%s",
+                            self._reconnect_attempts, detail)
+                    # Re-read immediately so the snapshot reflects the repair
+                    # rather than making the operator wait a whole interval.
+                    try:
+                        market = self._market.refresh()
+                        snapshot = self._guarded(self._broker_snapshot,
+                                                 "broker_snapshot", warnings)
+                        account = self._guarded(self._account, "account", warnings)
+                        connected = bool(market.heartbeat.connection
+                                         == mr.CONN_CONNECTED)
+                        ok = bool(connected and snapshot is not None)
+                    except Exception as exc:                # noqa: BLE001
+                        warnings.append(
+                            f"post_reconnect_refresh_failed:{type(exc).__name__}")
+                else:
+                    warnings.append(f"reconnect_failed:{detail}")
+                    if self._logger is not None:
+                        self._logger.warning(
+                            "runtime.reconnect failed attempt=%d detail=%s",
+                            self._reconnect_attempts, detail)
+
+            if not ok:
+                self._last_failure_at = now
+                self._last_failure_detail = (
+                    "; ".join(warnings) if warnings else "unknown")
             self._failures = 0 if ok else self._failures + 1
             self._sequence += 1
             self._last_tick_at = now
@@ -262,6 +332,7 @@ class RuntimeSupervisor:
                 tick_duration_ms=duration,
                 warnings=tuple(dict.fromkeys(warnings)))
             self._last = result
+            self._log_transition(health, now)
 
         # Observers run OUTSIDE the lock: a slow scenario producer must not
         # stall the next broker read, and its failure must not lose the tick.
@@ -272,6 +343,25 @@ class RuntimeSupervisor:
                 if self._logger is not None:
                     self._logger.exception("runtime tick observer failed")
         return result
+
+    def _log_transition(self, health: RuntimeHealth, now: str) -> None:
+        """Emit ONE structured line when the runtime state changes.
+
+        Change-only by design: a per-tick line at a 5s cadence is ~17k lines a
+        day of noise that buries the transitions worth seeing."""
+        if self._logger is None or health.state == self._logged_state:
+            return
+        previous, self._logged_state = self._logged_state, health.state
+        try:
+            self._logger.info(
+                "runtime.state at=%s from=%s to=%s connection=%s latency_ms=%s "
+                "tick=%d failures=%d reconnects=%d detail=%s",
+                now, previous or "none", health.state, health.connection,
+                health.latency_ms, health.tick_count,
+                health.consecutive_failures, health.reconnect_attempts,
+                health.last_failure_detail or "-")
+        except Exception:                                   # noqa: BLE001
+            pass                                # logging must never break a tick
 
     @staticmethod
     def _guarded(fn: Callable, name: str, warnings: list):
@@ -298,6 +388,11 @@ class RuntimeSupervisor:
             projection_age_seconds=projection_age, broker_age_seconds=broker_age,
             latency_ms=latency, connection=connection, running=self.running,
             interval_s=self.interval_s,
+            reconnect_attempts=self._reconnect_attempts,
+            reconnect_successes=self._reconnect_successes,
+            last_reconnect_at=self._last_reconnect_at,
+            last_failure_at=self._last_failure_at,
+            last_failure_detail=self._last_failure_detail,
             warnings=tuple(dict.fromkeys(warnings)))
 
     def _derive_state(self, *, connection: str, latency_ms: float | None,

@@ -23,7 +23,8 @@ function runtime(over: Partial<LiveRuntimeStatus> = {}): LiveRuntimeStatus {
     state: 'CONNECTED', projectionAgeSeconds: 2, brokerAgeSeconds: 3,
     lastTickAt: '2026-07-28T10:00:00Z', lastSuccessAt: '2026-07-28T10:00:00Z',
     tickCount: 12, consecutiveFailures: 0, intervalSeconds: 5, running: true,
-    warnings: [], ...over,
+    reconnectAttempts: 0, reconnectSuccesses: 0, lastFailureAt: null,
+    lastFailureDetail: null, warnings: [], ...over,
   };
 }
 
@@ -34,6 +35,8 @@ function broker(over: Partial<LiveBrokerRuntime> = {}): LiveBrokerRuntime {
     accountCurrency: 'USD', balance: 10000, equity: 10012.5, margin: 120,
     freeMargin: 9892.5, marginLevel: 8343.75, leverage: 100,
     adapterKind: 'mock', executionMode: 'observe',
+    login: '80…45', accountType: 'demo', brokerCompany: 'Test Broker Ltd',
+    gatewayLatencyMs: 42, reconnectCount: 0,
     lastHeartbeatAt: '2026-07-28T10:00:00Z', heartbeatAgeSeconds: 3,
     availability: 'ok', provenance: 'mock-fixture', freshness: null, ...over,
   };
@@ -105,6 +108,55 @@ describe('LiveRuntimePanel', () => {
     expect(screen.getByTestId('broker-balance').textContent).toContain('10000.00');
     expect(screen.getByTestId('broker-equity').textContent).toContain('10012.50');
     expect(screen.getByTestId('broker-free-margin').textContent).toContain('9892.50');
+  });
+
+  it('shows the account type prominently, and never assumes demo', async () => {
+    vi.spyOn(api, 'liveRuntime').mockResolvedValue(view());
+    mount();
+    await waitFor(() => screen.getByTestId('broker-account-type'));
+    expect(screen.getByTestId('broker-account-type').textContent).toBe('DEMO');
+
+    cleanup();
+    vi.spyOn(api, 'liveRuntime').mockResolvedValue(
+      view({ broker: broker({ accountType: null }) }));
+    mount();
+    await waitFor(() => screen.getByTestId('broker-account-type'));
+    // Absent evidence must NOT read as demo.
+    expect(screen.getByTestId('broker-account-type').textContent)
+      .toContain('UNKNOWN');
+  });
+
+  it('flags a real account distinctly from a demo one', async () => {
+    vi.spyOn(api, 'liveRuntime').mockResolvedValue(
+      view({ broker: broker({ accountType: 'real' }) }));
+    mount();
+    await waitFor(() => screen.getByTestId('broker-account-type'));
+    expect(screen.getByTestId('broker-account-type').textContent).toBe('REAL');
+  });
+
+  it('renders login, broker company and gateway latency', async () => {
+    vi.spyOn(api, 'liveRuntime').mockResolvedValue(view());
+    mount();
+    await waitFor(() => screen.getByTestId('broker-login'));
+    expect(screen.getByTestId('broker-login').textContent).toContain('80…45');
+    expect(screen.getByTestId('broker-gateway-latency').textContent)
+      .toContain('42ms');
+    expect(screen.getByTestId('live-broker-card').textContent)
+      .toContain('Test Broker Ltd');
+    expect(screen.getByTestId('live-broker-card').textContent).toContain('1:100');
+  });
+
+  it('reports reconnect attempts and the last failure', async () => {
+    vi.spyOn(api, 'liveRuntime').mockResolvedValue(view({
+      runtime: runtime({ state: 'RECONNECTING', reconnectAttempts: 3,
+                         reconnectSuccesses: 1,
+                         lastFailureDetail: 'broker_not_connected:Disconnected' }),
+    }));
+    mount();
+    await waitFor(() => screen.getByTestId('runtime-reconnects'));
+    expect(screen.getByTestId('runtime-reconnects').textContent).toContain('1/3');
+    expect(screen.getByTestId('runtime-last-failure').textContent)
+      .toContain('broker_not_connected');
   });
 
   it('renders the market card with bid, ask, spread and ages', async () => {

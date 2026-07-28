@@ -1058,6 +1058,10 @@ export interface LiveRuntimeStatus {
   consecutiveFailures: number;
   intervalSeconds: number | null;
   running: boolean;
+  reconnectAttempts: number;
+  reconnectSuccesses: number;
+  lastFailureAt: string | null;
+  lastFailureDetail: string | null;
   warnings: string[];
 }
 
@@ -1077,6 +1081,13 @@ export interface LiveBrokerRuntime {
   leverage: number | null;
   adapterKind: string | null;
   executionMode: string | null;
+  /** LIVE-5B: already masked by the adapter. */
+  login: string | null;
+  /** 'demo' | 'contest' | 'real', or null when the terminal did not report it. */
+  accountType: string | null;
+  brokerCompany: string | null;
+  gatewayLatencyMs: number | null;
+  reconnectCount: number;
   lastHeartbeatAt: string | null;
   heartbeatAgeSeconds: number | null;
   availability: string;

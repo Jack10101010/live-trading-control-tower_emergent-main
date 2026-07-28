@@ -760,3 +760,35 @@ execution_telemetry + BotEvent audit (derived read model; /api/execution/state)
 **The candle rule has no edge.** It was never backtested, tuned or selected; it exists so the plumbing can be exercised. `RecommendationSource.STRATEGY` on these proposals means "not an operator" — it does not assert that a tuned strategy exists.
 
 **Status and limitations.** The automated smoke test proves all ten stages end-to-end against the mock broker. **The genuine live MT5 trade is unperformed and cannot run on this host** (finding 4); §5 of `LIVE-5A-SMOKE-WORKFLOW.md` is the Windows runbook. Also outstanding: the legacy `/api/operations/*` routes still read the broker per request (deliberately untouched — changing them is a LIVE-4A behaviour change this slice must not risk); ledger ingestion on close is proven but not wired to the loop; Recommendation→Intent linkage remains opt-in; and one timeframe with one rule.
+
+### ADR-LIVE-5B — Windows VPS integration and live-trade verification (LIVE-5B, 2026-07-28)
+
+**Context.** LIVE-5A connected the pipeline and proved it end-to-end against the mock broker, leaving one thing undone: making the Control Tower actually capable of reaching a real MT5 terminal, and diagnosable when it cannot. LIVE-5B is integration, verification and debugging. **No new domain was built and no existing system was redesigned.**
+
+**Audit — what precisely blocked a real trade.** Exactly one thing, and it is environmental rather than architectural:
+
+* `import MetaTrader5` fails on the development host (`Darwin arm64`; the package ships a Windows wheel only), so `MT5Gateway.available` is False, `_load_live_gateway()` returns None, and every read and write reports unavailable.
+
+Everything else is configuration, and all of it is **environment-only** — no code change is needed to switch MOCK → DEMO → LIVE (`CONTROL_TOWER_BROKER_ADAPTER`, `MARKET_DATA_PROVIDER`, `LIVE_MODE`, `LIVE_PRODUCER_ENABLED`, plus the execution mode which is deliberately settable only through `POST /api/execution/mode`). Verified by running the whole chain.
+
+**A correction to the assumed topology.** The task described *Mac → Backend → Windows VPS → MT5*. `connection_policy` approves exactly one profile, `local_loopback`; `remote_pre_live` and `remote_live` both deny with `profile_not_approved` and four named prerequisites. **The backend must therefore run ON the VPS beside the terminal**, with the Mac contributing only a browser. Documented in `WINDOWS_VPS_SETUP.md` §1 rather than worked around.
+
+**The one real defect found, and fixed.** `broker._load_live_gateway()` wrapped its entire import-and-construct in a bare `except Exception: return None`. Every possible cause — a `live.config` failure, a bad `LUX_ROOT`, a malformed `LIVE_*` variable, a partial SDK install — surfaced to the operator as one sentence: *"MetaTrader5 package unavailable on this host"*, which on the VPS would frequently be **false** and never actionable. `load_live_gateway_diagnostic()` now guards each step separately and returns the specific reason, and the adapter reports it through `_unavailable_detail()`.
+
+**Decision.**
+
+1. **`mt5_diagnostics.py`** — the chain diagnosed in dependency order: platform, package, connection policy, adapter selection, market provider, credentials, gateway load, terminal, symbol, execution mode, gateway live mode, producer. Every failure carries `detail`, `why` and `fix` (test-pinned: no failing check may omit any of them). Once a prerequisite fails, dependent checks report `skipped`, so the operator sees ONE root cause instead of eight cascading errors. Terminal errors are mapped from MT5's own `last_error()` text to concrete fixes — an authorization failure says a demo password expires with the account; an IPC timeout says start the terminal.
+
+2. **`GET /api/integration/diagnostics`** — read-only, `no-store`, covering gateway, runtime, broker, projection, execution, recommendation, scenario and ledger in a fixed row shape (`status`, `lastSuccess`, `lastFailure`, `latencyMs`, `freshness`, `warnings`). Logins and server names are masked (`80…45`) because diagnostics get pasted into issue trackers; `MT5_PASSWORD` is never read for its value, only named in remediation advice.
+
+3. **Safe automatic recovery.** The supervisor takes a `reconnect_fn` and, when the link is down, attempts one reconnect per tick, counts attempts and successes, records `lastFailureAt`/`lastFailureDetail`, and re-reads immediately on success so the operator does not wait a whole interval. Reconnecting is a **read-path repair** — it opens a terminal session and places no order — so automating it cannot cause a trade. Anything that could affect a **position** is deliberately never auto-recovered: the runtime fails closed and reports. Structurally pinned: the supervisor contains no `close_position`, `submit_market_order`, `order_send`, `flatten` or `modify_position`.
+
+4. **Structured, change-only logging.** `runtime.state` is emitted on transition, not per tick — at a 5s cadence a per-tick line is ~17k lines a day that buries the transitions worth seeing (test-pinned: four identical ticks produce one line). Scenario and Recommendation creation log once each, with identity and terms. A broken log sink can never break a tick.
+
+5. **Operational dashboard fields** — account type (demo/contest/real), masked login, broker company, leverage, gateway latency, and reconnect successes/attempts with the last failure detail. `BrokerAccountInfo.trade_mode` is the one additive DTO field, sourced from the `AccountIdentity` the adapter already reads for the fingerprint, so no extra broker call is made. It exists because **an operator about to enable LIVE must be able to see whether the account is real**; absent evidence renders `UNKNOWN`, never assumed demo.
+
+6. **`integration_smoke.py`** — the twelve-stage checklist with explicit PASS/FAIL per stage and a fix on every failure. It **reads only**: the acceptance and order stages report observed state, never performed actions, and a stage that cannot be evaluated FAILS rather than passing by omission.
+
+**Live trade status — not fabricated.** The trade has **not** been executed. Stages 1–3 (broker connected, quotes updating, candles updating) PASS on the mock adapter here; stages 4–12 require the VPS. `FIRST_LIVE_TRADE_RUNBOOK.md` is the operator procedure, and §7 lists what to confirm before enabling LIVE. Placing a real-money order is a human act by design.
+
+**Unchanged.** Execution command surface, broker write capabilities, authorization, safety gates, and the recommendation, scenario and ledger architectures. `execution.py`, `execution_safety.py`, `execution_store.py`, `reconciliation.py`, `command_registry.py`, `command_authorization.py`, `execution_mode.py`, `order_lifecycle.py`, `trade_ledger_*.py`, `trade_reconstruction.py`, `scenario_*.py`, `recommendation_store.py` and `recommendation_decision_service.py` are all untouched by this commit.

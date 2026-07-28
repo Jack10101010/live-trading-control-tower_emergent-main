@@ -1294,6 +1294,14 @@ class BrokerRuntimeView:
     leverage: int | None = None
     adapter_kind: str | None = None
     execution_mode: str | None = None
+    #: LIVE-5B operational visibility. `login` is ALREADY masked by the adapter
+    #: (`login_masked`); `account_type` is demo/contest/real, and is the field an
+    #: operator checks before enabling LIVE.
+    login: str | None = None
+    account_type: str | None = None
+    broker_company: str | None = None
+    gateway_latency_ms: float | None = None
+    reconnect_count: int = 0
     last_heartbeat_at: str | None = None
     heartbeat_age_seconds: float | None = None
     availability: str = AVAILABILITY_UNAVAILABLE
@@ -1313,6 +1321,10 @@ class BrokerRuntimeView:
             "marginLevel": self.margin_level, "leverage": self.leverage,
             "adapterKind": self.adapter_kind,
             "executionMode": self.execution_mode,
+            "login": self.login, "accountType": self.account_type,
+            "brokerCompany": self.broker_company,
+            "gatewayLatencyMs": self.gateway_latency_ms,
+            "reconnectCount": self.reconnect_count,
             "lastHeartbeatAt": self.last_heartbeat_at,
             "heartbeatAgeSeconds": self.heartbeat_age_seconds,
             "availability": self.availability, "provenance": self.provenance,
@@ -1368,12 +1380,20 @@ class RuntimeStatusView:
     consecutive_failures: int = 0
     interval_seconds: float | None = None
     running: bool = False
+    reconnect_attempts: int = 0
+    reconnect_successes: int = 0
+    last_failure_at: str | None = None
+    last_failure_detail: str | None = None
     warnings: tuple = field(default_factory=tuple)
 
     def as_dict(self) -> dict:
         return _sorted({
             "state": self.state,
             "projectionAgeSeconds": self.projection_age_seconds,
+            "reconnectAttempts": self.reconnect_attempts,
+            "reconnectSuccesses": self.reconnect_successes,
+            "lastFailureAt": self.last_failure_at,
+            "lastFailureDetail": self.last_failure_detail,
             "brokerAgeSeconds": self.broker_age_seconds,
             "lastTickAt": self.last_tick_at,
             "lastSuccessAt": self.last_success_at,
@@ -1485,6 +1505,11 @@ def build_live_runtime(snapshot=None, *, now: str, health=None,
         leverage=_int(account.get("leverage")),
         adapter_kind=(adapter_kind or snapshot_adapter(snapshot)),
         execution_mode=execution_mode,
+        login=account.get("login_masked") or account.get("accountId"),
+        account_type=account.get("trade_mode"),
+        broker_company=account.get("broker_company"),
+        gateway_latency_ms=(heartbeat.latency_ms if heartbeat else None),
+        reconnect_count=int(getattr(resolved_health, "reconnect_attempts", 0) or 0),
         last_heartbeat_at=(heartbeat.at if heartbeat else None),
         heartbeat_age_seconds=heartbeat_age,
         availability=(broker_availability if account or connected
@@ -1542,6 +1567,10 @@ def build_live_runtime(snapshot=None, *, now: str, health=None,
         consecutive_failures=resolved_health.consecutive_failures,
         interval_seconds=resolved_health.interval_s,
         running=resolved_health.running,
+        reconnect_attempts=getattr(resolved_health, "reconnect_attempts", 0),
+        reconnect_successes=getattr(resolved_health, "reconnect_successes", 0),
+        last_failure_at=getattr(resolved_health, "last_failure_at", None),
+        last_failure_detail=getattr(resolved_health, "last_failure_detail", None),
         warnings=tuple(resolved_health.warnings))
 
     return LiveRuntimeView(
