@@ -153,6 +153,23 @@ def _cost_summary(deals) -> tld.TradeCostSummary:
         other_costs=None, completeness=completeness)
 
 
+def _risk_math():
+    """The canonical realised-R module, imported lazily.
+
+    `live/` sits beside `backend/` rather than under it, so the repository root
+    must be on `sys.path` — the same arrangement `broker.py` already uses to load
+    the gateway. Kept lazy and local so importing this module never depends on
+    the live package being present.
+    """
+    import os
+    import sys
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from live import risk_math
+    return risk_math
+
+
 def _risk_summary(*, intent_row: dict | None, average_entry: float | None,
                   entry_quantity: float | None,
                   gross_pnl: float | None) -> tld.TradeRiskSummary:
@@ -162,32 +179,31 @@ def _risk_summary(*, intent_row: dict | None, average_entry: float | None,
     at intent creation). A later protective modification is deliberately NOT
     consulted — inferring intended risk from a moved stop would fabricate it.
 
-    POLICY: realized R uses GROSS realized PnL (see TradeRiskSummary)."""
+    POLICY: realized R uses GROSS realized PnL (see TradeRiskSummary).
+
+    MS-A: the arithmetic itself now lives in `live/risk_math.py` so the
+    autonomous runner can compute the SAME number from confirmed broker closes.
+    This function keeps ownership of what is reconstruction's own concern —
+    finding the originating intent and deciding that "no intent" is UNAVAILABLE —
+    and delegates the formula. There is no second implementation."""
     if not intent_row:
+        # Distinct from "an intent exists but recorded no stop": here there is no
+        # originating record at all, so nothing about planned risk is knowable.
         return tld.TradeRiskSummary(completeness=tld.UNAVAILABLE)
-    initial_stop = intent_row.get("stop_loss")
-    initial_entry = intent_row.get("entry")
-    if initial_stop is None:
-        return tld.TradeRiskSummary(initial_entry_price=initial_entry,
-                                    completeness=tld.UNAVAILABLE)
-    basis_entry = initial_entry if initial_entry is not None else average_entry
-    if basis_entry is None or entry_quantity is None:
-        return tld.TradeRiskSummary(initial_stop_price=initial_stop,
-                                    initial_entry_price=initial_entry,
-                                    completeness=tld.PARTIAL)
-    risk_amount = abs(basis_entry - initial_stop) * entry_quantity
-    if risk_amount <= 0:
-        return tld.TradeRiskSummary(initial_stop_price=initial_stop,
-                                    initial_entry_price=basis_entry,
-                                    initial_risk_amount=0.0,
-                                    completeness=tld.PARTIAL)
-    realized_r = (round(gross_pnl / risk_amount, 6)
-                  if gross_pnl is not None else None)
+
+    result = _risk_math().realised_risk(
+        initial_stop=intent_row.get("stop_loss"),
+        initial_entry=intent_row.get("entry"),
+        average_entry=average_entry,
+        entry_quantity=entry_quantity,
+        gross_pnl=gross_pnl)
     return tld.TradeRiskSummary(
-        initial_stop_price=initial_stop, initial_entry_price=basis_entry,
-        initial_risk_amount=round(risk_amount, 8), planned_r=1.0,
-        realized_r=realized_r, realized_r_basis="gross",
-        completeness=tld.COMPLETE if realized_r is not None else tld.PARTIAL)
+        initial_stop_price=result.initial_stop_price,
+        initial_entry_price=result.initial_entry_price,
+        initial_risk_amount=result.initial_risk_amount,
+        planned_r=result.planned_r, realized_r=result.realized_r,
+        realized_r_basis=result.realized_r_basis,
+        completeness=result.completeness)
 
 
 def _quality(*, intent_row: dict | None, average_entry: float | None,

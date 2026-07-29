@@ -337,12 +337,21 @@ def test_provider_backed_runs_never_use_fast_path(tmp_path, monkeypatch):
 
 # ── invariants: schema + saves (cases 25, 26) ────────────────────────────────
 def test_no_durable_state_schema_change(tmp_path):
+    """The durable key set, pinned exactly.
+
+    MS-A replaced the legacy `daily` single bucket — which could hold one day and
+    reset itself, so a delayed prior-day close erased the current day — with
+    `realized_r_by_date`, a bounded per-date map. That was the one approved
+    schema change; the guard is updated to the new canonical shape and keeps its
+    original strictness (exact set equality), so any FURTHER key still fails.
+    """
     cfg, r, _ = _primed(tmp_path)
     r.run_once()                                          # fast skip
     raw = json.loads((cfg.state_dir / "runner_state.json").read_text())
     assert set(raw.keys()) == {"last_boundary", "last_recomputed_input_revision",
                                "prev_frame_hash", "prev_frame_file", "ledger",
-                               "mirror", "daily", "updated_at"}
+                               "mirror", "realized_r_by_date", "updated_at"}
+    assert "daily" not in raw          # the legacy bucket is gone, not shadowed
 
 
 def test_no_additional_save(tmp_path, monkeypatch):
