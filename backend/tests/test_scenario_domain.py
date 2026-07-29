@@ -462,7 +462,14 @@ def test_scenarios_endpoint_lists_and_filters(monkeypatch, tmp_path):
     body = r.json()
     assert len(body["scenarios"]) == 2
     assert body["summary"]["total"] == 2 and body["summary"]["active"] == 1
-    assert [s["createdAt"] for s in body["scenarios"]] == [T0, T1] or True  # ordered
+    # Deterministic ordering, genuinely asserted (the previous `... or True` was
+    # vacuous). The AUTHORITATIVE ordering is applied by the projection:
+    # operational_projection.build_scenarios sorts ASCENDING on
+    # (created_at, scenario_id) — oldest first — overriding the store's
+    # `created_at DESC` read order. Hence [T0, T1]. (The route docstring's
+    # "newest first" wording disagrees with the implementation; that doc drift
+    # belongs to the API reconciliation milestone, not this test.)
+    assert [s["createdAt"] for s in body["scenarios"]] == [T0, T1]
     assert len(client.get("/api/scenarios?instrument=GBPUSD").json()["scenarios"]) == 1
     assert len(client.get("/api/scenarios?session=asia").json()["scenarios"]) == 1
     assert len(client.get("/api/scenarios?nodeId=node-1").json()["scenarios"]) == 2

@@ -1324,3 +1324,32 @@ def test_ledger_file_is_never_parsed_as_an_arm_request(tmp_path):
     assert arming.ledger_path(cfg.arm_dir) != cfg.arm_file_path()
     fake2, gw2, v2, rt2 = _arm_once(cfg)                         # no active request now
     assert rt2 is None and v2.reasons == (arming.ARM_REQUEST_MISSING,)
+
+
+# ── AUDIT F-2 (same class) — consumed-ledger durability ──────────────────────
+def test_consumed_ledger_write_fsyncs_and_fails_closed_on_fsync_error(tmp_path, monkeypatch):
+    """Replay protection depends on the consumed ledger surviving power loss:
+    fsync must precede os.replace, and an fsync failure must return False
+    (arming fails closed) without corrupting an existing ledger."""
+    import os as _os
+    arm_dir = tmp_path / "arm"
+    ledger = arming.ledger_path(arm_dir)
+    calls = []
+    real_fsync, real_replace = _os.fsync, _os.replace
+    monkeypatch.setattr(_os, "fsync", lambda fd: (calls.append("fsync"), real_fsync(fd))[1])
+    monkeypatch.setattr(_os, "replace",
+                        lambda a, b: (calls.append("replace"), real_replace(a, b))[1])
+    # Schema-valid entries (read_consumed_ledger strictly validates entry keys).
+    e1 = {"request_digest": "a" * 64, "nonce_digest": "b" * 64,
+          "expires_at": "2026-07-29T00:00:00+00:00"}
+    e2 = {"request_digest": "c" * 64, "nonce_digest": "d" * 64,
+          "expires_at": "2026-07-29T01:00:00+00:00"}
+    assert arming.write_consumed_ledger(ledger, arm_dir, [e1]) is True
+    assert "fsync" in calls and calls.index("fsync") < calls.index("replace")
+    baseline_bytes = Path(ledger).read_bytes()
+    # fsync failure -> False (fail closed), existing ledger BYTES untouched
+    monkeypatch.setattr(_os, "fsync",
+                        lambda fd: (_ for _ in ()).throw(OSError("disk error")))
+    assert arming.write_consumed_ledger(ledger, arm_dir, [e1, e2]) is False
+    assert Path(ledger).read_bytes() == baseline_bytes, \
+        "failed write must not alter the existing ledger"

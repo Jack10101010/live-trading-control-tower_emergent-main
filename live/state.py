@@ -232,10 +232,30 @@ class RunnerState:
                 ACCOUNTED_KEY: {}, TELEMETRY_KEY: {}, "updated_at": None}
 
     def save(self) -> None:
+        """Atomic + durable: same-dir temp -> write -> flush -> fsync -> atomic
+        rename — the repository's canonical checkpoint pattern (backend/
+        ops_journal `_save_checkpoint`; also ops_notifier, liveness). The fsync
+        closes the power-loss window the rename alone leaves open: without it
+        the rename can survive an OS crash while the data blocks do not,
+        silently reverting the execution ledger to an older version after
+        broker state has advanced. A failed write cleans its temp and raises;
+        the last complete state file is never corrupted. Directory fsync is
+        deliberately omitted to match the canonical pattern and preserve
+        Windows compatibility (see VPS-RUNBOOK durability notes)."""
         self.data["updated_at"] = datetime.now(timezone.utc).isoformat()
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.data, indent=1))
-        os.replace(tmp, self.path)
+        try:
+            with tmp.open("w") as fh:
+                fh.write(json.dumps(self.data, indent=1))
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, self.path)
+        except Exception:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
 
     # ── frames ───────────────────────────────────────────────────────────────
     def store_frame(self, frame, boundary: str, input_revision: str) -> None:

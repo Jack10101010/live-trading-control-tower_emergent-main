@@ -506,14 +506,37 @@ def test_conflicting_payload_under_same_key_denies():
 
 
 def test_different_entities_are_independent(monkeypatch):
+    # Deterministic two-position fixture: the pristine world exposes exactly ONE
+    # open ("managing") live trade, so this path previously skipped. Clone that
+    # trade under a fresh tradeId in a DEEP-COPIED world and rebind server.WORLD
+    # for this test only — every consumer (_fresh_broker_snapshot projection,
+    # _trade_current, close overlays) reads server.WORLD at call time, and the
+    # runtime overlay DB is already isolated per-test by `isolated_event_store`.
+    import copy
+    world = copy.deepcopy(server.WORLD)
+    open_trades = [t for t in world.get("liveTrades", []) if t.get("state") == "managing"]
+    assert open_trades, "pristine fixture must expose one open live trade"
+    clone = copy.deepcopy(open_trades[0])
+    clone["tradeId"] = "tr_TESTINDEPENDENT0000000000A"
+    clone["clientOrderId"] = "cli_TESTINDEPENDENT0000000A"
+    clone["brokerOrderId"] = "brk_TESTINDEPENDENT0000000A"
+    world["liveTrades"].append(clone)
+    monkeypatch.setattr(server, "WORLD", world)
+
     snap = server._fresh_broker_snapshot()
     positions = snap.get("positions") or []
-    if len(positions) < 2:
-        pytest.skip("fixture exposes fewer than two positions")
+    assert len(positions) >= 2, f"expected 2 open positions, got {len(positions)}"
     a, b = positions[0]["positionId"], positions[1]["positionId"]
+    assert a != b
     r1 = _op(f"/api/execution/positions/{a}/close", {}, key="l3-ind-a")
     r2 = _op(f"/api/execution/positions/{b}/close", {}, key="l3-ind-b")
     assert r1.status_code == 200 and r2.status_code == 200
+    # Independence is the point: closing A must not have locked or closed B —
+    # both closes succeeded against distinct entities, and each is now closed
+    # independently (a further close of each denies for ITS OWN reason).
+    r1b = _op(f"/api/execution/positions/{a}/close", {}, key="l3-ind-a2")
+    r2b = _op(f"/api/execution/positions/{b}/close", {}, key="l3-ind-b2")
+    assert r1b.status_code == 422 and r2b.status_code == 422
 
 
 def test_ambiguous_outcome_freezes_entity_until_reconciliation(monkeypatch):

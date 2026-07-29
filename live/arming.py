@@ -474,8 +474,12 @@ def prune_ledger(entries, policy: ArmPolicy, now_utc: datetime):
 
 
 def write_consumed_ledger(path: Path, arm_dir: Path, entries) -> bool:
-    """Atomically persist the ledger via a bounded temp file inside the arm dir +
-    ``os.replace``. Returns False on any failure (arming then fails closed)."""
+    """Atomically + durably persist the ledger: bounded temp file inside the arm
+    dir -> write -> flush -> fsync -> ``os.replace`` (the repository's canonical
+    checkpoint pattern — see backend/ops_journal). The fsync matters here for
+    replay protection: without it a power loss can revert the consumed-request
+    ledger while the operator believes an arm was already spent. Returns False
+    on any failure (arming then fails closed)."""
     try:
         arm_dir = Path(arm_dir)
         arm_dir.mkdir(parents=True, exist_ok=True)
@@ -483,7 +487,10 @@ def write_consumed_ledger(path: Path, arm_dir: Path, entries) -> bool:
         payload = json.dumps({"entries": list(entries)}, separators=(",", ":"))
         if len(payload.encode("utf-8")) > MAX_LEDGER_BYTES:
             return False
-        tmp.write_text(payload, encoding="utf-8")
+        with tmp.open("w", encoding="utf-8") as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
         os.replace(tmp, Path(path))               # atomic within the same filesystem
         return True
     except OSError:

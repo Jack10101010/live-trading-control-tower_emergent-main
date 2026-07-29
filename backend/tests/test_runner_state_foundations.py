@@ -511,3 +511,39 @@ def test_the_date_map_has_a_bounded_deterministic_retention_policy():
     assert 0 < live_state._RETAIN_DAYS <= 400, "retention must stay bounded"
     source = _live_source("state.py")
     assert "_prune(" in source, "retention is declared but never applied"
+
+
+# ── AUDIT F-2 — durable save: flush + fsync + atomic replace ─────────────────
+def test_save_fsyncs_before_replace(tmp_path, monkeypatch):
+    """The canonical checkpoint pattern (ops_journal) requires fsync BEFORE
+    os.replace, closing the power-loss window where the rename survives but the
+    data blocks do not (execution ledger silently reverts)."""
+    calls = []
+    real_fsync, real_replace = os.fsync, os.replace
+    monkeypatch.setattr(os, "fsync", lambda fd: (calls.append("fsync"), real_fsync(fd))[1])
+    monkeypatch.setattr(os, "replace",
+                        lambda a, b: (calls.append("replace"), real_replace(a, b))[1])
+    s = live_state.RunnerState(tmp_path)
+    s.ledger_set("i1", "sent")
+    s.save()
+    assert "fsync" in calls, "save() must fsync the temp file"
+    assert calls.index("fsync") < calls.index("replace"), "fsync must precede os.replace"
+    assert live_state.RunnerState(tmp_path).ledger_status("i1") == "sent"
+
+
+def test_failed_save_preserves_last_complete_state_and_cleans_tmp(tmp_path, monkeypatch):
+    """Rollback semantics: a write failure (fsync raising, e.g. disk error) must
+    leave the last complete state file untouched, remove the temp, and raise."""
+    s = live_state.RunnerState(tmp_path)
+    s.ledger_set("keep", "confirmed")
+    s.save()                                             # good baseline on disk
+    s.ledger_set("lost", "sent")                         # in-memory only
+    monkeypatch.setattr(os, "fsync",
+                        lambda fd: (_ for _ in ()).throw(OSError("disk error")))
+    import pytest as _pytest
+    with _pytest.raises(OSError):
+        s.save()
+    reloaded = live_state.RunnerState(tmp_path)
+    assert reloaded.ledger_status("keep") == "confirmed"   # baseline intact
+    assert reloaded.ledger_status("lost") is None          # partial write not visible
+    assert not s.path.with_suffix(".tmp").exists(), "failed save must clean its temp"
