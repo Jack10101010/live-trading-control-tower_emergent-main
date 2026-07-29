@@ -50,12 +50,27 @@ REALIZED_R_KEY = "realized_r_by_date"
 #: this structure, and storing it now avoids a migration later for no extra cost.
 ACCOUNTED_KEY = "accounted_deal_ids"
 
-#: Detail keys carried across every ledger lifecycle transition. Only the
-#: ORIGINATING INTENT qualifies: it is the one fact a later state cannot
-#: reconstruct and must never fabricate. Broker execution facts are lifecycle
-#: detail and are supplied fresh by each writer; diagnostics are deliberately
-#: absent so a stale error cannot survive into a successful state.
-_LINEAGE_KEYS = ("intent",)
+#: Detail keys carried across every ledger lifecycle transition.
+#:
+#: The test for membership is: could a LATER lifecycle state reproduce this fact?
+#: If not, losing it is unrecoverable and it belongs here.
+#:
+#:   intent         the originating plan, including the ORIGINAL stop. Never
+#:                  reconstructable once the trade closes (MS-A).
+#:   accounted_at   durable proof that this entry's closes were accounted, in a
+#:                  COMMITTED transaction. B4.5: pruning must not depend on the
+#:                  accounted-id map, which expires first — see `_prune_ledger`.
+#:   filled_volume  the entry quantity: the DENOMINATOR of realised R. A later
+#:                  state cannot recover the original fill size.
+#:   price          the executed entry, used as the basis when no planned entry
+#:                  was recorded.
+#:
+#: Diagnostics and error text are deliberately absent, so a stale failure reason
+#: cannot survive into a later successful state. Carrying is gap-filling only:
+#: `{**carried, **new_detail}` means an explicitly supplied value always wins,
+#: and carrying happens only WITHIN one intent id, so a close or modify record
+#: (which has its own id) never inherits an open's fill facts.
+_LINEAGE_KEYS = ("intent", "accounted_at", "filled_volume", "price")
 
 #: Retention for the realised-R map: the most recent N day buckets.
 #:
@@ -71,6 +86,9 @@ _RETAIN_DAYS = 40
 #: first of five conditions.
 _PRUNABLE_STATUSES = frozenset({LEDGER_CONFIRMED, LEDGER_FAILED, LEDGER_BLOCKED,
                                 LEDGER_SIMULATED})
+
+#: Sentinel distinguishing "this key was absent" from "it held None".
+_UNSET = object()
 
 
 def _utc_today() -> str:
@@ -356,6 +374,28 @@ class RunnerState:
 
     # ── B3: confirmed-close accounting ───────────────────────────────────────
 
+    def _stamp_accounted(self, position_id, executed_at, undo: list) -> None:
+        """Record on the owning ledger entry that a close of it was accounted.
+
+        In-memory only: the caller's single `save()` commits it together with the
+        bucket and the accounted id, so the marker can never be durable without
+        the R it attests to, nor vice versa.
+        """
+        if not position_id:
+            return
+        target = str(position_id)
+        for record in self.data.get("ledger", {}).values():
+            if not isinstance(record, dict):
+                continue
+            detail = record.get("detail")
+            if isinstance(detail, dict) and target in _tickets_of(detail):
+                # Keep the LATEST accounted close, so a partially closed position
+                # reports when its accounting most recently advanced.
+                if str(executed_at or "") > str(detail.get("accounted_at") or ""):
+                    # Record the prior value so a failed commit can restore it.
+                    undo.append((detail, detail.get("accounted_at", _UNSET)))
+                    detail["accounted_at"] = executed_at
+
     def _accounted(self) -> dict:
         return self.data.setdefault(ACCOUNTED_KEY, {})
 
@@ -426,10 +466,6 @@ class RunnerState:
         All five conditions must hold. Any doubt retains the entry.
         """
         age_cutoff = clock - timedelta(hours=2.0 * lookback_hours)
-        accounted_positions = {
-            entry["position"]
-            for entry in (_accounted_entry(v) for v in self._accounted().values())
-            if entry["position"]}
         ledger = self.data["ledger"]
         removable = []
         for intent_id, record in ledger.items():
@@ -445,10 +481,15 @@ class RunnerState:
             # 2) the position must not still be open.
             if tickets & open_tickets:
                 continue
-            # 3+4) at least one of its closes is in the accounted map — which is
-            #      itself the durable record of a COMMITTED transaction, so
-            #      "accounted" and "committed" are the same evidence here.
-            if not (tickets & accounted_positions):
+            # 3+4) the entry carries durable proof that a close of it was
+            #      accounted in a COMMITTED transaction. B4.5 root cause: this
+            #      used to consult the accounted-id MAP, which expires at
+            #      LOOKBACK — before the entry becomes age-eligible at
+            #      2 x LOOKBACK — so for any trade closing within LOOKBACK of
+            #      opening the condition became permanently unsatisfiable and
+            #      the entry was retained forever. The marker lives on the entry
+            #      itself and therefore outlives the map, by construction.
+            if not detail.get("accounted_at"):
                 continue
             # 3b) nothing observed-but-unaccounted may remain for this position.
             if tickets & pending_positions:
@@ -493,6 +534,9 @@ class RunnerState:
         """
         buckets_before = dict(self._buckets())
         accounted_before = dict(self._accounted())
+        # Ledger markers are mutated IN PLACE on nested dicts, so a shallow copy
+        # of the ledger would not restore them. Each stamp records its own undo.
+        stamped: list = []
         committed = 0
         try:
             for deal_id, on_date, realised_r, executed_at, position_id in postings:
@@ -503,6 +547,12 @@ class RunnerState:
                 self._accounted()[key] = {
                     "at": executed_at,
                     "position": (str(position_id) if position_id else None)}
+                # B4.5: durable proof ON THE LEDGER ENTRY that its closes were
+                # accounted. Same transaction, same single save — no second
+                # transaction and no ordering change. The accounted-id map
+                # cannot serve this purpose because it expires at LOOKBACK,
+                # long before the entry becomes age-eligible at 2 x LOOKBACK.
+                self._stamp_accounted(position_id, executed_at, stamped)
                 committed += 1
             if committed:
                 self.save()
@@ -510,4 +560,13 @@ class RunnerState:
         except Exception:
             self.data[REALIZED_R_KEY] = buckets_before
             self.data[ACCOUNTED_KEY] = accounted_before
+            # Restore markers too. A marker surviving a failed commit is the
+            # dangerous direction: a later ordinary save would persist it, and
+            # pruning would then discard planned-risk lineage for R that was
+            # never recorded.
+            for detail, prior in reversed(stamped):
+                if prior is _UNSET:
+                    detail.pop("accounted_at", None)
+                else:
+                    detail["accounted_at"] = prior
             raise
