@@ -285,8 +285,12 @@ class Executor:
                     "detail": read.detail}
 
         records = close_accounting.account_deals(read.deals, self.state.data["ledger"])
-        postings = [(r.deal_id, r.utc_date, r.realised_r)
-                    for r in records
+        # `account_deals` maps 1:1 over the deals, so the pairing is positional
+        # and needs no lookup. The deal supplies the EXECUTION instant, which the
+        # accounting record does not carry (it holds only the UTC day).
+        postings = [(r.deal_id, r.utc_date, r.realised_r,
+                     d.execution_time_utc.isoformat(), r.position_id)
+                    for r, d in zip(records, read.deals)
                     if r.accountable and not self.state.is_accounted(r.deal_id)]
         try:
             committed = self.state.commit_accounting(postings)
@@ -297,10 +301,27 @@ class Executor:
             return {"enabled": True, "committed": 0, "read": read.outcome.value,
                     "error": f"commit failed: {type(exc).__name__}"}
 
+        # B4 — retention runs AFTER the commit, never before. The accounted map
+        # is the durable record of committed accounting, so pruning judged on it
+        # is judged on evidence that has already survived a save. A pruning
+        # failure is pure housekeeping: accounting and idempotency are already
+        # durable, so it is reported and retried next cycle, never raised.
+        pruned = None
+        try:
+            pruned = self.state.prune(
+                now=now,
+                lookback_hours=float(getattr(
+                    self.config, "close_accounting_lookback_hours", 48)),
+                open_tickets=set(self.state.data.get("mirror", {}).values()),
+                pending_positions={r.position_id for r in records
+                                   if not r.accountable})
+        except Exception as exc:                                # noqa: BLE001
+            pruned = {"error": type(exc).__name__}
+
         summary = close_accounting.summarise(records)
         return {"enabled": True, "committed": committed,
                 "read": read.outcome.value, "counts": summary["counts"],
-                "rejected": len(read.rejected)}
+                "rejected": len(read.rejected), "pruned": pruned}
 
     # ── apply ────────────────────────────────────────────────────────────────
     def apply(self, intents: list, today: str | None = None) -> dict:

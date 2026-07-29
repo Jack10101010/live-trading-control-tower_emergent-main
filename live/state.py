@@ -16,7 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 LEDGER_PENDING = "pending"
@@ -66,6 +66,12 @@ _LINEAGE_KEYS = ("intent",)
 #: ledger remains the durable financial record.
 _RETAIN_DAYS = 40
 
+#: B4 — ledger statuses that may EVER be pruned. `pending` and `sent` are in
+#: flight; `partial` may still have an open position. Being terminal is only the
+#: first of five conditions.
+_PRUNABLE_STATUSES = frozenset({LEDGER_CONFIRMED, LEDGER_FAILED, LEDGER_BLOCKED,
+                                LEDGER_SIMULATED})
+
 
 def _utc_today() -> str:
     """The R day. UTC calendar date, matching the executor's own definition
@@ -93,6 +99,47 @@ def _date_key(value) -> str:
     except ValueError as exc:
         raise ValueError(f"realised-R date must be ISO YYYY-MM-DD: {value!r}") from exc
     return parsed.strftime("%Y-%m-%d")
+
+
+def _tickets_of(detail: dict) -> set:
+    """Broker tickets recorded in one ledger detail, via the canonical keys.
+
+    Imported from the executor so there is exactly one definition of which
+    detail keys carry a ticket — the same single source the accounting engine
+    resolves through.
+    """
+    from live.executor import Executor
+    return {str(detail[k]) for k in Executor._TICKET_KEYS
+            if detail.get(k) not in (None, "", 0)}
+
+
+def _accounted_entry(value) -> dict:
+    """Normalize one accounted-map value to `{"at": iso, "position": id|None}`.
+
+    B3 stored the posted DAY as a bare string. B4 needs the deal's EXECUTION
+    timestamp (to bound retention by the lookback window) and its position (to
+    prove every close for a ledger entry was accounted). A legacy string is read
+    as the LAST instant of that day — deliberately the most conservative
+    interpretation, so a migrated record is retained longer rather than pruned
+    early. Retention may never cost correctness.
+    """
+    if isinstance(value, dict):
+        return {"at": value.get("at"), "position": value.get("position")}
+    if isinstance(value, str) and value:
+        return {"at": f"{value}T23:59:59+00:00", "position": None}
+    return {"at": None, "position": None}
+
+
+def _parse_instant(value):
+    """A timezone-aware datetime, or None. Never raises on malformed input —
+    an unreadable timestamp means "do not prune this", not "prune it"."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 def _prune(buckets: dict, *, keep: tuple = ()) -> None:
@@ -326,11 +373,107 @@ class RunnerState:
         """A copy of the accounted map, for tests and future retention work."""
         return dict(self._accounted())
 
+    def prune(self, *, now=None, lookback_hours: float = 48.0,
+              open_tickets=(), pending_positions=()) -> dict:
+        """B4 — bounded retention. Housekeeping ONLY; correctness never depends
+        on it, and when in doubt data is retained.
+
+        Runs AFTER a successful accounting commit, never before. The ordering is
+        the safety property: the accounted map read here IS the durable record of
+        committed accounting, so an entry can only be judged prunable on evidence
+        that has already survived a save. Pruning before committing could discard
+        a ledger entry whose accounting was then lost.
+
+        Idempotent: it removes only what is already ineligible, so running it
+        repeatedly produces identical state. Returns counts; performs ONE save
+        and only when something actually changed.
+        """
+        clock = now or datetime.now(timezone.utc)
+        cutoff = clock - timedelta(hours=float(lookback_hours))
+        removed_deals = self._prune_accounted(cutoff)
+        removed_ledger = self._prune_ledger(
+            clock=clock, lookback_hours=float(lookback_hours),
+            open_tickets={str(t) for t in open_tickets},
+            pending_positions={str(p) for p in pending_positions})
+        if removed_deals or removed_ledger:
+            self.save()
+        return {"accounted_removed": removed_deals,
+                "ledger_removed": removed_ledger}
+
+    def _prune_accounted(self, cutoff) -> int:
+        """Drop idempotency records for deals the reader can no longer return.
+
+        THE PROOF, not a heuristic: the history reader never requests deals older
+        than LOOKBACK, so a deal executed before `now - LOOKBACK` can never be
+        returned again; it can therefore never be re-accounted, and its
+        idempotency record is no longer required. A record whose timestamp is
+        missing or unreadable is KEPT — an unknown age is not an expired one.
+        """
+        accounted = self._accounted()
+        expired = []
+        for deal_id, raw in accounted.items():
+            executed_at = _parse_instant(_accounted_entry(raw)["at"])
+            if executed_at is not None and executed_at < cutoff:
+                expired.append(deal_id)
+        for deal_id in expired:
+            accounted.pop(deal_id, None)
+        return len(expired)
+
+    def _prune_ledger(self, *, clock, lookback_hours: float,
+                      open_tickets: set, pending_positions: set) -> int:
+        """Drop ledger entries that can no longer participate in accounting.
+
+        All five conditions must hold. Any doubt retains the entry.
+        """
+        age_cutoff = clock - timedelta(hours=2.0 * lookback_hours)
+        accounted_positions = {
+            entry["position"]
+            for entry in (_accounted_entry(v) for v in self._accounted().values())
+            if entry["position"]}
+        ledger = self.data["ledger"]
+        removable = []
+        for intent_id, record in ledger.items():
+            if not isinstance(record, dict):
+                continue
+            # 1) terminal only — pending/sent are in flight, partial may be open.
+            if record.get("status") not in _PRUNABLE_STATUSES:
+                continue
+            detail = record.get("detail") or {}
+            tickets = _tickets_of(detail)
+            if not tickets:
+                continue                    # no lineage to reason about: keep
+            # 2) the position must not still be open.
+            if tickets & open_tickets:
+                continue
+            # 3+4) at least one of its closes is in the accounted map — which is
+            #      itself the durable record of a COMMITTED transaction, so
+            #      "accounted" and "committed" are the same evidence here.
+            if not (tickets & accounted_positions):
+                continue
+            # 3b) nothing observed-but-unaccounted may remain for this position.
+            if tickets & pending_positions:
+                continue
+            # 5) older than 2x LOOKBACK, so a late close deal has had ample time
+            #    to arrive and be accounted before its lineage is discarded.
+            written_at = _parse_instant(record.get("at"))
+            if written_at is None or written_at >= age_cutoff:
+                continue
+            removable.append(intent_id)
+        for intent_id in removable:
+            ledger.pop(intent_id, None)
+        return len(removable)
+
     def commit_accounting(self, postings) -> int:
         """THE accounting transaction. One event, one durable state replacement.
 
-        `postings` is an iterable of `(deal_id, utc_date, realised_r)`. Already
-        accounted deals are skipped. Returns the number newly committed.
+        `postings` is an iterable of
+        `(deal_id, utc_date, realised_r, executed_at_iso, position_id)`.
+        Already accounted deals are skipped. Returns the number newly committed.
+
+        B4 note: the stored value gained the deal's EXECUTION instant and its
+        position id. Atomicity, ordering and rollback are untouched — only the
+        recorded facts widened, because retention needs to know when a deal can
+        no longer be returned by a bounded read and which ledger entry it closes.
 
         WHY BOTH MUTATIONS MUST SHARE ONE SAVE
             If the bucket and the accounted id were persisted separately, a crash
@@ -352,12 +495,14 @@ class RunnerState:
         accounted_before = dict(self._accounted())
         committed = 0
         try:
-            for deal_id, on_date, realised_r in postings:
+            for deal_id, on_date, realised_r, executed_at, position_id in postings:
                 key = str(deal_id)
                 if key in self._accounted():
                     continue                    # idempotent: already counted
                 self.add_realized_r(realised_r, on_date)
-                self._accounted()[key] = _date_key(on_date)
+                self._accounted()[key] = {
+                    "at": executed_at,
+                    "position": (str(position_id) if position_id else None)}
                 committed += 1
             if committed:
                 self.save()
