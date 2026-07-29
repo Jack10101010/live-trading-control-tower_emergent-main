@@ -344,13 +344,18 @@ def test_no_durable_state_schema_change(tmp_path):
     `realized_r_by_date`, a bounded per-date map. That was the one approved
     schema change; the guard is updated to the new canonical shape and keeps its
     original strictness (exact set equality), so any FURTHER key still fails.
+
+    B3 then added `accounted_deal_ids` — the deal-id idempotency store, the one
+    structure that makes confirmed-close accounting exactly-once. Also approved,
+    also pinned here.
     """
     cfg, r, _ = _primed(tmp_path)
     r.run_once()                                          # fast skip
     raw = json.loads((cfg.state_dir / "runner_state.json").read_text())
     assert set(raw.keys()) == {"last_boundary", "last_recomputed_input_revision",
                                "prev_frame_hash", "prev_frame_file", "ledger",
-                               "mirror", "realized_r_by_date", "updated_at"}
+                               "mirror", "realized_r_by_date", "accounted_deal_ids",
+                               "updated_at"}
     assert "daily" not in raw          # the legacy bucket is gone, not shadowed
 
 

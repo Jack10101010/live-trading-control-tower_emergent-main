@@ -367,10 +367,16 @@ def test_a_prior_day_loss_does_not_block_today(tmp_path, monkeypatch):
     assert SafetyRails(config, s).evaluate(an_intent(), "EURUSD", TODAY).allowed
 
 
-def test_milestone_a_adds_no_production_realised_r_writer():
-    """The rail stays dormant. Only tests seed the accumulator until Milestone B
-    adds confirmed-close accounting — this asserts that plainly rather than
-    letting a reader assume protection is active."""
+def test_realised_r_is_written_from_exactly_one_place():
+    """Successor to MS-A's "no writer exists" guard.
+
+    MS-A asserted the accumulator had no production writer, which was why the
+    rail was dormant. B3 added one, so the invariant moves from ABSENCE to
+    SINGULARITY — and lands on the stricter property B3 actually needs: realised
+    R may be posted ONLY from inside `commit_accounting`, the single atomic
+    transaction. A second writer could persist a bucket update without its
+    accounted deal id, which either double-counts a loss or loses one forever.
+    """
     import subprocess
     out = subprocess.run(
         ["grep", "-rn", "add_realized_r", "--include=*.py",
@@ -379,7 +385,13 @@ def test_milestone_a_adds_no_production_realised_r_writer():
     callers = [ln for ln in out.splitlines()
                if "def add_realized_r" not in ln and "/tests/" not in ln
                and "test_" not in ln]
-    assert callers == [], f"unexpected production writer: {callers}"
+    assert len(callers) == 1, f"expected one writer, found: {callers}"
+    assert "state.py" in callers[0], callers
+
+    # ...and that one call site must live inside the transaction.
+    source = (REPO_ROOT / "live" / "state.py").read_text()
+    transaction = source[source.index("def commit_accounting"):]
+    assert "self.add_realized_r(" in transaction
 
 
 # ── structural guards (Phase 13) ─────────────────────────────────────────────

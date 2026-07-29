@@ -45,6 +45,11 @@ def frame_hash(frame) -> str:
 #: single `daily` bucket, which could hold exactly one day and reset itself.
 REALIZED_R_KEY = "realized_r_by_date"
 
+#: B3 — deal ids already accounted, mapped to the UTC day they were posted to.
+#: A MAP rather than a list: the day is what B4's retention rule needs to bound
+#: this structure, and storing it now avoids a migration later for no extra cost.
+ACCOUNTED_KEY = "accounted_deal_ids"
+
 #: Detail keys carried across every ledger lifecycle transition. Only the
 #: ORIGINATING INTENT qualifies: it is the one fact a later state cannot
 #: reconstruct and must never fabricate. Broker execution facts are lifecycle
@@ -134,6 +139,8 @@ def _migrate(data: dict) -> dict:
             if key is not None and key not in buckets:
                 buckets[key] = float(amount)
     data[REALIZED_R_KEY] = buckets
+    accounted = data.get(ACCOUNTED_KEY)
+    data[ACCOUNTED_KEY] = accounted if isinstance(accounted, dict) else {}
     return data
 
 
@@ -150,7 +157,7 @@ class RunnerState:
         return {"last_boundary": None, "last_recomputed_input_revision": None,
                 "prev_frame_hash": "", "prev_frame_file": None,
                 "ledger": {}, "mirror": {}, REALIZED_R_KEY: {},
-                "updated_at": None}
+                ACCOUNTED_KEY: {}, "updated_at": None}
 
     def save(self) -> None:
         self.data["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -299,3 +306,63 @@ class RunnerState:
 
     def _buckets(self) -> dict:
         return self.data.setdefault(REALIZED_R_KEY, {})
+
+    # ── B3: confirmed-close accounting ───────────────────────────────────────
+
+    def _accounted(self) -> dict:
+        return self.data.setdefault(ACCOUNTED_KEY, {})
+
+    def is_accounted(self, deal_id: str) -> bool:
+        """Whether this broker deal has already been accounted.
+
+        Deal id is THE idempotency identity — a stable broker-assigned fact, not
+        a timestamp and not a locally generated key. There is deliberately no
+        second mechanism: overlapping history windows, a replayed cycle and a
+        restart all deduplicate through this one check.
+        """
+        return str(deal_id) in self._accounted()
+
+    def accounted_deal_ids(self) -> dict:
+        """A copy of the accounted map, for tests and future retention work."""
+        return dict(self._accounted())
+
+    def commit_accounting(self, postings) -> int:
+        """THE accounting transaction. One event, one durable state replacement.
+
+        `postings` is an iterable of `(deal_id, utc_date, realised_r)`. Already
+        accounted deals are skipped. Returns the number newly committed.
+
+        WHY BOTH MUTATIONS MUST SHARE ONE SAVE
+            If the bucket and the accounted id were persisted separately, a crash
+            between them would either double-count a loss (bucket saved, id not —
+            the deal is re-read next cycle and posted again) or lose a confirmed
+            loss permanently (id saved, bucket not — the deal is skipped forever).
+            Both are unacceptable, and RunnerState's whole-file replace makes the
+            combined write free, so there is no reason to split them.
+
+        WHY IN-MEMORY STATE IS ROLLED BACK ON FAILURE
+            `self.data` is shared with every other writer in the process. If a
+            save failed and the mutation were left in memory, the NEXT unrelated
+            `save()` would silently persist this accounting anyway — outside any
+            transaction, and possibly after the caller had already retried it.
+            Restoring the prior values keeps "the save failed" and "nothing was
+            committed" the same fact.
+        """
+        buckets_before = dict(self._buckets())
+        accounted_before = dict(self._accounted())
+        committed = 0
+        try:
+            for deal_id, on_date, realised_r in postings:
+                key = str(deal_id)
+                if key in self._accounted():
+                    continue                    # idempotent: already counted
+                self.add_realized_r(realised_r, on_date)
+                self._accounted()[key] = _date_key(on_date)
+                committed += 1
+            if committed:
+                self.save()
+            return committed
+        except Exception:
+            self.data[REALIZED_R_KEY] = buckets_before
+            self.data[ACCOUNTED_KEY] = accounted_before
+            raise

@@ -373,15 +373,31 @@ def test_accounting_persists_nothing():
         assert forbidden not in source, f"B2 mutates state: {forbidden}"
 
 
-def test_no_executor_hook_was_added():
-    """B2 ships inert: nothing in production calls the accounting engine."""
+def test_there_is_exactly_one_production_integration_point():
+    """Successor to B2's "no hook exists" guard.
+
+    B2 asserted the engine was inert. B3 activates it, so the invariant moves
+    from ABSENCE to SINGULARITY: the accounting engine may be invoked from
+    exactly one place, and the cycle may call it exactly once. Accounting logic
+    spread through the executor is the failure this prevents — it is stricter
+    than the guard it replaces, not weaker.
+    """
     import subprocess
     out = subprocess.run(
-        ["grep", "-rn", "close_accounting", "--include=*.py",
+        ["grep", "-rn", "close_accounting\\|account_closed_deals", "--include=*.py",
          str(REPO_ROOT / "live"), str(REPO_ROOT / "backend")],
         capture_output=True, text=True).stdout
-    callers = [ln for ln in out.splitlines() if "/tests/" not in ln]
-    assert callers == [], f"unexpected production caller: {callers}"
+    lines = [ln for ln in out.splitlines() if "/tests/" not in ln]
+    # The engine module itself, the executor's single method, and one call site.
+    importers = [ln for ln in lines if "import close_accounting" in ln]
+    definitions = [ln for ln in lines if "def account_closed_deals" in ln]
+    call_sites = [ln for ln in lines
+                  if "executor.account_closed_deals(" in ln
+                  or "self.account_closed_deals(" in ln]
+    assert len(importers) == 1, f"more than one importer: {importers}"
+    assert len(definitions) == 1, f"more than one entry point: {definitions}"
+    assert len(call_sites) == 1, f"more than one call site: {call_sites}"
+    assert "main.py" in call_sites[0], call_sites
 
 
 def test_no_duplicate_r_formula_exists():

@@ -353,13 +353,18 @@ def _grep(pattern: str, *paths: Path) -> list:
     return [ln for ln in out.splitlines() if "/tests/" not in ln]
 
 
-def test_no_production_caller_of_the_reader_was_added():
-    """B1 ships INERT. The reader exists and is tested; nothing in production
-    calls it until B2 adds the accounting loop."""
-    callers = [ln for ln in _grep("closed_deals", REPO_ROOT / "live",
-                                  REPO_ROOT / "backend")
-               if "def closed_deals" not in ln]
-    assert callers == [], f"unexpected production caller: {callers}"
+def test_the_reader_has_exactly_one_production_caller():
+    """Successor to B1's "no caller exists" guard.
+
+    B1 shipped inert; B3 activated accounting, so the invariant moves from
+    ABSENCE to SINGULARITY. The gateway reader may be invoked from exactly one
+    place — the executor's single accounting entry point — because a second
+    caller would mean a second, unsynchronised history read per cycle.
+    """
+    callers = [ln for ln in _grep("self.gateway.closed_deals(", REPO_ROOT / "live",
+                                  REPO_ROOT / "backend")]
+    assert len(callers) == 1, f"expected one caller, found: {callers}"
+    assert "executor.py" in callers[0], callers
 
 
 def test_the_reader_touches_no_state_and_no_accounting():

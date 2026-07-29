@@ -60,6 +60,19 @@ class LiveConfig:
     fixed_risk_lots: float = float(_env("LIVE_FIXED_RISK_LOTS", "0.01"))
     max_open_positions: int = int(_env("LIVE_MAX_OPEN_POSITIONS", "6"))
     daily_loss_limit_r: float = float(_env("LIVE_DAILY_LOSS_LIMIT_R", "5.0"))
+    # B3 — confirmed-close realised-R accounting. DISABLED BY DEFAULT: enabling
+    # it is the single switch that activates the previously dormant daily-loss
+    # rail, so it is a deliberate operator action rather than a deploy side
+    # effect, and disabling it returns the system to its previous known state.
+    close_accounting_enabled: bool = (
+        _env("LIVE_CLOSE_ACCOUNTING_ENABLED", "false").strip().lower()
+        in ("1", "true", "yes"))
+    # The bounded history window each cycle reads. Must comfortably exceed the
+    # longest tolerable outage: a close older than this is never seen, and
+    # therefore never accounted. Generous overlap costs nothing because deal-id
+    # idempotency deduplicates.
+    close_accounting_lookback_hours: float = float(
+        _env("LIVE_CLOSE_ACCOUNTING_LOOKBACK_HOURS", "48"))
     magic_number: int = int(_env("LIVE_MT5_MAGIC", "77001"))
 
     # pre-trade market-condition rails (LX-1 Slice 5) — conservative EURUSD shadow

@@ -123,6 +123,16 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops, liveness=No
             _t = clock()
             drain_result = executor.drain_pending() if executor is not None else None
             stage_timings["drain_s"] = round(clock() - _t, 6)
+            # B3: account confirmed broker closes BEFORE this cycle evaluates any
+            # new OPEN. Ordering matters — a loss realised at 09:00 must be able
+            # to block a 09:15 entry in the SAME cycle, which it cannot do if
+            # accounting runs after the rails. Inert unless explicitly enabled,
+            # and it never raises into the cycle: bookkeeping about events that
+            # already happened must not stop the executor managing live risk.
+            _t = clock()
+            accounting_result = (executor.account_closed_deals()
+                                 if executor is not None else None)
+            stage_timings["accounting_s"] = round(clock() - _t, 6)
             if drain_result and (drain_result.get("frozen") or drain_result.get("drained")):
                 executor_result = drain_result
             if drain_result and drain_result.get("frozen"):

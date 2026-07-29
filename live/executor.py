@@ -243,6 +243,65 @@ class Executor:
         det = matches[0].get("detail") or {}
         return (det.get("filled_volume"), matches[0].get("status"), False)
 
+    # ── B3: confirmed-close accounting (the ONE integration point) ───────────
+
+    def account_closed_deals(self, now_utc=None) -> dict:
+        """Account confirmed broker closes into durable realised R.
+
+        THE single production entry point for accounting. It is called once per
+        cycle and deliberately does nothing else: no accounting logic is spread
+        through the rest of the executor.
+
+        DISABLED BY DEFAULT. With the flag off this returns immediately and
+        touches no state, so existing production behaviour is unchanged.
+
+        NEVER RAISES INTO THE CYCLE. Accounting is bookkeeping about events that
+        have already happened; it must not be able to stop the executor from
+        managing live positions. An unavailable history read, a malformed deal or
+        a failed save all leave the cycle running and are reported in the return
+        value instead.
+        """
+        if not getattr(self.config, "close_accounting_enabled", False):
+            return {"enabled": False, "committed": 0}
+
+        from datetime import timedelta
+
+        from live import close_accounting
+
+        now = now_utc or datetime.now(timezone.utc)
+        window_from = now - timedelta(
+            hours=float(getattr(self.config, "close_accounting_lookback_hours", 48)))
+        try:
+            read = self.gateway.closed_deals(window_from, now)
+        except Exception as exc:                                # noqa: BLE001
+            return {"enabled": True, "committed": 0,
+                    "error": f"read failed: {type(exc).__name__}"}
+
+        if not read.performed:
+            # A failed read is NOT a quiet market. Skip the cycle and retry; the
+            # bounded window means nothing is lost as long as the outage is
+            # shorter than the configured lookback.
+            return {"enabled": True, "committed": 0, "read": read.outcome.value,
+                    "detail": read.detail}
+
+        records = close_accounting.account_deals(read.deals, self.state.data["ledger"])
+        postings = [(r.deal_id, r.utc_date, r.realised_r)
+                    for r in records
+                    if r.accountable and not self.state.is_accounted(r.deal_id)]
+        try:
+            committed = self.state.commit_accounting(postings)
+        except Exception as exc:                                # noqa: BLE001
+            # `commit_accounting` restored the prior in-memory values, so nothing
+            # was durably or transiently committed. The deals stay in the window
+            # and are retried next cycle.
+            return {"enabled": True, "committed": 0, "read": read.outcome.value,
+                    "error": f"commit failed: {type(exc).__name__}"}
+
+        summary = close_accounting.summarise(records)
+        return {"enabled": True, "committed": committed,
+                "read": read.outcome.value, "counts": summary["counts"],
+                "rejected": len(read.rejected)}
+
     # ── apply ────────────────────────────────────────────────────────────────
     def apply(self, intents: list, today: str | None = None) -> dict:
         today = today or datetime.now(timezone.utc).strftime("%Y-%m-%d")
