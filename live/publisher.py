@@ -35,6 +35,17 @@ class CTPublisher:
             "engine_version": engine_version,
             "mode": mode,
             "at": datetime.now(timezone.utc).isoformat(),
+            # Freshness hint for the Control Tower. The server owns the verdict, but
+            # only the node knows how long its NEXT publish is likely to take, and
+            # that gap differs by two orders of magnitude:
+            #   caught-up idle -> `no_new_bar` cycles finish in ~1s, then a 10s sleep
+            #   recompute      -> a full replay was measured at ~1119s warm median
+            # Reported as the same vocabulary `live.status` and `deploy_check` already
+            # use, so the server can apply the existing 900s/120s policy unchanged. A
+            # `cycle_running` node still older than 900s is genuinely stalled (it has
+            # overrun the M15 bar budget) — that is the intended reading, not a false
+            # alarm. Older nodes omit this field; the server falls back conservatively.
+            "phase": "idle" if runner_result.get("status") == "no_new_bar" else "cycle_running",
             "runner": {
                 "status": runner_result.get("status"),
                 "boundary": runner_result.get("boundary"),
