@@ -113,7 +113,19 @@ export function MarketDataView() {
                   {rtHealth?.marketData?.provider ?? 'unknown'}
                 </span>
                 <ProvenanceChip
-                  provenance={rtHealth?.marketData?.provider === 'fixture' ? 'fixture' : 'market-feed'}
+                  provenance={
+                    // Data governance: only a real feed may claim MARKET DATA.
+                    // `mock_live` (deterministic pseudo-live) and `replay` are
+                    // Control-Tower-generated → SYNTHESIZED; an unknown/absent
+                    // provider is UNAVAILABLE, never silently "market data".
+                    rtHealth?.marketData?.provider === 'mt5'
+                      ? 'market-feed'
+                      : rtHealth?.marketData?.provider === 'fixture'
+                      ? 'fixture'
+                      : rtHealth?.marketData?.provider
+                      ? 'synthesized'
+                      : 'unavailable'
+                  }
                 />
               </span>
             </li>
