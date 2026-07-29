@@ -250,6 +250,116 @@ class MT5Gateway:
                              trade_expert=trade_expert)
 
     # ── account state ────────────────────────────────────────────────────────
+    def closed_deals(self, since_utc, until_utc) -> "deal_records.DealReadResult":
+        """Read this instance's TRADE deals over a bounded UTC window (B1).
+
+        The runner has never had a history reader: `snapshot()` describes only
+        OPEN entities, so a closed position simply vanishes and its realised
+        outcome is invisible. This is the narrow read that makes confirmed-close
+        evidence available — and nothing more. It resolves no intent, computes no
+        R and writes no state; Milestone B2 owns all of that.
+
+        NON-THROWING, matching this module's other accessors: any hostile or
+        broken SDK response yields UNAVAILABLE rather than propagating.
+
+        THE DISTINCTION THIS METHOD EXISTS TO PRESERVE: `history_deals_get`
+        signals failure by returning `None`. The idiom `... or []` turns that
+        into an empty successful read — a failed read reported as a quiet market.
+        Here `None`, a disconnected terminal and an exception are all UNAVAILABLE,
+        and no value of `deals` can ever mean "the read failed".
+
+        Filtering is to THIS instance: configured magic number, configured broker
+        symbol, and trade deal types only (balance/credit/correction records are
+        excluded, not rejected). BOTH `in` and `out` deals are returned, because
+        B2 needs entry deals to derive the total entry quantity that forms the
+        denominator of R.
+        """
+        from live import deal_records
+
+        if not isinstance(since_utc, datetime) or not isinstance(until_utc, datetime):
+            return deal_records.DealReadResult(
+                outcome=deal_records.DealReadOutcome.UNAVAILABLE,
+                detail="window bounds must be datetimes")
+        if since_utc.tzinfo is None or until_utc.tzinfo is None:
+            # A naive bound would be interpreted in local time by the SDK and
+            # could silently shift which day a deal is attributed to.
+            return deal_records.DealReadResult(
+                outcome=deal_records.DealReadOutcome.UNAVAILABLE,
+                detail="window bounds must be timezone-aware UTC")
+        if since_utc > until_utc:
+            return deal_records.DealReadResult(
+                outcome=deal_records.DealReadOutcome.UNAVAILABLE,
+                detail="window start is after window end",
+                window_from=since_utc, window_to=until_utc)
+        if not self._connected:
+            return deal_records.DealReadResult(
+                outcome=deal_records.DealReadOutcome.UNAVAILABLE,
+                detail="gateway not connected",
+                window_from=since_utc, window_to=until_utc)
+
+        history = getattr(self.sdk, "history_deals_get", None)
+        if not callable(history):
+            # A terminal build without deal history is UNAVAILABLE, not empty.
+            return deal_records.DealReadResult(
+                outcome=deal_records.DealReadOutcome.UNAVAILABLE,
+                detail="terminal exposes no deal history",
+                window_from=since_utc, window_to=until_utc)
+        try:
+            raw_deals = history(since_utc, until_utc)
+        except Exception as exc:                                # noqa: BLE001
+            return deal_records.DealReadResult(
+                outcome=deal_records.DealReadOutcome.UNAVAILABLE,
+                detail=f"{type(exc).__name__}",
+                window_from=since_utc, window_to=until_utc)
+        if raw_deals is None:
+            return deal_records.DealReadResult(
+                outcome=deal_records.DealReadOutcome.UNAVAILABLE,
+                detail="history read failed (None)",
+                window_from=since_utc, window_to=until_utc)
+
+        deals: list = []
+        rejected: list = []
+        try:
+            for raw in raw_deals:
+                # Per-record isolation: a single hostile object must not discard
+                # the whole window. Only a failure to WALK the collection is
+                # fatal (handled below); a failure to read one record is a
+                # rejection, surfaced rather than dropped.
+                try:
+                    if not deal_records.is_trade_deal(raw):
+                        continue                # balance/credit: not our subject
+                    if getattr(raw, "magic", None) != self.config.magic_number:
+                        continue                # another EA or a hand-placed trade
+                    if str(getattr(raw, "symbol", "") or "") != self.config.broker_symbol:
+                        continue
+                except Exception as exc:                        # noqa: BLE001
+                    rejected.append(deal_records.RejectedDeal(
+                        reason=deal_records.REJECT_UNREADABLE,
+                        detail=type(exc).__name__))
+                    continue
+                record, reject = deal_records.normalize_deal(raw)
+                (deals if record is not None else rejected).append(
+                    record if record is not None else reject)
+        except Exception as exc:                                # noqa: BLE001
+            # The collection itself was not iterable/stable: the read cannot be
+            # trusted as a whole, so it is UNAVAILABLE rather than partial.
+            return deal_records.DealReadResult(
+                outcome=deal_records.DealReadOutcome.UNAVAILABLE,
+                detail=f"{type(exc).__name__}",
+                window_from=since_utc, window_to=until_utc)
+
+        # Deterministic order: (execution time, deal id). `history_deals_get` is
+        # unordered and nothing documents its order, so an ordering imposed here
+        # is what makes repeated reads comparable.
+        deals.sort(key=lambda d: (d.execution_time_utc, d.deal_id))
+        rejected.sort(key=lambda r: (r.reason, r.raw_ticket or ""))
+        outcome = (deal_records.DealReadOutcome.MALFORMED if rejected
+                   else deal_records.DealReadOutcome.OK)
+        return deal_records.DealReadResult(
+            outcome=outcome, deals=tuple(deals), rejected=tuple(rejected),
+            detail=(f"{len(rejected)} unusable trade deal(s)" if rejected else None),
+            window_from=since_utc, window_to=until_utc)
+
     def snapshot(self) -> tuple[bool, dict | str]:
         if not self._connected:
             return False, "not connected"

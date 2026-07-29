@@ -457,15 +457,24 @@ def test_live_does_not_import_the_backend():
     assert out.strip() == "", f"live/ imports backend: {out}"
 
 
-def test_milestone_a_adds_no_broker_history_reader():
-    """Milestone B owns the reader. Its absence is what keeps the rail dormant,
-    so this asserts the boundary rather than trusting the commit message."""
+def test_the_sdk_history_call_is_confined_to_the_gateway_layer():
+    """Successor to MS-A's "no reader exists" guard.
+
+    MS-A asserted the absence of a history reader, because its absence was what
+    kept the rail dormant. B1 deliberately added that reader, so the invariant
+    moves from EXISTENCE to LOCATION: the raw SDK history call may appear only
+    behind the gateway boundary, never in the executor, state, safety or
+    accounting layers. That is the constraint worth keeping — the original guard
+    had done its job and would otherwise have to be deleted outright.
+    """
     import subprocess
     out = subprocess.run(
-        ["grep", "-rn", "history_deals_get", "--include=*.py",
+        ["grep", "-rln", "history_deals_get", "--include=*.py",
          str(REPO_ROOT / "live")],
         capture_output=True, text=True).stdout
-    assert out.strip() == "", f"a history reader appeared in live/: {out}"
+    files = {Path(line).name for line in out.splitlines() if line.strip()}
+    assert files <= {"mt5_gateway.py", "deal_records.py"}, (
+        f"the SDK history call escaped the gateway layer: {sorted(files)}")
 
 
 def test_no_fixture_funded_rules_or_timezone_defaults_entered_the_live_path():
