@@ -346,8 +346,10 @@ def test_no_durable_state_schema_change(tmp_path):
     original strictness (exact set equality), so any FURTHER key still fails.
 
     B3 then added `accounted_deal_ids` — the deal-id idempotency store, the one
-    structure that makes confirmed-close accounting exactly-once. Also approved,
-    also pinned here.
+    structure that makes confirmed-close accounting exactly-once. The final
+    milestone added `accounting_telemetry`, which is DIAGNOSTICS ONLY: it is
+    never an input to a decision, so losing it cannot affect correctness. All
+    approved, all pinned here with the original exact-set strictness.
     """
     cfg, r, _ = _primed(tmp_path)
     r.run_once()                                          # fast skip
@@ -355,7 +357,7 @@ def test_no_durable_state_schema_change(tmp_path):
     assert set(raw.keys()) == {"last_boundary", "last_recomputed_input_revision",
                                "prev_frame_hash", "prev_frame_file", "ledger",
                                "mirror", "realized_r_by_date", "accounted_deal_ids",
-                               "updated_at"}
+                               "accounting_telemetry", "updated_at"}
     assert "daily" not in raw          # the legacy bucket is gone, not shadowed
 
 

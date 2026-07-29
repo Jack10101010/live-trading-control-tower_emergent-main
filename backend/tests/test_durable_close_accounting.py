@@ -118,7 +118,7 @@ def test_the_flag_off_touches_no_state_and_reads_no_history(tmp_path):
     gw = FakeGateway(ok([deal()]))
     ex = executor(tmp_path, gw, enabled=False)
     result = ex.account_closed_deals(BASE)
-    assert result == {"enabled": False, "committed": 0}
+    assert result == {"enabled": False, "committed": 0, "mode": "off"}
     assert gw.calls == []                                   # not even a read
     assert ex.state.realized_r_by_date() == {}
     assert ex.state.accounted_deal_ids() == {}
@@ -239,25 +239,35 @@ def test_a_partial_batch_failure_commits_nothing_from_that_batch(tmp_path,
 
 
 def test_one_accounting_event_is_one_durable_replacement(tmp_path, monkeypatch):
-    """Not one save per deal: a batch is a single state replacement."""
+    """Not one save per deal: the accounting TRANSACTION is a single state
+    replacement, asserted on the transaction itself.
+
+    The executor may save again afterwards to persist telemetry. That is a
+    separate, clearly-labelled diagnostics write and is deliberately outside the
+    transaction — counting total cycle saves would conflate the two.
+    """
     saves = {"n": 0}
-    ex = executor(tmp_path, FakeGateway(ok([deal("1", -1.0), deal("2", -2.0),
-                                            deal("3", -1.0)])))
+    ex = executor(tmp_path, FakeGateway(ok([])))
     real_save = ex.state.save
 
     def counting():
         saves["n"] += 1
         real_save()
     monkeypatch.setattr(ex.state, "save", counting)
-    assert ex.account_closed_deals(BASE)["committed"] == 3
+    seed_ledger(ex.state)
+    assert ex.state.commit_accounting([
+        ("1", TODAY, -1.0, BASE.isoformat(), POSITION),
+        ("2", TODAY, -2.0, BASE.isoformat(), POSITION),
+        ("3", TODAY, -1.0, BASE.isoformat(), POSITION)]) == 3
     assert saves["n"] == 1
 
 
-def test_nothing_is_saved_when_there_is_nothing_to_commit(tmp_path, monkeypatch):
+def test_the_transaction_saves_nothing_when_there_is_nothing_to_commit(tmp_path,
+                                                                        monkeypatch):
     saves = {"n": 0}
     ex = executor(tmp_path, FakeGateway(ok([])))
     monkeypatch.setattr(ex.state, "save", lambda: saves.__setitem__("n", saves["n"] + 1))
-    assert ex.account_closed_deals(BASE)["committed"] == 0
+    assert ex.state.commit_accounting([]) == 0
     assert saves["n"] == 0
 
 
@@ -431,8 +441,11 @@ def test_only_the_transaction_persists_accounting_state():
     assert "commit_accounting" in source
     accounting = source[source.index("def account_closed_deals"):
                         source.index("def apply")]
-    assert ".save()" not in accounting, "accounting saves outside the transaction"
     assert "add_realized_r" not in accounting, "accounting posts outside the transaction"
+    # The only save in the entry point is the telemetry write, which is
+    # diagnostics and explicitly not accounting state.
+    assert accounting.count("self.state.save()") <= 1
+    assert "telemetry is diagnostics" in accounting
 
 
 def test_the_r_formula_is_still_defined_exactly_once():

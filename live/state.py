@@ -50,6 +50,11 @@ REALIZED_R_KEY = "realized_r_by_date"
 #: this structure, and storing it now avoids a migration later for no extra cost.
 ACCOUNTED_KEY = "accounted_deal_ids"
 
+#: Durable accounting DIAGNOSTICS. Deliberately outside the accounting
+#: transaction: it is an observation of what happened, never an input to any
+#: decision, so losing it can never affect correctness.
+TELEMETRY_KEY = "accounting_telemetry"
+
 #: Detail keys carried across every ledger lifecycle transition.
 #:
 #: The test for membership is: could a LATER lifecycle state reproduce this fact?
@@ -206,6 +211,8 @@ def _migrate(data: dict) -> dict:
     data[REALIZED_R_KEY] = buckets
     accounted = data.get(ACCOUNTED_KEY)
     data[ACCOUNTED_KEY] = accounted if isinstance(accounted, dict) else {}
+    telemetry = data.get(TELEMETRY_KEY)
+    data[TELEMETRY_KEY] = telemetry if isinstance(telemetry, dict) else {}
     return data
 
 
@@ -222,7 +229,7 @@ class RunnerState:
         return {"last_boundary": None, "last_recomputed_input_revision": None,
                 "prev_frame_hash": "", "prev_frame_file": None,
                 "ledger": {}, "mirror": {}, REALIZED_R_KEY: {},
-                ACCOUNTED_KEY: {}, "updated_at": None}
+                ACCOUNTED_KEY: {}, TELEMETRY_KEY: {}, "updated_at": None}
 
     def save(self) -> None:
         self.data["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -373,6 +380,48 @@ class RunnerState:
         return self.data.setdefault(REALIZED_R_KEY, {})
 
     # ── B3: confirmed-close accounting ───────────────────────────────────────
+
+    # ── accounting telemetry (diagnostics only) ──────────────────────────────
+
+    def accounting_telemetry(self) -> dict:
+        """A copy of the durable accounting diagnostics."""
+        return dict(self.data.setdefault(TELEMETRY_KEY, {}))
+
+    def record_accounting_telemetry(self, fields: dict, *, counters=()) -> dict:
+        """Merge telemetry in memory. Cumulative counters accumulate; the rest
+        are point-in-time replacements.
+
+        NOT part of the accounting transaction, by design: telemetry is an
+        observation, never an input to a decision, so a lost update can never
+        affect correctness. It is persisted by whatever save the cycle performs.
+        """
+        current = self.data.setdefault(TELEMETRY_KEY, {})
+        for name in counters:
+            current[name] = int(current.get(name, 0)) + int(fields.get(name, 0) or 0)
+        for key, value in fields.items():
+            if key not in counters:
+                current[key] = value
+        return current
+
+    def retention_stats(self, *, now=None) -> dict:
+        """Live size and age of the retained state.
+
+        `oldest_ledger_age_hours` is the signal that pruning has stopped making
+        progress: under a healthy configuration it oscillates below roughly
+        2 x LOOKBACK, and a value that climbs without bound means entries are
+        accumulating — exactly the B4 defect, now observable rather than silent.
+        """
+        clock = now or datetime.now(timezone.utc)
+        ages = []
+        for record in self.data.get("ledger", {}).values():
+            if isinstance(record, dict):
+                written = _parse_instant(record.get("at"))
+                if written is not None:
+                    ages.append((clock - written).total_seconds() / 3600.0)
+        return {"ledger_entries": len(self.data.get("ledger", {})),
+                "accounted_ids": len(self.data.get(ACCOUNTED_KEY, {})),
+                "oldest_ledger_age_hours": (round(max(ages), 3) if ages else None),
+                "realized_r_days": len(self.data.get(REALIZED_R_KEY, {}))}
 
     def _stamp_accounted(self, position_id, executed_at, undo: list) -> None:
         """Record on the owning ledger entry that a close of it was accounted.

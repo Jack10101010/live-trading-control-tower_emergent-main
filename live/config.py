@@ -73,6 +73,14 @@ class LiveConfig:
     # idempotency deduplicates.
     close_accounting_lookback_hours: float = float(
         _env("LIVE_CLOSE_ACCOUNTING_LOOKBACK_HOURS", "48"))
+    # SHADOW MODE, default TRUE. Enabling accounting therefore never enforces on
+    # the first deploy: the pipeline runs, posts durably and reports what the
+    # daily-loss rail WOULD have decided, while trading continues unchanged.
+    # Promotion is a second, separate configuration change — you cannot reach
+    # enforcement by accident.
+    close_accounting_shadow: bool = (
+        _env("LIVE_CLOSE_ACCOUNTING_SHADOW", "true").strip().lower()
+        not in ("0", "false", "no"))
     magic_number: int = int(_env("LIVE_MT5_MAGIC", "77001"))
 
     # pre-trade market-condition rails (LX-1 Slice 5) — conservative EURUSD shadow

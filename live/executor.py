@@ -262,27 +262,60 @@ class Executor:
         value instead.
         """
         if not getattr(self.config, "close_accounting_enabled", False):
-            return {"enabled": False, "committed": 0}
+            return {"enabled": False, "committed": 0, "mode": "off"}
 
         from datetime import timedelta
 
         from live import close_accounting
 
         now = now_utc or datetime.now(timezone.utc)
+        stamp = now.isoformat()
+        shadow = bool(getattr(self.config, "close_accounting_shadow", True))
+        mode = "shadow" if shadow else "enforce"
+
+        def report(**fields):
+            """One reporting path for every outcome, so no branch can return
+            without recording what happened. Silence is the failure mode
+            telemetry exists to prevent."""
+            counters = ("cycles", "deals_processed", "deals_accounted",
+                        "duplicates_ignored", "unresolved", "unaccountable",
+                        "quarantined", "ignored", "malformed", "prune_runs",
+                        "ledger_removed", "accounted_removed", "errors")
+            payload = {"last_accounting_attempt": stamp, "mode": mode,
+                       "shadow": shadow, "cycles": 1}
+            payload.update(fields)
+            self.state.record_accounting_telemetry(payload, counters=counters)
+            if fields.get("last_accounting_error"):
+                fields = {**fields, "error": fields["last_accounting_error"]}
+            self.state.record_accounting_telemetry(
+                self.state.retention_stats(now=now), counters=())
+            try:
+                self.state.save()          # telemetry is diagnostics; a failure
+            except Exception:              # noqa: BLE001  here must not matter
+                pass
+            return {"enabled": True, "mode": mode, **fields}
         window_from = now - timedelta(
             hours=float(getattr(self.config, "close_accounting_lookback_hours", 48)))
         try:
             read = self.gateway.closed_deals(window_from, now)
         except Exception as exc:                                # noqa: BLE001
-            return {"enabled": True, "committed": 0,
-                    "error": f"read failed: {type(exc).__name__}"}
+            return report(committed=0, errors=1,
+                          last_accounting_error=f"read failed: {type(exc).__name__}",
+                          last_error_at=stamp)
 
+        self.state.record_accounting_telemetry(
+            {"last_history_read_attempt": stamp,
+             "last_read_outcome": read.outcome.value}, counters=())
         if not read.performed:
             # A failed read is NOT a quiet market. Skip the cycle and retry; the
             # bounded window means nothing is lost as long as the outage is
             # shorter than the configured lookback.
-            return {"enabled": True, "committed": 0, "read": read.outcome.value,
-                    "detail": read.detail}
+            return report(committed=0, read=read.outcome.value,
+                          detail=read.detail, errors=1,
+                          last_accounting_error=f"history {read.outcome.value}",
+                          last_error_at=stamp)
+        self.state.record_accounting_telemetry(
+            {"last_successful_history_read": stamp}, counters=())
 
         records = close_accounting.account_deals(read.deals, self.state.data["ledger"])
         # `account_deals` maps 1:1 over the deals, so the pairing is positional
@@ -298,8 +331,9 @@ class Executor:
             # `commit_accounting` restored the prior in-memory values, so nothing
             # was durably or transiently committed. The deals stay in the window
             # and are retried next cycle.
-            return {"enabled": True, "committed": 0, "read": read.outcome.value,
-                    "error": f"commit failed: {type(exc).__name__}"}
+            return report(committed=0, read=read.outcome.value, errors=1,
+                          last_accounting_error=f"commit failed: {type(exc).__name__}",
+                          last_error_at=stamp)
 
         # B4 — retention runs AFTER the commit, never before. The accounted map
         # is the durable record of committed accounting, so pruning judged on it
@@ -319,9 +353,24 @@ class Executor:
             pruned = {"error": type(exc).__name__}
 
         summary = close_accounting.summarise(records)
-        return {"enabled": True, "committed": committed,
-                "read": read.outcome.value, "counts": summary["counts"],
-                "rejected": len(read.rejected), "pruned": pruned}
+        counts = summary["counts"]
+        return report(
+            committed=committed, read=read.outcome.value, counts=counts,
+            rejected=len(read.rejected), pruned=pruned,
+            last_successful_accounting=stamp,
+            deals_processed=len(records),
+            deals_accounted=committed,
+            duplicates_ignored=max(0, counts.get(close_accounting.ACCOUNTABLE, 0)
+                                   - committed),
+            unresolved=counts.get(close_accounting.UNRESOLVED, 0),
+            unaccountable=counts.get(close_accounting.UNACCOUNTABLE, 0),
+            quarantined=counts.get(close_accounting.QUARANTINED, 0),
+            ignored=counts.get(close_accounting.IGNORED, 0),
+            malformed=len(read.rejected),
+            prune_runs=1 if isinstance(pruned, dict) and "error" not in pruned else 0,
+            ledger_removed=(pruned or {}).get("ledger_removed", 0),
+            accounted_removed=(pruned or {}).get("accounted_removed", 0),
+            last_pruning_result=pruned)
 
     # ── apply ────────────────────────────────────────────────────────────────
     def apply(self, intents: list, today: str | None = None) -> dict:
@@ -396,6 +445,25 @@ class Executor:
                 skipped.append(intent.to_dict())
                 continue
             verdict = self.rails.evaluate(intent, SYMBOL, today, market, health)
+            # SHADOW MODE. The rails are NOT duplicated and the execution path is
+            # NOT forked: one evaluation, one verdict. In shadow the
+            # accounting-aware daily-loss outcome is RECORDED and then treated as
+            # allowed, so the operator can compare "what production did" against
+            # "what accounting-aware production would have done" without any live
+            # behaviour change. Only this rail is shadowed — the kill switch,
+            # whitelist, max-open, health and market rails always enforce, because
+            # none of them depends on the newly activated accounting.
+            if (not verdict.allowed and verdict.rail == "daily_loss_limit"
+                    and getattr(self.config, "close_accounting_enabled", False)
+                    and getattr(self.config, "close_accounting_shadow", True)):
+                self.state.record_accounting_telemetry(
+                    {"shadow_blocks_observed": 1,
+                     "last_shadow_block": {"intent": intent.intent_id,
+                                           "rail": verdict.rail,
+                                           "detail": verdict.detail}},
+                    counters=("shadow_blocks_observed",))
+                self.observed["shadow_daily_loss_block"] = verdict.detail
+                verdict = RailVerdict(True, "allowed_shadow", verdict.detail)
             if not verdict.allowed:
                 self.rails.record_block(intent, verdict)
                 blocked.append({**intent.to_dict(), "rail": verdict.rail, "detail": verdict.detail})
