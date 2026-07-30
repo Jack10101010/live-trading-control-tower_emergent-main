@@ -182,7 +182,18 @@ class LiveRunner:
         return boundary
 
     # ── one cycle ────────────────────────────────────────────────────────────
-    def run_once(self, now_utc: datetime | None = None, defer_commit: bool = False) -> dict:
+    def run_once(self, now_utc: datetime | None = None, defer_commit: bool = False,
+                 on_work_start=None) -> dict:
+        """Recompute for the newest closed boundary.
+
+        `on_work_start(boundary_str)` fires once, after this cycle has committed
+        to real work but BEFORE the pipeline runs. It exists because the pipeline
+        is the long pole (~1119s warm median) and the node is otherwise silent
+        for its whole duration: telemetry was published only at the END of a
+        cycle, so a healthy node mid-recompute looked dead to the Control Tower.
+        Deliberately placed after the `no_new_bar` short-circuit so quiet polls
+        stay silent — this fires only when a long phase is genuinely starting.
+        """
         if self._candles_provider is not None:
             candles = self._candles_provider()
         else:
@@ -194,6 +205,9 @@ class LiveRunner:
 
         if self.state.data["last_boundary"] == boundary_str:
             return {"status": "no_new_bar", "boundary": boundary_str}
+
+        if on_work_start is not None:
+            on_work_start(boundary_str)
 
         pipeline = self._pipeline or self.golden_pipeline
         frontier_date = str(boundary.date())

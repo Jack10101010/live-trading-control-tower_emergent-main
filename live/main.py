@@ -69,7 +69,33 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops) -> dict:
         # as the engine was quiet. Broker truth must lead the cycle, not trail it.
         reconcile_report = executor.reconcile()
         bridge_result = bridge.poll_once()
-        runner_result = runner.run_once(defer_commit=True)
+
+        def _announce_recompute(boundary_str: str) -> None:
+            """Tell the Control Tower we are entering a long phase, before we do.
+
+            Publishing only at cycle end left the node silent for the whole
+            recompute, so its last message said `idle` (120s freshness budget)
+            while it worked for ~1119s — the dashboard showed a healthy node as
+            stale. This announcement carries `cycle_running`, which moves the
+            server-side budget to 900s for the duration. Wrapped so a telemetry
+            fault can never break a trading cycle (publish() is already
+            fallback-first; this guards build_payload too).
+            """
+            try:
+                early = publisher.build_payload(
+                    {"status": "recomputing", "boundary": boundary_str,
+                     "trades_rows": None, "intents": [],
+                     "note": "recompute started; telemetry resumes at cycle end"},
+                    None,
+                    engine_version=runner.session.engine_version if runner.session else "n/a",
+                    mode=config.mode)
+                early["bridge"] = bridge_result
+                publisher.publish(early)
+            except Exception as exc:
+                print(f"transition publish failed (continuing): {exc}")
+
+        runner_result = runner.run_once(defer_commit=True,
+                                        on_work_start=_announce_recompute)
         if runner_result.get("status") == "ok" and runner_result.get("intents"):
             executor_result = executor.apply(runner_result["intents"],
                                              report=reconcile_report)
