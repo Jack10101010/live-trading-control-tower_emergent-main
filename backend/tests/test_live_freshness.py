@@ -194,3 +194,19 @@ def test_ingest_still_rejects_payload_without_instance_id():
 def test_ingest_response_contract_unchanged():
     body = client.post("/api/live/ingest", json=payload()).json()
     assert body["ok"] is True and "seq" in body and "deduplicated" in body
+
+
+# ── deploy_check consumes server freshness (does not re-derive it) ────────────
+def test_deploy_check_consumes_server_freshness():
+    """`ct_receives_status` used to pass on identity alone, so a node dead for
+    hours still looked healthy. It must now consume the SERVER's stale verdict,
+    and must not fail merely because an older backend omits the freshness block.
+
+    Verified live against a running backend during integration:
+      PASS ct_receives_status - healthy age 60.112s (limit 120s, phase idle)
+    """
+    src = (Path(__file__).resolve().parents[2] / "live" / "deploy_check.py").read_text()
+    assert 'payload.get("freshness")' in src, "freshness block never read"
+    i = src.index("identity_ok and not fresh.get")      # the verdict itself
+    assert 'fresh.get("stale", True)' in src[i:i + 120], "server stale verdict not consumed"
+    assert "predates freshness" in src, "no backwards-compatible fallback for older backends"

@@ -151,8 +151,23 @@ def runtime(cfg: LiveConfig) -> int:
         url = cfg.ct_base_url.rstrip("/") + "/live/status?instance_id=live-eurusd-golden-001"
         with urllib.request.urlopen(url, timeout=5) as resp:
             payload = json.loads(resp.read())
-        check("ct_receives_status", payload.get("instance_id") == "live-eurusd-golden-001",
-              f"boundary {payload.get('runner', {}).get('boundary')}")
+        # Identity alone is not health: the CT holds the LAST payload forever, so a
+        # node dead for hours still satisfies "the CT has a record for me". Consume
+        # the server-authoritative freshness instead of re-deriving age here — the
+        # backend owns that verdict and computes it from its own clock.
+        identity_ok = payload.get("instance_id") == "live-eurusd-golden-001"
+        fresh = payload.get("freshness")
+        boundary = payload.get("runner", {}).get("boundary")
+        if fresh is None:
+            # Older backend without the freshness contract — do not fail the deploy
+            # on its absence, but say plainly that staleness was not verified.
+            check("ct_receives_status", identity_ok,
+                  f"boundary {boundary} (backend predates freshness; staleness NOT verified)")
+        else:
+            check("ct_receives_status", identity_ok and not fresh.get("stale", True),
+                  f"boundary {boundary} — {fresh.get('state')} "
+                  f"age {fresh.get('age_seconds')}s (limit {fresh.get('stale_limit_seconds')}s, "
+                  f"phase {fresh.get('phase')}), {fresh.get('ingest_count')} ingests")
     except Exception as exc:
         check("ct_receives_status", False,
               f"{type(exc).__name__}: {exc} (publisher falls back to publish_last.json — "
