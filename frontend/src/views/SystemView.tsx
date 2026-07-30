@@ -14,7 +14,7 @@ import { RecommendationPanel } from '@/components/domain/RecommendationPanel';
 import { useFleet, usePackages, useFeatureFlags, useRuntimeHealth, useBrokerReconciliation, useStrategyEvaluation, useSchedulerStatus, useMarketSnapshot, useRiskLimits, useActivePackage, useBackendHealth, useOperator } from '@/hooks/useRepository';
 import { api, QK } from '@/lib/api';
 import { queryClient } from '@/lib/queryClient';
-import { Panel } from '@/components/structures/Panel';
+import { Panel, ProvenanceFrame } from '@/components/structures/Panel';
 import { Badge, PackageVersionChip, TimestampUTC, KeyValueGrid, HealthDot, ProvenanceChip } from '@/components/primitives';
 import { fmtHash } from '@/lib/format';
 
@@ -45,6 +45,11 @@ export function SystemView() {
 
   // UI-0: real runtime-health values (or `undefined` = unknown). Never fabricated.
   const rt = runtime;
+  // Card-level provenance: the operational projection, runtime loop and ledger
+  // are REAL pipelines, but their content is adapter-fed. With the mock adapter
+  // active they render mock-synthetic values and must not claim LIVE.
+  const adapterProvenance =
+    rt?.broker?.kind && rt.broker.kind !== 'mock' ? ('live' as const) : ('synthetic' as const);
   const componentVersions: Array<[string, unknown]> = Object.entries(
     (activePackage?.componentVersions ?? {}) as Record<string, unknown>
   );
@@ -114,12 +119,16 @@ export function SystemView() {
       {/* LIVE-4A — the operational dashboard. ONE projection query feeds every
           card; no card re-derives operational truth. Placed first: it is the
           canonical operational view of the system. */}
-      <OperationalDashboard />
+      <ProvenanceFrame provenance={adapterProvenance}>
+        <OperationalDashboard />
+      </ProvenanceFrame>
 
       {/* LIVE-5A — the live runtime: one backend loop owns every broker and
           market read, and this panel renders the snapshot it published. Placed
           first because it is the only card that reports the LIVE market. */}
-      <LiveRuntimePanel />
+      <ProvenanceFrame provenance={adapterProvenance}>
+        <LiveRuntimePanel />
+      </ProvenanceFrame>
 
       {/* LIVE-4B — the canonical Scenario domain: the parent object of every
           recommendation, intent, order, position and future ledger entry. */}
@@ -133,9 +142,13 @@ export function SystemView() {
           The operator id is ASSERTED, not authenticated: this system has no
           per-operator identity (the auth boundary is one shared token), so
           every decision records how much its identity claim was worth. */}
-      <RecommendationPanel operatorId={operatorId} />
+      <ProvenanceFrame provenance="live">
+        <RecommendationPanel operatorId={operatorId} />
+      </ProvenanceFrame>
 
-      <TradeLedgerPanel />
+      <ProvenanceFrame provenance={adapterProvenance}>
+        <TradeLedgerPanel />
+      </ProvenanceFrame>
 
       {/* UI-1 — the live relationship between this Control Tower, the execution
           node and MT5. Placed first: it is the only thing on this page that
@@ -147,7 +160,9 @@ export function SystemView() {
         {/* UI-9 — security configuration status. Value-free by construction: the
             backend reports configured/missing/invalid and never a value. */}
         <div className="col-span-12 lg:col-span-6">
-          <SecurityBaselinePanel />
+          <ProvenanceFrame provenance="live">
+            <SecurityBaselinePanel />
+          </ProvenanceFrame>
         </div>
         {/* UI-17 — read-only operator controls. Three read-only diagnostics only;
             no execution control, disabled by default. */}
@@ -178,6 +193,7 @@ export function SystemView() {
             carry no health claim — the Control Tower cannot observe engine health
             until a node publishes it. */}
         <Panel
+          provenance="fixture"
           title={
             <span className="flex items-center gap-2">
               Engine Components
@@ -206,7 +222,7 @@ export function SystemView() {
           </div>
         </Panel>
 
-        <Panel title={<>Feature Flags <span className="text-text-muted mono ml-1">({Object.keys(flags).length})</span></>} className="col-span-4">
+        <Panel provenance="placeholder" title={<>Feature Flags <span className="text-text-muted mono ml-1">({Object.keys(flags).length})</span></>} className="col-span-4">
           <ul className="space-y-1.5 text-xs">
             {Object.entries(flags).map(([k, v]) => (
               <li key={k} className="flex items-center gap-2">
@@ -226,7 +242,7 @@ export function SystemView() {
         {/* UI-0: this panel previously asserted a document-store connection this
             stack has no client for, plus a fixed feed-lag figure. Rows now come from
             the real runtime-health contract, or state plainly that nothing is wired. */}
-        <Panel title="Storage & Feeds" className="col-span-4">
+        <Panel provenance="live" title="Storage & Feeds" className="col-span-4">
           <ul className="space-y-1.5 text-xs" data-testid="storage-feeds">
             <li className="flex items-center gap-2">
               <HealthDot state={rt?.runtimeDbHealthy ? 'ok' : 'critical'} />
@@ -271,6 +287,7 @@ export function SystemView() {
       </div>
 
       <Panel
+        provenance="fixture"
         title={
           <>
             Runtime Health <span className="text-text-muted mono ml-1">runtime layer · not broker</span>
@@ -721,7 +738,7 @@ export function SystemView() {
         </div>
       </Panel>
 
-      <Panel title={<>Deployments & Manifests <span className="text-text-muted mono ml-1">({deployments.length})</span></>}>
+      <Panel provenance="fixture" title={<>Deployments & Manifests <span className="text-text-muted mono ml-1">({deployments.length})</span></>}>
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
           {deployments.map((d) => (
             <div
@@ -749,7 +766,7 @@ export function SystemView() {
         </div>
       </Panel>
 
-      <Panel title="Packages">
+      <Panel provenance="fixture" title="Packages">
         <ul className="space-y-2">
           {packages.map((pkg) => (
             <li
@@ -769,7 +786,7 @@ export function SystemView() {
         </ul>
       </Panel>
 
-      <Panel title="Brokers" dense>
+      <Panel provenance="fixture" title="Brokers" dense>
         <ul className="space-y-1.5 text-xs">
           {brokers.map((b) => (
             <li key={b.brokerId} className="flex items-center gap-2">

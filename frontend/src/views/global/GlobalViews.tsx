@@ -16,6 +16,7 @@ import {
 } from '@/hooks/useRepository';
 import { useShellStore } from '@/store/shellStore';
 import { Panel } from '@/components/structures/Panel';
+import type { PanelProvenance } from '@/lib/cardProvenance';
 import {
   WorkspacePage,
   ToolbarLabel,
@@ -47,6 +48,7 @@ import type { Deployment, Package } from '@/types/domain';
 import { fmtHash, fmtPercent, fmtProbability } from '@/lib/format';
 import { NavLink } from 'react-router-dom';
 import { cn } from '@/lib/utils';
+import { candleCardProvenance } from '@/lib/cardProvenance';
 import {
   Radio,
   Cpu,
@@ -93,7 +95,7 @@ export function MarketDataView() {
       }
     >
       <div className="grid grid-cols-12 gap-4">
-        <Panel title={`${pair} · Live Feed`} className="col-span-12" bodyClassName="p-0">
+        <Panel provenance={candleCardProvenance(rtHealth?.marketData?.provider)} title={`${pair} · Live Feed`} className="col-span-12" bodyClassName="p-0">
           <FeatureGate flag="charts">
             <ChartWorkspace instrument={pair} mode="live" resizable initialHeight={460} />
           </FeatureGate>
@@ -104,7 +106,7 @@ export function MarketDataView() {
             the Control Tower cannot observe. The bar feed now reports the real
             provider; everything else states plainly that it is not wired. Genuine
             chart-feed freshness lives in ChartDataStatusStrip above. */}
-        <Panel title="Feed Health" className="col-span-4">
+        <Panel provenance="mixed" title="Feed Health" className="col-span-4">
           <ul className="space-y-2 text-xs" data-testid="feed-health">
             <li className="flex items-center gap-2">
               <span className="text-text">Aggregated bar feed</span>
@@ -143,7 +145,7 @@ export function MarketDataView() {
           </ul>
         </Panel>
 
-        <Panel title="Market State (Provenance)" className="col-span-4">
+        <Panel provenance="fixture" title="Market State (Provenance)" className="col-span-4">
           {ms ? (
             <div className="space-y-2">
               <MarketStateBadge state={ms.state} confidence={ms.confidence} />
@@ -161,7 +163,7 @@ export function MarketDataView() {
           )}
         </Panel>
 
-        <Panel title="Latency histogram (24h)" className="col-span-4" bodyClassName="p-3">
+        <Panel provenance="placeholder" title="Latency histogram (24h)" className="col-span-4" bodyClassName="p-3">
           <PlaceholderChart height={180} variant="bar" />
         </Panel>
 
@@ -169,6 +171,7 @@ export function MarketDataView() {
             "4.2 GB" were literals. Divergence and reconciliation truth belongs to
             the node; none of it is wired, so no number is shown. */}
         <Panel
+          provenance="placeholder"
           title={
             <span className="flex items-center gap-2">
               Snapshot integrity
@@ -261,7 +264,7 @@ export function DeploymentsView() {
           <PLKpi label="Total floating" value={<PLValue value={deployments.reduce((s, d) => s + d.riskState.floatingPl, 0)} />} />
         </div>
 
-        <Panel title="All Deployments" bodyClassName="p-0">
+        <Panel provenance="fixture" title="All Deployments" bodyClassName="p-0">
           <DataTable
             columns={cols}
             data={deployments}
@@ -325,7 +328,7 @@ export function StrategyPackagesView() {
       }
     >
       <div className="grid grid-cols-12 gap-4">
-        <Panel title="Active Package" className="col-span-4">
+        <Panel provenance="fixture" title="Active Package" className="col-span-4">
           <KeyValueGrid
             items={[
               { label: 'Label', value: active.label },
@@ -340,11 +343,11 @@ export function StrategyPackagesView() {
           />
         </Panel>
 
-        <Panel title="Portfolio delta trajectory" className="col-span-8" bodyClassName="p-3">
+        <Panel provenance="fixture" title="Portfolio delta trajectory" className="col-span-8" bodyClassName="p-3">
           <PlaceholderChart height={260} variant="area" />
         </Panel>
 
-        <Panel title="All Packages" className="col-span-12" bodyClassName="p-0">
+        <Panel provenance="fixture" title="All Packages" className="col-span-12" bodyClassName="p-0">
           <DataTable columns={cols} data={packages} rowKey={(p) => `${p.packageId}-${p.version}`} />
         </Panel>
       </div>
@@ -467,6 +470,7 @@ export function SettingsView() {
         <SettingsSection
           className="col-span-12"
           icon={<Cpu size={13} />}
+          provenance="placeholder"   // flags are hardcoded backend constants (rule 19)
           title="Feature Flags"
         >
           <div className="grid grid-cols-3 gap-2">
@@ -512,15 +516,18 @@ function SettingsSection({
   title,
   children,
   className,
+  provenance = 'runtime-config',
 }: {
   icon: React.ReactNode;
   title: string;
   children: React.ReactNode;
   className?: string;
+  provenance?: PanelProvenance;
 }) {
   return (
     <div className={className}>
       <Panel
+        provenance={provenance}
         title={
           <span className="flex items-center gap-2">
             {icon}

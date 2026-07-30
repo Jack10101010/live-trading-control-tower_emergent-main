@@ -4,6 +4,8 @@
  * Each view uses <WorkspacePage> for consistent shell + toolbar + inspector.
  */
 import { useOutletContext } from 'react-router-dom';
+import { useRuntimeHealth } from '@/hooks/useRepository';
+import { candleCardProvenance } from '@/lib/cardProvenance';
 import { useMemo, useState } from 'react';
 import {
   usePairWorkspace,
@@ -66,6 +68,7 @@ export function PairDashboardView() {
   const pair = usePair();
   const ws = usePairWorkspace(pair);
   const ms = useMarketState(pair);
+  const rtHealth = useRuntimeHealth();
   const pkg = useActivePackage();
   const edge = useEdgeMonitor();
   const openInspector = useShellStore((s) => s.openInspector);
@@ -85,7 +88,7 @@ export function PairDashboardView() {
       }
     >
       <div className="grid grid-cols-12 gap-4">
-        <Panel title="Pair Health" className="col-span-12">
+        <Panel provenance="fixture" title="Pair Health" className="col-span-12">
           <div className="grid grid-cols-6 gap-6">
             <MetricStat label="Open trades" value={openTrades.length} emphasise mono />
             <MetricStat label="Deployments" value={ws.deployments.length} emphasise mono />
@@ -114,13 +117,13 @@ export function PairDashboardView() {
 
         {/* Chart — the canonical ChartWorkspace (same rendering path as Replay).
             Resizable: drag the divider under the chart (persisted height). */}
-        <Panel title="Recent Price Action" className="col-span-8" bodyClassName="p-0">
+        <Panel provenance={candleCardProvenance(rtHealth?.marketData?.provider)} title="Recent Price Action" className="col-span-8" bodyClassName="p-0">
           <FeatureGate flag="charts">
             <ChartWorkspace instrument={pair} mode="live" resizable initialHeight={420} />
           </FeatureGate>
         </Panel>
 
-        <Panel title="Market State" className="col-span-4">
+        <Panel provenance="fixture" title="Market State" className="col-span-4">
           {ms ? (
             <div className="space-y-3">
               <MarketStateBadge state={ms.state} confidence={ms.confidence} />
@@ -143,6 +146,7 @@ export function PairDashboardView() {
         </Panel>
 
         <Panel
+          provenance="fixture"
           title="Recent Decisions"
           className="col-span-8"
           actions={<span className="text-2xs text-text-muted mono">last 24h</span>}
@@ -177,7 +181,7 @@ export function PairDashboardView() {
           )}
         </Panel>
 
-        <Panel title="Today's Posture" className="col-span-4">
+        <Panel provenance="fixture" title="Today's Posture" className="col-span-4">
           <div className="space-y-3">
             <div className="flex items-baseline justify-between">
               <span className="text-2xs uppercase tracking-widest text-text-muted">Blocked intents</span>
@@ -302,7 +306,7 @@ export function PairOrdersView() {
         </>
       }
     >
-      <Panel title="Pending Orders" bodyClassName="p-0">
+      <Panel provenance="fixture" title="Pending Orders" bodyClassName="p-0">
         <DataTable
           columns={cols}
           data={pending}
@@ -479,7 +483,7 @@ export function PairTradesView() {
         </>
       }
     >
-      <Panel bodyClassName="p-0" title={`${tab.charAt(0).toUpperCase() + tab.slice(1)} · ${pair}`}>
+      <Panel provenance="fixture" bodyClassName="p-0" title={`${tab.charAt(0).toUpperCase() + tab.slice(1)} · ${pair}`}>
         {tab === 'open' && (
           <DataTable columns={activeCols} data={open} rowKey={(t) => t.tradeId} onRowClick={(t) => openInspector({ kind: 'trade', tradeId: t.tradeId })} emptyMessage="No open trades" searchable searchAccessor={(t) => `${t.scenarioKey} ${t.state} ${t.protectionStatus}`} />
         )}
@@ -511,7 +515,7 @@ export function PairEdgeMonitorView() {
       subtitle="Drift · confidence · research-vs-live · ghost-vs-live · candidates"
     >
       <div className="grid grid-cols-12 gap-4">
-        <Panel title="Live Edge Signals" className="col-span-12">
+        <Panel provenance="fixture" title="Live Edge Signals" className="col-span-12">
           <div className="grid grid-cols-6 gap-6">
             <MetricStat label="Expectancy" value={<RValue value={edge.metrics.expectancyR} />} emphasise />
             <MetricStat label="Win rate" value={<span className="mono">{fmtPercent(edge.metrics.winRate * 100, 1)}</span>} emphasise />
@@ -522,11 +526,11 @@ export function PairEdgeMonitorView() {
           </div>
         </Panel>
 
-        <Panel title="Expectancy trajectory (30d)" className="col-span-8" bodyClassName="p-3">
+        <Panel provenance="fixture" title="Expectancy trajectory (30d)" className="col-span-8" bodyClassName="p-3">
           <PlaceholderChart height={220} variant="area" />
         </Panel>
 
-        <Panel title="Comparisons" className="col-span-4">
+        <Panel provenance="fixture" title="Comparisons" className="col-span-4">
           <KeyValueGrid
             items={[
               { label: 'Research vs Live', value: <span className="mono">{edge.metrics.researchVsLive}</span> },
@@ -539,7 +543,7 @@ export function PairEdgeMonitorView() {
           />
         </Panel>
 
-        <Panel title="Future Candidates" className="col-span-6">
+        <Panel provenance="fixture" title="Future Candidates" className="col-span-6">
           {edge.metrics.futureCandidates.length === 0 ? (
             <div className="text-xs text-text-muted italic">No candidates pending</div>
           ) : (
@@ -554,7 +558,7 @@ export function PairEdgeMonitorView() {
           )}
         </Panel>
 
-        <Panel title="Drift by cohort (heat map)" className="col-span-6" bodyClassName="p-3">
+        <Panel provenance="fixture" title="Drift by cohort (heat map)" className="col-span-6" bodyClassName="p-3">
           <PlaceholderChart height={200} variant="bar" />
         </Panel>
       </div>
@@ -586,7 +590,7 @@ export function PairStrategyHealthView() {
   return (
     <WorkspacePage title={`${pair} · Strategy Health`} subtitle="Coverage · stability · integrity">
       <div className="grid grid-cols-12 gap-4">
-        <Panel title="Health Score" className="col-span-4">
+        <Panel provenance="fixture" title="Health Score" className="col-span-4">
           <div className="flex flex-col items-center gap-3 py-2">
             <div
               className="w-28 h-28 rounded-full border-4 flex items-center justify-center"
@@ -617,7 +621,7 @@ export function PairStrategyHealthView() {
           </div>
         </Panel>
 
-        <Panel title="Cell Coverage" className="col-span-8">
+        <Panel provenance="fixture" title="Cell Coverage" className="col-span-8">
           <div className="grid grid-cols-4 gap-4">
             <MetricStat label="Total cells" value={cells.length} mono emphasise />
             <MetricStat label="Allowed" value={<span className="mono text-[color:var(--positive)]">{allowed}</span>} sub={`${((allowed / cells.length) * 100).toFixed(0)}%`} emphasise />
@@ -626,7 +630,7 @@ export function PairStrategyHealthView() {
           </div>
         </Panel>
 
-        <Panel title="Package Integrity" className="col-span-6">
+        <Panel provenance="fixture" title="Package Integrity" className="col-span-6">
           <KeyValueGrid
             items={[
               { label: 'Version', value: `v${pkg.version}`, mono: true },
@@ -641,7 +645,7 @@ export function PairStrategyHealthView() {
           />
         </Panel>
 
-        <Panel title="Component versions" className="col-span-6">
+        <Panel provenance="fixture" title="Component versions" className="col-span-6">
           <ul className="space-y-1.5 text-xs">
             {Object.entries(pkg.componentVersions).map(([k, v]) => (
               <li key={k} className="flex items-center gap-2">
@@ -653,7 +657,7 @@ export function PairStrategyHealthView() {
           </ul>
         </Panel>
 
-        <Panel title="Warning signals" className="col-span-12">
+        <Panel provenance="fixture" title="Warning signals" className="col-span-12">
           <ComingSoon
             title="Signal detectors coming online in Phase 2"
             description="Drift-per-cohort, sample-decay, correlated-loss, session-regime-mismatch will surface here as sortable/dismissable alerts."
@@ -694,7 +698,7 @@ export function PairActivityTimelineView() {
         </>
       }
     >
-      <Panel bodyClassName="p-0">
+      <Panel provenance="mixed" bodyClassName="p-0">
         <ol className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
           {filtered.length === 0 ? (
             <li className="p-8 text-center text-text-muted italic">No events in this scope</li>

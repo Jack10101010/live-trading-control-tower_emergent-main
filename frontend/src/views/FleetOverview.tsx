@@ -1,7 +1,7 @@
 import { useFleet, useSystemConfidence, useRepository } from '@/hooks/useRepository';
 import { useNavigate } from 'react-router-dom';
 import { useShellStore } from '@/store/shellStore';
-import { Card, Panel, EmptyState } from '@/components/structures/Panel';
+import { Card, Panel, EmptyState, ProvenanceFrame } from '@/components/structures/Panel';
 import {
   Badge,
   HealthDot,
@@ -52,6 +52,7 @@ export function FleetOverview() {
         </header>
 
         <div className="flex-1 overflow-auto px-6 pb-6">
+          <ProvenanceFrame provenance="fixture" className="p-2">
           <div className="grid gap-3 grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3">
             {deployments.map((d) => {
               const account = accounts.find((a) => a.accountId === d.accountId);
@@ -150,6 +151,7 @@ export function FleetOverview() {
               );
             })}
           </div>
+          </ProvenanceFrame>
         </div>
       </div>
 
@@ -159,6 +161,7 @@ export function FleetOverview() {
         style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-elevated)' }}
       >
         <Panel
+          provenance="fixture"
           title={
             <span className="flex items-center gap-2">
               <AlertTriangle size={12} className="text-[color:var(--warning)]" />

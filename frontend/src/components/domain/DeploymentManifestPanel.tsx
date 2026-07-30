@@ -22,6 +22,7 @@ export function DeploymentManifestPanel({
 
   return (
     <Panel
+      provenance="fixture"
       title={
         <span className="flex items-center gap-2">
           <Layers size={13} /> Deployment Manifest

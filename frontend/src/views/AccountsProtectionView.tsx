@@ -25,6 +25,7 @@ export function AccountsProtectionView() {
 
         return (
           <Panel
+            provenance="fixture"
             key={acct.accountId}
             title={
               <span className="flex items-center gap-2">

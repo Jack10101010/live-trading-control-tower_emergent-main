@@ -73,7 +73,7 @@ export function VersionHistoryView() {
   return (
     <FeatureGate flag="versionHistory">
       <WorkspacePage title="Version History" subtitle="Complete lineage of every Strategy Package — status · validation · deployments · hash">
-        <Panel title={<span className="flex items-center gap-2"><GitBranch size={13} /> Packages</span>} dense>
+        <Panel provenance="fixture" title={<span className="flex items-center gap-2"><GitBranch size={13} /> Packages</span>} dense>
           <DataTable columns={columns} data={rows} rowKey={(p) => `${p.packageId}-${p.version}`} />
         </Panel>
         <div className="text-2xs text-text-muted mt-3">
@@ -135,7 +135,7 @@ export function PackageComparisonView() {
         ) : (
           <div className="space-y-4">
             {/* Projected improvement */}
-            <Panel title="Projected impact (B vs A)" dense>
+            <Panel provenance="fixture" title="Projected impact (B vs A)" dense>
               <div className="grid grid-cols-4 gap-3">
                 <MetricStat label="Δ net R" value={<RValue value={cmp.projectedImprovement.netR} />} mono />
                 <MetricStat label="Δ drawdown" value={cmp.projectedImprovement.drawdown.toFixed(2)} mono />
@@ -146,7 +146,7 @@ export function PackageComparisonView() {
             </Panel>
 
             {/* Validation comparison */}
-            <Panel title="Validation" dense>
+            <Panel provenance="fixture" title="Validation" dense>
               <div className="flex items-center gap-3">
                 <span className="text-2xs text-text-muted">A</span>
                 <ValidationBadgeChip badge={cmp.validationComparison.a.badge} />
@@ -157,7 +157,7 @@ export function PackageComparisonView() {
             </Panel>
 
             {/* Component version diffs */}
-            <Panel title={<>Component versions <span className="text-text-muted mono ml-1">({cmp.componentVersionDiffs.length} changed)</span></>} dense>
+            <Panel provenance="fixture" title={<>Component versions <span className="text-text-muted mono ml-1">({cmp.componentVersionDiffs.length} changed)</span></>} dense>
               {cmp.componentVersionDiffs.length === 0 ? (
                 <div className="text-xs text-text-muted italic">No component version changes</div>
               ) : (
@@ -173,7 +173,7 @@ export function PackageComparisonView() {
             </Panel>
 
             {/* Cell diffs */}
-            <Panel title={<>Policy cells changed <span className="text-text-muted mono ml-1">({cmp.cellDiffs.length})</span></>} dense>
+            <Panel provenance="fixture" title={<>Policy cells changed <span className="text-text-muted mono ml-1">({cmp.cellDiffs.length})</span></>} dense>
               {cmp.cellDiffs.length === 0 ? (
                 <div className="text-xs text-text-muted italic">No cell-level changes between these versions</div>
               ) : (

@@ -325,7 +325,7 @@ export function PlaceholderPanel({
   columns?: string[];
 }) {
   return (
-    <Panel title={title} subtitle={description} bodyClassName="p-3">
+    <Panel provenance="placeholder" title={title} subtitle={description} bodyClassName="p-3">
       {variant === 'chart' && <PlaceholderChart height={height} />}
       {variant === 'table' && <PlaceholderTable columns={columns ?? ['Field', 'Value', 'Δ']} />}
       {variant === 'rows' && <SkeletonRows rows={6} />}

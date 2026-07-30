@@ -131,6 +131,7 @@ export function PolicyEngineView() {
 function ActivePackageCard({ pkg, onEdit }: { pkg: ReturnType<typeof useActivePackage>; onEdit: () => void }) {
   return (
     <Panel
+      provenance="fixture"
       title="Active Package"
       dense
       actions={
@@ -167,6 +168,7 @@ function RecommendationsCard({
 }) {
   return (
     <Panel
+      provenance="fixture"
       title={
         <>
           Recommendations <span className="text-text-muted mono ml-1">({recs.length})</span>
@@ -219,6 +221,7 @@ function DraftsCard({
 }) {
   return (
     <Panel
+      provenance="fixture"
       title={
         <>
           Drafts <span className="text-text-muted mono ml-1">({drafts.length})</span>
@@ -280,7 +283,7 @@ function DraftsCard({
 function NativeValidationCard({ pkg }: { pkg: ReturnType<typeof useActivePackage> }) {
   const v = pkg.validation;
   return (
-    <Panel title="Native Validation (latest)" dense>
+    <Panel provenance="fixture" title="Native Validation (latest)" dense>
       <div className="space-y-2">
         <div className="flex items-center gap-2">
           <ValidationBadgeChip badge={v.badge} />
@@ -329,7 +332,7 @@ function PromotionLadder({
   const currentIdx = stages.findIndex((s) => s.key === currentStage);
 
   return (
-    <Panel title="Promotion Ladder" dense>
+    <Panel provenance="fixture" title="Promotion Ladder" dense>
       <div className="space-y-3">
         {/* Ladder rail */}
         <div className="flex items-center justify-between">
@@ -395,6 +398,7 @@ function PromotionLadder({
 function LiveOverridesCard() {
   return (
     <Panel
+      provenance="fixture"
       title={
         <span className="flex items-center gap-1.5">
           Live Overrides <Lock size={10} className="text-text-muted" />

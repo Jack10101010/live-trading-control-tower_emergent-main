@@ -186,7 +186,7 @@ export function ReplayView() {
         style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-elevated)' }}
       >
         <div className="p-4 space-y-4">
-          <Panel title="Policy state at cursor" dense>
+          <Panel provenance="replay" title="Policy state at cursor" dense>
             <div className="space-y-2 text-xs text-text-2">
               <div className="flex items-center gap-2">
                 <PackageVersionChip version={pkg.version} hash={pkg.packageHash} />
@@ -201,7 +201,7 @@ export function ReplayView() {
             </div>
           </Panel>
 
-          <Panel title="Active trade" dense>
+          <Panel provenance="replay" title="Active trade" dense>
             {activeTrade ? (
               <button
                 className="w-full text-left rounded-md border p-2 hover:bg-[color:var(--panel-2)] transition-colors"
@@ -223,7 +223,7 @@ export function ReplayView() {
             )}
           </Panel>
 
-          <Panel title="Trades opened (cumulative)" dense>
+          <Panel provenance="replay" title="Trades opened (cumulative)" dense>
             <div className="text-2xs text-text-muted mb-1">
               {openedByCursor.length} live · {ghost.length} ghost · {blocked.length} blocked (window)
             </div>

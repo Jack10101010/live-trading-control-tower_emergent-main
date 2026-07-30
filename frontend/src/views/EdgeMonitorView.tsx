@@ -32,7 +32,7 @@ export function EdgeMonitorView() {
         </p>
       </div>
 
-      <Panel title="Live Edge Signals" className="col-span-12">
+      <Panel provenance="fixture" title="Live Edge Signals" className="col-span-12">
         <div className="grid grid-cols-6 gap-6">
           <MetricStat label="Expectancy" value={<RValue value={edge.metrics.expectancyR} />} emphasise />
           <MetricStat
@@ -63,7 +63,7 @@ export function EdgeMonitorView() {
         </div>
       </Panel>
 
-      <Panel title="Comparisons" className="col-span-6">
+      <Panel provenance="fixture" title="Comparisons" className="col-span-6">
         <KeyValueGrid
           items={[
             { label: 'Research vs Live', value: <span className="mono">{edge.metrics.researchVsLive}</span> },
@@ -76,7 +76,7 @@ export function EdgeMonitorView() {
         />
       </Panel>
 
-      <Panel title="Future Candidates" className="col-span-6">
+      <Panel provenance="fixture" title="Future Candidates" className="col-span-6">
         <ul className="space-y-2">
           {edge.metrics.futureCandidates.map((c, i) => (
             <li key={i} className="flex items-center gap-2 text-xs text-text-2">
@@ -91,6 +91,7 @@ export function EdgeMonitorView() {
       </Panel>
 
       <Panel
+        provenance="fixture"
         title={<>Recommendation Pipeline <span className="text-text-muted mono ml-2">({recs.length})</span></>}
         className="col-span-12"
       >

@@ -26,7 +26,7 @@ export function FeatureGate({
     <div className="h-full flex items-center justify-center" data-testid={`feature-disabled-${flag}`}>
       <EmptyState
         title="Module disabled"
-        description={`This workspace is turned off by the "${flag}" feature flag. Enable it in the environment or deployment manifest.`}
+        description={`This workspace is turned off by the "${flag}" feature flag. Flags are currently hardcoded backend constants (see /api/feature-flags); environment/manifest control is not yet wired.`}
         icon={<Lock size={18} />}
       />
     </div>

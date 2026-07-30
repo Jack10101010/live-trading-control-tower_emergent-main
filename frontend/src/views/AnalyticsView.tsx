@@ -82,7 +82,7 @@ export function AnalyticsView() {
     <div className="relative h-full min-h-0">
       <div className="absolute inset-0 overflow-y-auto">
         <div className="grid grid-cols-12 gap-4 p-4 pb-8">
-      <Panel title="Performance Overview" className="col-span-12">
+      <Panel provenance="fixture" title="Performance Overview" className="col-span-12">
         <div className="grid grid-cols-7 gap-6">
           <MetricStat label="Net R" value={<RValue value={metrics.netR} />} emphasise />
           <MetricStat label="Trades" value={metrics.count} mono emphasise />
@@ -94,7 +94,7 @@ export function AnalyticsView() {
         </div>
       </Panel>
 
-      <Panel title="Equity Curve (cumulative R)" className="col-span-12">
+      <Panel provenance="fixture" title="Equity Curve (cumulative R)" className="col-span-12">
         {equity.length >= 1 ? (
           <FeatureGate flag="charts">
             <ChartPanel kind="line" lineData={equity} height={220} linePrecision={2} className="w-full" />
@@ -107,6 +107,7 @@ export function AnalyticsView() {
       </Panel>
 
       <Panel
+        provenance="fixture"
         title={
           <span className="flex items-center gap-2">
             Performance by
@@ -131,6 +132,7 @@ export function AnalyticsView() {
       </Panel>
 
       <Panel
+        provenance="fixture"
         title={
           <span className="flex items-center gap-2">
             By Session (policy expectancy)
@@ -159,6 +161,7 @@ export function AnalyticsView() {
       </Panel>
 
       <Panel
+        provenance="fixture"
         title={
           <span className="flex items-center gap-2">
             By Market State (expectancy · allowed %)

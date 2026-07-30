@@ -19,6 +19,7 @@ export function BrokerHealthView() {
         const h = health.find((x) => x.brokerId === broker.brokerId);
         return (
           <Panel
+            provenance="fixture"
             key={broker.brokerId}
             title={
               <span className="flex items-center gap-2">
