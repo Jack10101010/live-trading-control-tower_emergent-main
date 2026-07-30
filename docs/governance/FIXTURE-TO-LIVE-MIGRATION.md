@@ -13,7 +13,7 @@ DYNAMIC = flips green automatically when its real source activates.
 
 | # | Panel / data source | Provenance | Colour | Backend source | Live replacement | Blockers | Diff | Risk | Target milestone | Done |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 1 | Risk limits (accounts) | fixture-overlaid | RED | `/api/risk/limits` (fixture fundedRules) | config-sourced limits + node account telemetry | real account config model | Med | **High** | **M-RISK-1** | ☐ |
+| 1 | Risk limits (accounts) | honest-unconfigured | RED (accounts still fixture) | `/api/risk/limits` — **fixture severed; returns honest unconfigured contract; fixture-immune (tested)** | config-sourced limits + node account telemetry (future) | real account config model (future GREEN) | Med | **Resolved** (no fabricated numbers) | **M-RISK-1** | ☑ |
 | 2 | System Confidence panel + shell chip | fixture | RED | `/api/system-confidence` → WORLD | remove (or rebuild from real signals much later) | none — removable today | Low | **High** | **M-CONF-1** | ☐ |
 | 3 | Fleet deployment tiles / brokers / accounts | fixture | RED | `/api/fleet` → WORLD | `/api/operations/{nodes,accounts,positions}` | node telemetry published | Med | High | M-FLEET-1 | ☐ |
 | 4 | Pair trades / ghost trades / pending orders / blocked intents | fixture | RED | WORLD.liveTrades etc. | `/api/ledger/*` + `/api/operations/{orders,positions}` | real broker history (demo MT5) | Med | High | M-TRADES-1 | ☐ |
@@ -45,6 +45,7 @@ DYNAMIC = flips green automatically when its real source activates.
 - **GREEN (live/runtime-config):** 5 families
 - **DYNAMIC (green when real source activates):** 4 families (#6–9)
 - **RED fixture:** 11 · **RED mixed:** 2 · **RED placeholder:** 2 · **RED constants:** 1 · **RED replay:** 1
+- **M-RISK-1 complete:** the highest-risk fabricated numbers (funded risk rules) can no longer render anywhere.
 - **UI backed by genuine operational data today:** ≈20% of families (5/25);
   with a demo MT5 connection (M-MT5-READ-1 + M-FEED-1) the four DYNAMIC
   families flip automatically → ≈36% with zero further UI work.

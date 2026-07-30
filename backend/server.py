@@ -4232,8 +4232,40 @@ async def risk_health():
 
 @api_router.get("/risk/limits")
 async def risk_limits(account: str | None = None):
-    """Active limit set (engine defaults overlaid with the fixture account fundedRules)."""
-    return _RISK_ENGINE.limits(_risk_env(), account)
+    """M-RISK-1 — the HONEST risk-limits contract.
+
+    Rule: real configuration, real telemetry, or honestly unavailable — never
+    fixture-derived. This route previously returned engine advisory defaults
+    overlaid with the WORLD fixture account's `fundedRules`, which rendered
+    fabricated funded-account limits as if operational. It now reads NO account,
+    NO WORLD data and returns NO invented numbers.
+
+    Field-level honesty:
+      * `configured=False` / `limits=None` — no funded-account rule source is
+        configured in the Control Tower today.
+      * `unavailable` names exactly what is missing (external program limits).
+      * genuinely ENFORCED safeguards live on the execution node (SafetyRails:
+        daily-loss R, position caps) and surface via node telemetry — pointed
+        to, never duplicated or invented here.
+    The engine's advisory assessment ceilings (risk_engine.DEFAULT_LIMITS) are
+    deliberately NOT exposed as "limits": they are Control-Tower assessment
+    constants, not account or broker enforcement. The `account` query parameter
+    is accepted for backward compatibility and deliberately ignored."""
+    return {
+        # First explicitly-versioned form of this contract. The pre-M-RISK-1
+        # response was UNVERSIONED (a bare dict of advisory/fixture numbers), so
+        # this starts at 1 per repository convention (ops_journal, ops_notifier,
+        # resume markers all begin their versioned life at 1).
+        "schemaVersion": 1,
+        "configured": False,
+        "source": "unconfigured",
+        "limits": None,
+        "unavailable": ["fundedAccountRules", "accountProgramLimits"],
+        "detail": ("No funded-account rule source is configured. Node-enforced "
+                   "safeguards (daily-loss, position caps) are published via "
+                   "node telemetry when an execution node is connected; "
+                   "external account-program limits are unavailable."),
+    }
 
 
 # ---------------------------------------------------------------------------

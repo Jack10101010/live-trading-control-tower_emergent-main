@@ -17,7 +17,7 @@ a card never greens the card.
 |---|---|---|---|---|---|---|---|---|
 | /fleet | Fleet entities (deployments/brokers/accounts) | `FleetOverview` | `useFleet` → `/api/fleet` → `WORLD` | WORLD fixture | fixture | RED | High (financial entities) | replace source (`/operations/*`) |
 | /broker-health | Broker health panel | `BrokerHealthView` | `useBrokerHealth` → `/api/world` → `WORLD.brokerHealth` | WORLD fixture | fixture | RED | High | await MT5 telemetry |
-| /accounts | Accounts + protection | `AccountsProtectionView` | `useAccountsProtection`, `useRiskLimits` → `/api/risk/limits` | fixture accounts + fixture-overlaid limits | fixture | RED | **Highest** (risk numbers) | replace source; never green while fundedRules overlay remains |
+| /accounts | Accounts + protection | `AccountsProtectionView` | `useAccountsProtection` (fixture accounts) + honest funded-rules unavailable block | fixture accounts; **risk rules severed (M-RISK-1 ✅): `/api/risk/limits` is honestly unconfigured, fixture-immune** | fixture | RED (account data still fixture) | High → reduced (no fabricated risk numbers) | M-FLEET-1 for account data |
 | /market-data | Live Feed chart | `MarketDataView` (`GlobalViews`) | `ChartWorkspace` ← market-data engine | provider-dependent | dynamic | **DYNAMIC** (`candleCardProvenance`) | Medium | green only for mt5/polygon/store |
 | /market-data | Feed Health | same | `useRuntimeHealth` (provider row) + placeholder rows | mixed (live provider fact + unwired feeds) | mixed | RED | Low (chips honest) | **SPLIT** candidate |
 | /market-data | Market State (Provenance) | same | `useMarketState` → `WORLD.marketStateSnapshots` | WORLD fixture | fixture | RED | Medium | await node telemetry |

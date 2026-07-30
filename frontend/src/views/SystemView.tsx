@@ -688,7 +688,11 @@ export function SystemView() {
               <div className="flex justify-between col-span-2 mt-1 pt-1 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
                 <span className="text-text-muted">Limits</span>
                 <span className="mono text-text-2">
-                  {riskLimits.maxOpenTrades} trades · {riskLimits.maxExposureLots} lots · ${riskLimits.maxDailyLoss} daily · ${riskLimits.maxFloatingLoss} floating
+                  {riskLimits.configured && riskLimits.limits
+                    ? Object.entries(riskLimits.limits)
+                        .map(([k, v]) => `${k} ${v}`)
+                        .join(' · ')
+                    : 'no funded-rule source configured — node safeguards publish via telemetry'}
                 </span>
               </div>
             </div>

@@ -21,7 +21,6 @@ export function AccountsProtectionView() {
         const totalFloating = acctDeployments.reduce((s, d) => s + d.riskState.floatingPl, 0);
         const minDdBuffer = Math.min(...acctDeployments.map((d) => d.riskState.ddBufferPct), 100);
         const totalRiskToday = acctDeployments.reduce((s, d) => s + d.riskState.riskTodayPct, 0);
-        const rules = acct.fundedRules;
 
         return (
           <Panel
@@ -65,29 +64,24 @@ export function AccountsProtectionView() {
               <MetricStat label="Timezone" value={acct.timezone} />
             </div>
 
-            {rules && (
-              <div className="rounded-md p-3 border" style={{ borderColor: 'var(--border-subtle)', background: 'var(--panel-2)' }}>
-                <div className="text-2xs uppercase tracking-widest text-text-muted mb-2">
-                  Funded Ruleset
-                </div>
-                <KeyValueGrid
-                  items={[
-                    { label: 'Account size', value: fmtMoney(rules.accountSize) },
-                    { label: 'Daily loss limit', value: fmtMoney(rules.dailyLossLimit) },
-                    { label: 'Max drawdown', value: fmtMoney(rules.maxDrawdown) },
-                    { label: 'DD type', value: <Badge variant="neutral" size="sm">{rules.ddType}</Badge> },
-                    { label: 'Trailing anchor', value: rules.trailingAnchor },
-                    { label: 'Profit target', value: fmtMoney(rules.profitTarget) },
-                    { label: 'Min days', value: rules.minTradingDays, mono: true },
-                    { label: 'News', value: rules.newsRestrictions ? 'restricted' : 'unrestricted' },
-                    { label: 'Weekend', value: rules.weekendHolding ? 'allowed' : 'flat by Fri close' },
-                    { label: 'Max lot', value: `${rules.maxLot} lots`, mono: true },
-                    { label: 'Max risk', value: fmtPercent(rules.maxRiskExposure * 100), mono: true },
-                    { label: 'Daily reset', value: `${rules.dailyResetTime} ${rules.accountTimezone}`, mono: true },
-                  ]}
-                />
+            {/* M-RISK-1: the fixture funded-rules grid is GONE. Funded-account
+                rules must be real configuration, real telemetry, or honestly
+                unavailable — never fixture-derived. */}
+            <div
+              className="rounded-md p-3 border"
+              data-testid="funded-rules-unavailable"
+              style={{ borderColor: 'var(--border-subtle)', background: 'var(--panel-2)' }}
+            >
+              <div className="text-2xs uppercase tracking-widest text-text-muted mb-2">
+                Funded Ruleset
               </div>
-            )}
+              <div className="text-xs text-text-muted">
+                No funded-account rule source is configured — external
+                account-program limits are unavailable. Node-enforced safeguards
+                (daily-loss, position caps) are published via node telemetry when
+                an execution node is connected.
+              </div>
+            </div>
           </Panel>
         );
       })}

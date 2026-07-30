@@ -168,12 +168,14 @@ export interface MarketCandles {
 }
 
 /** Active risk limit set (Phase 12) — engine defaults overlaid with fixture fundedRules. */
+/** M-RISK-1 honest contract: never fixture-derived, never invented numbers. */
 export interface RiskLimits {
-  maxOpenTrades: number;
-  maxExposureLots: number;
-  maxDailyLoss: number;
-  maxFloatingLoss: number;
-  minMarketConfidence: number;
+  schemaVersion: number;
+  configured: boolean;
+  source: 'unconfigured' | 'configured';
+  limits: Record<string, number> | null;
+  unavailable: string[];
+  detail: string;
 }
 
 /** Immutable market snapshot (Phase 11) — the single owner is the Market Data Engine. */

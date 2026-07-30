@@ -160,6 +160,20 @@ describe('structural guards', () => {
     expect(read('views/SystemView.tsx')).toContain('provenance="live"');
   });
 
+  it('M-RISK-1: accounts view renders no fixture funded rules and stays RED', () => {
+    const av = read('views/AccountsProtectionView.tsx');
+    expect(av).not.toContain('fundedRules');            // fixture rules unreachable
+    expect(av).toContain('funded-rules-unavailable');   // honest state present
+    expect(av).toContain('No funded-account rule source is configured');
+    expect(av).toContain('provenance="fixture"');       // card stays RED (account data still fixture)
+    // SystemView must not render legacy fabricated limit fields either.
+    const sys = read('views/SystemView.tsx');
+    for (const legacy of ['maxOpenTrades', 'maxExposureLots', 'maxDailyLoss', 'maxFloatingLoss']) {
+      expect(sys, `legacy fabricated limit field ${legacy}`).not.toContain(`riskLimits.${legacy}`);
+    }
+    expect(sys).toContain('no funded-rule source configured');
+  });
+
   it('chart cards use dynamic candle provenance, never a static green', () => {
     expect(read('views/global/GlobalViews.tsx')).toContain('candleCardProvenance(');
     expect(read('views/pair/PairViews.tsx')).toContain('candleCardProvenance(');
