@@ -199,10 +199,15 @@ def test_21b_the_mock_adapter_cannot_be_CONSTRUCTED_in_production(monkeypatch):
     single construction path refuses to build it", so an explicit call site
     cannot smuggle the mock broker into a production process."""
     _production(monkeypatch, adapter="mt5", provider="mt5")
+    # `_CACHE` is a PROCESS global that other tests legitimately populate by
+    # calling `get_adapter("mock")` in development. Asserting the key is absent
+    # would therefore test the order tests happened to run in, not this call.
+    # The property that actually matters is that THIS call built nothing.
+    before = dict(broker_adapter._CACHE)
     with pytest.raises(environment.EnvironmentViolation) as exc:
         broker_adapter.get_adapter("mock")
     assert str(exc.value) == "broker_adapter_inadmissible: mock"
-    assert "mock" not in broker_adapter._CACHE, "a MockBroker was constructed"
+    assert broker_adapter._CACHE == before, "get_adapter constructed an adapter"
 
 
 def test_21c_explicit_get_adapter_still_works_in_development(monkeypatch):
