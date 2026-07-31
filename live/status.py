@@ -64,6 +64,63 @@ def _tail_cycles(path: Path, n: int = 40) -> list[dict]:
     return out
 
 
+def _delivery_rows(cycles: list[dict]) -> None:
+    """Telemetry delivery health, derived from the cycle history already on disk.
+
+    OpsLog records the publisher's own `published` result on every cycle, so the
+    evidence was already durable — only the operator-facing summary was missing.
+    Answering "when did telemetry stop arriving?" previously meant hand-parsing
+    cycles.jsonl, which is exactly what the last incident required.
+
+    Deliberately NOT in the publisher. That component is stateless by design: it
+    writes publish_last.json BEFORE the network attempt and swallows failure, so a
+    Control Tower outage can never touch trading. Counters living there would make
+    it stateful in the trading path, raising persistence and crash-recovery
+    questions, for information that is already recorded. This function is
+    read-only and out-of-process, so behaviour-neutrality is structural rather
+    than a review promise.
+
+    Only what the window can honestly support: lifetime totals would need state
+    that does not exist, so they are omitted rather than synthesised.
+    """
+    seen = [c for c in cycles if isinstance(c.get("published"), dict)]
+    if not seen:
+        # Distinguish "never tried" from "tried and failed". A quiet cycle that
+        # produced no publish is not evidence of a delivery problem.
+        row("telemetry delivering?", NA,
+            f"no delivery attempts in the last {len(cycles)} cycles"
+            if cycles else "no cycles logged yet")
+        return
+
+    last = seen[-1]["published"]
+    delivered = bool(last.get("delivered"))
+    # Consecutive failures counted backwards from the most recent attempt: the
+    # run that is still open is what an operator needs, not a total.
+    streak = 0
+    for c in reversed(seen):
+        if c["published"].get("delivered"):
+            break
+        streak += 1
+    fails = [c for c in seen if not c["published"].get("delivered")]
+    oks = [c for c in seen if c["published"].get("delivered")]
+    last_ok = oks[-1].get("cycle_end") if oks else None
+    last_fail = fails[-1].get("cycle_end") if fails else None
+    err = str(last.get("error") or "")
+
+    verdict = OK if delivered else (FAIL if streak >= 3 else WARN)
+    row("telemetry delivering?", verdict,
+        (f"last attempt OK" if delivered else f"FAILING — {streak} consecutive")
+        + f"; {len(fails)}/{len(seen)} failed in window"
+        + (f"; last error: {err[:60]}" if err and not delivered else ""))
+
+    # Timestamps separately: an operator's first question after an outage is when
+    # it last worked, and that must not be buried in a compound verdict line.
+    row("telemetry last delivered", OK if last_ok else NA,
+        (f"{str(last_ok)[:19]}Z" if last_ok else "never, in this window")
+        + (f"; last failure {str(last_fail)[:19]}Z" if last_fail else "")
+        + f" (window = last {len(cycles)} cycles)")
+
+
 def collect(cfg: LiveConfig, probe_mt5: bool = True) -> None:
     ops = cfg.state_dir / "ops"
     hb = _read_json(ops / "heartbeat.json")
@@ -148,6 +205,8 @@ def collect(cfg: LiveConfig, probe_mt5: bool = True) -> None:
             f"{replays} suppressed annotations, {dupes} blocked intents in recent cycles")
 
     # ── runtime lifecycle / recovery ─────────────────────────────────────────
+    _delivery_rows(cycles)
+
     lc = _read_json(ops / "lifecycle.json")
     if lc is None:
         row("lifecycle state?", NA, "no lifecycle.json — process has never started")

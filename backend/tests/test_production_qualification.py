@@ -457,3 +457,99 @@ def test_build_validates_config_before_touching_the_broker(tmp_path, monkeypatch
         live_main.build()
     assert calls == ["validated"]                       # called, and called first
     assert "LIVE_MAX_OPEN_POSITIONS" in str(exc.value)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TELEMETRY DELIVERY OBSERVABILITY
+# ══════════════════════════════════════════════════════════════════════════════
+# Derived from the `published` result OpsLog already records per cycle. The
+# publisher stays stateless: it writes publish_last.json BEFORE the network
+# attempt and swallows failure, so that file proves nothing about delivery. The
+# real incident needed a hand-written parser over cycles.jsonl to answer "when did
+# telemetry stop arriving?" — these rows exist so it never does again.
+
+def _delivery_status(tmp_path, published_seq):
+    """Drive live.status over a synthetic cycle history."""
+    from live import status as live_status
+    cfg = _cfg(tmp_path)
+    ops = OpsLog(cfg.state_dir)
+    for i, pub in enumerate(published_seq):
+        rec = ops.cycle_start()
+        ops.cycle_end(rec, boundary=f"2026-07-31 {i:02d}:00:00+00:00",
+                      status="ok", published=pub)
+    RunnerState(cfg.state_dir).save()
+    live_status.ROWS.clear()
+    live_status.collect(cfg, probe_mt5=False)
+    return {q: (v, d) for q, v, d in live_status.ROWS}
+
+
+OKD = {"delivered": True, "status": 200}
+BAD = {"delivered": False, "error": "<urlopen error timed out>", "fallback": "x"}
+
+
+def test_status_reports_healthy_delivery(tmp_path):
+    rows = _delivery_status(tmp_path, [OKD, OKD, OKD])
+    v, d = rows["telemetry delivering?"]
+    assert v == "OK" and "last attempt OK" in d and "0/3 failed" in d
+    assert rows["telemetry last delivered"][0] == "OK"
+
+
+def test_status_reports_consecutive_failures_and_last_error(tmp_path):
+    """The incident shape: delivery worked, then stopped."""
+    rows = _delivery_status(tmp_path, [OKD, BAD, BAD, BAD, BAD])
+    v, d = rows["telemetry delivering?"]
+    assert v == "FAIL"                      # >=3 consecutive is not a blip
+    assert "4 consecutive" in d and "4/5 failed in window" in d
+    assert "urlopen error timed out" in d   # most recent error surfaced
+
+
+def test_a_single_failure_is_a_warning_not_an_outage(tmp_path):
+    """One dropped publish must not read as a dead Control Tower."""
+    v, d = _delivery_status(tmp_path, [OKD, OKD, BAD])["telemetry delivering?"]
+    assert v == "WARN" and "1 consecutive" in d
+
+
+def test_recovery_after_an_outage_reads_healthy_again(tmp_path):
+    v, d = _delivery_status(tmp_path, [BAD, BAD, BAD, OKD])["telemetry delivering?"]
+    assert v == "OK" and "0 consecutive" not in d
+    assert "3/4 failed in window" in d      # history retained, not forgotten
+
+
+def test_last_delivered_timestamp_is_reported(tmp_path):
+    _, d = _delivery_status(tmp_path, [OKD, BAD, BAD])["telemetry last delivered"]
+    assert "2026-" in d and "window = last" in d, "must state the analysed window"
+
+
+def test_never_delivered_in_window_is_not_silently_ok(tmp_path):
+    v, d = _delivery_status(tmp_path, [BAD, BAD])["telemetry last delivered"]
+    assert v == "n/a" and "never, in this window" in d
+
+
+def test_sparse_history_without_publish_results_is_not_an_outage(tmp_path):
+    """Quiet cycles that produced no publish are not delivery failures."""
+    rows = _delivery_status(tmp_path, [None, None])
+    v, d = rows["telemetry delivering?"]
+    assert v == "n/a" and "no delivery attempts" in d
+
+
+def test_no_history_at_all_reports_honestly(tmp_path):
+    from live import status as live_status
+    cfg = _cfg(tmp_path)
+    RunnerState(cfg.state_dir).save()
+    live_status.ROWS.clear()
+    live_status.collect(cfg, probe_mt5=False)
+    rows = {q: (v, d) for q, v, d in live_status.ROWS}
+    assert rows["telemetry delivering?"] == ("n/a", "no cycles logged yet")
+
+
+def test_delivery_rows_never_synthesise_lifetime_totals(tmp_path):
+    """Only what the window supports; a lifetime counter would need state."""
+    _, d = _delivery_status(tmp_path, [OKD, BAD])["telemetry delivering?"]
+    assert "in window" in d, "counts must be window-scoped, not implied all-time"
+
+
+def test_publisher_remains_stateless(tmp_path):
+    """The whole point: no delivery counters leaked into the trading path."""
+    from live.publisher import CTPublisher
+    pub = CTPublisher(_cfg(tmp_path))
+    assert set(vars(pub)) == {"config", "fallback"}
