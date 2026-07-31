@@ -123,6 +123,19 @@ export function useOperationalFleet(): {
  * deployments, so the pair menu was derived from invented entities. This is
  * genuine configuration and asserts nothing operational about any symbol.
  */
+/**
+ * M-EVENTS-1 — DEVELOPMENT FIXTURE EVENTS ONLY. NOT THE AUDIT STREAM.
+ * The three authored seeds that used to be merged into `/api/events`.
+ */
+export function useFixtureEventsPreview(): { events: EventEntry[]; detail: string } {
+  const { data } = useSuspenseQuery({
+    queryKey: QK.fixtureEventsPreview,
+    queryFn: api.fixtureEventsPreview,
+    staleTime: Infinity,
+  });
+  return { events: data?.events ?? [], detail: data?.detail ?? '' };
+}
+
 export function useConfiguredInstruments(): { symbols: string[]; configured: boolean } {
   const { data } = useSuspenseQuery({
     queryKey: QK.instruments,
@@ -216,7 +229,8 @@ export function usePairWorkspace(pairId: string) {
     const deployments: Deployment[] = [];
     const marketState = world.marketStateSnapshots.find((m) => m.instrument === pairId);
     const decisions = world.decisionChains.filter((d) => d.scenarioKey.startsWith(`${pairId}:`));
-    const events = world.events.filter((e) => e.scenarioKey?.startsWith(`${pairId}:`) ?? true);
+    // M-EVENTS-1: the pair workspace no longer surfaces fixture events.
+    const events: EventEntry[] = [];
     return { pair: pairId, trades, ghosts, blocked, deployments, marketState, decisions, events };
   }, [world, pairId]);
 }

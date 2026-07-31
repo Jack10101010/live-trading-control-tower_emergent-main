@@ -223,7 +223,11 @@ KNOWN_COMMANDS = command_registry.fixture_command_names()
 # Track B event categories: decision·order·trade·policy·risk·manual·system·error·broker
 _COMMAND_CATEGORY = command_registry.fixture_categories()
 
-_FIXTURE_MAX_SEQ = max((e.get("seq", 0) for e in WORLD.get("events", [])), default=0)
+# M-EVENTS-1: `_FIXTURE_MAX_SEQ` is GONE. It anchored runtime seq allocation and
+# the audit stream's head to the development fixture, so the numbering of real
+# events depended on a development file. With the merge removed it had no
+# remaining consumer, and leaving an unused fixture hook in the runtime is how
+# a merge quietly returns.
 
 
 def _events_db() -> sqlite3.Connection:
@@ -323,10 +327,21 @@ def _stored_events() -> list[dict]:
 
 
 def _all_events() -> list[dict]:
-    """Merged, seq-ordered audit stream: frozen fixture events + appended ones."""
-    evs = list(WORLD.get("events", [])) + _stored_events()
-    evs.sort(key=lambda e: e.get("seq", 0))
-    return evs
+    """M-EVENTS-1: the RUNTIME audit stream. Runtime events only.
+
+    This function used to return `WORLD["events"] + _stored_events()`, sorted
+    into one chronological collection. That made `/api/events` the last surface
+    in the Control Tower that merged invented records with operational ones —
+    and the merge was invisible: the three fixture seeds carry no marker, and
+    once interleaved by `seq` an operator reading the audit trail could not tell
+    which entries describe things that actually happened in this process.
+
+    An audit stream is the worst possible place for that ambiguity, so the merge
+    is gone. Events in `events.db` are genuine: each one records a command this
+    process dispatched or a runtime transition it observed. Fixture seeds are
+    served separately at `/api/dev/fixture-events`.
+    """
+    return _stored_events()
 
 
 def _max_seq() -> int:
@@ -339,15 +354,18 @@ def _max_seq() -> int:
                 stored = conn.execute("SELECT COALESCE(MAX(seq), 0) FROM bot_events").fetchone()[0]
             finally:
                 conn.close()
-    return max(_FIXTURE_MAX_SEQ, stored)
+    # M-EVENTS-1: the head is the RUNTIME head. It no longer takes the fixture's
+    # maximum seq into account — the audit stream contains no fixture rows, so a
+    # head above them would leave an unreachable gap at the bottom of the stream.
+    return stored
 
 
 def _events_since(since: int, pair: str | None = None) -> list[dict]:
     """Events with seq strictly greater than `since` (the delta), oldest first.
-    Stored rows come from the indexed seq-filtered read (no full-history scan
-    per polling iteration); fixture events are filtered in Python (three rows)."""
-    fixtures = [e for e in WORLD.get("events", []) if e.get("seq", 0) > since]
-    evs = fixtures + _stored_events_since(since, None)
+    M-EVENTS-1: runtime rows only. The delta channel previously merged fixture
+    rows in, so a long-polling client could receive an invented event as though
+    it had just occurred."""
+    evs = _stored_events_since(since, None)
     evs.sort(key=lambda e: e.get("seq", 0))
     if pair:
         evs = [e for e in evs if e.get("scenarioKey") is None or e.get("scenarioKey", "").startswith(f"{pair}:")]
@@ -407,7 +425,10 @@ def _append_event(event: dict, idempotency_key: str | None) -> tuple[dict, bool]
                 if row:
                     return _decode_idempotent_row(idempotency_key, row), True
             max_stored = conn.execute("SELECT COALESCE(MAX(seq), 0) FROM bot_events").fetchone()[0]
-            event["seq"] = max(_FIXTURE_MAX_SEQ, max_stored) + 1
+            # M-EVENTS-1: runtime seq allocation no longer anchors to the
+            # fixture's maximum. It used to start above the fixture seeds, which
+            # made the numbering of REAL events depend on a development file.
+            event["seq"] = max_stored + 1
             conn.execute(
                 "INSERT INTO bot_events (seq, event_id, idempotency_key, payload) VALUES (?, ?, ?, ?)",
                 (event["seq"], event["eventId"], idempotency_key, json.dumps(event)),
@@ -718,7 +739,9 @@ def _event_count() -> int:
                 stored = conn.execute("SELECT COUNT(*) FROM bot_events").fetchone()[0]
             finally:
                 conn.close()
-    return len(WORLD.get("events", [])) + stored
+    # M-EVENTS-1: the runtime event count is runtime rows only. Adding the
+    # fixture seeds inflated an operational health figure with invented rows.
+    return stored
 
 
 def _runtime_health() -> dict:
@@ -4267,6 +4290,29 @@ async def market_data_history(limit: int = 25):
     return _MARKET_DATA_ENGINE.history(limit)
 
 
+@api_router.get("/dev/fixture-events")
+async def dev_fixture_events():
+    """M-EVENTS-1 — DEVELOPMENT FIXTURE EVENTS. NOT AN OPERATIONAL SOURCE.
+
+    The three authored seed events that used to be merged into `/api/events`.
+    They are served here, alone and labelled, so component development and
+    tests keep a sample stream while the audit trail stays purely operational.
+    In production M-ENV-1 never loads the fixture world, so this reports
+    unavailable rather than serving anything.
+    """
+    if not _fixture_available():
+        return _fixture_unavailable("dev_fixture_events")
+    return {
+        "schemaVersion": 1,
+        "provenance": "fixture",
+        "source": "development_fixture",
+        "detail": ("Authored demonstration events. None of these describe anything "
+                   "that happened in this process. The operational audit stream is "
+                   "/api/events and contains runtime events only."),
+        "events": list(WORLD.get("events", [])),
+    }
+
+
 @api_router.get("/instruments")
 async def instruments():
     """M-FLEET-2 — the CONFIGURED instrument universe. Configuration, not activity.
@@ -4528,8 +4574,9 @@ async def events(
     since_seq: int = Query(0, ge=0),
     limit: int | None = Query(None, ge=1, le=EVENTS_PAGE_LIMIT_MAX),
 ):
-    """Merged audit stream: frozen fixture events + retained stored events,
-    ordered by monotonic seq (newest seq last). Sequence pagination (P-2):
+    """M-EVENTS-1: the RUNTIME audit stream — retained stored events only,
+    ordered by monotonic seq (newest seq last). Fixture seeds are NOT merged in;
+    they are served separately at `/api/dev/fixture-events`. Sequence pagination (P-2):
     `since_seq` returns events with seq strictly greater (default 0 = the full
     available merged stream); `limit` caps the page, applied to the final
     merged ordered stream AFTER sequence filtering. Defaults preserve the
@@ -4543,9 +4590,8 @@ async def events(
         raise HTTPException(
             status_code=422,
             detail="pair cannot be combined with limit; filtered pagination is not supported")
-    fixtures = [e for e in WORLD.get("events", []) if e.get("seq", 0) > since_seq]
-    stored = _stored_events_since(since_seq, limit)
-    evs = sorted(fixtures + stored, key=lambda e: e.get("seq", 0))
+    # M-EVENTS-1: runtime rows only — see `_all_events`.
+    evs = sorted(_stored_events_since(since_seq, limit), key=lambda e: e.get("seq", 0))
     if pair:
         evs = [e for e in evs if e.get("scenarioKey") is None or e.get("scenarioKey", "").startswith(f"{pair}:")]
     if limit is not None:

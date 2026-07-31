@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import type { EventEntry } from '@/types/domain';
 import type { LiveTrade } from '@/types/domain';
 import {
   useRepository,
@@ -56,7 +57,10 @@ export function TradeRenderer({ tradeId }: { tradeId: string }) {
   if (!trade) return <div className="p-4 text-text-muted">Trade not found</div>;
 
   const cellKey = trade.scenarioKey.split(':').slice(1).join(':');
-  const relatedEvents = world.events.filter((e) => e.scenarioKey === trade.scenarioKey).slice(0, 6);
+  // M-EVENTS-1: read the FIXTURE world's events directly, so the inspector
+  // showed authored audit entries beside a trade. The runtime audit stream is
+  // /api/events; there is no per-scenario authoritative event query yet.
+  const relatedEvents: EventEntry[] = [];
   const relatedRecs = world.recommendations.filter((r) => r.scenarioKey === trade.scenarioKey);
 
   const toReplay = (iso: string) => navigate(`/pair/${instrument}/replay?t=${isoToUnix(iso)}`);

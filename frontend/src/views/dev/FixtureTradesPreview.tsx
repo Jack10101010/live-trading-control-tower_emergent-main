@@ -1,4 +1,4 @@
-import { useFixtureTradesPreview } from '@/hooks/useRepository';
+import { useFixtureTradesPreview, useFixtureEventsPreview } from '@/hooks/useRepository';
 import { Panel } from '@/components/structures/Panel';
 
 /**
@@ -39,6 +39,7 @@ export function FixtureTradesPreview() {
           ))}
         </ul>
       </Panel>
+      <FixtureEvents />
       <Panel provenance="fixture" title={`Fixture blocked intents (${blocked.length})`}>
         <ul className="text-xs mono space-y-1">
           {blocked.map((b) => (
@@ -47,5 +48,24 @@ export function FixtureTradesPreview() {
         </ul>
       </Panel>
     </div>
+  );
+}
+
+/**
+ * M-EVENTS-1: the three authored seed events, shown alone. They used to be
+ * merged into `/api/events` with no marker, so an operator reading the audit
+ * trail could not tell which entries described things that actually happened.
+ */
+function FixtureEvents() {
+  const { events, detail } = useFixtureEventsPreview();
+  return (
+    <Panel provenance="fixture" title={`Fixture events (${events.length})`}>
+      <p className="text-2xs text-text-muted mb-2" data-testid="fixture-events-note">{detail}</p>
+      <ul className="text-xs mono space-y-1" data-testid="fixture-events-list">
+        {events.map((e) => (
+          <li key={e.eventId}>seq {e.seq} · {e.at} · {e.scenarioKey ?? '—'}</li>
+        ))}
+      </ul>
+    </Panel>
   );
 }

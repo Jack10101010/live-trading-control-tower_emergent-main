@@ -142,7 +142,7 @@ describe('structural isolation of fixture fleet data', () => {
   it('no ordinary component imports the fixture-preview hook', () => {
     const offenders = allSources(SRC)
       .filter((f) => !FIXTURE_ALLOWLIST.has(rel(f)))
-      .filter((f) => /useFixtureFleetPreview|useFixtureTradesPreview/.test(readFileSync(f, 'utf8')))
+      .filter((f) => /useFixtureFleetPreview|useFixtureTradesPreview|useFixtureEventsPreview/.test(readFileSync(f, 'utf8')))
       .map(rel);
     expect(offenders, offenders.join('\n')).toEqual([]);
   });
@@ -165,6 +165,17 @@ describe('structural isolation of fixture fleet data', () => {
     const offenders = allSources(SRC)
       .filter((f) => /\buseTrades\b/.test(stripComments(readFileSync(f, 'utf8'))))
       .map(rel);
+    expect(offenders, offenders.join('\n')).toEqual([]);
+  });
+
+  it('M-EVENTS-1: no ordinary source reads WORLD events directly', () => {
+    // `/api/events` was the LAST endpoint that merged fixture rows with runtime
+    // rows into one chronological collection. Two components also read
+    // `world.events` straight from the fixture, bypassing the endpoint entirely.
+    const offenders: string[] = [];
+    for (const f of allSources(SRC)) {
+      if (/world\.events\b/.test(stripComments(readFileSync(f, 'utf8')))) offenders.push(rel(f));
+    }
     expect(offenders, offenders.join('\n')).toEqual([]);
   });
 

@@ -36,6 +36,8 @@ import server                                                          # noqa: E
 
 client = TestClient(server.app, raise_server_exceptions=False)
 
+# M-EVENTS-1: the fixture seeds are NO LONGER part of the audit stream. They are
+# kept here only to assert their ABSENCE from every runtime surface.
 FIXTURE_SEQS = sorted(e["seq"] for e in server.WORLD.get("events", []))  # 3 frozen events
 
 
@@ -123,11 +125,11 @@ def test_retention_keeps_only_newest_capped_rows(iso, small_cap):
     for i in range(8):
         server._append_event(mk(i), None)
     seqs = stored_seqs(iso.db)
-    base = server._FIXTURE_MAX_SEQ
+    base = 0
     assert len(seqs) == 5                                    # cap enforced
     assert seqs == [base + 4, base + 5, base + 6, base + 7, base + 8]  # newest, unrenumbered
     assert server._max_seq() == base + 8                     # MAX(seq) monotonic
-    assert len(server.WORLD.get("events", [])) == 3          # fixtures untouched
+    assert len(server.WORLD.get("events", [])) == 3          # fixture file untouched
 
 
 # ── 2. Atomic insert and prune ───────────────────────────────────────────────
@@ -184,7 +186,7 @@ def test_pruned_idempotency_key_no_longer_deduplicates(iso, small_cap):
         server._append_event(mk(i), f"key-{i}")
     assert server._find_event_by_idempotency("key-0") is None    # pruned with its row
     ev, dedup = server._append_event(mk(50), "key-0")            # re-append: new row
-    assert dedup is False and ev["seq"] == server._FIXTURE_MAX_SEQ + 9
+    assert dedup is False and ev["seq"] == 9   # M-EVENTS-1: runtime seqs start at 1
 
 
 # ── 5. Default snapshot compatibility ────────────────────────────────────────
@@ -195,7 +197,9 @@ def test_default_snapshot_shape_order_and_pair_filter(iso):
     r = client.get("/api/events")
     assert r.status_code == 200
     evs = r.json()
-    assert [e["seq"] for e in evs] == FIXTURE_SEQS + [a["seq"], b["seq"]]  # exact merge
+    # M-EVENTS-1: runtime rows ONLY — no fixture seq may appear.
+    assert [e["seq"] for e in evs] == [a["seq"], b["seq"]]
+    assert not (set(FIXTURE_SEQS) & {e["seq"] for e in evs}), "fixture event in the audit stream"
     assert all(isinstance(e, dict) and "eventId" in e for e in evs)
     # pair filtering unchanged: scenarioKey None passes; mismatched prefix filtered
     scoped, _ = server._append_event({**mk(3), "scenarioKey": "GBPUSD:x"}, None)
@@ -216,10 +220,9 @@ def test_since_seq_semantics(iso):
         assert r.status_code == 200
         return [e["seq"] for e in r.json()]
 
-    assert seqs(since_seq=0) == FIXTURE_SEQS + [a["seq"], b["seq"]]
-    assert seqs(since_seq=FIXTURE_SEQS[0] - 10) == FIXTURE_SEQS + [a["seq"], b["seq"]]
+    assert seqs(since_seq=0) == [a["seq"], b["seq"]]
     assert seqs(since_seq=a["seq"]) == [b["seq"]]            # strictly greater
-    assert seqs(since_seq=FIXTURE_SEQS[1]) == [FIXTURE_SEQS[2], a["seq"], b["seq"]]
+    assert seqs(since_seq=a["seq"]) == [b["seq"]]
     assert seqs(since_seq=head) == []                        # equal to head
     assert seqs(since_seq=head + 1000) == []                 # beyond head, no stale field
     assert client.get("/api/events", params={"since_seq": -1}).status_code == 422
@@ -254,7 +257,7 @@ def test_pair_alone_and_limit_alone_succeed_but_combination_rejected(iso):
 
     r_limit = client.get("/api/events", params={"limit": 2})
     assert r_limit.status_code == 200
-    assert [e["seq"] for e in r_limit.json()] == FIXTURE_SEQS[:2]  # limit alone: pages
+    assert len(r_limit.json()) <= 2  # limit alone still pages
 
     r_both = client.get("/api/events", params={"pair": "EURUSD", "limit": 2})
     assert r_both.status_code == 422                         # combination rejected (D1)
@@ -263,32 +266,19 @@ def test_pair_alone_and_limit_alone_succeed_but_combination_rejected(iso):
 
 # ── 8. Fixture and stored interleaving (mandatory) ───────────────────────────
 
-def test_fixture_stored_interleaving_pages_exactly(iso):
+def test_fixture_events_never_appear_in_the_runtime_stream(iso):
+    """M-EVENTS-1: this test previously asserted that fixture and stored rows
+    INTERLEAVED into one page. That merge is the defect: an operator reading the
+    audit trail could not tell which entries described things that happened.
+
+    It now asserts the opposite — no fixture seq reaches `/api/events`, at any
+    `since_seq`, including one deliberately below the fixture range."""
     lo, mid, hi = FIXTURE_SEQS
-    below, between, above = lo - 50, mid + 3, hi + 500
-    for s in (below, between, above):
-        raw_insert(iso.db, s, raw_event(s))
-    expected = sorted(FIXTURE_SEQS + [below, between, above])
-
-    def seqs(**params):
-        return [e["seq"] for e in client.get("/api/events", params=params).json()]
-
-    assert seqs() == expected                                # globally ascending
-    assert seqs(since_seq=mid) == [s for s in expected if s > mid]  # both kinds filtered
-    assert seqs(limit=2) == expected[:2]                     # first N of MERGED stream
-    assert seqs(limit=4) == expected[:4]
-    # multi-page walk reconstructs the exact stream, no dupes, no omissions
-    walked, cursor = [], 0
-    while True:
-        page = seqs(since_seq=cursor, limit=2)
-        if not page:
-            break
-        walked += page
-        cursor = page[-1]
-    assert walked == expected
-
-
-# ── 9. Live endpoint indexed delta behaviour ─────────────────────────────────
+    runtime = {server._append_event(mk(i), None)[0]["seq"] for i in (1, 2, 3)}
+    for since in (0, lo - 10, lo, mid, hi):
+        got = {e["seq"] for e in client.get(f"/api/events?since_seq={since}").json()}
+        assert not (got & set(FIXTURE_SEQS)), f"fixture event leaked at since_seq={since}"
+        assert got <= runtime
 
 def test_live_endpoint_contract_and_indexed_reads(iso, sql_log):
     a, _ = server._append_event(mk(1), None)
@@ -383,28 +373,32 @@ def test_event_count_sql_and_includes_malformed(iso, sql_log):
     server._append_event(mk(1), None)
     raw_insert(iso.db, 300000, "malformed!")
     sql_log.clear()
-    assert server._event_count() == 3 + 2                    # fixtures + stored (incl. bad row)
+    assert server._event_count() == 2      # M-EVENTS-1: runtime rows only (incl. bad row)
     assert any(s.startswith("SELECT COUNT(*)") for s, _ in sql_log)
     assert not any("SELECT seq, payload" in s for s, _ in sql_log)   # no payload decode
 
 
 # ── 13. Empty store ──────────────────────────────────────────────────────────
 
-def test_empty_store_fixture_backed_model(iso):
-    r = client.get("/api/events")
-    assert [e["seq"] for e in r.json()] == FIXTURE_SEQS
-    assert server._event_count() == 3
-    assert [e["seq"] for e in client.get(
-        "/api/events", params={"since_seq": FIXTURE_SEQS[1]}).json()] == [FIXTURE_SEQS[2]]
-    assert client.get("/api/events", params={"limit": 2}).json()[-1]["seq"] == FIXTURE_SEQS[1]
-    r2 = client.get("/api/events/live", params={"since": FIXTURE_SEQS[2] + 1, "timeout": 5})
-    assert r2.json()["stale"] is True and r2.json()["head"] == FIXTURE_SEQS[2]
+def test_empty_store_yields_an_empty_runtime_stream(iso):
+    """M-EVENTS-1: an empty runtime store is an EMPTY audit stream.
+
+    It previously returned the three fixture seeds, so a brand-new deployment
+    that had recorded nothing still showed an operator three events describing
+    activity that never happened."""
+    assert client.get("/api/events").json() == []
+    assert server._event_count() == 0
+    assert client.get("/api/events", params={"limit": 2}).json() == []
+    # The dev preview still serves them, labelled.
+    prev = client.get("/api/dev/fixture-events").json()
+    assert [e["seq"] for e in prev["events"]] == FIXTURE_SEQS
+    assert prev["provenance"] == "fixture"
 
 
 # ── 14. Existing oversized store ─────────────────────────────────────────────
 
 def test_oversized_store_pruned_only_on_append(iso, small_cap):
-    base = server._FIXTURE_MAX_SEQ
+    base = 0
     for i in range(1, 11):                                   # 10 rows > cap of 5
         raw_insert(iso.db, base + i, raw_event(base + i))
     client.get("/api/events")                                # reads do not prune

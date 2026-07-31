@@ -27,7 +27,7 @@ DYNAMIC = flips green automatically when its real source activates.
 | 12 | Edge Monitor (main view + pair edge tab + Pair Health expectancy/win-rate) | **removed** | RED (honest placeholder surfaces) | `/api/edge-monitor` — **honest `computed:false`; WORLD.edgeMonitor severed, fixture-immune (tested)** | ledger + broker-history derived metrics (M-TRADES-2 and beyond) | no performance model exists; needs real trade history | Low | **Resolved** (no fabricated track record) | **M-EDGE-1** | ☑ |
 | 13 | Recommendations / drafts / decision chains (fixture) | fixture | RED | WORLD | durable trade-recommendation store (exists) | consumer migration | Med | Med | M-REC-1 | ☐ |
 | 14 | Packages / versioning / comparisons / policy panels | fixture | RED | WORLD.packages | real package registry (later) | package model | High | Med | M-PKG-1 | ☐ |
-| 15 | Events feed (journal) | mixed | RED | WORLD.events ⊕ events.db | split: runtime events only (fixture seeds dropped) | split work only | Low | Med | M-EVENTS-1 | ☐ |
+| 15 | Events feed (journal) | **runtime only** | n/a (no fixture rows) | `events.db` (runtime) | — | — | Low | **Resolved** (no merged stream) | **M-EVENTS-1** | ☑ |
 | 16 | Feed Health card | mixed | RED | runtime health + placeholders | split: provider row GREEN / unwired rows placeholder | split work only | Low | Low | M-EVENTS-1 | ☐ |
 | 17 | Feature flags (Settings + System cards + gates) | constants | RED | hardcoded dict `server.py:4510` | env/deployment-manifest config | config mechanism | Low | Low | M-FLAGS-1 | ☐ |
 | 18 | Replay panels | replay | RED | WORLD.replaySessions | real replay engine output | replay engine | High | Low | (deferred) | ☐ |
@@ -57,6 +57,18 @@ DYNAMIC = flips green automatically when its real source activates.
   that still read WORLD answer `501 fixture_world_unavailable` instead of fabricated
   data; each is still retired by its own milestone. Development behaviour is unchanged,
   so no row's colour changes here.
+- **M-EVENTS-1 complete:** the last mixed-origin stream is gone. `/api/events` merged
+  `WORLD["events"]` with `events.db` into one seq-ordered collection, and the merge was
+  invisible — the three seeds carry no marker, so an operator reading the audit trail
+  could not tell which entries described things that actually happened. Unlike the fleet
+  and trade domains this was a SPLIT, not a removal: `events.db` is genuinely
+  authoritative (every row records a command this process dispatched). Runtime events
+  stay; fixture seeds move to `/api/dev/fixture-events`, labelled. The delta channel
+  (`/events/live`) no longer emits fixture rows, the runtime event count no longer
+  includes them, and `_FIXTURE_MAX_SEQ` was DELETED — it anchored runtime seq allocation
+  and the stream head to a development file, so the numbering of real events depended on
+  the fixture. An empty runtime store now yields an empty stream instead of three
+  invented events.
 - **M-TRADES-1 complete:** fixture live trades, ghost trades and blocked intents no
   longer render on ANY ordinary operator route. `useTrades` (nine consumers, including
   the chart overlay and the analytics engine) is gone; `useOperationalTrades` reads

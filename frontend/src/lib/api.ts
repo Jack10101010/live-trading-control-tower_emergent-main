@@ -1469,6 +1469,9 @@ export const api = {
     apiFetch<ScenarioOperationalView & { history: ScenarioEventView[] }>(
       `/scenarios/${encodeURIComponent(scenarioId)}`),
   instruments: () => apiFetch<InstrumentsResponse>('/instruments'),
+  /** M-EVENTS-1 — DEVELOPMENT FIXTURE EVENTS ONLY. Not the audit stream. */
+  fixtureEventsPreview: () =>
+    apiFetch<{ provenance: string; detail: string; events: EventEntry[] }>('/dev/fixture-events'),
   operationsNodes: () => apiFetch<{ nodes: NodeOperationalView[] }>('/operations/nodes'),
   operationsAccounts: () => apiFetch<{ accounts: AccountOperationalView[] }>('/operations/accounts'),
   operationsOrders: () => apiFetch<{ orders: OrderOperationalView[] }>('/operations/orders'),
@@ -1684,6 +1687,7 @@ export const QK = {
   /** M-FLEET-2: DEVELOPMENT FIXTURE ONLY. Ordinary hooks must not use this. */
   fixtureFleetPreview: ['fixture-fleet-preview'] as const,
   instruments: ['instruments'] as const,
+  fixtureEventsPreview: ['fixture-events-preview'] as const,
   operationsNodes: ['operations', 'nodes'] as const,
   operationsAccounts: ['operations', 'accounts'] as const,
   featureFlags: ['feature-flags'] as const,
