@@ -50,11 +50,33 @@ def _age_s(iso: str | None) -> float | None:
         return None
 
 
+#: Bytes read from the end of cycles.jsonl to find the tail. A cycle record is
+#: ~700B, so this comfortably covers `n` records while bounding the read.
+_TAIL_BYTES = 256 * 1024
+
+
 def _tail_cycles(path: Path, n: int = 40) -> list[dict]:
+    """Last `n` cycle records, reading a BOUNDED window from the end of the file.
+
+    This used to slurp the whole file to take a 40-line tail. cycles.jsonl is
+    append-only with no rotation anywhere in the node (ops_log documents "No
+    rotation"), so that cost grew without limit — and it grew fastest during long
+    unattended runs, which is exactly when an operator most needs `live.status` to
+    answer quickly. Reading a fixed window from the end is O(1) in file size.
+    """
     if not path.exists():
         return []
     out = []
-    for line in path.read_text().splitlines()[-n:]:
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as fh:
+            if size > _TAIL_BYTES:
+                fh.seek(size - _TAIL_BYTES)
+                fh.readline()          # discard the partial record at the seek point
+            text = fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return []
+    for line in text.splitlines()[-n:]:
         line = line.strip()
         if line:
             try:
@@ -216,9 +238,24 @@ def collect(cfg: LiveConfig, probe_mt5: bool = True) -> None:
         phase = lc.get("phase", "?")
         # Only RUNNING may trade. STOPPED is a correct resting state, not a fault.
         healthy_phase = phase in ("RUNNING", "STOPPED")
-        row("lifecycle state?", OK if healthy_phase else WARN if phase == "READY" else FAIL,
-            f"{phase} since {lc.get('since', '?')}"
-            + (f" — {lc['phase_detail']}" if lc.get("phase_detail") and not healthy_phase else ""))
+        # CORROBORATE against the heartbeat before believing "RUNNING". lifecycle.json
+        # records the last TRANSITION, and a process that is killed cannot write
+        # STOPPED — so the file keeps asserting RUNNING for a pid that no longer
+        # exists. Observed for 3.5h after a real node death: this row read OK while
+        # the heartbeat row correctly read FAIL. A row that lies is worse than no
+        # row, because it is the one an operator scans for "is the node alive?".
+        # `age` and `phase` come from the heartbeat block already read above.
+        hb_limit = 900 if (hb or {}).get("phase") == "cycle_running" else 120
+        abandoned = (phase == "RUNNING" and age is not None and age > hb_limit)
+        if abandoned:
+            row("lifecycle state?", FAIL,
+                f"claims RUNNING (pid {lc.get('pid')}) but no heartbeat for {age:.0f}s "
+                f"(limit {hb_limit}s) — process is gone; lifecycle records the last "
+                f"transition, and a killed process cannot write STOPPED")
+        else:
+            row("lifecycle state?", OK if healthy_phase else WARN if phase == "READY" else FAIL,
+                f"{phase} since {lc.get('since', '?')}"
+                + (f" — {lc['phase_detail']}" if lc.get("phase_detail") and not healthy_phase else ""))
 
         rec = lc.get("reconcile", {})
         rec_status = rec.get("status", "?")

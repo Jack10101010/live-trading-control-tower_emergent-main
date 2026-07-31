@@ -615,3 +615,93 @@ def test_world_declares_no_behaviour():
                  if p.name != "world.py"
                  and ("WORLD.kind" in p.read_text() or ".kind ==" in p.read_text())]
     assert branching == [], f"behaviour branched on world kind in {branching}"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# M-OPS-1 — operational resilience
+# ══════════════════════════════════════════════════════════════════════════════
+def _lifecycle_state(tmp_path, phase, hb_age_s, hb_phase="cycle_running", pid=1712):
+    """live.status over a synthetic lifecycle+heartbeat pair."""
+    from live import status as live_status
+    cfg = _cfg(tmp_path)
+    ops = cfg.state_dir / "ops"; ops.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc)
+    (ops / "lifecycle.json").write_text(json.dumps({
+        "phase": phase, "pid": pid, "since": now.isoformat(),
+        "updated_at": now.isoformat(), "restart_reason": "first_start",
+        "reconcile": {"status": "complete", "runs": 1, "completed_at": now.isoformat(),
+                      "detail": "dry_run"},
+        "last_clean_shutdown": None, "last_crash": None, "recovery_duration_s": 1.0}))
+    (ops / "heartbeat.json").write_text(json.dumps({
+        "at": (now - timedelta(seconds=hb_age_s)).isoformat(),
+        "phase": hb_phase, "status": "running", "boundary": None, "error": ""}))
+    RunnerState(cfg.state_dir).save()
+    live_status.ROWS.clear()
+    live_status.collect(cfg, probe_mt5=False)
+    return {q: (v, d) for q, v, d in live_status.ROWS}
+
+
+def test_lifecycle_running_with_a_fresh_heartbeat_still_reads_ok(tmp_path):
+    """The positive case must not regress: a genuinely live node reads OK."""
+    v, d = _lifecycle_state(tmp_path, "RUNNING", hb_age_s=5)["lifecycle state?"]
+    assert v == "OK" and "RUNNING since" in d
+
+
+def test_lifecycle_claiming_running_after_death_is_not_reported_ok(tmp_path):
+    """Observed for 3.5h after a real node death: lifecycle.json kept asserting
+    RUNNING for a pid that no longer existed, because a killed process cannot
+    write STOPPED. That row is the one an operator scans for "is it alive?"."""
+    v, d = _lifecycle_state(tmp_path, "RUNNING", hb_age_s=17265)["lifecycle state?"]
+    assert v == "FAIL"
+    assert "claims RUNNING" in d and "1712" in d and "process is gone" in d
+
+
+def test_recomputing_node_is_not_called_dead_inside_its_budget(tmp_path):
+    """A ~19min recompute is legitimate; only past the bar budget is it gone."""
+    v, _ = _lifecycle_state(tmp_path, "RUNNING", hb_age_s=600)["lifecycle state?"]
+    assert v == "OK"
+
+
+def test_idle_node_uses_the_tight_bound_for_abandonment(tmp_path):
+    v, _ = _lifecycle_state(tmp_path, "RUNNING", hb_age_s=200, hb_phase="idle")["lifecycle state?"]
+    assert v == "FAIL"
+
+
+def test_stopped_lifecycle_is_not_flagged_as_abandoned(tmp_path):
+    """STOPPED is a correct resting state, however old the heartbeat is."""
+    v, d = _lifecycle_state(tmp_path, "STOPPED", hb_age_s=99999)["lifecycle state?"]
+    assert v == "OK" and "STOPPED" in d
+
+
+def test_cycle_tail_read_is_bounded_by_file_size(tmp_path):
+    """cycles.jsonl is append-only with no rotation anywhere in the node, so a
+    whole-file read to take a 40-line tail grew without limit — worst exactly
+    during the long unattended runs when status matters most."""
+    from live.status import _tail_cycles, _TAIL_BYTES
+    p = tmp_path / "cycles.jsonl"
+    recs = [{"cycle_start": f"2026-01-01T00:00:{i%60:02d}", "n": i, "pad": "x" * 600}
+            for i in range(3000)]
+    p.write_text("\n".join(json.dumps(r) for r in recs))
+    assert p.stat().st_size > _TAIL_BYTES, "fixture must exceed the read window"
+    got = _tail_cycles(p, 40)
+    assert len(got) == 40
+    assert got[-1]["n"] == 2999 and got[0]["n"] == 2960     # correct tail, not a slice of junk
+
+
+def test_cycle_tail_handles_small_and_missing_files(tmp_path):
+    from live.status import _tail_cycles
+    p = tmp_path / "c.jsonl"
+    p.write_text("\n".join(json.dumps({"n": i}) for i in range(5)))
+    assert len(_tail_cycles(p, 40)) == 5
+    assert _tail_cycles(tmp_path / "absent.jsonl", 40) == []
+
+
+def test_cycle_tail_survives_a_torn_first_record(tmp_path):
+    """Seeking mid-file lands inside a record; the partial line must be dropped,
+    not parsed into a bogus cycle."""
+    from live.status import _tail_cycles, _TAIL_BYTES
+    p = tmp_path / "c.jsonl"
+    recs = [{"n": i, "pad": "y" * 600} for i in range(3000)]
+    p.write_text("\n".join(json.dumps(r) for r in recs))
+    got = _tail_cycles(p, 40)
+    assert all("n" in g for g in got), "a partial record leaked through"
