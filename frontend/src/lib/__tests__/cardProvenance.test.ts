@@ -199,6 +199,36 @@ describe('structural guards', () => {
     }
   });
 
+  it('M-EDGE-1: no fabricated edge/performance metrics render anywhere', () => {
+    const REMOVED = ['expectancyR', 'winRate', 'edgeDrift', 'policyHealth',
+                     'researchVsLive', 'ghostVsLive', 'distributionDrift',
+                     'featureDrift', 'forwardTestHealth', 'operatorConfidence',
+                     'futureCandidates'];
+    // Main Edge Monitor view: honest state, no metrics, no hook.
+    const em = read('views/EdgeMonitorView.tsx');
+    for (const f of REMOVED) expect(em, `EdgeMonitorView renders ${f}`).not.toContain(`metrics.${f}`);
+    expect(em).not.toContain('useEdgeMonitor');
+    expect(em).toContain('edge-monitor-not-computed');
+    expect(em).toContain('Edge performance is not computed.');
+    // Pair edge tab: kept, honest, no pair-specific claim, no metrics.
+    const pv = read('views/pair/PairViews.tsx');
+    for (const f of REMOVED) expect(pv, `PairViews renders ${f}`).not.toContain(`metrics.${f}`);
+    expect(pv).not.toContain('useEdgeMonitor');
+    expect(pv).toContain('pair-edge-monitor-not-computed');
+    // Pair Health no longer shows edge-fed expectancy/win rate.
+    const health = pv.slice(pv.indexOf('title="Pair Health"'), pv.indexOf('title="Pair Health"') + 900);
+    expect(health).not.toContain('Expectancy');
+    expect(health).not.toContain('Win rate');
+    // Repo-wide: no .tsx consumer reads the removed EdgeMonitor shape.
+    for (const file of allTsx(SRC)) {
+      const text = readFileSync(file, 'utf8');
+      expect(text, `${path.relative(SRC, file)} reads edge.metrics`).not.toContain('edge.metrics');
+    }
+    // The honest surfaces must NOT read as operationally green.
+    expect(em).toContain('provenance="placeholder"');
+    expect(pv).toContain('provenance="placeholder"');
+  });
+
   it('chart cards use dynamic candle provenance, never a static green', () => {
     expect(read('views/global/GlobalViews.tsx')).toContain('candleCardProvenance(');
     expect(read('views/pair/PairViews.tsx')).toContain('candleCardProvenance(');

@@ -25,7 +25,7 @@ a card never greens the card.
 | /market-data | Snapshot integrity | same | placeholder grid | placeholder | placeholder | RED | Low | await node reconciliation |
 | /deployments | All Deployments | `DeploymentsView` | `useFleet` → `WORLD` | WORLD fixture | fixture | RED | High | replace source |
 | /strategy-packages | Active Package / delta / All Packages | `StrategyPackagesView` | `usePackages` → `WORLD.packages` | WORLD fixture | fixture | RED | Medium | replace or gate |
-| /edge-monitor | 4 panels (signals/comparisons/candidates/pipeline) | `EdgeMonitorView` | `useEdgeMonitor` → `/api/edge-monitor` → `WORLD` | WORLD fixture | fixture | RED | High (fake analytics) | gate or remove |
+| /edge-monitor | Edge Performance (honest) + Recommendation Pipeline | `EdgeMonitorView` | `/api/edge-monitor` → **honest `computed:false`** | **edge metrics removed (M-EDGE-1 ✅)**; pipeline panel still fixture recommendations (M-REC-1) | placeholder / fixture | RED | Resolved for metrics | ledger-derived metrics later; pipeline → M-REC-1 |
 | /system | Engine Components | `SystemView` | active package (fixture) | WORLD fixture | fixture | RED | Medium | await node manifest |
 | /system | Feature Flags | `SystemView` | `useFeatureFlags` → `/api/feature-flags` → **hardcoded dict** (`server.py:4510`) | constants | placeholder | RED | Low | move to real config; FeatureGate copy corrected |
 | /system | Storage & Feeds | `SystemView` | `useRuntimeHealth` → `/runtime/health` | real runtime | live | GREEN | — | retain |
@@ -39,10 +39,11 @@ a card never greens the card.
 | /settings | Preferences / Appearance / Notifications / Shortcuts | `SettingsView` (`SettingsSection`) | `/api/operator/preferences` → runtime overlay | persisted config | runtime-config | GREEN | — | retain |
 | /settings | Feature Flags section | `SettingsView` | `/api/feature-flags` → hardcoded dict | constants | placeholder | RED | Low | move to real config |
 | /fleet | Deployment tile grid (Cards) | `FleetOverview` (ProvenanceFrame) | `useFleet` → `WORLD` | WORLD fixture | fixture | RED | High | replace source |
-| /pair/:id/dashboard | Pair Health / Market State / Recent Decisions / Today's Posture | `PairViews` | `usePairWorkspace` etc. → `WORLD` | WORLD fixture | fixture | RED | High | replace source |
+| /pair/:id/dashboard | Pair Health / Market State / Recent Decisions / Today's Posture | `PairViews` | `usePairWorkspace` etc. → `WORLD` | WORLD fixture; **edge-fed Expectancy + Win rate tiles removed (M-EDGE-1 ✅)** | fixture | RED | High → reduced | replace source |
 | /pair/:id/dashboard | Recent Price Action chart | `PairViews` | `ChartWorkspace` | provider-dependent | dynamic | **DYNAMIC** | Medium | as market-data chart |
 | /pair/:id (trades/orders tabs) | Live/ghost trades, Pending Orders, tab tables | `PairViews` | `useTrades` → `WORLD.liveTrades/ghostTrades` | WORLD fixture | fixture | RED | **High** (fake R values) | replace with ledger/operations |
-| /pair/:id (edge/package tabs) | Edge signals, expectancy, drift, health score, coverage, integrity, versions, warnings | `PairViews` | fixture cluster | WORLD fixture | fixture | RED | High | gate or replace |
+| /pair/:id (edge tab) | Edge Performance (honest unavailable; **tab deliberately kept**) | `PairViews` | `/api/edge-monitor` → honest `computed:false` | **removed (M-EDGE-1 ✅)** | placeholder | RED | Resolved | ledger-derived metrics later |
+| /pair/:id (package tabs) | Health score, coverage, integrity, versions, warnings | `PairViews` | fixture cluster | WORLD fixture | fixture | RED | High | gate or replace |
 | /pair/:id/journal | Events feed | `PairViews` | `useEvents` → `WORLD.events` ⊕ runtime events.db | inseparably mixed | mixed | RED | Medium | **SPLIT** (fixture seeds vs runtime events) |
 | /pair/:id/policy | Policy panels ×6 | `PolicyEngineView` | `usePolicyMatrix` → fixture packages (+ synthesized cells zeroed) | WORLD fixture | fixture | RED | Medium | replace source |
 | /pair/:id/replay | Replay panels ×3 | `ReplayView` | replay sessions → `WORLD.replaySessions` | replay | replay | RED | Low (gated) | retain gated |
@@ -50,6 +51,25 @@ a card never greens the card.
 | /version-history, /package-comparison | Packages, comparisons ×5 panels | `VersioningViews` | `WORLD.packages/packageComparisons` | WORLD fixture | fixture | RED | Medium | retain gated |
 | (shell) | ChartDataStatusStrip | in `ChartWorkspace` | chart feed status | derived (labels its own source) | chip-level | — (chip) | Low | retain |
 | (any) | `PlaceholderPanel` sections | `WorkspacePage` | none | placeholder | placeholder | RED | Low | await implementation |
+
+## M-EDGE-1 — fabricated performance removed (recorded)
+
+Removed `WORLD.edgeMonitor` fields: `expectancyR` (0.39), `winRate` (0.335),
+`edgeDrift` ("-0.02R vs research"), `distributionDrift`, `featureDrift`,
+`policyHealth` ("green"), `researchVsLive` ("+0.06R"), `ghostVsLive`,
+`forwardTestHealth`, `recommendationGeneration`, `operatorConfidence`,
+`futureCandidates`. Previous consumers: `EdgeMonitorView` (Live Edge Signals /
+Comparisons / Future Candidates), `PairEdgeMonitorView` (same plus expectancy
+and drift placeholder charts), and the Pair Health card's Expectancy + Win-rate
+tiles. **No genuine performance model exists**, and the real plane deliberately
+refuses to compute these figures — `operational_projection.LedgerOperationalSummary`
+and `trade_ledger_domain.LedgerSummaryTotals` both state "NO win rate, no
+expectancy, no drawdown, no equity curve" — so the fixture versions were a
+second, fictional authority. Genuine performance must eventually derive from the
+authoritative trade ledger and real broker history. AnalyticsView and other
+trade-derived analytics remain OUT of M-EDGE-1 (M-TRADES-2). The pair Edge
+Monitor tab remains present as an honest unavailable surface, and feature-flag
+behaviour is unchanged.
 
 ## Manual-inspection corrections (post-launch review)
 

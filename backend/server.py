@@ -4357,7 +4357,27 @@ async def broker_health():
 
 @api_router.get("/edge-monitor")
 async def edge_monitor():
-    return WORLD.get("edgeMonitor", {})
+    """M-EDGE-1 — honest contract. This route previously served the WORLD
+    fixture's authored track record (expectancy 0.39R, win rate 33.5%, edge
+    drift "-0.02R vs research", policy health "green", research/ghost-vs-live
+    comparisons). No edge or performance model exists in the Control Tower, and
+    the real operational plane deliberately refuses to compute these figures:
+    `operational_projection.LedgerOperationalSummary` and
+    `trade_ledger_domain.LedgerSummaryTotals` both document "NO win rate, no
+    expectancy, no drawdown, no equity curve". Publishing fixture versions of
+    exactly those metrics created a second — and fictional — authority.
+
+    Genuine performance must eventually derive from the authoritative trade
+    ledger and real broker history; until then this reports nothing rather than
+    inventing a track record an operator could size or promote against."""
+    return {
+        "schemaVersion": 1,
+        "computed": False,
+        "reason": "no_edge_performance_model",
+        "detail": ("Edge performance is not computed. No edge or performance "
+                   "model is implemented; genuine metrics must derive from the "
+                   "trade ledger and real broker history."),
+    }
 
 
 @api_router.get("/system-confidence")

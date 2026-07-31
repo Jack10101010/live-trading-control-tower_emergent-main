@@ -11,7 +11,6 @@ import {
   usePairWorkspace,
   useMarketState,
   useActivePackage,
-  useEdgeMonitor,
   useTrades,
   useEvents,
   usePolicyMatrix,
@@ -70,7 +69,6 @@ export function PairDashboardView() {
   const ms = useMarketState(pair);
   const rtHealth = useRuntimeHealth();
   const pkg = useActivePackage();
-  const edge = useEdgeMonitor();
   const openInspector = useShellStore((s) => s.openInspector);
 
   const openTrades = ws.trades.filter((t) => t.state !== 'closed');
@@ -88,8 +86,11 @@ export function PairDashboardView() {
       }
     >
       <div className="grid grid-cols-12 gap-4">
+        {/* M-EDGE-1: the fixture-fed Expectancy and Win rate tiles are removed
+            (no edge/performance model exists). The remaining tiles are pair
+            operational content and rebalance to four columns. */}
         <Panel provenance="fixture" title="Pair Health" className="col-span-12">
-          <div className="grid grid-cols-6 gap-6">
+          <div className="grid grid-cols-4 gap-6">
             <MetricStat label="Open trades" value={openTrades.length} emphasise mono />
             <MetricStat label="Deployments" value={ws.deployments.length} emphasise mono />
             <MetricStat
@@ -104,12 +105,6 @@ export function PairDashboardView() {
                   {fmtPercent(worstDd, 0)}
                 </span>
               }
-              emphasise
-            />
-            <MetricStat label="Expectancy" value={<RValue value={edge.metrics.expectancyR} />} sub="30d rolling" emphasise />
-            <MetricStat
-              label="Win rate"
-              value={<span className="mono">{fmtPercent(edge.metrics.winRate * 100, 1)}</span>}
               emphasise
             />
           </div>
@@ -507,59 +502,29 @@ export function PairTradesView() {
 
 export function PairEdgeMonitorView() {
   const pair = usePair();
-  const edge = useEdgeMonitor();
 
   return (
     <WorkspacePage
       title={`${pair} · Edge Monitor`}
-      subtitle="Drift · confidence · research-vs-live · ghost-vs-live · candidates"
+      subtitle="Edge performance metrics are not computed for any pair."
     >
       <div className="grid grid-cols-12 gap-4">
-        <Panel provenance="fixture" title="Live Edge Signals" className="col-span-12">
-          <div className="grid grid-cols-6 gap-6">
-            <MetricStat label="Expectancy" value={<RValue value={edge.metrics.expectancyR} />} emphasise />
-            <MetricStat label="Win rate" value={<span className="mono">{fmtPercent(edge.metrics.winRate * 100, 1)}</span>} emphasise />
-            <MetricStat label="Edge drift" value={<span className="mono">{edge.metrics.edgeDrift}</span>} emphasise />
-            <MetricStat label="Distribution drift" value={<Badge variant="validation" color="var(--positive)">{edge.metrics.distributionDrift}</Badge>} emphasise />
-            <MetricStat label="Feature drift" value={<span className="mono">{edge.metrics.featureDrift}</span>} emphasise />
-            <MetricStat label="Policy health" value={<Badge variant="health" color="var(--positive)">{edge.metrics.policyHealth}</Badge>} emphasise />
+        {/* M-EDGE-1: the pair-level fabricated edge metrics, comparisons,
+            candidates and the expectancy/drift placeholder charts are GONE. The
+            TAB IS DELIBERATELY KEPT: the absence of an edge model is itself
+            operationally relevant, and a genuine ledger-backed model can later
+            inhabit this surface without another navigation migration. No
+            pair-specific claim is made, because no pair-specific model exists. */}
+        <Panel provenance="placeholder" title="Edge Performance" className="col-span-12">
+          <div className="py-6 px-2 max-w-2xl" data-testid="pair-edge-monitor-not-computed">
+            <div className="text-sm text-text font-medium">Edge performance is not computed.</div>
+            <p className="text-xs text-text-muted mt-2">
+              No edge or performance model is implemented — for this pair or any
+              other. Genuine expectancy, win rate and drift must derive from the
+              authoritative trade ledger and real broker history. Nothing here is
+              estimated from demonstration data.
+            </p>
           </div>
-        </Panel>
-
-        <Panel provenance="fixture" title="Expectancy trajectory (30d)" className="col-span-8" bodyClassName="p-3">
-          <PlaceholderChart height={220} variant="area" />
-        </Panel>
-
-        <Panel provenance="fixture" title="Comparisons" className="col-span-4">
-          <KeyValueGrid
-            items={[
-              { label: 'Research vs Live', value: <span className="mono">{edge.metrics.researchVsLive}</span> },
-              { label: 'Ghost vs Live', value: <span className="mono">{edge.metrics.ghostVsLive}</span> },
-              { label: 'Forward-test', value: edge.metrics.forwardTestHealth },
-              { label: 'Rec gen', value: edge.metrics.recommendationGeneration, mono: true },
-              { label: 'Operator conf.', value: <Badge variant="status">{edge.metrics.operatorConfidence}</Badge> },
-              { label: 'As of', value: <TimestampUTC iso={edge.asOf} /> },
-            ]}
-          />
-        </Panel>
-
-        <Panel provenance="fixture" title="Future Candidates" className="col-span-6">
-          {edge.metrics.futureCandidates.length === 0 ? (
-            <div className="text-xs text-text-muted italic">No candidates pending</div>
-          ) : (
-            <ul className="space-y-2">
-              {edge.metrics.futureCandidates.map((c, i) => (
-                <li key={i} className="flex items-center gap-2 text-xs text-text-2">
-                  <Badge variant="recommendation" size="sm">candidate</Badge>
-                  <span className="mono">{c}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Panel>
-
-        <Panel provenance="fixture" title="Drift by cohort (heat map)" className="col-span-6" bodyClassName="p-3">
-          <PlaceholderChart height={200} variant="bar" />
         </Panel>
       </div>
     </WorkspacePage>

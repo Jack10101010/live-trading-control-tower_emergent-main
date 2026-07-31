@@ -24,7 +24,7 @@ DYNAMIC = flips green automatically when its real source activates.
 | 9 | Charts (market-data + pair) + derived overlays | provider-dep. | DYNAMIC | market_data engine (provider=fixture) | provider=mt5 or store/polygon | MT5/store feed wired as default | Med | Med | M-FEED-1 | ☐ |
 | 10 | Market State snapshot cards | fixture | RED | WORLD.marketStateSnapshots | node-published market state | node telemetry | Med | Med | M-NODE-TEL-1 | ☐ |
 | 11 | Broker Health view | fixture | RED | WORLD.brokerHealth | real MT5 health telemetry | demo MT5 + health surface | Med | High | M-MT5-READ-2 | ☐ |
-| 12 | Edge Monitor (4 panels + pair edge tabs) | fixture | RED | `/api/edge-monitor` → WORLD | research pipeline export (much later) | none — gate off today | Low | High | M-GATE-1 | ☐ |
+| 12 | Edge Monitor (main view + pair edge tab + Pair Health expectancy/win-rate) | **removed** | RED (honest placeholder surfaces) | `/api/edge-monitor` — **honest `computed:false`; WORLD.edgeMonitor severed, fixture-immune (tested)** | ledger + broker-history derived metrics (M-TRADES-2 and beyond) | no performance model exists; needs real trade history | Low | **Resolved** (no fabricated track record) | **M-EDGE-1** | ☑ |
 | 13 | Recommendations / drafts / decision chains (fixture) | fixture | RED | WORLD | durable trade-recommendation store (exists) | consumer migration | Med | Med | M-REC-1 | ☐ |
 | 14 | Packages / versioning / comparisons / policy panels | fixture | RED | WORLD.packages | real package registry (later) | package model | High | Med | M-PKG-1 | ☐ |
 | 15 | Events feed (journal) | mixed | RED | WORLD.events ⊕ events.db | split: runtime events only (fixture seeds dropped) | split work only | Low | Med | M-EVENTS-1 | ☐ |
@@ -47,6 +47,7 @@ DYNAMIC = flips green automatically when its real source activates.
 - **RED fixture:** 11 · **RED mixed:** 2 · **RED placeholder:** 2 · **RED constants:** 1 · **RED replay:** 1
 - **M-RISK-1 complete:** the highest-risk fabricated numbers (funded risk rules) can no longer render anywhere.
 - **M-CONF-1 complete:** the fabricated confidence score/band/signals are gone from the header, context bar and fleet rail; the endpoint reports `computed:false`.
+- **M-EDGE-1 complete:** the fabricated track record (expectancy 0.39R, win rate 33.5%, edge drift, policy health, research/ghost-vs-live) is gone from the Edge Monitor view, the pair edge tab and the Pair Health card; `/api/edge-monitor` reports `computed:false`. The pair tab remains present as an honest unavailable surface; feature-flag behaviour is unchanged. AnalyticsView and trade-derived analytics stay OUT of scope (M-TRADES-2).
 - **UI backed by genuine operational data today:** ≈20% of families (5/25);
   with a demo MT5 connection (M-MT5-READ-1 + M-FEED-1) the four DYNAMIC
   families flip automatically → ≈36% with zero further UI work.

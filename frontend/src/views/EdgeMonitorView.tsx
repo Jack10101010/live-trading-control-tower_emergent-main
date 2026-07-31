@@ -1,4 +1,4 @@
-import { useEdgeMonitor, useRecommendations } from '@/hooks/useRepository';
+import { useRecommendations } from '@/hooks/useRepository';
 import { Panel } from '@/components/structures/Panel';
 import {
   Badge,
@@ -19,7 +19,6 @@ import { DiffView } from '@/components/structures/Panel';
  * Not Analytics (which describes what happened).
  */
 export function EdgeMonitorView() {
-  const edge = useEdgeMonitor();
   const recs = useRecommendations();
   const openInspector = useShellStore((s) => s.openInspector);
 
@@ -28,66 +27,25 @@ export function EdgeMonitorView() {
       <div className="col-span-12">
         <h1 className="text-2xl font-semibold text-text tracking-tight">Edge Monitor</h1>
         <p className="text-xs text-text-muted mt-1">
-          Drift · confidence · research-vs-live · ghost-vs-live · forward-test health · candidate pipeline. Predictive; feeds recommendations.
+          Predictive surface for the recommendation pipeline. Edge performance metrics are not computed.
         </p>
       </div>
 
-      <Panel provenance="fixture" title="Live Edge Signals" className="col-span-12">
-        <div className="grid grid-cols-6 gap-6">
-          <MetricStat label="Expectancy" value={<RValue value={edge.metrics.expectancyR} />} emphasise />
-          <MetricStat
-            label="Win rate"
-            value={<span className="mono">{fmtPercent(edge.metrics.winRate * 100, 1)}</span>}
-            emphasise
-          />
-          <MetricStat
-            label="Edge drift"
-            value={<span className="mono">{edge.metrics.edgeDrift}</span>}
-            emphasise
-          />
-          <MetricStat
-            label="Distribution drift"
-            value={<Badge variant="validation" color="var(--positive)">{edge.metrics.distributionDrift}</Badge>}
-            emphasise
-          />
-          <MetricStat
-            label="Policy health"
-            value={<Badge variant="health" color="var(--positive)">{edge.metrics.policyHealth}</Badge>}
-            emphasise
-          />
-          <MetricStat
-            label="Operator confidence"
-            value={<Badge variant="status">{edge.metrics.operatorConfidence}</Badge>}
-            emphasise
-          />
+      {/* M-EDGE-1: the fabricated edge metrics (expectancy, win rate, edge/
+          distribution/feature drift, policy health, operator confidence,
+          research-vs-live, ghost-vs-live, forward-test health, future
+          candidates) are GONE. No edge or performance model exists, so the
+          surface states that plainly rather than showing invented figures. */}
+      <Panel provenance="placeholder" title="Edge Performance" className="col-span-12">
+        <div className="py-6 px-2 max-w-2xl" data-testid="edge-monitor-not-computed">
+          <div className="text-sm text-text font-medium">Edge performance is not computed.</div>
+          <p className="text-xs text-text-muted mt-2">
+            No edge or performance model is implemented. Genuine expectancy, win
+            rate and drift must derive from the authoritative trade ledger and
+            real broker history — none of which is available yet. Nothing is
+            estimated or carried over from demonstration data.
+          </p>
         </div>
-      </Panel>
-
-      <Panel provenance="fixture" title="Comparisons" className="col-span-6">
-        <KeyValueGrid
-          items={[
-            { label: 'Research vs Live', value: <span className="mono">{edge.metrics.researchVsLive}</span> },
-            { label: 'Ghost vs Live', value: <span className="mono">{edge.metrics.ghostVsLive}</span> },
-            { label: 'Forward-test', value: edge.metrics.forwardTestHealth },
-            { label: 'Recommendation gen', value: edge.metrics.recommendationGeneration, mono: true },
-            { label: 'Feature drift', value: edge.metrics.featureDrift, mono: true },
-            { label: 'As of', value: <TimestampUTC iso={edge.asOf} /> },
-          ]}
-        />
-      </Panel>
-
-      <Panel provenance="fixture" title="Future Candidates" className="col-span-6">
-        <ul className="space-y-2">
-          {edge.metrics.futureCandidates.map((c, i) => (
-            <li key={i} className="flex items-center gap-2 text-xs text-text-2">
-              <Badge variant="recommendation" size="sm">candidate</Badge>
-              <span className="mono">{c}</span>
-            </li>
-          ))}
-          {edge.metrics.futureCandidates.length === 0 && (
-            <li className="text-xs text-text-muted italic">No candidates pending</li>
-          )}
-        </ul>
       </Panel>
 
       <Panel

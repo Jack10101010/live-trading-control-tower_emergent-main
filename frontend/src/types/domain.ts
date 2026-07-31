@@ -291,23 +291,12 @@ export interface BrokerHealth {
   timeline: Array<{ at: string; code: string; detail: string; resolved: boolean }>;
 }
 
+/** M-EDGE-1 honest contract: edge/performance is NOT computed — no metrics. */
 export interface EdgeMonitor {
-  instrument: string;
-  asOf: string;
-  metrics: {
-    expectancyR: number;
-    winRate: number;
-    edgeDrift: string;
-    distributionDrift: string;
-    featureDrift: string;
-    policyHealth: string;
-    researchVsLive: string;
-    ghostVsLive: string;
-    forwardTestHealth: string;
-    recommendationGeneration: number;
-    operatorConfidence: string;
-    futureCandidates: string[];
-  };
+  schemaVersion: number;
+  computed: false;
+  reason: string;
+  detail: string;
 }
 
 /** M-CONF-1 honest contract: confidence is NOT computed — no score exists. */
