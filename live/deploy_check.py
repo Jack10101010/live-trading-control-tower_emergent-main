@@ -151,23 +151,32 @@ def runtime(cfg: LiveConfig) -> int:
         url = cfg.ct_base_url.rstrip("/") + "/live/status?instance_id=live-eurusd-golden-001"
         with urllib.request.urlopen(url, timeout=5) as resp:
             payload = json.loads(resp.read())
-        # Identity alone is not health: the CT holds the LAST payload forever, so a
-        # node dead for hours still satisfies "the CT has a record for me". Consume
-        # the server-authoritative freshness instead of re-deriving age here — the
-        # backend owns that verdict and computes it from its own clock.
+        # Identity alone is not health: the CT holds the LAST snapshot, so a node
+        # dead for hours still satisfies "the CT has a record for me". Consume the
+        # canonical `ct.node-telemetry.v1` freshness verdict (M-TEL-1) rather than
+        # re-deriving age here. The backend owns that judgement and computes it
+        # from its own clock; a second implementation would be a second thing to
+        # drift, which is exactly what this milestone removed from the VPS.
         identity_ok = payload.get("instance_id") == "live-eurusd-golden-001"
-        fresh = payload.get("freshness")
-        boundary = payload.get("runner", {}).get("boundary")
-        if fresh is None:
-            # Older backend without the freshness contract — do not fail the deploy
-            # on its absence, but say plainly that staleness was not verified.
+        # v1 reports freshness at the TOP LEVEL; `cycle` replaced the flat `runner`.
+        stale = payload.get("stale")
+        boundary = ((payload.get("cycle") or {}).get("last_boundary")
+                    or (payload.get("snapshot") or {}).get("cycle", {}).get("last_boundary")
+                    or (payload.get("runner") or {}).get("boundary"))
+        if stale is None:
+            # Server predates M-TEL-1 (no freshness in its response). Do not fail
+            # the deploy on its absence, but say plainly that staleness was NOT
+            # verified, so a silent downgrade is never mistaken for a pass.
             check("ct_receives_status", identity_ok,
-                  f"boundary {boundary} (backend predates freshness; staleness NOT verified)")
+                  f"boundary {boundary} (server predates M-TEL-1; staleness NOT verified)")
         else:
-            check("ct_receives_status", identity_ok and not fresh.get("stale", True),
-                  f"boundary {boundary} — {fresh.get('state')} "
-                  f"age {fresh.get('age_seconds')}s (limit {fresh.get('stale_limit_seconds')}s, "
-                  f"phase {fresh.get('phase')}), {fresh.get('ingest_count')} ingests")
+            check("ct_receives_status", identity_ok and stale is False,
+                  f"boundary {boundary} — {'STALE' if stale else 'fresh'} "
+                  f"age {payload.get('age_seconds')}s "
+                  f"(limit {payload.get('stale_after_seconds')}s"
+                  + (f", basis {payload['basis']}" if payload.get("basis") else "")
+                  + (f", skew {payload['clock_skew_seconds']}s"
+                     if payload.get("clock_skew_seconds") is not None else "") + ")")
     except Exception as exc:
         check("ct_receives_status", False,
               f"{type(exc).__name__}: {exc} (publisher falls back to publish_last.json — "

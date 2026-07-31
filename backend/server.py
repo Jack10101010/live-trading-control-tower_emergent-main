@@ -1722,53 +1722,6 @@ async def feature_flags() -> dict[str, Any]:
 # memory (+ a LIVE_STATUS BotEvent in the append-only events spine, idempotent
 # per instance/boundary). Read side: /live/status for the UI/operators.
 _LIVE_STATUS: dict = {}
-#: Server-observed ingest metadata per instance. Deliberately NOT persisted — see
-#: `_live_freshness`. Keyed by instance_id, parallel to _LIVE_STATUS.
-_LIVE_META: dict = {}
-
-# Freshness thresholds, reused verbatim from the operator-facing policy already in
-# the repository (`live/status.py`, `live/deploy_check.py`): a node mid-recompute is
-# allowed the full M15 bar budget, an idle node is not. These are not new numbers.
-LIVE_STALE_LIMIT_CYCLE_RUNNING_S = 900
-LIVE_STALE_LIMIT_IDLE_S = 120
-
-
-def _live_freshness(instance_id: str, now: datetime | None = None) -> dict:
-    """Server-authoritative freshness for one instance.
-
-    Age is computed from the SERVER clock against the server's own last-ingest
-    time — never from the node's `at` field and never from browser time, so a node
-    with a skewed clock cannot make itself look fresh.
-
-    Not persisted by design: after a backend restart the honest answer is "no
-    telemetry received since restart", which is what an absent entry conveys.
-    Replaying a dead node's last payload as though it were current is precisely
-    the failure this endpoint is meant to prevent.
-    """
-    meta = _LIVE_META.get(instance_id)
-    if meta is None:
-        return {"state": "unknown", "online": False, "stale": True,
-                "age_seconds": None, "first_seen": None, "last_seen": None,
-                "last_successful_ingest": None, "ingest_count": 0,
-                "phase": None, "stale_limit_seconds": None,
-                "detail": "no telemetry received since backend start"}
-    now = now or datetime.now(timezone.utc)
-    last = datetime.fromisoformat(meta["last_seen"])
-    age = (now - last).total_seconds()
-    phase = (_LIVE_STATUS.get(instance_id) or {}).get("phase")
-    # Unknown/absent phase (older node build) -> conservative: assume a recompute
-    # may be in flight rather than declaring a working node stale.
-    limit = LIVE_STALE_LIMIT_IDLE_S if phase == "idle" else LIVE_STALE_LIMIT_CYCLE_RUNNING_S
-    stale = age > limit
-    return {"state": "stale" if stale else "healthy",
-            "online": not stale, "stale": stale,
-            "age_seconds": round(age, 3),
-            "first_seen": meta["first_seen"], "last_seen": meta["last_seen"],
-            "last_successful_ingest": meta["last_successful_ingest"],
-            "ingest_count": meta["ingest_count"],
-            "phase": phase, "stale_limit_seconds": limit,
-            "detail": (f"no telemetry for {age:.0f}s (limit {limit}s, phase={phase or 'unknown'})"
-                       if stale else f"receiving telemetry (phase={phase or 'unknown'})")}
 
 
 @api_router.post("/live/ingest")
@@ -1777,13 +1730,6 @@ async def live_ingest(request: Request):
     if not isinstance(payload, dict) or "instance_id" not in payload:
         raise HTTPException(status_code=400, detail="payload must include instance_id")
     _LIVE_STATUS[payload["instance_id"]] = payload
-    _now = datetime.now(timezone.utc).isoformat()
-    _meta = _LIVE_META.setdefault(payload["instance_id"],
-                                  {"first_seen": _now, "last_seen": _now,
-                                   "last_successful_ingest": _now, "ingest_count": 0})
-    _meta["last_seen"] = _now
-    _meta["last_successful_ingest"] = _now
-    _meta["ingest_count"] += 1
     idem = f"live|{payload['instance_id']}|{payload.get('runner', {}).get('boundary')}|{payload.get('at')}"
     event = {
         "eventId": f"evt_live_{uuid.uuid4().hex[:12]}",
@@ -1801,22 +1747,12 @@ async def live_ingest(request: Request):
 
 @api_router.get("/live/status")
 async def live_status(instance_id: str | None = None):
-    """Last payload PLUS server-computed freshness.
-
-    Additive and backwards compatible: every field a previous client read is still
-    present and unchanged at the same path; `freshness` is new. Clients must not
-    age telemetry themselves — the server owns that verdict.
-    """
     if instance_id:
         payload = _LIVE_STATUS.get(instance_id)
         if payload is None:
             raise HTTPException(status_code=404, detail=f"no status for {instance_id}")
-        return {**payload, "freshness": _live_freshness(instance_id)}
-    return {"instances": sorted(_LIVE_STATUS),
-            "statuses": {k: {**v, "freshness": _live_freshness(k)}
-                         for k, v in _LIVE_STATUS.items()},
-            "freshness": {k: _live_freshness(k) for k in _LIVE_STATUS},
-            "server_time": datetime.now(timezone.utc).isoformat()}
+        return payload
+    return {"instances": sorted(_LIVE_STATUS), "statuses": _LIVE_STATUS}
 
 
 app.include_router(api_router)
