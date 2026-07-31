@@ -376,6 +376,13 @@ def get_adapter(kind: str | None = None) -> BrokerAdapter:
     nothing else may instantiate an adapter class.
     """
     resolved = kind or active_kind()
+    # M-ENV-1: checked BEFORE the cache, because an EXPLICIT `get_adapter("mock")`
+    # must be refused in production too. Startup validation covers the configured
+    # kind; this covers every call site that names a kind directly, which is what
+    # makes "no mock broker can be constructed in production" a property of the
+    # single construction path rather than of import ordering.
+    import environment
+    environment.require_broker_adapter_admissible(resolved)
     if resolved in _CACHE:
         return _CACHE[resolved]
     if resolved not in known_kinds():
@@ -406,10 +413,22 @@ def get_adapter(kind: str | None = None) -> BrokerAdapter:
 def active_kind() -> str:
     """LIVE-1: the selected adapter kind. Unset/blank -> the mock default. A value
     outside `known_kinds()` is returned VERBATIM so every construction attempt
-    fails closed in `get_adapter` (unknown values deny; nothing falls back)."""
+    fails closed in `get_adapter` (unknown values deny; nothing falls back).
+
+    M-ENV-1: the mock default is a DEVELOPMENT default. In production the
+    fail-open branch is refused outright — an unset variable must never resolve
+    to the mock broker there. Startup validation already rejects that
+    configuration before this is reached, so this is additive defence: it makes
+    "production can never see mock" provable at the function itself rather than
+    only as a consequence of import ordering.
+    """
     import os
+    import environment
     raw = (os.environ.get(VAR_ADAPTER) or "").strip().lower()
-    return raw if raw else ACTIVE_KIND
+    if raw:
+        return raw
+    environment.require_broker_adapter_admissible(None)
+    return ACTIVE_KIND
 
 
 # ── LIVE-1 canonical read models (immutable; MT5 types never escape the adapter) ─

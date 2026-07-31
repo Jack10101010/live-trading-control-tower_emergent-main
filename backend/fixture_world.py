@@ -104,12 +104,32 @@ class FixtureWorld:
         }
 
 
-def load(search_paths) -> FixtureWorld:
-    """Load the first fixture that exists. TOTAL: never raises.
+def unavailable_world() -> FixtureWorld:
+    """An explicitly-empty world, named so the intent is unmistakable.
 
-    A malformed fixture is treated as ABSENT rather than fatal — a corrupt
-    development file must not stop a production process from starting.
+    M-ENV-1 uses this in production INSTEAD of loading: `available` is False, so
+    every fixture-backed surface reports `CODE_FIXTURE_ABSENT` through the
+    existing FIX-2 boundary rather than serving fabricated data. It is the same
+    object the loader already returns when no fixture file exists, so production
+    exercises a path this repository has shipped and tested for some time — not
+    a new one invented for the boundary.
     """
+    return FixtureWorld(None, None)
+
+
+def load(search_paths) -> FixtureWorld:
+    """Load the first fixture that exists. TOTAL for I/O: never raises on a
+    missing or malformed file (a corrupt development fixture must not stop a
+    process from starting).
+
+    M-ENV-1: it DOES raise when called in production. Loading the fixture world
+    is an activation, and an activation that cannot legitimately happen must
+    fail loudly rather than quietly succeed. `server.py` never reaches this call
+    in production — the guard exists so a FUTURE call site cannot reintroduce
+    fixture data through a side door.
+    """
+    import environment                       # local: keeps this module dependency-light
+    environment.require_fixture_activation_allowed()
     for candidate in search_paths:
         path = Path(candidate)
         if not path.exists():

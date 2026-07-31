@@ -45,6 +45,7 @@ import command_authorization
 import execution_mode as execution_mode_layer
 import connection_policy
 import transport as transport_layer
+import environment as environment_layer
 import execution_safety
 import execution_context as execution_context_layer
 import execution_store as execution_store_layer
@@ -94,6 +95,24 @@ OPS_KILL_FILE = Path(os.environ.get("LIVE_KILL_FILE", "./live_state/KILL")).reso
 
 logger = logging.getLogger(__name__)
 
+# ── M-ENV-1: the deployment-environment boundary ─────────────────────────────
+# THE FIRST THING THIS PROCESS DECIDES, and the only place the environment is
+# resolved. It runs BEFORE the Mongo connection, BEFORE the fixture world is
+# loaded and BEFORE any market-data provider is registered, so a rejected
+# production configuration never reaches a state where a store could be opened,
+# a background loop started, or a fixture-backed value served. An inadmissible
+# capability raises `EnvironmentViolation`, which propagates out of module
+# import — uvicorn exits non-zero and no route is ever mounted.
+#
+# `.env` is loaded above, so a variable set there is honoured here.
+#
+# The resolved environment is LOGGED further down, beside the CORS and auth
+# summaries, because `logging.basicConfig` has not run yet at this point — a
+# line emitted here is silently dropped (verified against a real uvicorn boot).
+# Resolution stays here; only the reporting is deferred.
+ENVIRONMENT = environment_layer.enforce_startup()
+_ENV_POLICY = environment_layer.policy(ENVIRONMENT)
+
 # MongoDB connection is OPTIONAL — local dev runs fixture-only with no database.
 # Only connect when MONGO_URL is set; never crash the server when it is absent.
 client = None
@@ -134,7 +153,17 @@ FIXTURE_SEARCH_PATHS = (
     Path('/app/_fixtures/world.v1.json'),
 )
 
-WORLD = fixture_world.load(FIXTURE_SEARCH_PATHS)
+# M-ENV-1: in production the fixture world is never ACTIVATED. It is not loaded
+# and then ignored — the load call is not made at all, so no fixture bytes enter
+# the process. The result is the SAME unavailable world the repository already
+# produces when `world.v1.json` is absent, which means the proven FIX-2 boundary
+# below (`_fixture_surface_boundary`) refuses every fixture-backed surface with
+# an honest 501 instead of serving fabricated operational data. That is why a
+# production process can start while the remaining WORLD-backed endpoints exist:
+# they answer "no production source" rather than lying, and each is retired by
+# its own eradication milestone.
+WORLD = (fixture_world.load(FIXTURE_SEARCH_PATHS) if _ENV_POLICY.world_may_load
+         else fixture_world.unavailable_world())
 
 
 def _fixture_available() -> bool:
@@ -1603,7 +1632,10 @@ def _replay_session_for(pair: str) -> dict | None:
 _MT5_SYMBOLS = ["EURUSD", "GBPUSD", "XAUUSD"]
 _MT5_ALIASES = {"EURUSD": "EURUSD.r", "GBPUSD": "GBPUSD.r", "XAUUSD": "XAUUSD.a"}
 # Provider selection is by CONFIGURATION only (env var); MT5 is disabled by default.
-_MD_PROVIDER = (os.environ.get("MARKET_DATA_PROVIDER") or "fixture").strip().lower()
+# M-ENV-1: the variable is read through the environment module so exactly one
+# module parses it. The `"fixture"` fallback is a DEVELOPMENT default and is
+# unreachable in production, where an unset provider already aborted startup.
+_MD_PROVIDER = environment_layer.configured_market_data_provider() or "fixture"
 _MT5_MD_ENABLED = _MD_PROVIDER == "mt5" or (os.environ.get("MT5_MARKET_DATA_ENABLED") or "").strip() in ("1", "true", "yes")
 
 # Market Data Service (Phase 24, Architecture V1.2 §4.2): provider adapters
@@ -1625,16 +1657,27 @@ def _service_candles(symbol: str, timeframe: str, count: int, end_iso: str,
 
 
 _MARKET_DATA_ENGINE = market_data_layer.MarketDataEngine(now_fn=_now_iso)
-_MARKET_DATA_ENGINE.register(
-    market_data_layer.FixtureProvider(_fixture_regime, candle_source=_service_candles), active=True)
-_MARKET_DATA_ENGINE.register(market_data_layer.ReplayProvider(
-    _fixture_regime, _replay_session_for, candle_source=_service_candles))
-_MARKET_DATA_ENGINE.register(market_data_layer.MockLiveProvider(_fixture_regime))
-_MARKET_DATA_ENGINE.register(market_data_layer.MT5MarketDataProvider(
-    _fixture_regime, available_symbols=_MT5_SYMBOLS, aliases=_MT5_ALIASES, enabled=_MT5_MD_ENABLED))
-# Config-driven active selection (no automatic switching). Falls back to fixture.
-if _MD_PROVIDER in ("fixture", "replay", "mock_live", "mt5"):
-    _MARKET_DATA_ENGINE.set_active(_MD_PROVIDER)
+# M-ENV-1: an inadmissible provider is not merely left inactive — it is never
+# REGISTERED, so no later `set_active` call, diagnostic, or future code path can
+# reach it. In development the admissible set is every known provider, so the
+# registration order and the active default are byte-for-byte what they were.
+for _provider in (
+    market_data_layer.FixtureProvider(_fixture_regime, candle_source=_service_candles),
+    market_data_layer.ReplayProvider(
+        _fixture_regime, _replay_session_for, candle_source=_service_candles),
+    market_data_layer.MockLiveProvider(_fixture_regime),
+    market_data_layer.MT5MarketDataProvider(
+        _fixture_regime, available_symbols=_MT5_SYMBOLS, aliases=_MT5_ALIASES,
+        enabled=_MT5_MD_ENABLED),
+):
+    if _provider.provider_id in _ENV_POLICY.market_data_providers:
+        _MARKET_DATA_ENGINE.register(
+            _provider, active=_provider.provider_id == market_data_layer.FixtureProvider.provider_id)
+# Config-driven active selection (no automatic switching). `set_active` returns
+# False for an unregistered provider, leaving the registered default in place —
+# in production only admissible providers exist, so there is nothing to fall
+# back TO that startup validation has not already approved.
+_MARKET_DATA_ENGINE.set_active(_MD_PROVIDER)
 
 
 # ---------------------------------------------------------------------------
@@ -1833,12 +1876,18 @@ async def health(request: Request):
         "status": "ok",
         "scope": "process",              # process liveness, not trading readiness
         "serverTime": _now_iso(),        # real clock — never the fixture asOf
-        "backendMode": "fixture",        # this backend serves the fixture world
+        # M-ENV-1: the resolved deployment environment. Additive and unmistakable
+        # — a development process says so, on the surface the UI already reads.
+        "environment": ENVIRONMENT,
+        # DERIVED, not asserted: `backendMode` was the constant "fixture", which
+        # would be a fabrication in a process where the fixture world is not
+        # active at all.
+        "backendMode": "fixture" if WORLD.available else "runtime",
         "brokerKind": broker_kind,       # active broker impl; "mock" != MT5 connected
         "liveNodeConnected": live_node_connected,
         "tradingReady": trading_ready,   # ARCH-2: derived from named gates (False in the mock world)
         "dataSources": {
-            "world": "fixture",
+            "world": "fixture" if WORLD.available else "unavailable",
             "broker": "mock" if broker_kind == "mock" else broker_kind,
             "nodeTelemetry": "available" if live_node_connected else "unavailable",
         },
@@ -5340,6 +5389,7 @@ logging.basicConfig(
 
 # UI-10: one startup line so the effective boundary is visible without guessing.
 # Counts and classifications only — a log file must not disclose the origin list.
+logger.info("%s", environment_layer.summarise_for_log(ENVIRONMENT))
 logger.info("%s", cors_policy.summarise_for_log(_CORS_POLICY))
 logger.info("%s", auth_policy.summarise_for_log(_AUTH_POLICY))
 for _issue in _CORS_POLICY.issues:

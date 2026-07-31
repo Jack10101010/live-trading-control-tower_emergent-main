@@ -47,6 +47,16 @@ DYNAMIC = flips green automatically when its real source activates.
 - **RED fixture:** 11 · **RED mixed:** 2 · **RED placeholder:** 2 · **RED constants:** 1 · **RED replay:** 1
 - **M-RISK-1 complete:** the highest-risk fabricated numbers (funded risk rules) can no longer render anywhere.
 - **M-CONF-1 complete:** the fabricated confidence score/band/signals are gone from the header, context bar and fleet rail; the endpoint reports `computed:false`.
+- **M-ENV-1 complete** (supersedes the planned M-MODE-1; see
+  `MOCK-DATA-ERADICATION-PLAN.md` §11): the two fail-open production defaults are
+  closed. `CONTROL_TOWER_ENVIRONMENT` (`development` when unset, `production` only when
+  explicit) declares which broker adapters and market-data providers are *admissible*;
+  it is an admissibility policy, not a behaviour selector, and adds no mode enum —
+  `CONTROL_TOWER_MODE`, `execution_mode` and `connection_policy` keep their existing
+  meanings untouched. In production the fixture world is never loaded, so the rows below
+  that still read WORLD answer `501 fixture_world_unavailable` instead of fabricated
+  data; each is still retired by its own milestone. Development behaviour is unchanged,
+  so no row's colour changes here.
 - **M-EDGE-1 complete:** the fabricated track record (expectancy 0.39R, win rate 33.5%, edge drift, policy health, research/ghost-vs-live) is gone from the Edge Monitor view, the pair edge tab and the Pair Health card; `/api/edge-monitor` reports `computed:false`. The pair tab remains present as an honest unavailable surface; feature-flag behaviour is unchanged. AnalyticsView and trade-derived analytics stay OUT of scope (M-TRADES-2).
 - **UI backed by genuine operational data today:** ≈20% of families (5/25);
   with a demo MT5 connection (M-MT5-READ-1 + M-FEED-1) the four DYNAMIC
@@ -54,7 +64,8 @@ DYNAMIC = flips green automatically when its real source activates.
 
 ## Milestone order (risk-first)
 
-M-RISK-1 → M-CONF-1 → M-MT5-READ-1 (flips #6–8) → M-FEED-1 (flips #9) →
+M-RISK-1 → M-CONF-1 → M-EDGE-1 → M-TEL-1 → **M-ENV-1** (boundary; prerequisite for
+everything below) → M-MT5-READ-1 (flips #6–8) → M-FEED-1 (flips #9) →
 M-FLEET-1 → M-TRADES-1/2 → M-NODE-TEL-1/2 → M-EVENTS-1 → M-REC-1 →
 M-FLAGS-1 → M-GATE-1 → M-PKG-1 → (deferred: replay).
 
