@@ -1,6 +1,6 @@
 import { useLocation } from 'react-router-dom';
 import { useShellStore } from '@/store/shellStore';
-import { useFleet, useMarketState, useActivePackage } from '@/hooks/useRepository';
+import { useMarketState, useActivePackage } from '@/hooks/useRepository';
 import { ChevronRight } from 'lucide-react';
 import { HealthDot, MarketStateBadge, PackageVersionChip } from '@/components/primitives';
 import { fmtRelative } from '@/lib/format';
@@ -13,7 +13,7 @@ import { fmtRelative } from '@/lib/format';
  */
 export function ContextBar() {
   const location = useLocation();
-  const { asOf, deployments, brokers, accounts } = useFleet();
+
   const activePair = useShellStore((s) => s.activePair);
   const marketState = useMarketState(activePair);
   const pkg = useActivePackage();
@@ -41,15 +41,11 @@ export function ContextBar() {
   else if (inPair) {
     const parts = path.split('/').filter(Boolean);
     const pairId = parts[1] ?? activePair;
-    const dep = deployments.find((d) => d.pair === pairId);
-    const account = accounts.find((a) => a.accountId === dep?.accountId);
-    const broker = brokers.find((b) => b.brokerId === account?.brokerId);
-    crumbs.push(
-      'Fleet',
-      broker?.venue ?? '—',
-      account ? `${account.type} ${account.baseCurrency}` : '—',
-      pairId
-    );
+    // M-FLEET-2: the broker and account segments came from fixture records, so
+    // the breadcrumb asserted a venue and an account type that did not exist.
+    // The instrument is configuration and is real; the operational segments are
+    // simply not shown until an authoritative source reports them.
+    crumbs.push('Instrument', pairId);
     if (parts[2]) {
       const tabLabel = parts[2]
         .split('-')
@@ -91,7 +87,9 @@ export function ContextBar() {
         {/* M-CONF-1: the three fixture confidence signal chips are GONE —
             fabricated values may not render in chrome. Real node/bridge state
             lives in the live-operations strip and System → Connection. */}
-        <span className="text-2xs text-text-muted mono">as of {fmtRelative(asOf)}</span>
+        {/* M-FLEET-2: the fixture world's frozen `asOf` was rendered as a
+            freshness timestamp. It was never one, and there is no authoritative
+            fleet clock to replace it, so no timestamp is claimed here. */}
       </div>
     </div>
   );

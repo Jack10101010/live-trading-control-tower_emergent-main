@@ -1,175 +1,98 @@
 import { useAccountsProtection } from '@/hooks/useRepository';
 import { Panel, EmptyState } from '@/components/structures/Panel';
 import { PLValue, Badge, MetricStat } from '@/components/primitives';
-import { fmtPercent } from '@/lib/format';
+import { numericOrNull } from '@/lib/operationalProvenance';
 import { Wallet } from 'lucide-react';
 
 /**
- * M-FLEET-1 — Accounts & Protection, truth-first.
+ * M-FLEET-2 — Accounts & Protection renders AUTHORITATIVE accounts only.
  *
- * Two genuine fabrications lived in the aggregates on this page, and both came
- * from the same mistake: treating "no deployments" as "zero".
+ * Until now this page rendered the fixture world's funded and demo accounts:
+ * a $100,000 balance, $100,412 equity, a "funded" badge. M-FLEET-1 labelled
+ * them; this milestone removes them from the ordinary route entirely.
  *
- *   Math.min(...[], 100)  ->  a drawdown BUFFER of 100% for an account with
- *                             nothing deployed — an invented safety margin, and
- *                             the most dangerous number on the page.
- *   [].reduce(..., 0)     ->  Daily P/L "$0.00" for an account whose P/L is
- *                             simply unknown.
+ * The accounts now come from the operational projection, passed through the
+ * single provenance gate. Only `live_mt5` records survive. Under the
+ * development-default mock adapter the projection's own records are stamped
+ * `mock-fixture` and carry those very same invented figures, so they are
+ * rejected and this page reports `unavailable` — the honest answer, and the
+ * reason the page is deliberately empty in development.
  *
- * An empty set has no minimum and no meaningful sum. Both now render an explicit
- * "—", because an operator reading "100% buffer, $0.00 loss" would conclude the
- * account is safe and flat. Neither is a fact this page possesses.
- *
- * Balance and equity remain FIXTURE values (no production account source is
- * wired yet — the real projection is `/api/operations/accounts`), so they are
- * labelled as fixture rather than presented as operational truth.
+ * Every numeric field is `number | null` at the source (`realizedPnLToday`,
+ * `openRisk` are null when not derivable). That distinction is preserved to the
+ * pixel: `null` renders "—", never 0.
  */
 
-/** An empty set has no minimum. Never substitute a full buffer. */
 const NOT_DERIVABLE = '—';
 
 export function AccountsProtectionView() {
-  const { accounts, deployments, available, provenance, provenanceDetail } = useAccountsProtection();
+  const { accounts, status, detail } = useAccountsProtection();
 
-  if (!available) {
+  if (status === 'unavailable') {
     return (
-      <div className="p-6 h-full min-h-0 overflow-auto">
-        <Header />
+      <Shell>
         <EmptyState
-          title="Accounts unavailable"
-          description={
-            provenanceDetail ||
-            'Account and protection records have no production source in this process. No balances can be reported.'
-          }
+          title="No authoritative account source"
+          description={detail}
           icon={<Wallet size={16} />}
         />
-      </div>
+      </Shell>
     );
   }
 
-  if (accounts.length === 0) {
+  if (status === 'empty' || accounts.length === 0) {
     return (
-      <div className="p-6 h-full min-h-0 overflow-auto">
-        <Header />
+      <Shell>
         <EmptyState
-          title="No accounts"
-          description="The account source returned no records. This is a genuine empty result, not missing data."
+          title="No accounts reported"
+          description="The authoritative operational source answered and reported no accounts. This is a genuine empty result, not missing data."
           icon={<Wallet size={16} />}
         />
-      </div>
+      </Shell>
     );
   }
-
-  const isFixture = provenance === 'fixture';
 
   return (
-    <div className="p-6 h-full min-h-0 overflow-auto space-y-4">
-      <Header />
-
-      {accounts.map((acct) => {
-        const acctDeployments = deployments.filter((d) => d.accountId === acct.accountId);
-        // Aggregates are DERIVABLE only when there is something to aggregate.
-        // `null` means "not derivable from the evidence this page has" and is
-        // rendered as "—", never as 0 and never as a full buffer.
-        const derivable = acctDeployments.length > 0;
-        const totalDailyPl = derivable
-          ? acctDeployments.reduce((s, d) => s + d.riskState.dailyPl, 0)
-          : null;
-        const totalFloating = derivable
-          ? acctDeployments.reduce((s, d) => s + d.riskState.floatingPl, 0)
-          : null;
-        const totalRiskToday = derivable
-          ? acctDeployments.reduce((s, d) => s + d.riskState.riskTodayPct, 0)
-          : null;
-        const minDdBuffer = derivable
-          ? Math.min(...acctDeployments.map((d) => d.riskState.ddBufferPct))
-          : null;
-
+    <Shell>
+      {status === 'stale' && (
+        <p className="text-2xs text-[color:var(--warning)] mb-3" data-testid="accounts-stale">
+          These records are older than their freshness budget. Shown as last
+          reported, not as current state.
+        </p>
+      )}
+      {accounts.map((acct, i) => {
+        const key = acct.accountFingerprint ?? `account-${i}`;
         return (
           <Panel
-            provenance="fixture"
-            key={acct.accountId}
+            provenance="live"
+            key={key}
             title={
               <span className="flex items-center gap-2">
-                {acct.type.toUpperCase()} · {acct.baseCurrency}
-                <span className="mono text-text-muted ml-2 text-2xs">
-                  {acct.accountId.slice(0, 20)}…
-                </span>
+                {acct.broker ?? 'Broker unreported'} · {acct.currency ?? '—'}
+                <span className="mono text-text-muted ml-2 text-2xs">{key.slice(0, 20)}…</span>
               </span>
             }
             actions={
-              <span className="flex items-center gap-2">
-                {/* M-FLEET-1: a fixture account must never wear the live colour.
-                    The record's own type is still shown; what changes is that it
-                    can no longer be read as an operational account. */}
-                {isFixture && (
-                  <span data-testid={`account-fixture-tag-${acct.accountId}`}>
-                    <Badge variant="mode" color="var(--mode-mock)">FIXTURE</Badge>
-                  </span>
-                )}
-                <Badge variant="mode" color={isFixture ? 'var(--mode-mock)' : 'var(--mode-live)'}>
-                  {acct.type}
+              <span data-testid="account-live-badge">
+                <Badge variant="mode" color="var(--mode-live)">
+                  {acct.connectionState ?? 'unknown'}
                 </Badge>
               </span>
             }
           >
-            {isFixture && (
-              <p
-                className="text-2xs text-text-muted mb-3"
-                data-testid={`account-fixture-note-${acct.accountId}`}
-              >
-                Balance and equity below are development fixture values, not
-                broker-reported figures. Genuine account state is projected at
-                <span className="mono"> /api/operations/accounts</span> when a real
-                adapter is connected.
-              </p>
-            )}
-
             <div className="grid grid-cols-4 gap-6 mb-4">
-              <MetricStat label="Balance" value={<PLValue value={acct.balance} showSign={false} />} emphasise />
-              <MetricStat label="Equity" value={<PLValue value={acct.equity} showSign={false} />} emphasise />
-              <MetricStat
-                label="Daily P/L"
-                value={<Derived value={totalDailyPl} render={(v) => <PLValue value={v} />} />}
-                emphasise
-              />
-              <MetricStat
-                label="Floating"
-                value={<Derived value={totalFloating} render={(v) => <PLValue value={v} />} />}
-                emphasise
-              />
-              <MetricStat
-                label="Risk today"
-                value={
-                  <Derived
-                    value={totalRiskToday}
-                    render={(v) => <span className="mono">{fmtPercent(v)}</span>}
-                  />
-                }
-              />
-              <MetricStat
-                label="DD buffer"
-                value={
-                  <Derived
-                    value={minDdBuffer}
-                    render={(v) => (
-                      <span
-                        className="mono"
-                        style={{ color: v < 40 ? 'var(--warning)' : 'var(--positive)' }}
-                      >
-                        {fmtPercent(v, 0)}
-                      </span>
-                    )}
-                  />
-                }
-              />
-              <MetricStat label="Deployments" value={acctDeployments.length} mono />
-              <MetricStat label="Timezone" value={acct.timezone} />
+              <Stat label="Balance" value={numericOrNull(acct.balance)} money emphasise />
+              <Stat label="Equity" value={numericOrNull(acct.equity)} money emphasise />
+              <Stat label="Realised P/L today" value={numericOrNull(acct.realizedPnLToday)} money emphasise />
+              <Stat label="Unrealised P/L" value={numericOrNull(acct.unrealizedPnL)} money emphasise />
+              <Stat label="Open risk" value={numericOrNull(acct.openRisk)} money />
+              <Stat label="Margin" value={numericOrNull(acct.margin)} money />
+              <Stat label="Margin level" value={numericOrNull(acct.marginLevel)} />
+              <Stat label="Leverage" value={numericOrNull(acct.leverage)} />
             </div>
 
-            {/* M-RISK-1: the fixture funded-rules grid is GONE. Funded-account
-                rules must be real configuration, real telemetry, or honestly
-                unavailable — never fixture-derived. */}
+            {/* M-RISK-1: unchanged. Funded-account rules must be real
+                configuration, real telemetry, or honestly unavailable. */}
             <div
               className="rounded-md p-3 border"
               data-testid="funded-rules-unavailable"
@@ -188,43 +111,59 @@ export function AccountsProtectionView() {
           </Panel>
         );
       })}
-    </div>
+    </Shell>
   );
 }
 
-function Header() {
+function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mb-4">
-      <h1 className="text-2xl font-semibold text-text tracking-tight">Accounts &amp; Protection</h1>
-      <p className="text-xs text-text-muted mt-1">
-        Funded rulesets · RiskState · buffers · lockouts · overrides (reason-gated)
-      </p>
+    <div className="p-6 h-full min-h-0 overflow-auto space-y-4">
+      <div className="mb-4">
+        <h1 className="text-2xl font-semibold text-text tracking-tight">Accounts &amp; Protection</h1>
+        <p className="text-xs text-text-muted mt-1">
+          Funded rulesets · RiskState · buffers · lockouts · overrides (reason-gated)
+        </p>
+      </div>
+      {children}
     </div>
   );
 }
 
 /**
- * Renders a derived aggregate, or an explicit "not derivable" marker.
- * `null` is NOT zero: an account with no deployments has an unknown P/L and an
- * unknown drawdown buffer, and saying "0" or "100%" would invent both.
+ * `null` is not zero. The projection reports null when a figure is not
+ * derivable from the evidence it has; rendering that as 0 would invent a
+ * measurement — a flat P/L, an unlevered account, a zero margin requirement.
  */
-function Derived({
+function Stat({
+  label,
   value,
-  render,
+  money = false,
+  emphasise = false,
 }: {
+  label: string;
   value: number | null;
-  render: (v: number) => React.ReactNode;
+  money?: boolean;
+  emphasise?: boolean;
 }) {
-  if (value === null) {
-    return (
-      <span
-        className="mono text-text-muted"
-        data-testid="aggregate-not-derivable"
-        title="No deployments on this account, so this value cannot be derived. It is unknown, not zero."
-      >
-        {NOT_DERIVABLE}
-      </span>
-    );
-  }
-  return <>{render(value)}</>;
+  return (
+    <MetricStat
+      label={label}
+      emphasise={emphasise}
+      value={
+        value === null ? (
+          <span
+            className="mono text-text-muted"
+            data-testid="value-not-reported"
+            title="Not reported by the operational source. Unknown, not zero."
+          >
+            {NOT_DERIVABLE}
+          </span>
+        ) : money ? (
+          <PLValue value={value} showSign={false} />
+        ) : (
+          <span className="mono">{value}</span>
+        )
+      }
+    />
+  );
 }

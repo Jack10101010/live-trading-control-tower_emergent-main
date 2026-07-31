@@ -144,10 +144,15 @@ describe('misleading indicator cleanup stays applied', () => {
     expect(source).not.toContain('useSystemConfidence');
   });
 
-  it('the fixture deployment "Armed" status stays scope-labelled', () => {
+  it('M-FLEET-2: the navigator shows no fixture deployment status at all', () => {
+    // This previously required the fixture "Armed" chip to be scope-labelled so
+    // it could not be read as live-node arming. The chip is gone: the navigator
+    // builds its fleet tree from authoritative nodes only, so there is no
+    // fixture deployment status left to disambiguate.
     const source = read('components/shell/ScopeNavigator.tsx');
-    expect(source).toMatch(/Fixture deployment status/);
-    expect(source).toMatch(/Not live-node arming or execution state/);
+    expect(source).not.toMatch(/Fixture deployment status/);
+    expect(source).toContain('useOperationalFleet');
+    expect(source).not.toContain('useFleet(');
   });
 
   it('only one persistent operational surface exists in the shell', () => {

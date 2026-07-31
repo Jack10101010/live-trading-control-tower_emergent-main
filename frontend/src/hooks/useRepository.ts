@@ -5,7 +5,14 @@ import { deriveFairValueGaps, type FairValueGap } from '@/lib/fairValueGaps';
 import { deriveLiquidityPools, type LiquidityPool } from '@/lib/liquidity';
 import { deriveMarketStructure, type MarketStructure } from '@/lib/marketStructure';
 import { type Candle } from '@/lib/chartData';
-import { api, QK, type BackendHealth, type BrokerReconciliation, type OperatorPreferences, type RuntimeHealth, type StrategyEvaluation, type SchedulerStatus, type MarketSnapshot, type RiskLimits, type MarketCandles, type FleetProvenance } from '@/lib/api';
+import { api, QK, type BackendHealth, type BrokerReconciliation, type OperatorPreferences, type RuntimeHealth, type StrategyEvaluation, type SchedulerStatus, type MarketSnapshot, type RiskLimits, type MarketCandles, type FleetProvenance, type NodeOperationalView, type AccountOperationalView } from '@/lib/api';
+import {
+  authoritativeOnly,
+  classify,
+  UNAVAILABLE_DETAIL,
+  type OperationalStatus,
+  type ProvenancedRecord,
+} from '@/lib/operationalProvenance';
 import { expandMatrix } from '@/lib/matrixExpand';
 import { queryClient } from '@/lib/queryClient';
 import { applyEvents, resetLastAppliedSeq, seedLastAppliedSeq } from '@/lib/realtime';
@@ -57,42 +64,112 @@ export function useRepository(): { world: WorldFixture } {
 }
 
 /**
- * Fleet reads through `/api/fleet` + `/api/packages/active` (migrated off
- * `/api/world`, Phase 4 Step 2). Same return shape as before — `pairs` is
- * still derived client-side; both queries fetch in parallel and dedupe via
- * shared keys. Deployment-affecting commands invalidate `QK.fleet`.
+ * M-FLEET-2 — the AUTHORITATIVE operational fleet.
+ *
+ * This hook used to return `/api/fleet`: authored fixture deployments, brokers
+ * and accounts. Thirteen surfaces consumed it, so every one of them showed
+ * invented financial entities on an ordinary operator route.
+ *
+ * It now reads the operational projection and passes it through the single
+ * provenance gate in `lib/operationalProvenance`. Only `live_mt5` records
+ * survive; `mock-fixture` (the development default) and anything unrecognised
+ * are dropped. Under the mock adapter that means this hook returns NOTHING and
+ * reports `unavailable` — which is the honest answer, and is why the operator
+ * UI is deliberately empty in development.
+ *
+ * `deployments` is permanently empty: there is no authoritative deployment
+ * concept. `/api/operations/nodes` projects execution NODES, not deployments,
+ * and inventing deployments from nodes would recreate the fabrication this
+ * milestone removes. Surfaces render an unavailable state instead.
  */
-export function useFleet(): {
+export function useOperationalFleet(): {
+  nodes: NodeOperationalView[];
+  accounts: AccountOperationalView[];
+  deployments: Deployment[];
+  status: OperationalStatus;
+  detail: string;
+} {
+  const [{ data: nodesRes }, { data: acctRes }] = useSuspenseQueries({
+    queries: [
+      { queryKey: QK.operationsNodes, queryFn: api.operationsNodes },
+      { queryKey: QK.operationsAccounts, queryFn: api.operationsAccounts },
+    ],
+  });
+  return useMemo(() => {
+    const rawNodes = nodesRes?.nodes ?? [];
+    const rawAccounts = acctRes?.accounts ?? [];
+    const nodes = authoritativeOnly(rawNodes as unknown as ProvenancedRecord[]) as unknown as NodeOperationalView[];
+    const accounts = authoritativeOnly(rawAccounts as unknown as ProvenancedRecord[]) as unknown as AccountOperationalView[];
+    const rejected = (rawNodes.length - nodes.length) + (rawAccounts.length - accounts.length);
+    const status = classify([...nodes, ...accounts] as unknown as ProvenancedRecord[], {
+      sourceAnswered: Boolean(nodesRes || acctRes),
+      rejectedCount: rejected,
+    });
+    return {
+      nodes,
+      accounts,
+      deployments: [],          // no authoritative deployment concept exists
+      status,
+      detail: status === 'available' || status === 'stale' ? '' : UNAVAILABLE_DETAIL,
+    };
+  }, [nodesRes, acctRes]);
+}
+
+/**
+ * M-FLEET-2 — the CONFIGURED instrument universe (`/api/instruments`).
+ *
+ * Navigation needs instrument identity; it previously took that from fixture
+ * deployments, so the pair menu was derived from invented entities. This is
+ * genuine configuration and asserts nothing operational about any symbol.
+ */
+export function useConfiguredInstruments(): { symbols: string[]; configured: boolean } {
+  const { data } = useSuspenseQuery({
+    queryKey: QK.instruments,
+    queryFn: api.instruments,
+    staleTime: Infinity,
+  });
+  return useMemo(
+    () => ({
+      symbols: (data?.instruments ?? []).map((i) => i.symbol),
+      configured: Boolean(data),
+    }),
+    [data]
+  );
+}
+
+/**
+ * M-FLEET-2 — DEVELOPMENT FIXTURE PREVIEW ONLY. NOT FOR ORDINARY SURFACES.
+ *
+ * Returns the authored fixture fleet from `/api/fleet`. Every ordinary operator
+ * component is forbidden from importing this (enforced by a source guard); it
+ * exists for tests and the dedicated development preview route. In production
+ * M-ENV-1 never loads the fixture world, so the endpoint answers 501.
+ */
+export function useFixtureFleetPreview(): {
   deployments: Deployment[];
   brokers: Broker[];
   accounts: Account[];
-  pairs: string[];
-  activePackage: Package;
-  asOf: string;
-  /** M-FLEET-1: additive. False = no source; empty arrays mean UNKNOWN, not none. */
   available: boolean;
   provenance: FleetProvenance;
   provenanceDetail: string;
+  asOf: string;
 } {
-  const [{ data: fleet }, { data: activePackage }] = useSuspenseQueries({
-    queries: [
-      { queryKey: QK.fleet, queryFn: api.fleet, staleTime: Infinity },
-      { queryKey: QK.activePackage, queryFn: api.activePackage, staleTime: Infinity },
-    ],
+  const { data: fleet } = useSuspenseQuery({
+    queryKey: QK.fixtureFleetPreview,
+    queryFn: api.fixtureFleetPreview,
+    staleTime: Infinity,
   });
   return useMemo(
     () => ({
       deployments: fleet.deployments,
       brokers: fleet.brokers,
       accounts: fleet.accounts,
-      pairs: Array.from(new Set(fleet.deployments.map((d) => d.pair))),
-      activePackage,
-      asOf: fleet.asOf ?? '',
       available: fleet.available,
       provenance: fleet.provenance,
       provenanceDetail: fleet.detail,
+      asOf: fleet.asOf ?? '',
     }),
-    [fleet, activePackage]
+    [fleet]
   );
 }
 
@@ -102,8 +179,12 @@ export function useFleet(): {
  * so the inspector reflects live runtime status — via the shared `QK.fleet`
  * key, which deployment commands already invalidate. Signature unchanged.
  */
-export function useDeployment(id: string): Deployment | undefined {
-  return useFleet().deployments.find((d) => d.deploymentId === id);
+export function useDeployment(_id: string): Deployment | undefined {
+  // M-FLEET-2: there is no authoritative deployment record. This previously
+  // resolved against the fixture fleet, so any inspector opened on an ordinary
+  // route rendered an invented deployment. It now resolves to nothing until a
+  // real deployment concept exists, and callers render an unavailable state.
+  return undefined;
 }
 
 /**
@@ -112,47 +193,14 @@ export function useDeployment(id: string): Deployment | undefined {
  * No new fixture data, no invented contract — the manifest is a view over the
  * frozen world. When a backend manifest store lands, point this at `/api/...`.
  */
-export function useDeploymentManifest(deploymentId: string): DeploymentManifest | undefined {
-  const world = useWorld();
-  const flags = useFeatureFlags();
-  return useMemo(() => {
-    const dep = world.deployments.find((d) => d.deploymentId === deploymentId);
-    if (!dep) return undefined;
-    const pkg =
-      world.packages.find((p) => p.packageHash === dep.packageHash) ??
-      world.packages.find((p) => p.status === 'active') ??
-      world.packages[0];
-    const account = world.accounts.find((a) => a.accountId === dep.accountId);
-    const broker = world.brokers.find((b) => b.brokerId === account?.brokerId);
-    const ms = world.marketStateSnapshots.find((m) => m.instrument === dep.pair);
-    const environment: DeploymentManifest['environment'] =
-      dep.executionMode === 'live'
-        ? 'Live'
-        : dep.lane === 'experimental'
-        ? 'Experimental'
-        : dep.executionMode === 'demo'
-        ? 'Demo'
-        : 'Local';
-    return {
-      manifestId: `mf_${dep.deploymentId.replace(/^dpl_/, '')}`,
-      manifestHash: `sha256:derived-${(dep.packageHash.replace('sha256:', '')).slice(0, 12)}`,
-      derived: true,
-      createdAt: pkg.promotedAt ?? world.meta.asOf,
-      createdBy: String((world.operators[0] as { operatorId?: string })?.operatorId ?? 'system'),
-      clonedFrom: null,
-      strategyPackage: { packageId: pkg.packageId, version: pkg.version, packageHash: dep.packageHash },
-      broker: broker?.brokerId ?? account?.brokerId ?? '',
-      account: dep.accountId,
-      pair: dep.pair,
-      lane: dep.lane,
-      environment,
-      marketDataVersion: ms?.modelVersion ?? pkg.componentVersions?.marketStateModel ?? 'md@unknown',
-      replayDataVersion: `replay@${world.meta.fixtureVersion}`,
-      enabledModules: Object.entries(flags).filter(([, v]) => v).map(([k]) => k),
-      featureFlags: flags,
-      metadata: { label: pkg.label, notes: dep.lastAction, tags: [dep.lane, environment, broker?.venue ?? ''] },
-    };
-  }, [world, deploymentId, flags]);
+export function useDeploymentManifest(_deploymentId: string): DeploymentManifest | undefined {
+  // M-FLEET-2: this synthesised a "deployment manifest" from the FIXTURE world's
+  // deployments, packages, accounts and brokers — reading WORLD directly, so it
+  // bypassed /api/fleet entirely and survived the endpoint-level severing. Every
+  // field it produced (broker, account, environment "Live", manifest hash) was
+  // derived from invented records. There is no authoritative manifest source, so
+  // it resolves to nothing and its consumers render an unavailable state.
+  return undefined;
 }
 
 export function usePairWorkspace(pairId: string) {
@@ -161,7 +209,8 @@ export function usePairWorkspace(pairId: string) {
     const trades = world.liveTrades.filter((t) => t.scenarioKey.startsWith(`${pairId}:`));
     const ghosts = world.ghostTrades.filter((g) => g.scenarioKey.startsWith(`${pairId}:`));
     const blocked = world.blockedIntents.filter((b) => b.scenarioKey.startsWith(`${pairId}:`));
-    const deployments = world.deployments.filter((d) => d.pair === pairId);
+    // M-FLEET-2: fixture deployments no longer reach a pair workspace.
+    const deployments: Deployment[] = [];
     const marketState = world.marketStateSnapshots.find((m) => m.instrument === pairId);
     const decisions = world.decisionChains.filter((d) => d.scenarioKey.startsWith(`${pairId}:`));
     const events = world.events.filter((e) => e.scenarioKey?.startsWith(`${pairId}:`) ?? true);
@@ -395,18 +444,18 @@ export function useRiskLimits(): RiskLimits {
 /** Accounts + deployments via `/api/fleet` composition (migrated off `/api/world`,
  *  Phase 4.5). Deployments are runtime-overlaid; single `QK.fleet` key. */
 export function useAccountsProtection(): {
-  accounts: Account[];
-  deployments: Deployment[];
-  available: boolean;
-  provenance: FleetProvenance;
-  provenanceDetail: string;
+  accounts: AccountOperationalView[];
+  status: OperationalStatus;
+  detail: string;
 } {
-  // M-FLEET-1: provenance travels WITH the records. Account balances and
-  // equity are fixture values today; a consumer that renders them without
-  // saying so is asserting operational truth it does not have.
-  const { accounts, deployments, available, provenance, provenanceDetail } = useFleet();
-  return { accounts, deployments, available, provenance, provenanceDetail };
+  // M-FLEET-2: authoritative accounts only. Under the mock adapter the
+  // projection's records carry `mock-fixture` provenance and the same invented
+  // balances the fixture serves, so they are rejected and this reports
+  // `unavailable` rather than rendering them.
+  const { accounts, status, detail } = useOperationalFleet();
+  return { accounts, status, detail };
 }
+
 
 /** Decision chain via `/api/decisions/{id}` (migrated off `/api/world`, Phase 4.5).
  *  Per-id query key; returns undefined on 404. */
@@ -483,10 +532,13 @@ export function usePackageComparisons(): PackageComparison[] {
 }
 
 export function useDeploymentsForPackage(packageHash: string): Deployment[] {
-  return useFleet().deployments.filter((d) => d.packageHash === packageHash);
+  // M-FLEET-2: authoritative deployments only — of which there are none, so
+  // this is empty rather than a list of fixture deployments.
+  void packageHash;
+  return useOperationalFleet().deployments;
 }
 
-/** Active package through `/api/packages/active` — same query key `useFleet` composes with. */
+/** Active package through `/api/packages/active`. */
 export function useActivePackage(): Package {
   const { data } = useSuspenseQuery({
     queryKey: QK.activePackage,

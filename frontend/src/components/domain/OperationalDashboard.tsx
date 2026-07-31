@@ -13,6 +13,7 @@
  *   RECONCILIATION REQUIRED  — the projection says this entity needs evidence
  */
 import { useQuery } from '@tanstack/react-query';
+import { isAuthoritative } from '@/lib/operationalProvenance';
 import {
   api,
   type AccountOperationalView,
@@ -48,7 +49,8 @@ const C = {
 } as const;
 
 function ProvenanceBadge({ provenance }: { provenance: string }) {
-  const live = provenance === 'live_mt5';
+  // M-FLEET-2: provenance is decided in one module (see operationalProvenance).
+  const live = isAuthoritative({ provenance });
   const absent = provenance === 'absent';
   return (
     <span className={BADGE} style={absent ? C.bad : live ? C.live : C.mock}

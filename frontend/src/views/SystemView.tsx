@@ -11,7 +11,7 @@ import { ScenarioPanel } from '@/components/domain/ScenarioPanel';
 import { TradeLedgerPanel } from '@/components/domain/TradeLedgerPanel';
 import { LiveRuntimePanel } from '@/components/domain/LiveRuntimePanel';
 import { RecommendationPanel } from '@/components/domain/RecommendationPanel';
-import { useFleet, usePackages, useFeatureFlags, useRuntimeHealth, useBrokerReconciliation, useStrategyEvaluation, useSchedulerStatus, useMarketSnapshot, useRiskLimits, useActivePackage, useBackendHealth, useOperator } from '@/hooks/useRepository';
+import { useOperationalFleet, usePackages, useFeatureFlags, useRuntimeHealth, useBrokerReconciliation, useStrategyEvaluation, useSchedulerStatus, useMarketSnapshot, useRiskLimits, useActivePackage, useBackendHealth, useOperator } from '@/hooks/useRepository';
 import { api, QK } from '@/lib/api';
 import { queryClient } from '@/lib/queryClient';
 import { Panel, ProvenanceFrame } from '@/components/structures/Panel';
@@ -26,7 +26,9 @@ const SYNC_POLL_MS = 2000;
  * · Feature Flags · settings.
  */
 export function SystemView() {
-  const { deployments, brokers } = useFleet();
+  // M-FLEET-2: authoritative nodes only. The Deployments & Manifests and
+  // Brokers panels below listed fixture records on an ordinary route.
+  const { nodes, status: fleetStatus } = useOperationalFleet();
   const packages = usePackages();
   const flags = useFeatureFlags();
   const runtime = useRuntimeHealth();
@@ -742,32 +744,28 @@ export function SystemView() {
         </div>
       </Panel>
 
-      <Panel provenance="fixture" title={<>Deployments & Manifests <span className="text-text-muted mono ml-1">({deployments.length})</span></>}>
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-          {deployments.map((d) => (
-            <div
-              key={d.deploymentId}
-              className="rounded-md border p-3"
-              style={{ borderColor: 'var(--border-subtle)', background: 'var(--panel-2)' }}
-            >
-              <div className="flex items-center gap-2 mb-2">
-                <Badge variant="status">{d.status}</Badge>
-                <Badge variant="mode" color={d.executionMode === 'live' ? 'var(--mode-live)' : 'var(--mode-mock)'}>
-                  {d.executionMode}
-                </Badge>
-                <span className="ml-auto mono text-2xs text-text-muted">{d.deploymentId.slice(0, 24)}…</span>
+      <Panel
+        provenance="live"
+        title={<>Execution Nodes <span className="text-text-muted mono ml-1">({nodes.length})</span></>}
+      >
+        {/* M-FLEET-2: this listed fixture "deployments & manifests". There is no
+            authoritative deployment record, so it lists authoritative execution
+            NODES — or says it has none. */}
+        {nodes.length === 0 ? (
+          <div className="text-xs text-text-muted" data-testid="system-nodes-empty">
+            {fleetStatus === 'unavailable'
+              ? 'No authoritative operational source is reporting execution nodes.'
+              : 'No execution nodes reported.'}
+          </div>
+        ) : (
+          <div className="space-y-1">
+            {nodes.map((n) => (
+              <div key={n.nodeId} className="text-xs mono text-text-2" data-testid={`system-node-${n.nodeId}`}>
+                {n.nodeId} · {n.health ?? 'unknown'} · {n.connectionState ?? 'unknown'}
               </div>
-              <KeyValueGrid
-                items={[
-                  { label: 'Pair', value: d.pair, mono: true },
-                  { label: 'Lane', value: d.lane },
-                  { label: 'Package hash', value: fmtHash(d.packageHash, 16), mono: true },
-                  { label: 'Action', value: <span className="text-2xs">{d.lastAction}</span> },
-                ]}
-              />
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </Panel>
 
       <Panel provenance="fixture" title="Packages">
@@ -790,17 +788,27 @@ export function SystemView() {
         </ul>
       </Panel>
 
-      <Panel provenance="fixture" title="Brokers" dense>
-        <ul className="space-y-1.5 text-xs">
-          {brokers.map((b) => (
-            <li key={b.brokerId} className="flex items-center gap-2">
-              <HealthDot state={b.status === 'connected' ? 'ok' : 'critical'} />
-              <span className="text-text">{b.venue}</span>
-              <span className="mono text-text-muted">{b.adapterType}</span>
-              <span className="ml-auto text-2xs text-text-muted">last recon <TimestampUTC iso={b.lastReconcileAt} /></span>
-            </li>
-          ))}
-        </ul>
+      <Panel provenance="live" title="Brokers" dense>
+        {/* M-FLEET-2: listed the two fixture broker records with an invented
+            connected status. Broker identity is now reported only by
+            authoritative nodes. */}
+        {nodes.length === 0 ? (
+          <div className="text-xs text-text-muted" data-testid="system-brokers-empty">
+            {fleetStatus === 'unavailable'
+              ? 'No authoritative operational source is reporting a broker.'
+              : 'No broker reported.'}
+          </div>
+        ) : (
+          <ul className="space-y-1.5 text-xs">
+            {nodes.map((n) => (
+              <li key={n.nodeId} className="flex items-center gap-2">
+                <HealthDot state={n.connectionState === 'Connected' ? 'ok' : 'critical'} />
+                <span className="text-text">{n.broker ?? 'unreported'}</span>
+                <span className="mono text-text-muted">{n.adapter ?? '—'}</span>
+              </li>
+            ))}
+          </ul>
+        )}
       </Panel>
     </div>
   );

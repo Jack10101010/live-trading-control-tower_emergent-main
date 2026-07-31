@@ -14,7 +14,6 @@ import {
   useTrades,
   useEvents,
   usePolicyMatrix,
-  useFleet,
 } from '@/hooks/useRepository';
 import { ActionBar } from '@/components/structures/ActionBar';
 import { orderActions, tradeActions } from '@/components/domain/tradeActions';
@@ -234,10 +233,10 @@ export function PairDashboardView() {
 export function PairOrdersView() {
   const pair = usePair();
   const trades = useTrades({ pair });
-  const { accounts, brokers, deployments } = useFleet();
+
   const pkg = useActivePackage();
   const openInspector = useShellStore((s) => s.openInspector);
-  const depById = useMemo(() => new Map(deployments.map((d) => [d.deploymentId, d])), [deployments]);
+
   const pending = trades.live.filter((t) => t.state === 'pending');
 
   const cols: Column<LiveTrade>[] = [
@@ -258,11 +257,9 @@ export function PairOrdersView() {
     {
       key: 'account',
       header: 'Account',
-      cell: (t) => {
-        const account = accounts.find((a) => a.accountId === depById.get(t.deploymentId)?.accountId);
-        const broker = brokers.find((b) => b.brokerId === account?.brokerId);
-        return <span className="text-2xs text-text-2">{broker?.venue ?? '—'} · {account?.type ?? '—'}</span>;
-      },
+      // M-FLEET-2: resolved a FIXTURE account and broker for each order row.
+      // No authoritative account mapping exists, so the column reports absence.
+      cell: () => <span className="text-2xs text-text-muted">—</span>,
     },
     { key: 'lane', header: 'Lane', cell: (t) => <LaneChip lane={t.lane} /> },
     { key: 'pkg', header: 'Package', cell: () => <Badge variant="status">v{pkg.version}</Badge> },
@@ -323,14 +320,17 @@ export function PairOrdersView() {
 export function PairTradesView() {
   const pair = usePair();
   const trades = useTrades({ pair });
-  const { asOf } = useFleet();
+
   const currentMs = useMarketState(pair);
   const openInspector = useShellStore((s) => s.openInspector);
   const [tab, setTab] = useState<'open' | 'closed' | 'ghost' | 'blocked'>('open');
 
   const open = trades.live.filter((t) => t.state !== 'closed' && t.state !== 'pending');
   const closed = trades.live.filter((t) => t.state === 'closed');
-  const now = new Date(asOf);
+  // M-FLEET-2: was `new Date(asOf)` — the FIXTURE world's frozen timestamp used
+  // as "now" for age calculations, which made stale rows look fresh. The real
+  // clock is the only honest reference here.
+  const now = new Date();
 
   const liveCols: Column<LiveTrade>[] = [
     {

@@ -1,6 +1,6 @@
 import { NavLink, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
-import { useFleet, useFeatureFlags } from '@/hooks/useRepository';
+import { useOperationalFleet, useConfiguredInstruments, useFeatureFlags } from '@/hooks/useRepository';
 import type { FeatureFlag } from '@/types/domain';
 import { useShellStore } from '@/store/shellStore';
 import {
@@ -39,7 +39,12 @@ import { HealthDot } from '@/components/primitives';
  * any tab of any pair without visiting the pair dashboard first.
  */
 export function ScopeNavigator() {
-  const { deployments, brokers, accounts, pairs } = useFleet();
+  // M-FLEET-2: the fleet tree is built from AUTHORITATIVE nodes only, and the
+  // pair list from the CONFIGURED instrument universe. Previously both came
+  // from fixture records, so the navigator offered selectable scopes for
+  // brokers, accounts and deployments that did not exist.
+  const { nodes, status: fleetStatus } = useOperationalFleet();
+  const { symbols: pairs } = useConfiguredInstruments();
   const flags = useFeatureFlags();
   const location = useLocation();
   const activePair = useShellStore((s) => s.activePair);
@@ -90,78 +95,32 @@ export function ScopeNavigator() {
             {expanded.has('fleet') ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
             <LayoutGrid size={12} className="ml-0.5" />
             <span className="ml-1 font-medium">Fleet</span>
-            <span className="ml-auto text-2xs text-text-muted mono">{deployments.length} dep</span>
+            {/* M-FLEET-2: was a fixture deployment count. Authoritative nodes only. */}
+            <span className="ml-auto text-2xs text-text-muted mono">
+              {fleetStatus === 'unavailable' ? '—' : `${nodes.length} node`}
+            </span>
           </button>
 
           {expanded.has('fleet') && (
             <div className="pl-3 mt-0.5 space-y-0.5">
-              {brokers.map((broker) => {
-                const brokerAccounts = accounts.filter((a) => a.brokerId === broker.brokerId);
-                const brokerId = `b:${broker.brokerId}`;
-                return (
-                  <div key={broker.brokerId}>
-                    <button
-                      onClick={() => toggle(brokerId)}
-                      className="flex items-center gap-1 w-full text-left h-6 px-1.5 text-2xs text-text-2 hover:bg-[color:var(--panel-2)] rounded-sm"
-                    >
-                      {expanded.has(brokerId) ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                      {/* UI-1: this is the FIXTURE broker model's own status — it is
-                          not MT5 connectivity and not the execution node. Real
-                          node/bridge state lives in the Connection panel. */}
-                      <HealthDot
-                        state={broker.status === 'connected' ? 'ok' : 'critical'}
-                        title={`Fixture broker record: ${broker.status}. Not MT5 connectivity — see System → Connection for live node and bridge state.`}
-                      />
-                      <span className="ml-1 truncate">{broker.venue}</span>
-                    </button>
-                    {expanded.has(brokerId) && (
-                      <div className="pl-4 space-y-0.5">
-                        {brokerAccounts.map((acct) => {
-                          const deps = deployments.filter((d) => d.accountId === acct.accountId);
-                          return (
-                            <div key={acct.accountId} className="text-2xs text-text-muted">
-                              <div className="uppercase tracking-wider py-1">{acct.type}</div>
-                              {deps.map((d) => (
-                                <button
-                                  key={d.deploymentId}
-                                  onClick={() => setActivePair(d.pair)}
-                                  className={cn(
-                                    'flex items-center gap-2 w-full text-left h-6 px-1.5 rounded-sm text-2xs hover:bg-[color:var(--panel-2)]',
-                                    activePair === d.pair && 'bg-[color:var(--selection)] text-text'
-                                  )}
-                                >
-                                  <CircleDot
-                                    size={9}
-                                    /* UI-3: fixture deployment status. "Armed" here is
-                                       the fixture model's own word, NOT live-node arming
-                                       (LX-1 Slice 8) — that is in the operations strip. */
-                                    aria-label={`Fixture deployment status: ${d.status}`}
-                                    style={{
-                                      color:
-                                        d.status === 'InTrade'
-                                          ? 'var(--live)'
-                                          : d.status === 'Armed'
-                                          ? 'var(--warning)'
-                                          : 'var(--paused)',
-                                    }}
-                                  />
-                                  <span
-                                    className="font-medium mono"
-                                    title={`Fixture deployment record: ${d.status}. Not live-node arming or execution state.`}
-                                  >
-                                    {d.pair}
-                                  </span>
-                                  <span className="ml-auto text-text-muted uppercase">{d.lane}</span>
-                                </button>
-                              ))}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+              {nodes.length === 0 ? (
+                <div className="px-1.5 py-1 text-2xs text-text-muted" data-testid="scope-fleet-empty">
+                  {fleetStatus === 'unavailable'
+                    ? 'No authoritative source'
+                    : 'No nodes reported'}
+                </div>
+              ) : (
+                nodes.map((node) => (
+                  <div
+                    key={node.nodeId}
+                    className="flex items-center gap-2 h-6 px-1.5 text-2xs text-text-2"
+                    data-testid={`scope-node-${node.nodeId}`}
+                  >
+                    <HealthDot state={node.health === 'healthy' ? 'ok' : 'critical'} title={String(node.health)} />
+                    <span className="ml-1 truncate mono">{node.nodeId}</span>
                   </div>
-                );
-              })}
+                ))
+              )}
             </div>
           )}
         </div>

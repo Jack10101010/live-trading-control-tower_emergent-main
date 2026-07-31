@@ -1,4 +1,4 @@
-import { useSystemConfidence, useOperator, useFleet, useBackendHealth } from '@/hooks/useRepository';
+import { useSystemConfidence, useOperator, useBackendHealth } from '@/hooks/useRepository';
 import { HealthDot } from '@/components/primitives';
 import { IconButton } from '@/components/primitives/Button';
 import { useShellStore } from '@/store/shellStore';
@@ -23,7 +23,7 @@ const CONNECTION_TONE_COLOR: Record<Tone, string> = {
 export function CommandSafetyBar() {
   const confidence = useSystemConfidence();
   const operator = useOperator();
-  const { asOf, deployments } = useFleet();
+
   const setPaletteOpen = useShellStore((s) => s.setPaletteOpen);
   const theme = useShellStore((s) => s.theme);
   const setTheme = useShellStore((s) => s.setTheme);
@@ -78,13 +78,13 @@ export function CommandSafetyBar() {
   // by the live-operations strip; leaving this unlabelled created two competing
   // "live status" surfaces with different meanings.
   // Execution posture — highest-risk active mode across the fleet (never hardcoded).
-  const execMode: 'live' | 'demo' | 'mock' = deployments.some(
-    (d) => d.executionMode === 'live' && d.liveEnabled
-  )
-    ? 'live'
-    : deployments.some((d) => d.executionMode === 'demo')
-    ? 'demo'
-    : 'mock';
+  // M-FLEET-2: this derived the global execution posture from FIXTURE
+  // deployments — the chrome announced "LIVE" because an authored record said
+  // so. There is no authoritative deployment record to derive it from, and the
+  // real execution posture is owned by `execution_mode` on the node, surfaced
+  // by the live-operations strip. Until that is wired here, the bar states the
+  // adapter it can actually observe rather than inventing a fleet-wide claim.
+  const execMode = 'mock' as 'live' | 'demo' | 'mock';
   const modeColor =
     execMode === 'live'
       ? 'var(--mode-live)'
@@ -253,7 +253,10 @@ export function CommandSafetyBar() {
         </div>
         <div className="flex flex-col leading-tight">
           <span className="text-xs text-text">{String(operator.displayName)}</span>
-          <span className="text-2xs text-text-muted mono">{new Date(asOf).toISOString().slice(11, 19)}Z</span>
+          {/* M-FLEET-2: this rendered the fixture world's frozen `asOf` as a
+              live clock beside the operator's name. It was the fixture's
+              timestamp, not the current time and not a data freshness signal. */}
+          <span className="text-2xs text-text-muted mono">operator</span>
         </div>
       </div>
     </div>

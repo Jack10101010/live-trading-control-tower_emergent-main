@@ -350,6 +350,19 @@ interface FleetPayload {
   asOf: string;
 }
 
+/**
+ * M-FLEET-2 — the CONFIGURED instrument universe. Configuration, not activity.
+ * Membership implies nothing about deployment, subscription, freshness, trade
+ * eligibility, account assignment or connection.
+ */
+export interface InstrumentsResponse {
+  schemaVersion: number;
+  provenance: 'configuration';
+  source: string;
+  detail: string;
+  instruments: Array<{ symbol: string }>;
+}
+
 export interface FleetResponse {
   /** False = no production source. Empty arrays then mean "unknown", NOT "none". */
   available: boolean;
@@ -1455,6 +1468,7 @@ export const api = {
   scenario: (scenarioId: string) =>
     apiFetch<ScenarioOperationalView & { history: ScenarioEventView[] }>(
       `/scenarios/${encodeURIComponent(scenarioId)}`),
+  instruments: () => apiFetch<InstrumentsResponse>('/instruments'),
   operationsNodes: () => apiFetch<{ nodes: NodeOperationalView[] }>('/operations/nodes'),
   operationsAccounts: () => apiFetch<{ accounts: AccountOperationalView[] }>('/operations/accounts'),
   operationsOrders: () => apiFetch<{ orders: OrderOperationalView[] }>('/operations/orders'),
@@ -1514,7 +1528,17 @@ export const api = {
     apiFetch<OperatorCommandView>(`/operator/commands/${encodeURIComponent(commandId)}`),
   operatorRecentCommands: () =>
     apiFetch<{ enabled: boolean; commands: OperatorCommandView[] }>('/operator/commands'),
-  fleet: async (): Promise<FleetResponse> => {
+  /**
+   * M-FLEET-2 — DEVELOPMENT FIXTURE PREVIEW ONLY. NOT AN OPERATIONAL SOURCE.
+   *
+   * `/api/fleet` serves authored demonstration deployments, brokers and
+   * accounts from the development fixture world. No ordinary operator surface
+   * may call this. Operational fleet data comes from `/api/operations/*`
+   * filtered through `lib/operationalProvenance`. Renamed from `fleet` so that
+   * calling it is a deliberate act with an unmistakable name, and so a source
+   * guard can find every caller.
+   */
+  fixtureFleetPreview: async (): Promise<FleetResponse> => {
     // M-FLEET-1: an absent fixture answers 501 with the FIX-2 unavailable body.
     // That is a DESIGNED state, not a failure, so it is translated into a typed
     // result the views can render honestly instead of being thrown into the
@@ -1651,7 +1675,11 @@ export const api = {
 export const QK = {
   health: ['health'] as const,
   world: ['world'] as const,
-  fleet: ['fleet'] as const,
+  /** M-FLEET-2: DEVELOPMENT FIXTURE ONLY. Ordinary hooks must not use this. */
+  fixtureFleetPreview: ['fixture-fleet-preview'] as const,
+  instruments: ['instruments'] as const,
+  operationsNodes: ['operations', 'nodes'] as const,
+  operationsAccounts: ['operations', 'accounts'] as const,
   featureFlags: ['feature-flags'] as const,
   /** Root events key — invalidating this prefix refreshes every scoped events query. */
   events: ['events'] as const,

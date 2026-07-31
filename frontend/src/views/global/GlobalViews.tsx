@@ -5,7 +5,8 @@
  */
 import { useState } from 'react';
 import {
-  useFleet,
+  useOperationalFleet,
+  useConfiguredInstruments,
   usePackages,
   useFeatureFlags,
   useVocabulary,
@@ -15,7 +16,7 @@ import {
   useRuntimeHealth,
 } from '@/hooks/useRepository';
 import { useShellStore } from '@/store/shellStore';
-import { Panel } from '@/components/structures/Panel';
+import { Panel, EmptyState } from '@/components/structures/Panel';
 import type { PanelProvenance } from '@/lib/cardProvenance';
 import {
   WorkspacePage,
@@ -69,7 +70,8 @@ import { toast } from 'sonner';
 /* -------------------------------------------------------------------------- */
 
 export function MarketDataView() {
-  const { pairs } = useFleet();
+  // M-FLEET-2: instruments are configuration, not fixture deployments.
+  const { symbols: pairs } = useConfiguredInstruments();
   const [pair, setPair] = useState(pairs[0] ?? 'EURUSD');
   const ms = useMarketState(pair);
   // UI-0: real market-data provider identity (never a hardcoded latency claim).
@@ -202,80 +204,21 @@ export function MarketDataView() {
 /* -------------------------------------------------------------------------- */
 
 export function DeploymentsView() {
-  const { deployments, brokers, accounts } = useFleet();
-  const openInspector = useShellStore((s) => s.openInspector);
-
-  const cols: Column<Deployment>[] = [
-    { key: 'id', header: 'Deployment', mono: true, cell: (d) => d.deploymentId.slice(0, 20) + '…' },
-    { key: 'pair', header: 'Pair', mono: true, cell: (d) => d.pair },
-    { key: 'lane', header: 'Lane', cell: (d) => <LaneChip lane={d.lane} /> },
-    { key: 'status', header: 'Status', cell: (d) => <Badge variant="status">{d.status}</Badge> },
-    {
-      key: 'mode',
-      header: 'Mode',
-      cell: (d) => (
-        <Badge variant="mode" color={d.executionMode === 'live' ? 'var(--mode-live)' : 'var(--mode-mock)'}>
-          {d.executionMode}
-        </Badge>
-      ),
-    },
-    {
-      key: 'broker',
-      header: 'Broker',
-      cell: (d) => {
-        const acct = accounts.find((a) => a.accountId === d.accountId);
-        const br = brokers.find((b) => b.brokerId === acct?.brokerId);
-        return <span className="text-xs text-text-2">{br?.venue ?? '—'}</span>;
-      },
-    },
-    { key: 'package', header: 'Package', mono: true, cell: (d) => fmtHash(d.packageHash, 12) },
-    { key: 'pl', header: 'Daily P/L', align: 'right', cell: (d) => <PLValue value={d.riskState.dailyPl} /> },
-    { key: 'risk', header: 'Risk today', align: 'right', mono: true, cell: (d) => fmtPercent(d.riskState.riskTodayPct) },
-    { key: 'dd', header: 'DD buffer', align: 'right', mono: true, cell: (d) => fmtPercent(d.riskState.ddBufferPct, 0) },
-    { key: 'action', header: 'Last action', cell: (d) => <span className="text-2xs text-text-muted truncate">{d.lastAction}</span> },
-  ];
-
-  const byLane = deployments.reduce<Record<string, number>>((acc, d) => {
-    acc[d.lane] = (acc[d.lane] ?? 0) + 1;
-    return acc;
-  }, {});
-
+  // M-FLEET-2: this table listed the three fixture deployments with their
+  // lanes, statuses and execution modes. No authoritative deployment record
+  // exists, so it states that instead of inventing rows.
+  const { status } = useOperationalFleet();
   return (
-    <WorkspacePage
-      title="Deployments"
-      subtitle="Every running package × pair × account × lane"
-      toolbar={
-        <>
-          <ToolbarLabel>Lane</ToolbarLabel>
-          <ToolbarChip active count={deployments.length}>All</ToolbarChip>
-          {Object.entries(byLane).map(([lane, n]) => (
-            <ToolbarChip key={lane} count={n}>{lane}</ToolbarChip>
-          ))}
-          <ToolbarSpacer />
-          <span className="text-2xs text-text-muted mono">Atomic version pinning · rollback via manifest</span>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        <div className="grid grid-cols-4 gap-4">
-          <PLKpi label="Deployments" value={deployments.length} />
-          <PLKpi label="Live lanes" value={deployments.filter((d) => d.lane === 'live').length} />
-          <PLKpi label="Total daily P/L" value={<PLValue value={deployments.reduce((s, d) => s + d.riskState.dailyPl, 0)} />} />
-          <PLKpi label="Total floating" value={<PLValue value={deployments.reduce((s, d) => s + d.riskState.floatingPl, 0)} />} />
-        </div>
-
-        <Panel provenance="fixture" title="All Deployments" bodyClassName="p-0">
-          <DataTable
-            columns={cols}
-            data={deployments}
-            rowKey={(d) => d.deploymentId}
-            onRowClick={(d) => openInspector({ kind: 'deployment', deploymentId: d.deploymentId })}
-          />
-        </Panel>
-
-        <ComingSoon title="Deployment Manifest editor" description="Create · promote · roll back manifests once mutation flows land." />
-      </div>
-    </WorkspacePage>
+    <div className="p-6">
+      <EmptyState
+        title="No authoritative deployment records"
+        description={
+          status === 'unavailable'
+            ? 'No authoritative operational source is reporting. The Control Tower has no operational deployment model; execution nodes are projected at /api/operations/nodes.'
+            : 'The Control Tower has no operational deployment model. Execution nodes are projected at /api/operations/nodes.'
+        }
+      />
+    </div>
   );
 }
 

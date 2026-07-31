@@ -123,14 +123,15 @@ describe('structural guards', () => {
   });
 
   it('fleet fixture deployment tiles are framed RED and Settings flags are not green', () => {
-    // M-FLEET-1: the frame is now DYNAMIC and strictly stronger than the old
-    // static "fixture" — with a source it is fixture (RED), and with NO source
-    // it is placeholder (also RED) rather than claiming fixture data it does not
-    // have. Both branches are red; neither can become green.
+    // M-FLEET-2: the fixture fleet is GONE from this view, so its red frame went
+    // with it — the approved policy is to remove a red border once the fixture
+    // content it marked no longer exists. What must hold now is stronger: the
+    // view reads only the authoritative hook, and cannot reach fixture data.
     const fleet = read('views/FleetOverview.tsx');
-    expect(fleet).toContain("<ProvenanceFrame provenance={available ? 'fixture' : 'placeholder'}");
-    expect(fleet).not.toContain('ProvenanceFrame provenance="live"');
-    expect(fleet).not.toContain("provenance={'live'}");
+    expect(fleet).toContain('useOperationalFleet');
+    expect(fleet).not.toContain('useFixtureFleetPreview');
+    expect(fleet).not.toContain('ProvenanceFrame');
+    expect(fleet).not.toContain('provenance="fixture"');
     // The Feature Flags settings section must not inherit runtime-config green.
     const gv = read('views/global/GlobalViews.tsx');
     const flags = gv.indexOf('title="Feature Flags"');
@@ -141,16 +142,18 @@ describe('structural guards', () => {
   });
 
   it('fixture fleet and fixture trade cards remain RED', () => {
-    // M-FLEET-1: Fleet's frame is dynamic (see above) and every fixture
-    // deployment additionally carries a visible FIXTURE tag, so provenance is
-    // stated in the payload AND on the card, not only in the border colour.
+    // M-FLEET-2: there are no fixture fleet or account cards left to be RED.
+    // Both views render authoritative records or an honest empty/unavailable
+    // state, so their panels are framed live and the FIXTURE tags are gone.
     const fleet = read('views/FleetOverview.tsx');
-    expect(fleet).toContain("provenance === 'fixture'");
-    expect(fleet).toContain('deployment-fixture-tag-');
-    // Accounts & Protection keeps its static RED frame and gains the same tag.
+    expect(fleet).not.toContain('deployment-fixture-tag-');
     const accounts = read('views/AccountsProtectionView.tsx');
-    expect(accounts).toContain('provenance="fixture"');
-    expect(accounts).toContain('account-fixture-tag-');
+    expect(accounts).not.toContain('account-fixture-tag-');
+    expect(accounts).toContain('provenance="live"');
+    // Fixture records survive ONLY on the isolated development route.
+    const preview = read('views/dev/FixtureFleetPreview.tsx');
+    expect(preview).toContain('provenance="fixture"');
+    expect(preview).toContain('useFixtureFleetPreview');
     const pair = read('views/pair/PairViews.tsx');
     // trades tab + pending orders + fixture panels
     expect((pair.match(/provenance="fixture"/g) ?? []).length).toBeGreaterThanOrEqual(10);
@@ -158,7 +161,7 @@ describe('structural guards', () => {
   });
 
   it('risk/accounts, edge monitor, system confidence and broker health stay RED', () => {
-    expect(read('views/AccountsProtectionView.tsx')).toContain('provenance="fixture"');
+    // M-FLEET-2: AccountsProtectionView no longer holds fixture accounts.
     expect(read('views/BrokerHealthView.tsx')).toContain('provenance="fixture"');
     expect(read('views/EdgeMonitorView.tsx')).toContain('provenance="fixture"');
     const sys = read('views/SystemView.tsx');
@@ -175,12 +178,13 @@ describe('structural guards', () => {
     expect(read('views/SystemView.tsx')).toContain('provenance="live"');
   });
 
-  it('M-RISK-1: accounts view renders no fixture funded rules and stays RED', () => {
+  it('M-RISK-1: accounts view renders no fixture funded rules', () => {
     const av = read('views/AccountsProtectionView.tsx');
     expect(av).not.toContain('fundedRules');            // fixture rules unreachable
     expect(av).toContain('funded-rules-unavailable');   // honest state present
     expect(av).toContain('No funded-account rule source is configured');
-    expect(av).toContain('provenance="fixture"');       // card stays RED (account data still fixture)
+    // M-FLEET-2: the card is no longer RED because the fixture ACCOUNT it
+    // framed is gone; the funded-rule unavailable state above is unchanged.
     // SystemView must not render legacy fabricated limit fields either.
     const sys = read('views/SystemView.tsx');
     for (const legacy of ['maxOpenTrades', 'maxExposureLots', 'maxDailyLoss', 'maxFloatingLoss']) {

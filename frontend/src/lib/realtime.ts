@@ -35,7 +35,10 @@ export function resetLastAppliedSeq(seq: number): void {
 
 const ROOT_KEYS: Record<string, QueryKey> = {
   trades: QK.trades,
-  fleet: QK.fleet,
+  // M-FLEET-2: deployment-affecting commands used to invalidate the fixture
+  // fleet. There is no authoritative deployment record now, so they refresh the
+  // operational node projection instead — the real surface a command can change.
+  fleet: QK.operationsNodes,
   packages: QK.packages,
   runtimeHealth: QK.runtimeHealth,
 };

@@ -4267,6 +4267,35 @@ async def market_data_history(limit: int = 25):
     return _MARKET_DATA_ENGINE.history(limit)
 
 
+@api_router.get("/instruments")
+async def instruments():
+    """M-FLEET-2 — the CONFIGURED instrument universe. Configuration, not activity.
+
+    Navigation needs to know which instruments this deployment is configured for.
+    That list previously came from fixture DEPLOYMENT records, which meant the
+    pair menu was derived from invented operational entities. It comes from
+    `RUNTIME_SYMBOLS` instead — the same tuple the runtime supervisor actually
+    polls and the market-data layer actually uses, so it is genuine
+    configuration.
+
+    What this endpoint deliberately does NOT claim: that any instrument is
+    deployed, subscribed, tradable, assigned to an account, connected to a
+    broker, or backed by fresh market data. It is a configured list and nothing
+    more. Every one of those is a separate operational question answered by
+    `/api/operations/*`, and none may be inferred from membership here.
+    """
+    return {
+        "schemaVersion": 1,
+        "provenance": "configuration",
+        "source": "RUNTIME_SYMBOLS",
+        "detail": ("The instruments this process is configured to poll. This is "
+                   "configuration only: it asserts nothing about deployment, "
+                   "broker subscription, market-data freshness, trade "
+                   "eligibility, account assignment or live connection."),
+        "instruments": [{"symbol": s} for s in RUNTIME_SYMBOLS],
+    }
+
+
 @api_router.get("/market-data/providers")
 async def market_data_providers():
     return _MARKET_DATA_ENGINE.provider_status()

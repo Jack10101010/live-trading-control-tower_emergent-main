@@ -9,6 +9,7 @@
  *   - there is NO button, no toggle, no execution control anywhere in this file.
  */
 import { useQuery } from '@tanstack/react-query';
+import { isAuthoritative } from '@/lib/operationalProvenance';
 import { api, type ExecutionBrokerState } from '@/lib/api';
 
 function fmt(n: number | null | undefined, suffix = ''): string {
@@ -25,7 +26,10 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 function BrokerBody({ broker }: { broker: ExecutionBrokerState }) {
-  const live = broker.provenance === 'live_mt5';
+  // M-FLEET-2: was an inline provenance string comparison. Provenance is
+  // decided in one module so a future value cannot be judged differently here
+  // than on the fleet surfaces.
+  const live = isAuthoritative(broker);
   const acct = broker.account;
   const connected = broker.connection === 'Connected';
   return (

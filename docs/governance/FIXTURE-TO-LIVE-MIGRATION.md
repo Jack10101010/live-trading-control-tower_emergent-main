@@ -15,7 +15,7 @@ DYNAMIC = flips green automatically when its real source activates.
 |---|---|---|---|---|---|---|---|---|---|---|
 | 1 | Risk limits (accounts) | honest-unconfigured | RED (accounts still fixture) | `/api/risk/limits` — **fixture severed; returns honest unconfigured contract; fixture-immune (tested)** | config-sourced limits + node account telemetry (future) | real account config model (future GREEN) | Med | **Resolved** (no fabricated numbers) | **M-RISK-1** | ☑ |
 | 2 | System Confidence (shell gauge, context chips, fleet rail) | **removed** | n/a (no card) | `/api/system-confidence` — **honest `computed:false`; fixture fiction severed (tested)** | future model from genuine telemetry only | a real confidence model (deliberately not built) | Low | **Resolved** (no fabricated certainty) | **M-CONF-1** | ☑ |
-| 3 | Fleet deployment tiles / brokers / accounts | fixture (**labelled**) | RED | `/api/fleet` → WORLD | `/api/operations/{nodes,accounts,positions}` | node telemetry published | Med | High | M-FLEET-1 | ☐ |
+| 3 | Fleet deployment tiles / brokers / accounts | **removed from operator UI** | n/a (no fixture card) | `/api/operations/{nodes,accounts}` filtered to `live_mt5` | same, real MT5 adapter | demo MT5 connection | Med | **Resolved** (no fixture records) | **M-FLEET-2** | ☑ |
 | 4 | Pair trades / ghost trades / pending orders / blocked intents | fixture | RED | WORLD.liveTrades etc. | `/api/ledger/*` + `/api/operations/{orders,positions}` | real broker history (demo MT5) | Med | High | M-TRADES-1 | ☐ |
 | 5 | Analytics (performance, equity curve) | fixture-derived | RED | computed from WORLD trades | recompute from ledger closes | #4 | Low | High | M-TRADES-2 | ☐ |
 | 6 | Operational Dashboard | adapter-fed | DYNAMIC | `/api/operations/*` (mock adapter) | same endpoints, real adapter | demo MT5 connection | Low | Med | M-MT5-READ-1 | ☐ |
@@ -57,6 +57,18 @@ DYNAMIC = flips green automatically when its real source activates.
   that still read WORLD answer `501 fixture_world_unavailable` instead of fabricated
   data; each is still retired by its own milestone. Development behaviour is unchanged,
   so no row's colour changes here.
+- **M-FLEET-2 complete:** fixture Fleet/Broker/Account records no longer render on ANY
+  ordinary operator route. The decisive finding was that `/api/operations/*` is not
+  automatically authoritative — under the development-default mock adapter it stamps
+  `mock-fixture` and carries the same invented $100,000 balance, so switching endpoints
+  would have laundered fixture data into an operational-looking surface. Instead a single
+  gate (`frontend/src/lib/operationalProvenance.ts`) admits only `live_mt5` and fails
+  closed on unknown provenance; all 13 consumers were rewired through it. Pair navigation
+  now derives from `/api/instruments` (configured `RUNTIME_SYMBOLS`), which asserts
+  nothing operational. Fixture fleet data survives only at the unlinked development route
+  `/dev/fixture-fleet`, enforced by repository-wide source guards. Under the mock adapter
+  the fleet UI is intentionally empty. Rows 3 and 20 are resolved for fixture content;
+  they turn GREEN when a real MT5 adapter reports (M-MT5-READ-1).
 - **M-FLEET-1 complete:** Fleet Overview and Accounts & Protection no longer present
   fixture records as operational truth. `/api/fleet` now states its own provenance
   (`schemaVersion:1`, `provenance:"fixture"`, `source:"development_fixture"`, plus a
