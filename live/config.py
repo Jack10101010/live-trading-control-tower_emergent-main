@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 # ── Locked operator decisions (M3 Phase 1) — changing these is a NEW decision ──
-DEPLOYMENT_PROFILE = "GOLDEN_COMPATIBLE"
+# DEPLOYMENT_PROFILE was defined here AND in live/__init__.py. This copy was dead
+# (nothing imported it); identity now lives once, in live/world.py.
 PORTFOLIO_INCLUDE_DISABLED_COHORTS = True          # Golden Research Profile semantics
 DATA_SEAM = "dukascopy-frozen->mt5-live (v1: accepted, monitored; no re-baseline)"
 # Canonical time base of every timestamp ABOVE the MT5 gateway. MT5 encodes tick

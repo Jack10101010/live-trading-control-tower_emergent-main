@@ -31,6 +31,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+from live import WORLD
 from live.config import (ENGINE_MANIFEST_ID_EXPECTED, ENGINE_MANIFEST_PATH,
                          ENGINE_VERSION_EXPECTED, LiveConfig)
 from live.engine_identity import (environment_fingerprint, load_manifest, verify,
@@ -148,7 +149,8 @@ def runtime(cfg: LiveConfig) -> int:
           f"{len(sent)} sent/confirmed entries (dry_run must only simulate)" if sent
           else f"{len(ledger)} ledger entries, all simulated/blocked")
     try:
-        url = cfg.ct_base_url.rstrip("/") + "/live/status?instance_id=live-eurusd-golden-001"
+        url = (cfg.ct_base_url.rstrip("/")
+               + f"/live/status?instance_id={WORLD.instance_id}")
         with urllib.request.urlopen(url, timeout=5) as resp:
             payload = json.loads(resp.read())
         # Identity alone is not health: the CT holds the LAST snapshot, so a node
@@ -157,7 +159,7 @@ def runtime(cfg: LiveConfig) -> int:
         # re-deriving age here. The backend owns that judgement and computes it
         # from its own clock; a second implementation would be a second thing to
         # drift, which is exactly what this milestone removed from the VPS.
-        identity_ok = payload.get("instance_id") == "live-eurusd-golden-001"
+        identity_ok = payload.get("instance_id") == WORLD.instance_id
         # v1 reports freshness at the TOP LEVEL; `cycle` replaced the flat `runner`.
         stale = payload.get("stale")
         boundary = ((payload.get("cycle") or {}).get("last_boundary")

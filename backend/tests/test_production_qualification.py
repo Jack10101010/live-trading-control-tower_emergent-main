@@ -553,3 +553,65 @@ def test_publisher_remains_stateless(tmp_path):
     from live.publisher import CTPublisher
     pub = CTPublisher(_cfg(tmp_path))
     assert set(vars(pub)) == {"config", "fallback"}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# M-WORLD-0 — world identity is one value, and it is load-bearing
+# ══════════════════════════════════════════════════════════════════════════════
+def test_world_identity_is_unchanged_from_m3_p1():
+    """intent_id = sha1(INSTANCE_ID|...) is the ledger's duplicate-suppression key,
+    so changing this string would let an already-executed order re-send. The whole
+    refactor must be identity-preserving."""
+    from live import WORLD, INSTANCE_ID, DEPLOYMENT_PROFILE
+    assert WORLD.instance_id == "live-eurusd-golden-001"
+    assert WORLD.deployment_profile == "GOLDEN_COMPATIBLE"
+    assert INSTANCE_ID == WORLD.instance_id
+    assert DEPLOYMENT_PROFILE == WORLD.deployment_profile
+
+
+def test_intent_ids_are_byte_stable_across_the_refactor():
+    """The observable consequence of identity: these ids must not move."""
+    from live.intents import _intent_id
+    assert _intent_id("T_1", "fill", "2026-07-31 08:00:00") == \
+        _intent_id("T_1", "fill", "2026-07-31 08:00:00")
+    import hashlib
+    from live import INSTANCE_ID
+    expected = hashlib.sha1(
+        f"{INSTANCE_ID}|T_1|fill|2026-07-31 08:00:00".encode()).hexdigest()[:20]
+    assert _intent_id("T_1", "fill", "2026-07-31 08:00:00") == expected
+
+
+def test_identity_is_stated_exactly_once_in_source():
+    """It was stated three ways: two module constants plus bare literals in
+    deploy_check, so renaming the instance would have left the deploy gate
+    checking a node that no longer exists."""
+    live_dir = Path(__file__).resolve().parents[2] / "live"
+    literals = [p.name for p in live_dir.glob("*.py")
+                if p.name != "world.py" and "live-eurusd-golden-001" in p.read_text()]
+    assert literals == [], f"hard-coded instance id still in {literals}"
+    profile_defs = [p.name for p in live_dir.glob("*.py")
+                    if p.name != "world.py" and 'DEPLOYMENT_PROFILE = "' in p.read_text()]
+    assert profile_defs == [], f"duplicate DEPLOYMENT_PROFILE in {profile_defs}"
+
+
+def test_world_is_immutable_and_validated():
+    from live.world import World, WORLD_KINDS
+    import dataclasses, pytest as _pt
+    w = World(instance_id="x", deployment_profile="p", kind="demo")
+    with _pt.raises(dataclasses.FrozenInstanceError):
+        w.instance_id = "y"                       # identity cannot drift at runtime
+    with _pt.raises(ValueError):
+        World(instance_id="x", deployment_profile="p", kind="nonsense")
+    with _pt.raises(ValueError):
+        World(instance_id="", deployment_profile="p", kind="demo")
+    assert "funded_live" in WORLD_KINDS and "research" in WORLD_KINDS
+
+
+def test_world_declares_no_behaviour():
+    """Guard against speculative abstraction: World is identity only. Nothing may
+    branch on `kind` until a second world actually exists."""
+    live_dir = Path(__file__).resolve().parents[2] / "live"
+    branching = [p.name for p in live_dir.glob("*.py")
+                 if p.name != "world.py"
+                 and ("WORLD.kind" in p.read_text() or ".kind ==" in p.read_text())]
+    assert branching == [], f"behaviour branched on world kind in {branching}"

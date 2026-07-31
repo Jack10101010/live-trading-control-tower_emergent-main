@@ -17,5 +17,10 @@ Locked operator decisions (Phase 1):
   topology: bridge + runner + executor co-located on the Windows VPS
 """
 
-DEPLOYMENT_PROFILE = "GOLDEN_COMPATIBLE"
-INSTANCE_ID = "live-eurusd-golden-001"
+from live.world import CURRENT as WORLD          # the one execution world (see live/world.py)
+
+# Kept as names because `intents.py` and `publisher.py` already read them, and
+# INSTANCE_ID is baked into every historical intent id. They are now VIEWS of the
+# single World value rather than a second place to state the same fact.
+DEPLOYMENT_PROFILE = WORLD.deployment_profile
+INSTANCE_ID = WORLD.instance_id
