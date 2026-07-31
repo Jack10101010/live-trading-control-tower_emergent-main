@@ -123,8 +123,14 @@ describe('structural guards', () => {
   });
 
   it('fleet fixture deployment tiles are framed RED and Settings flags are not green', () => {
-    expect(read('views/FleetOverview.tsx'))
-      .toContain('<ProvenanceFrame provenance="fixture"');
+    // M-FLEET-1: the frame is now DYNAMIC and strictly stronger than the old
+    // static "fixture" — with a source it is fixture (RED), and with NO source
+    // it is placeholder (also RED) rather than claiming fixture data it does not
+    // have. Both branches are red; neither can become green.
+    const fleet = read('views/FleetOverview.tsx');
+    expect(fleet).toContain("<ProvenanceFrame provenance={available ? 'fixture' : 'placeholder'}");
+    expect(fleet).not.toContain('ProvenanceFrame provenance="live"');
+    expect(fleet).not.toContain("provenance={'live'}");
     // The Feature Flags settings section must not inherit runtime-config green.
     const gv = read('views/global/GlobalViews.tsx');
     const flags = gv.indexOf('title="Feature Flags"');
@@ -135,7 +141,16 @@ describe('structural guards', () => {
   });
 
   it('fixture fleet and fixture trade cards remain RED', () => {
-    expect(read('views/FleetOverview.tsx')).toContain('provenance="fixture"');
+    // M-FLEET-1: Fleet's frame is dynamic (see above) and every fixture
+    // deployment additionally carries a visible FIXTURE tag, so provenance is
+    // stated in the payload AND on the card, not only in the border colour.
+    const fleet = read('views/FleetOverview.tsx');
+    expect(fleet).toContain("provenance === 'fixture'");
+    expect(fleet).toContain('deployment-fixture-tag-');
+    // Accounts & Protection keeps its static RED frame and gains the same tag.
+    const accounts = read('views/AccountsProtectionView.tsx');
+    expect(accounts).toContain('provenance="fixture"');
+    expect(accounts).toContain('account-fixture-tag-');
     const pair = read('views/pair/PairViews.tsx');
     // trades tab + pending orders + fixture panels
     expect((pair.match(/provenance="fixture"/g) ?? []).length).toBeGreaterThanOrEqual(10);

@@ -1912,11 +1912,45 @@ async def world():
     return WORLD.as_dict()
 
 
+#: M-FLEET-1: how the fleet records this process is serving were obtained.
+#: `fixture` is the ONLY value any current code path can produce — deployments,
+#: brokers and accounts have no production source yet (the real operational
+#: plane is `/api/operations/*`, which projects nodes and broker accounts, not
+#: "deployments"). The field exists so the UI can LABEL what it renders instead
+#: of inferring provenance from a border colour, and so the day a real source
+#: lands the label changes with the data rather than by editing a component.
+FLEET_PROVENANCE_FIXTURE = "fixture"
+FLEET_SOURCE_FIXTURE = "development_fixture"
+FLEET_DETAIL_FIXTURE = (
+    "These deployment, broker and account records come from the development "
+    "fixture world. They are NOT live operational truth: the balances, P/L, "
+    "lanes and execution modes are authored demonstration values. Genuine "
+    "broker/account state is projected at /api/operations/accounts, and genuine "
+    "execution nodes at /api/operations/nodes."
+)
+
+
 @api_router.get("/fleet")
 async def fleet():
+    """M-FLEET-1: the fleet composition, with its provenance stated in-band.
+
+    The response previously carried no statement of origin, so a client had no
+    way to tell authored demonstration records from operational truth — a
+    fixture deployment tagged `executionMode: "live"` with a $412 daily P/L read
+    exactly like a real one. The records are unchanged; what is new is that the
+    payload now SAYS what they are.
+
+    Absent fixture still answers 501 through `_fixture_unavailable` (FIX-2): an
+    empty 200 would read as "no deployments", which is a different fact from
+    "this surface has no production source".
+    """
     if not _fixture_available():
         return _fixture_unavailable("fleet")
     return {
+        "schemaVersion": 1,      # first VERSIONED form (the prior shape was unversioned)
+        "provenance": FLEET_PROVENANCE_FIXTURE,
+        "source": FLEET_SOURCE_FIXTURE,
+        "detail": FLEET_DETAIL_FIXTURE,
         "deployments": _deployments_view(),
         "brokers": WORLD.get("brokers", []),
         "accounts": WORLD.get("accounts", []),

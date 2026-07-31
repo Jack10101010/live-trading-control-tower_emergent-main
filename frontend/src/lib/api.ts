@@ -328,6 +328,39 @@ if (!BACKEND_URL) {
 
 export const apiUrl = (path: string): string => `${BACKEND_URL}/api${path}`;
 
+/**
+ * M-FLEET-1 — the fleet payload, with its origin stated in-band.
+ *
+ * `provenance` is the whole point. Deployment/broker/account records have no
+ * production source yet, so today the backend always answers `"fixture"`. A
+ * consumer must never present these as operational truth; it must say what they
+ * are. `"unavailable"` means the surface has no source at all (absent fixture,
+ * or a production process where the fixture world is never loaded).
+ */
+export type FleetProvenance = 'fixture' | 'live' | 'unavailable' | 'unknown';
+
+interface FleetPayload {
+  schemaVersion?: number;
+  provenance?: FleetProvenance;
+  source?: string;
+  detail?: string;
+  deployments: Deployment[];
+  brokers: Broker[];
+  accounts: Account[];
+  asOf: string;
+}
+
+export interface FleetResponse {
+  /** False = no production source. Empty arrays then mean "unknown", NOT "none". */
+  available: boolean;
+  provenance: FleetProvenance;
+  detail: string;
+  deployments: Deployment[];
+  brokers: Broker[];
+  accounts: Account[];
+  asOf: string | null;
+}
+
 function idempotencyKey(): string {
   const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
   return c?.randomUUID ? c.randomUUID() : `idem_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -1481,8 +1514,41 @@ export const api = {
     apiFetch<OperatorCommandView>(`/operator/commands/${encodeURIComponent(commandId)}`),
   operatorRecentCommands: () =>
     apiFetch<{ enabled: boolean; commands: OperatorCommandView[] }>('/operator/commands'),
-  fleet: () =>
-    apiFetch<{ deployments: Deployment[]; brokers: Broker[]; accounts: Account[]; asOf: string }>('/fleet'),
+  fleet: async (): Promise<FleetResponse> => {
+    // M-FLEET-1: an absent fixture answers 501 with the FIX-2 unavailable body.
+    // That is a DESIGNED state, not a failure, so it is translated into a typed
+    // result the views can render honestly instead of being thrown into the
+    // error boundary (which would read as "the Control Tower is broken" rather
+    // than "this surface has no production source"). Any OTHER non-2xx still
+    // throws — a genuine fault must not be dressed up as an empty fleet.
+    const res = await fetch(apiUrl('/fleet'), { headers: { Accept: 'application/json', ...authHeader() } });
+    if (res.status === 501) {
+      const body = (await res.json().catch(() => null)) as { code?: string; detail?: string } | null;
+      if (body?.code === 'fixture_world_unavailable') {
+        return {
+          available: false,
+          provenance: 'unavailable',
+          detail: body.detail ?? 'This surface has no production source.',
+          deployments: [],
+          brokers: [],
+          accounts: [],
+          asOf: null,
+        };
+      }
+    }
+    if (res.status === 401) throw new ApiAuthError(401, '/fleet');
+    if (!res.ok) throw new Error(`API ${res.status} /fleet: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+    const body = (await res.json()) as FleetPayload;
+    return {
+      available: true,
+      provenance: body.provenance ?? 'unknown',
+      detail: body.detail ?? '',
+      deployments: body.deployments,
+      brokers: body.brokers,
+      accounts: body.accounts,
+      asOf: body.asOf,
+    };
+  },
   health: () => apiFetch<BackendHealth>('/health'),
   edgeMonitor: () => apiFetch<EdgeMonitor>('/edge-monitor'),
   systemConfidence: () => apiFetch<SystemConfidence>('/system-confidence'),

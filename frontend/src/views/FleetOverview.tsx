@@ -20,7 +20,8 @@ import { fmtPercent } from '@/lib/format';
  * Answers "what needs my attention?" — not charts (§J).
  */
 export function FleetOverview() {
-  const { deployments, brokers, accounts, activePackage, asOf } = useFleet();
+  const { deployments, brokers, accounts, activePackage, asOf, available, provenance, provenanceDetail } =
+    useFleet();
   const { world } = useRepository();
   const msByPair = Object.fromEntries(world.marketStateSnapshots.map((m) => [m.instrument, m]));
   const navigate = useNavigate();
@@ -36,21 +37,65 @@ export function FleetOverview() {
           <div className="flex items-baseline justify-between gap-4">
             <div>
               <h1 className="text-2xl font-semibold text-text tracking-tight">Fleet Overview</h1>
-              <p className="text-xs text-text-muted mt-1">
-                {deployments.length} active deployments · {brokers.length} broker{brokers.length > 1 ? 's' : ''} · {accounts.length} account{accounts.length > 1 ? 's' : ''} · Package {activePackage.label}
+              {/* M-FLEET-1: counts are DERIVED from the records actually
+                  returned, and the word before them states what those records
+                  are. With no source there is nothing to count, so no number is
+                  shown — "0 deployments" would assert an empty fleet, which is a
+                  different fact from "this surface has no production source". */}
+              <p className="text-xs text-text-muted mt-1" data-testid="fleet-summary">
+                {available ? (
+                  <>
+                    {deployments.length} {provenance === 'fixture' ? 'fixture' : ''} deployment
+                    {deployments.length === 1 ? '' : 's'} · {brokers.length} broker
+                    {brokers.length === 1 ? '' : 's'} · {accounts.length} account
+                    {accounts.length === 1 ? '' : 's'} · Package {activePackage.label}
+                  </>
+                ) : (
+                  <>Fleet composition unavailable — no production source</>
+                )}
               </p>
             </div>
             <div className="flex items-center gap-3">
+              {provenance === 'fixture' && (
+                <span
+                  data-testid="fleet-provenance-banner"
+                  title={provenanceDetail}
+                  className="text-2xs uppercase tracking-widest px-2 py-0.5 rounded border mono"
+                  style={{ borderColor: 'var(--mode-mock)', color: 'var(--mode-mock)' }}
+                >
+                  Fixture data — not live
+                </span>
+              )}
               <PackageVersionChip version={activePackage.version} hash={activePackage.packageHash} />
-              <span className="text-2xs text-text-muted mono">
-                as of <TimestampUTC iso={asOf} mode="absolute" />
-              </span>
+              {available && asOf ? (
+                <span className="text-2xs text-text-muted mono">
+                  as of <TimestampUTC iso={asOf} mode="absolute" />
+                </span>
+              ) : null}
             </div>
           </div>
         </header>
 
         <div className="flex-1 overflow-auto px-6 pb-6">
-          <ProvenanceFrame provenance="fixture" className="p-2">
+          <ProvenanceFrame provenance={available ? 'fixture' : 'placeholder'} className="p-2">
+          {/* M-FLEET-1: three DISTINCT states, never conflated.
+              no source  -> say so; do not render an empty grid that reads as "no deployments"
+              source, 0  -> a genuine empty fleet
+              source, n  -> render exactly the n records returned, labelled */}
+          {!available ? (
+            <EmptyState
+              title="Fleet composition unavailable"
+              description={provenanceDetail ||
+                'Deployment, broker and account records have no production source in this process.'}
+              icon={<Layers size={16} />}
+            />
+          ) : deployments.length === 0 ? (
+            <EmptyState
+              title="No deployments"
+              description="The fleet source returned no deployment records. This is a real empty fleet, not missing data."
+              icon={<Layers size={16} />}
+            />
+          ) : (
           <div className="grid gap-3 grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3">
             {deployments.map((d) => {
               const account = accounts.find((a) => a.accountId === d.accountId);
@@ -89,13 +134,23 @@ export function FleetOverview() {
                   </div>
 
                   <div className="flex items-center gap-2 mb-3 flex-wrap">
+                    {/* M-FLEET-1: the single most dangerous element on this page
+                        was a FIXTURE record wearing a green `live` badge. The
+                        record's own mode is still shown — hiding it would be its
+                        own dishonesty — but a fixture deployment never gets the
+                        live/demo colour, and carries an explicit tag. */}
+                    {provenance === 'fixture' && (
+                      <span data-testid={`deployment-fixture-tag-${d.deploymentId}`}>
+                        <Badge variant="mode" color="var(--mode-mock)">FIXTURE</Badge>
+                      </span>
+                    )}
                     <Badge variant="status">{d.status}</Badge>
                     <Badge
                       variant="mode"
                       color={
-                        d.executionMode === 'live'
+                        provenance !== 'fixture' && d.executionMode === 'live'
                           ? 'var(--mode-live)'
-                          : d.executionMode === 'demo'
+                          : provenance !== 'fixture' && d.executionMode === 'demo'
                           ? 'var(--mode-demo)'
                           : 'var(--mode-mock)'
                       }
@@ -149,6 +204,7 @@ export function FleetOverview() {
               );
             })}
           </div>
+          )}
           </ProvenanceFrame>
         </div>
       </div>

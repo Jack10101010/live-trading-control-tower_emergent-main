@@ -5,7 +5,7 @@ import { deriveFairValueGaps, type FairValueGap } from '@/lib/fairValueGaps';
 import { deriveLiquidityPools, type LiquidityPool } from '@/lib/liquidity';
 import { deriveMarketStructure, type MarketStructure } from '@/lib/marketStructure';
 import { type Candle } from '@/lib/chartData';
-import { api, QK, type BackendHealth, type BrokerReconciliation, type OperatorPreferences, type RuntimeHealth, type StrategyEvaluation, type SchedulerStatus, type MarketSnapshot, type RiskLimits, type MarketCandles } from '@/lib/api';
+import { api, QK, type BackendHealth, type BrokerReconciliation, type OperatorPreferences, type RuntimeHealth, type StrategyEvaluation, type SchedulerStatus, type MarketSnapshot, type RiskLimits, type MarketCandles, type FleetProvenance } from '@/lib/api';
 import { expandMatrix } from '@/lib/matrixExpand';
 import { queryClient } from '@/lib/queryClient';
 import { applyEvents, resetLastAppliedSeq, seedLastAppliedSeq } from '@/lib/realtime';
@@ -69,6 +69,10 @@ export function useFleet(): {
   pairs: string[];
   activePackage: Package;
   asOf: string;
+  /** M-FLEET-1: additive. False = no source; empty arrays mean UNKNOWN, not none. */
+  available: boolean;
+  provenance: FleetProvenance;
+  provenanceDetail: string;
 } {
   const [{ data: fleet }, { data: activePackage }] = useSuspenseQueries({
     queries: [
@@ -83,7 +87,10 @@ export function useFleet(): {
       accounts: fleet.accounts,
       pairs: Array.from(new Set(fleet.deployments.map((d) => d.pair))),
       activePackage,
-      asOf: fleet.asOf,
+      asOf: fleet.asOf ?? '',
+      available: fleet.available,
+      provenance: fleet.provenance,
+      provenanceDetail: fleet.detail,
     }),
     [fleet, activePackage]
   );
@@ -387,9 +394,18 @@ export function useRiskLimits(): RiskLimits {
 
 /** Accounts + deployments via `/api/fleet` composition (migrated off `/api/world`,
  *  Phase 4.5). Deployments are runtime-overlaid; single `QK.fleet` key. */
-export function useAccountsProtection(): { accounts: Account[]; deployments: Deployment[] } {
-  const { accounts, deployments } = useFleet();
-  return { accounts, deployments };
+export function useAccountsProtection(): {
+  accounts: Account[];
+  deployments: Deployment[];
+  available: boolean;
+  provenance: FleetProvenance;
+  provenanceDetail: string;
+} {
+  // M-FLEET-1: provenance travels WITH the records. Account balances and
+  // equity are fixture values today; a consumer that renders them without
+  // saying so is asserting operational truth it does not have.
+  const { accounts, deployments, available, provenance, provenanceDetail } = useFleet();
+  return { accounts, deployments, available, provenance, provenanceDetail };
 }
 
 /** Decision chain via `/api/decisions/{id}` (migrated off `/api/world`, Phase 4.5).
