@@ -1,4 +1,4 @@
-import { useFleet, useSystemConfidence, useRepository } from '@/hooks/useRepository';
+import { useFleet, useRepository } from '@/hooks/useRepository';
 import { useNavigate } from 'react-router-dom';
 import { useShellStore } from '@/store/shellStore';
 import { Card, Panel, EmptyState, ProvenanceFrame } from '@/components/structures/Panel';
@@ -21,14 +21,12 @@ import { fmtPercent } from '@/lib/format';
  */
 export function FleetOverview() {
   const { deployments, brokers, accounts, activePackage, asOf } = useFleet();
-  const confidence = useSystemConfidence();
   const { world } = useRepository();
   const msByPair = Object.fromEntries(world.marketStateSnapshots.map((m) => [m.instrument, m]));
   const navigate = useNavigate();
   const setActivePair = useShellStore((s) => s.setActivePair);
   const openInspector = useShellStore((s) => s.openInspector);
 
-  const attention = confidence.signals.filter((s) => s.state !== 'ok');
 
   return (
     <div className="grid grid-cols-[1fr_320px] h-full min-h-0">
@@ -161,7 +159,7 @@ export function FleetOverview() {
         style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-elevated)' }}
       >
         <Panel
-          provenance="fixture"
+          provenance="placeholder"
           title={
             <span className="flex items-center gap-2">
               <AlertTriangle size={12} className="text-[color:var(--warning)]" />
@@ -170,48 +168,15 @@ export function FleetOverview() {
           }
           className="border-0 rounded-none h-full"
         >
-          {attention.length === 0 ? (
-            <EmptyState
-              title="All systems nominal"
-              description="No warnings or critical alerts across the fleet."
-              icon={<HealthDot state="ok" size="md" />}
-            />
-          ) : (
-            <ul className="space-y-2">
-              {attention.map((s) => (
-                <li
-                  key={s.key}
-                  className="rounded-md p-2.5 border"
-                  style={{ borderColor: 'var(--border-subtle)', background: 'var(--panel-2)' }}
-                >
-                  <div className="flex items-center gap-2">
-                    <HealthDot state={s.state === 'warn' ? 'warn' : 'critical'} />
-                    <span className="text-2xs uppercase tracking-widest text-text-muted">
-                      {s.key}
-                    </span>
-                    <span className="ml-auto mono text-2xs text-text-muted">{s.value}</span>
-                  </div>
-                  <p className="text-xs text-text mt-1.5">{s.message}</p>
-                  <p className="text-2xs text-text-muted mt-1">
-                    <TimestampUTC iso={s.since} />
-                  </p>
-                </li>
-              ))}
-              <li className="mt-4 pt-2 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
-                <div className="text-2xs uppercase tracking-widest text-text-muted mb-2">Healthy signals</div>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {confidence.signals
-                    .filter((s) => s.state === 'ok')
-                    .map((s) => (
-                      <div key={s.key} className="flex items-center gap-1.5 text-2xs text-text-2">
-                        <HealthDot state="ok" size="sm" />
-                        <span className="truncate">{s.key}</span>
-                      </div>
-                    ))}
-                </div>
-              </li>
-            </ul>
-          )}
+          {/* M-CONF-1: the fixture confidence signals (attention list +
+              "healthy signals" grid with invented values) are GONE. No
+              confidence model exists; this rail is honest about that until
+              real node telemetry can populate it. */}
+          <EmptyState
+            title="No attention model"
+            description="System confidence is not computed — no confidence model exists. Attention signals will populate from genuine node telemetry when implemented."
+            icon={<AlertTriangle size={16} />}
+          />
         </Panel>
       </aside>
     </div>

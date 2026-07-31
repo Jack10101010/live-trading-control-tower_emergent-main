@@ -310,20 +310,12 @@ export interface EdgeMonitor {
   };
 }
 
+/** M-CONF-1 honest contract: confidence is NOT computed — no score exists. */
 export interface SystemConfidence {
-  score: number;
-  band: 'healthy' | 'caution' | 'degraded' | 'critical';
-  worstSignal: string;
-  explanation: string;
-  updatedAt: string;
-  signals: Array<{
-    key: string;
-    state: 'ok' | 'warn' | 'fail' | 'unknown';
-    weight: number;
-    value: string;
-    message: string;
-    since: string;
-  }>;
+  schemaVersion: number;
+  computed: false;
+  reason: string;
+  detail: string;
 }
 
 export interface EventEntry {

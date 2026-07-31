@@ -174,6 +174,31 @@ describe('structural guards', () => {
     expect(sys).toContain('no funded-rule source configured');
   });
 
+  it('M-CONF-1: no fabricated system confidence renders anywhere', () => {
+    // Shell header: no score, no band colours, no fabricated explanation.
+    const bar = read('components/shell/CommandSafetyBar.tsx');
+    expect(bar).not.toContain('confidence.score');
+    expect(bar).not.toContain('confidence.band');
+    expect(bar).not.toContain('confidence.explanation');
+    expect(bar).toContain('system-confidence-not-computed');
+    expect(bar).toContain('not computed');
+    // Context bar: the three fixture signal chips are gone.
+    const ctx = read('components/shell/ContextBar.tsx');
+    expect(ctx).not.toContain('CHIP_SIGNALS');
+    expect(ctx).not.toContain('fx MD feed');
+    // Fleet attention rail: no confidence-derived signals; honest empty state.
+    const fleet = read('views/FleetOverview.tsx');
+    expect(fleet).not.toContain('confidence.signals');
+    expect(fleet).not.toContain('useSystemConfidence');
+    expect(fleet).toContain('No attention model');
+    // No component anywhere renders a confidence progress bar or score field.
+    for (const file of allTsx(SRC)) {
+      const text = readFileSync(file, 'utf8');
+      expect(text, `${path.relative(SRC, file)} renders confidence.score`)
+        .not.toContain('confidence.score');
+    }
+  });
+
   it('chart cards use dynamic candle provenance, never a static green', () => {
     expect(read('views/global/GlobalViews.tsx')).toContain('candleCardProvenance(');
     expect(read('views/pair/PairViews.tsx')).toContain('candleCardProvenance(');

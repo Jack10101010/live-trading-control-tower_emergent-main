@@ -73,15 +73,6 @@ export function CommandSafetyBar() {
           ? 'stream offline'
           : 'stream retrying';
 
-  const bandColor =
-    confidence.band === 'healthy'
-      ? 'var(--positive)'
-      : confidence.band === 'critical'
-      ? 'var(--negative)'
-      : 'var(--warning)';
-  const bandDot: 'ok' | 'warn' | 'critical' =
-    confidence.band === 'healthy' ? 'ok' : confidence.band === 'critical' ? 'critical' : 'warn';
-
   // UI-3: this is the FIXTURE world's planned execution posture, NOT the live
   // node's runtime mode. The node's real mode is published in telemetry and shown
   // by the live-operations strip; leaving this unlabelled created two competing
@@ -207,31 +198,19 @@ export function CommandSafetyBar() {
         </span>
       </div>
 
-      {/* System confidence gauge */}
+      {/* M-CONF-1: the fabricated confidence gauge (fixture score/band/
+          explanation) is GONE. No confidence model exists, and the header must
+          not imply one. Honest, muted, no number, no colour-coded band. */}
       <div
         className="flex items-center gap-3 px-4 h-full border-r flex-1 min-w-0"
         style={{ borderColor: 'var(--border-subtle)' }}
+        data-testid="system-confidence-not-computed"
+        title={confidence.detail}
       >
-        <div className="flex items-center gap-2 shrink-0">
-          <div className="text-[10px] uppercase tracking-widest text-text-muted">
-            System Confidence
-          </div>
-          <div
-            className="flex items-center gap-1.5 rounded-sm px-1.5 py-0.5 border tabular"
-            style={{
-              color: bandColor,
-              borderColor: `${bandColor}55`,
-              background: `color-mix(in srgb, ${bandColor} 10%, transparent)`,
-            }}
-          >
-            <HealthDot state={bandDot} size="sm" />
-            <span className="text-sm font-semibold">{confidence.score}</span>
-            <span className="text-2xs uppercase">{confidence.band}</span>
-          </div>
+        <div className="text-[10px] uppercase tracking-widest text-text-muted shrink-0">
+          System Confidence
         </div>
-        <div className="text-xs text-text-2 truncate" title={confidence.explanation}>
-          {confidence.explanation}
-        </div>
+        <div className="text-xs text-text-muted truncate">not computed — no confidence model</div>
       </div>
 
       {/* Global kill */}

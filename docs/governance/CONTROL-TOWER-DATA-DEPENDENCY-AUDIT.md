@@ -29,7 +29,7 @@ a card never greens the card.
 | /system | Engine Components | `SystemView` | active package (fixture) | WORLD fixture | fixture | RED | Medium | await node manifest |
 | /system | Feature Flags | `SystemView` | `useFeatureFlags` → `/api/feature-flags` → **hardcoded dict** (`server.py:4510`) | constants | placeholder | RED | Low | move to real config; FeatureGate copy corrected |
 | /system | Storage & Feeds | `SystemView` | `useRuntimeHealth` → `/runtime/health` | real runtime | live | GREEN | — | retain |
-| /system | System Confidence | `SystemView` | `/api/system-confidence` → `WORLD` | WORLD fixture | fixture | RED | **High** (fake confidence) | remove |
+| (shell/fleet) | System Confidence gauge, context chips, attention rail | `CommandSafetyBar`/`ContextBar`/`FleetOverview` | `/api/system-confidence` → **honest `computed:false`** | **removed (M-CONF-1 ✅)** — no score, band or signals exist | n/a | n/a (no data card) | Resolved | none — a future model must derive from genuine telemetry |
 | /system | Operational Dashboard | `OperationalDashboard` (framed) | `/api/operations/*` → projection over telemetry + durable stores | **adapter-fed** (mock ⇒ synthetic) | dynamic | **DYNAMIC** (adapter kind) | Medium | retain; green only with a real adapter |
 | /system | Live Runtime | `LiveRuntimePanel` (framed) | `/api/live-runtime` → backend runtime loop (adapter-fed) | **adapter-fed** | dynamic | **DYNAMIC** (adapter kind) | Medium | retain; green only with a real adapter |
 | /system | Trade Ledger | `TradeLedgerPanel` (framed) | `/api/ledger/*` → TradeLedgerStore (ingests broker history — mock in mock mode) | **adapter-fed durable** | dynamic | **DYNAMIC** (adapter kind) | Medium | retain; green only with a real adapter |
@@ -60,8 +60,9 @@ LiveRuntimePanel / TradeLedgerPanel displayed mock-adapter content inside a
 GREEN frame → frames are now adapter-dependent (mock/unknown ⇒ synthetic RED);
 (4) the Settings "Feature Flags" section inherited runtime-config GREEN from a
 shared mapped Panel → per-section provenance, flags ⇒ placeholder RED.
-Residual (documented, not in card scope): the shell header's SYSTEM CONFIDENCE
-chip renders fixture data as chrome — retired with the confidence milestone.
+Residual noted then, RESOLVED by M-CONF-1: the shell header's SYSTEM CONFIDENCE
+chip rendered fixture data as chrome — the gauge, the three context-bar signal
+chips and the fleet attention-rail signals are now removed entirely.
 
 ## Consumer graphs
 

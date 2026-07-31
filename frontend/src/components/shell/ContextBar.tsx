@@ -1,26 +1,10 @@
 import { useLocation } from 'react-router-dom';
 import { useShellStore } from '@/store/shellStore';
-import { useFleet, useMarketState, useActivePackage, useSystemConfidence } from '@/hooks/useRepository';
+import { useFleet, useMarketState, useActivePackage } from '@/hooks/useRepository';
 import { ChevronRight } from 'lucide-react';
 import { HealthDot, MarketStateBadge, PackageVersionChip } from '@/components/primitives';
 import { fmtRelative } from '@/lib/format';
 
-const SIGNAL_STATE: Record<string, 'ok' | 'warn' | 'critical' | 'muted'> = {
-  ok: 'ok',
-  warn: 'warn',
-  fail: 'critical',
-  unknown: 'muted',
-};
-/* UI-3: prefixed "fx" because these are FIXTURE-world confidence signals. Their
-   vocabulary ("Reconcile", "Broker") collides with the live node's real
-   reconciliation and bridge state, which the live-operations strip now shows —
-   two surfaces using the same words with different meanings is the exact
-   confusion this slice exists to remove. */
-const CHIP_SIGNALS: Array<{ key: string; label: string }> = [
-  { key: 'dataFreshness', label: 'fx MD feed' },
-  { key: 'reconciliation', label: 'fx Reconcile' },
-  { key: 'brokerHealth', label: 'fx Broker' },
-];
 
 /**
  * ContextBar — persistent breadcrumb + right-side health chips (§C row 2 & 3).
@@ -30,7 +14,6 @@ const CHIP_SIGNALS: Array<{ key: string; label: string }> = [
 export function ContextBar() {
   const location = useLocation();
   const { asOf, deployments, brokers, accounts } = useFleet();
-  const confidence = useSystemConfidence();
   const activePair = useShellStore((s) => s.activePair);
   const marketState = useMarketState(activePair);
   const pkg = useActivePackage();
@@ -105,22 +88,9 @@ export function ContextBar() {
             <PackageVersionChip version={pkg.version} hash={pkg.packageHash} />
           </div>
         )}
-        {CHIP_SIGNALS.map(({ key, label }) => {
-          const sig = confidence.signals.find((s) => s.key === key);
-          if (!sig) return null;
-          return (
-            <div
-              key={key}
-              className="flex items-center gap-1.5 text-2xs text-text-muted"
-              /* UI-1: system-confidence signals are fixture-world derived. Scoped
-                 explicitly so a green "Broker" chip cannot read as live MT5 health. */
-              title={`${sig.message} (fixture world — not live node or MT5 state; see System → Connection)`}
-            >
-              <HealthDot state={SIGNAL_STATE[sig.state] ?? 'muted'} size="sm" />
-              <span>{sig.state === 'ok' ? label : `${label} · ${sig.value}`}</span>
-            </div>
-          );
-        })}
+        {/* M-CONF-1: the three fixture confidence signal chips are GONE —
+            fabricated values may not render in chrome. Real node/bridge state
+            lives in the live-operations strip and System → Connection. */}
         <span className="text-2xs text-text-muted mono">as of {fmtRelative(asOf)}</span>
       </div>
     </div>

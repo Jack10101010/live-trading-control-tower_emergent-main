@@ -4362,7 +4362,19 @@ async def edge_monitor():
 
 @api_router.get("/system-confidence")
 async def system_confidence():
-    return WORLD.get("systemConfidence", {})
+    """M-CONF-1 — honest contract. The previous response served the WORLD
+    fixture's authored confidence fiction (score 82, invented signal values).
+    No genuine confidence model exists in the Control Tower: there is no real
+    computation to expose, so no score, band, or signal list is returned.
+    Rule: real data, real derivation, or honestly not computed — never fiction."""
+    return {
+        "schemaVersion": 1,
+        "computed": False,
+        "reason": "no_confidence_model",
+        "detail": ("System confidence is not computed. No confidence model is "
+                   "implemented; a future model must derive from genuine "
+                   "operational telemetry, never authored values."),
+    }
 
 
 @api_router.get("/recommendations")

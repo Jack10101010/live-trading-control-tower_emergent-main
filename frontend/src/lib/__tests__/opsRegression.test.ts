@@ -132,11 +132,16 @@ describe('misleading indicator cleanup stays applied', () => {
     expect(source).not.toContain('ct-pulse-dot');
   });
 
-  it('fixture confidence chips stay prefixed so they cannot read as node truth', () => {
+  it('fixture confidence chips are gone entirely (M-CONF-1 supersedes the prefix mitigation)', () => {
+    // UI-3 prefixed these chips so fixture signals could not read as node
+    // truth. M-CONF-1 legitimately supersedes that premise with the stronger
+    // protection: fabricated confidence may not render in chrome AT ALL. What
+    // must still hold is the underlying safety property — nothing in the
+    // context bar presents fixture confidence as observed system state.
     const source = read('components/shell/ContextBar.tsx');
-    expect(source).toContain("label: 'fx Reconcile'");
-    expect(source).toContain("label: 'fx Broker'");
-    expect(source).not.toContain("label: 'Reconcile'");
+    expect(source).not.toContain('CHIP_SIGNALS');
+    expect(source).not.toContain("label: 'fx Reconcile'");
+    expect(source).not.toContain('useSystemConfidence');
   });
 
   it('the fixture deployment "Armed" status stays scope-labelled', () => {
