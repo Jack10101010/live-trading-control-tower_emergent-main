@@ -117,3 +117,37 @@ export const UNAVAILABLE_DETAIL =
   'No authoritative operational source is reporting. The active broker adapter is ' +
   'not a live MT5 connection, so no deployment, broker or account records can be ' +
   'presented as operational truth.';
+
+/**
+ * M-TRADES-1 — why the durable trade ledger is NOT admitted here.
+ *
+ * `/api/ledger/*` reports `provenance: "durable-store"`. That names where the
+ * record is KEPT, not where it came from: the same store holds trades ingested
+ * from the mock adapter. Storage durability is not evidence of origin, so a
+ * `durable-store` record cannot be shown as operational truth without inferring
+ * authority from the endpoint — the exact mistake M-FLEET-2 exists to prevent.
+ *
+ * MISSING CONTRACT: the ledger must state the ORIGIN of each entry (which
+ * adapter produced the fill) alongside its storage class. Until it does, ledger
+ * history is reported as unavailable rather than rendered. This is a deliberate
+ * gap, not an oversight.
+ */
+export const PROV_DURABLE_STORE = 'durable-store';
+
+/** Reason text for trade surfaces with no admissible source. */
+export const TRADES_UNAVAILABLE_DETAIL =
+  'No authoritative operational source is reporting positions or orders. The active ' +
+  'broker adapter is not a live MT5 connection, so no trade, order or execution ' +
+  'record can be presented as operational truth.';
+
+/**
+ * Guard for derived performance figures.
+ *
+ * `computeMetrics([])` returns a mathematically valid report — 0 trades, 0% win
+ * rate, $0 expectancy — that reads as an OBSERVED flat performance. When the
+ * input list is empty because the source was unavailable or every record was
+ * rejected, that report is a fabrication. Analytics must ask this first.
+ */
+export function analyticsInputAdmissible(status: OperationalStatus): boolean {
+  return status === 'available' || status === 'stale';
+}

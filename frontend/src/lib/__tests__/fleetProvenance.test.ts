@@ -123,18 +123,26 @@ function allSources(dir: string, acc: string[] = []): string[] {
 
 const rel = (f: string) => path.relative(SRC, f);
 
+/** Doc comments legitimately NAME the retired hooks to explain why they went. */
+const stripComments = (t: string) =>
+  t.split('\n').filter((l) => {
+    const x = l.trim();
+    return !x.startsWith('//') && !x.startsWith('*') && !x.startsWith('/*');
+  }).join('\n');
+
 /** The only files allowed to touch fixture fleet data. */
 const FIXTURE_ALLOWLIST = new Set([
-  'lib/api.ts',                        // defines the fetcher
-  'hooks/useRepository.ts',            // defines the hook
-  'views/dev/FixtureFleetPreview.tsx', // the isolated dev-only route
+  'lib/api.ts',                         // defines the fetchers
+  'hooks/useRepository.ts',             // defines the hooks
+  'views/dev/FixtureFleetPreview.tsx',  // isolated dev-only route (M-FLEET-2)
+  'views/dev/FixtureTradesPreview.tsx', // isolated dev-only route (M-TRADES-1)
 ]);
 
 describe('structural isolation of fixture fleet data', () => {
   it('no ordinary component imports the fixture-preview hook', () => {
     const offenders = allSources(SRC)
       .filter((f) => !FIXTURE_ALLOWLIST.has(rel(f)))
-      .filter((f) => readFileSync(f, 'utf8').includes('useFixtureFleetPreview'))
+      .filter((f) => /useFixtureFleetPreview|useFixtureTradesPreview/.test(readFileSync(f, 'utf8')))
       .map(rel);
     expect(offenders, offenders.join('\n')).toEqual([]);
   });
@@ -144,8 +152,36 @@ describe('structural isolation of fixture fleet data', () => {
       .filter((f) => !FIXTURE_ALLOWLIST.has(rel(f)))
       .filter((f) => {
         const t = readFileSync(f, 'utf8');
-        return /apiFetch<[^>]*>\('\/fleet'\)/.test(t) || /fetch\(apiUrl\('\/fleet'\)/.test(t);
+        return /apiFetch<[^>]*>\('\/fleet'\)/.test(t) || /fetch\(apiUrl\('\/fleet'\)/.test(t)
+          || /apiFetch<[^>]*>\(`?\/trades/.test(t);
       })
+      .map(rel);
+    expect(offenders, offenders.join('\n')).toEqual([]);
+  });
+
+  it('M-TRADES-1: the old fixture-trades hook name no longer exists anywhere', () => {
+    // `useTrades` returned fixture live/ghost/blocked records to nine surfaces,
+    // including the chart overlay and the analytics engine.
+    const offenders = allSources(SRC)
+      .filter((f) => /\buseTrades\b/.test(stripComments(readFileSync(f, 'utf8'))))
+      .map(rel);
+    expect(offenders, offenders.join('\n')).toEqual([]);
+  });
+
+  it('M-TRADES-1: no ordinary source reads WORLD trade records directly', () => {
+    const offenders: string[] = [];
+    for (const f of allSources(SRC)) {
+      const t = readFileSync(f, 'utf8');
+      const code = t.split('\n').filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n');
+      if (/world\.(liveTrades|ghostTrades|blockedIntents)\b/.test(stripComments(code))) offenders.push(rel(f));
+    }
+    expect(offenders, offenders.join('\n')).toEqual([]);
+  });
+
+  it('M-TRADES-1: the fixture trades preview route is not linked from navigation', () => {
+    const offenders = allSources(SRC)
+      .filter((f) => rel(f) !== 'App.tsx' && rel(f) !== 'views/dev/FixtureTradesPreview.tsx')
+      .filter((f) => stripComments(readFileSync(f, 'utf8')).includes('/dev/fixture-trades'))
       .map(rel);
     expect(offenders, offenders.join('\n')).toEqual([]);
   });
@@ -154,7 +190,7 @@ describe('structural isolation of fixture fleet data', () => {
     // `useFleet` returned fixture deployments/brokers/accounts to 13 consumers.
     // Its absence is what makes the removal structural rather than per-component.
     const offenders = allSources(SRC)
-      .filter((f) => /\buseFleet\b/.test(readFileSync(f, 'utf8')))
+      .filter((f) => /\buseFleet\b/.test(stripComments(readFileSync(f, 'utf8'))))
       .map(rel);
     expect(offenders, offenders.join('\n')).toEqual([]);
   });
@@ -162,7 +198,7 @@ describe('structural isolation of fixture fleet data', () => {
   it('the fixture preview route is not linked from any navigation', () => {
     const offenders = allSources(SRC)
       .filter((f) => rel(f) !== 'App.tsx' && rel(f) !== 'views/dev/FixtureFleetPreview.tsx')
-      .filter((f) => readFileSync(f, 'utf8').includes('/dev/fixture-fleet'))
+      .filter((f) => stripComments(readFileSync(f, 'utf8')).includes('/dev/fixture-fleet'))
       .map(rel);
     expect(offenders, offenders.join('\n')).toEqual([]);
   });
@@ -194,7 +230,11 @@ describe('structural isolation of fixture fleet data', () => {
     // The fixture's own numbers and identifiers. Their absence outside the
     // allowlist is the blunt, checkable form of "the records are gone".
     const SENTINELS = ['dpl_01J8Z7R2M9K4E1P3T5V7W9X0YZ', 'acct_01J8Z4K7M9P2R4T6V8X0Z2B4D6F',
-                       'brk_01J8Z3E5G7J9M1P3R5T7V9X1Z3B', 'FTMO', 'MT5-Demo'];
+                       'brk_01J8Z3E5G7J9M1P3R5T7V9X1Z3B', 'FTMO', 'MT5-Demo',
+                       // M-TRADES-1 fixture trade/ghost/blocked identifiers
+                       'tr_01J8ZC4H2N8M6K1E3R5T7V9W0XZ', 'gh_01J8ZC9F5P2Q7R4T6V8X0Z1A3BC',
+                       'blk_01J8ZCD7K3M9N1P4R6T8V0X2Z4A', 'coid_01J8ZC3F1N5Q8T1W4Z7A0D3G6J',
+                       '88213', '88190', 'TE-50'];
     const offenders: string[] = [];
     for (const f of allSources(SRC)) {
       const t = readFileSync(f, 'utf8');

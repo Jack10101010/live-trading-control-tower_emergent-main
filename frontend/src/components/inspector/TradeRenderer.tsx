@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
+import type { LiveTrade } from '@/types/domain';
 import {
   useRepository,
-  useTrades,
   useDecisionChain,
   useMarketState,
   useDeploymentManifest,
@@ -38,7 +38,8 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
 
 export function TradeRenderer({ tradeId }: { tradeId: string }) {
   const { world } = useRepository();
-  const { live } = useTrades();
+  // M-TRADES-1: resolved against fixture live trades.
+  const live: LiveTrade[] = [];
   const navigate = useNavigate();
   const openInspector = useShellStore((s) => s.openInspector);
 

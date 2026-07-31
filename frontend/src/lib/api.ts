@@ -1661,7 +1661,13 @@ export const api = {
         body: JSON.stringify(payload ?? {}),
       }
     ),
-  trades: (pair?: string, lane?: string) => {
+  /**
+   * M-TRADES-1 — DEVELOPMENT FIXTURE PREVIEW ONLY. NOT AN OPERATIONAL SOURCE.
+   * `/api/trades` serves authored fixture live/ghost trades and blocked intents.
+   * Operational positions and orders come from `/api/operations/*` filtered
+   * through `lib/operationalProvenance`.
+   */
+  fixtureTradesPreview: (pair?: string, lane?: string) => {
     const q = new URLSearchParams();
     if (pair) q.set('pair', pair);
     if (lane) q.set('lane', lane);
@@ -1685,6 +1691,9 @@ export const QK = {
   events: ['events'] as const,
   eventsFor: (pair?: string) => (pair ? (['events', pair] as const) : (['events'] as const)),
   /** Root trades key — invalidating this prefix refreshes every scoped trades query. */
+  fixtureTradesPreview: ['fixture-trades-preview'] as const,
+  operationsOrders: ['operations', 'orders'] as const,
+  operationsPositions: ['operations', 'positions'] as const,
   trades: ['trades'] as const,
   tradesFor: (pair?: string, lane?: string) => ['trades', pair ?? 'all', lane ?? 'all'] as const,
   /** Root packages key; the list + active-package queries nest under it so one invalidation covers all. */

@@ -11,7 +11,7 @@ import {
   usePairWorkspace,
   useMarketState,
   useActivePackage,
-  useTrades,
+  useOperationalTrades,
   useEvents,
   usePolicyMatrix,
 } from '@/hooks/useRepository';
@@ -70,6 +70,7 @@ export function PairDashboardView() {
   const pkg = useActivePackage();
   const openInspector = useShellStore((s) => s.openInspector);
 
+  // M-TRADES-1: was a fixture-derived open-trade count.
   const openTrades = ws.trades.filter((t) => t.state !== 'closed');
   const totalRisk = ws.deployments.reduce((s, d) => s + d.riskState.riskTodayPct, 0);
   const worstDd = Math.min(...ws.deployments.map((d) => d.riskState.ddBufferPct), 100);
@@ -232,7 +233,9 @@ export function PairDashboardView() {
 
 export function PairOrdersView() {
   const pair = usePair();
-  const trades = useTrades({ pair });
+  // M-TRADES-1: fixture trades severed. Authoritative positions/orders only.
+  const { positions, orders, status: tradesStatus } = useOperationalTrades(pair);
+  const trades = { live: [] as LiveTrade[], ghost: [] as GhostTrade[], blocked: [] as BlockedIntent[] };
 
   const pkg = useActivePackage();
   const openInspector = useShellStore((s) => s.openInspector);
@@ -298,13 +301,27 @@ export function PairOrdersView() {
         </>
       }
     >
-      <Panel provenance="fixture" title="Pending Orders" bodyClassName="p-0">
+      {/* M-TRADES-1: authoritative orders render here. Under the mock adapter
+          the projection's records are rejected by the provenance gate, so this
+          list is empty and the table below states which source is missing. */}
+      {orders.length > 0 && (
+        <Panel provenance="live" title={`Authoritative orders (${orders.length})`} bodyClassName="p-3">
+          <ul className="text-xs mono space-y-1" data-testid="authoritative-orders">
+            {orders.map((o, i) => (
+              <li key={o.brokerOrderReference ?? `order-${i}`} data-testid="authoritative-order-row">
+                {o.instrument ?? '—'} · {o.side ?? '—'} · {o.brokerOrderReference ?? '—'}
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
+      <Panel provenance="live" title="Pending Orders" bodyClassName="p-0">
         <DataTable
           columns={cols}
           data={pending}
           rowKey={(t) => t.tradeId}
           onRowClick={(t) => openInspector({ kind: 'trade', tradeId: t.tradeId })}
-          emptyMessage="No pending orders"
+          emptyMessage={tradesStatus === 'unavailable' ? 'No authoritative order source — orders cannot be reported' : 'No open orders reported'}
           searchable
           searchAccessor={(t) => `${t.brokerOrderId} ${t.scenarioKey} ${t.state}`}
         />
@@ -319,7 +336,9 @@ export function PairOrdersView() {
 
 export function PairTradesView() {
   const pair = usePair();
-  const trades = useTrades({ pair });
+  // M-TRADES-1: fixture trades severed. Authoritative positions/orders only.
+  const { positions, orders, status: tradesStatus } = useOperationalTrades(pair);
+  const trades = { live: [] as LiveTrade[], ghost: [] as GhostTrade[], blocked: [] as BlockedIntent[] };
 
   const currentMs = useMarketState(pair);
   const openInspector = useShellStore((s) => s.openInspector);
@@ -470,26 +489,44 @@ export function PairTradesView() {
           <ToolbarLabel>View</ToolbarLabel>
           <ToolbarChip active={tab === 'open'} onClick={() => setTab('open')} count={open.length}>Open</ToolbarChip>
           <ToolbarChip active={tab === 'closed'} onClick={() => setTab('closed')} count={closed.length}>Closed</ToolbarChip>
-          <ToolbarChip active={tab === 'ghost'} onClick={() => setTab('ghost')} count={trades.ghost.length}>Ghost</ToolbarChip>
-          <ToolbarChip active={tab === 'blocked'} onClick={() => setTab('blocked')} count={trades.blocked.length}>Blocked</ToolbarChip>
+          <ToolbarChip active={tab === 'ghost'} onClick={() => setTab('ghost')} count={undefined}>Ghost</ToolbarChip>
+          <ToolbarChip active={tab === 'blocked'} onClick={() => setTab('blocked')} count={undefined}>Blocked</ToolbarChip>
           <ToolbarSpacer />
           <IconButton ariaLabel="Filter"><Filter size={13} /></IconButton>
           <IconButton ariaLabel="Export"><Download size={13} /></IconButton>
         </>
       }
     >
-      <Panel provenance="fixture" bodyClassName="p-0" title={`${tab.charAt(0).toUpperCase() + tab.slice(1)} · ${pair}`}>
+      {/* M-TRADES-1: authoritative open positions. Rejected under the mock
+          adapter, so this is empty and the tabs below say what is missing. */}
+      {positions.length > 0 && (
+        <Panel provenance="live" title={`Authoritative open positions (${positions.length})`} bodyClassName="p-3">
+          <ul className="text-xs mono space-y-1" data-testid="authoritative-positions">
+            {positions.map((p, i) => (
+              <li key={p.brokerPositionReference ?? `pos-${i}`} data-testid="authoritative-position-row">
+                {p.instrument ?? '—'} · {p.side ?? '—'} · qty {p.quantity ?? '—'} · entry {p.entryPrice ?? '—'}
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
+      {tradesStatus === 'stale' && (
+        <p className="text-2xs text-[color:var(--warning)] mb-2" data-testid="trades-stale">
+          Last reported, not current — these records are past their freshness budget.
+        </p>
+      )}
+      <Panel provenance="live" bodyClassName="p-0" title={`${tab.charAt(0).toUpperCase() + tab.slice(1)} · ${pair}`}>
         {tab === 'open' && (
-          <DataTable columns={activeCols} data={open} rowKey={(t) => t.tradeId} onRowClick={(t) => openInspector({ kind: 'trade', tradeId: t.tradeId })} emptyMessage="No open trades" searchable searchAccessor={(t) => `${t.scenarioKey} ${t.state} ${t.protectionStatus}`} />
+          <DataTable columns={activeCols} data={open} rowKey={(t) => t.tradeId} onRowClick={(t) => openInspector({ kind: 'trade', tradeId: t.tradeId })} emptyMessage={tradesStatus === 'unavailable' ? 'No authoritative position source — open trades cannot be reported' : 'No open positions reported'} searchable searchAccessor={(t) => `${t.scenarioKey} ${t.state} ${t.protectionStatus}`} />
         )}
         {tab === 'closed' && (
-          <DataTable columns={closedCols} data={closed} rowKey={(t) => t.tradeId} onRowClick={(t) => openInspector({ kind: 'trade', tradeId: t.tradeId })} emptyMessage="No closed trades" />
+          <DataTable columns={closedCols} data={closed} rowKey={(t) => t.tradeId} onRowClick={(t) => openInspector({ kind: 'trade', tradeId: t.tradeId })} emptyMessage={tradesStatus === 'unavailable' ? 'No authoritative trade history — the durable ledger does not yet state record origin' : 'No closed trades reported'} />
         )}
         {tab === 'ghost' && (
-          <DataTable columns={ghostCols} data={trades.ghost} rowKey={(g) => g.ghostTradeId} onRowClick={(g) => openInspector({ kind: 'ghost', ghostTradeId: g.ghostTradeId })} emptyMessage="No ghost trades" />
+          <DataTable columns={ghostCols} data={trades.ghost} rowKey={(g) => g.ghostTradeId} onRowClick={(g) => openInspector({ kind: 'ghost', ghostTradeId: g.ghostTradeId })} emptyMessage="No authoritative ghost-execution source — fixture ghost trades removed" />
         )}
         {tab === 'blocked' && (
-          <DataTable columns={blockedCols} data={trades.blocked} rowKey={(b) => b.blockedIntentId} onRowClick={(b) => openInspector({ kind: 'blocked', blockedIntentId: b.blockedIntentId })} emptyMessage="No blocked intents" />
+          <DataTable columns={blockedCols} data={trades.blocked} rowKey={(b) => b.blockedIntentId} onRowClick={(b) => openInspector({ kind: 'blocked', blockedIntentId: b.blockedIntentId })} emptyMessage="No authoritative blocked-intent source — fixture blocked intents removed" />
         )}
       </Panel>
     </WorkspacePage>

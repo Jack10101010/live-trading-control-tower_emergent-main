@@ -4,6 +4,7 @@ import { AppShell } from '@/components/shell/AppShell';
 import { RouteErrorBoundary } from '@/components/RouteErrorBoundary';
 import { FleetOverview } from '@/views/FleetOverview';
 import { FixtureFleetPreview } from '@/views/dev/FixtureFleetPreview';
+import { FixtureTradesPreview } from '@/views/dev/FixtureTradesPreview';
 import { PairWorkspace } from '@/views/PairWorkspace';
 import {
   PairDashboardView,
@@ -63,6 +64,7 @@ export default function App() {
             any navigation — reachable only by typing the URL — and unreachable
             in production, where M-ENV-1 never loads the fixture world. */}
         <Route path="/dev/fixture-fleet" element={<FixtureFleetPreview />} />
+        <Route path="/dev/fixture-trades" element={<FixtureTradesPreview />} />
         <Route path="/broker-health" element={<FeatureGate flag="brokerHealth"><BrokerHealthView /></FeatureGate>} />
         <Route path="/accounts" element={<FeatureGate flag="accountsProtection"><AccountsProtectionView /></FeatureGate>} />
         <Route path="/market-data" element={<MarketDataView />} />

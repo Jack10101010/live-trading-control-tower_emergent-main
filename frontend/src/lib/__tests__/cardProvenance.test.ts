@@ -154,10 +154,13 @@ describe('structural guards', () => {
     const preview = read('views/dev/FixtureFleetPreview.tsx');
     expect(preview).toContain('provenance="fixture"');
     expect(preview).toContain('useFixtureFleetPreview');
+    // M-TRADES-1: the trades/orders panels no longer hold fixture records, so
+    // their red frames went with the content; the events feed stays red (mixed
+    // fixture+runtime, retired by M-EVENTS-1) and other fixture panels remain.
     const pair = read('views/pair/PairViews.tsx');
-    // trades tab + pending orders + fixture panels
-    expect((pair.match(/provenance="fixture"/g) ?? []).length).toBeGreaterThanOrEqual(10);
     expect(pair).toContain('provenance="mixed"');            // events feed stays red
+    expect(pair).toContain('useOperationalTrades');
+    expect(pair).not.toContain('useTrades(');
   });
 
   it('risk/accounts, edge monitor, system confidence and broker health stay RED', () => {

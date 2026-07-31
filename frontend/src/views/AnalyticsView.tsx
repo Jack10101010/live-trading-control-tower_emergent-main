@@ -1,5 +1,8 @@
 import { useOutletContext } from 'react-router-dom';
-import { usePolicyMatrix, useTrades } from '@/hooks/useRepository';
+import { EmptyState } from '@/components/structures/Panel';
+import type { LiveTrade } from '@/types/domain';
+import { usePolicyMatrix, useOperationalTrades } from '@/hooks/useRepository';
+import { analyticsInputAdmissible } from '@/lib/operationalProvenance';
 import { Panel } from '@/components/structures/Panel';
 import { FeatureGate } from '@/components/FeatureGate';
 import { ChartPanel } from '@/components/domain/ChartPanel';
@@ -20,7 +23,15 @@ import {
 export function AnalyticsView() {
   const { pair } = useOutletContext<{ pair: string }>();
   const matrix = usePolicyMatrix(pair);
-  const trades = useTrades({ pair });
+  // M-TRADES-1 analytics safety boundary. `computeMetrics([])` returns a
+  // mathematically valid report — 0 trades, 0% win rate, $0 expectancy — that
+  // reads as an OBSERVED flat performance. When the list is empty because the
+  // source was unavailable or every record was rejected, that report is a
+  // fabrication. M-TRADES-2 will build real analytics; this milestone only
+  // ensures no performance figure is derived from an inadmissible input.
+  const { status: tradesStatus } = useOperationalTrades(pair);
+  const analyticsAdmissible = analyticsInputAdmissible(tradesStatus);
+  const trades = { live: [] as LiveTrade[] };
   const [dim, setDim] = useState<Dimension>('marketState');
 
   const metrics = useMemo(() => computeMetrics(trades.live), [trades.live]);
@@ -72,6 +83,19 @@ export function AnalyticsView() {
       n: v.sumN,
     }));
   }, [cells]);
+
+  // Refuse to render ANY derived performance figure from an inadmissible input.
+  if (!analyticsAdmissible) {
+    return (
+      <div className="p-6" data-testid="analytics-unavailable">
+        <h1 className="text-2xl font-semibold text-text tracking-tight mb-2">Analytics</h1>
+        <EmptyState
+          title="No authoritative trade history"
+          description="Performance cannot be computed: no authoritative operational source is reporting trades. Deriving a win rate or expectancy from an empty list would read as an observed flat result, which is not a fact this view possesses."
+        />
+      </div>
+    );
+  }
 
   return (
     // Scroll fix: `absolute inset-0` gives the scroll region a DEFINITE height

@@ -1,8 +1,8 @@
 import { useOutletContext, useSearchParams } from 'react-router-dom';
+import type { LiveTrade, GhostTrade, BlockedIntent } from '@/types/domain';
 import { useEffect, useRef } from 'react';
 import {
   useReplaySessionForPair,
-  useTrades,
   useMarketState,
   useActivePackage,
 } from '@/hooks/useRepository';
@@ -22,7 +22,10 @@ const TICK_MS = 400;
 export function ReplayView() {
   const { pair } = useOutletContext<{ pair: string }>();
   const session = useReplaySessionForPair(pair);
-  const { live, ghost, blocked } = useTrades({ pair });
+  // M-TRADES-1: replay replayed FIXTURE trades/ghosts/blocked intents.
+  const live: LiveTrade[] = [];
+  const ghost: GhostTrade[] = [];
+  const blocked: BlockedIntent[] = [];
   const marketState = useMarketState(pair);
   const pkg = useActivePackage();
   const openInspector = useShellStore((s) => s.openInspector);

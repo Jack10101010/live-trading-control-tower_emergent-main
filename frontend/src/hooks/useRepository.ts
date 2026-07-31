@@ -5,11 +5,12 @@ import { deriveFairValueGaps, type FairValueGap } from '@/lib/fairValueGaps';
 import { deriveLiquidityPools, type LiquidityPool } from '@/lib/liquidity';
 import { deriveMarketStructure, type MarketStructure } from '@/lib/marketStructure';
 import { type Candle } from '@/lib/chartData';
-import { api, QK, type BackendHealth, type BrokerReconciliation, type OperatorPreferences, type RuntimeHealth, type StrategyEvaluation, type SchedulerStatus, type MarketSnapshot, type RiskLimits, type MarketCandles, type FleetProvenance, type NodeOperationalView, type AccountOperationalView } from '@/lib/api';
+import { api, QK, type BackendHealth, type BrokerReconciliation, type OperatorPreferences, type RuntimeHealth, type StrategyEvaluation, type SchedulerStatus, type MarketSnapshot, type RiskLimits, type MarketCandles, type FleetProvenance, type NodeOperationalView, type AccountOperationalView, type PositionOperationalView, type OrderOperationalView } from '@/lib/api';
 import {
   authoritativeOnly,
   classify,
   UNAVAILABLE_DETAIL,
+  TRADES_UNAVAILABLE_DETAIL,
   type OperationalStatus,
   type ProvenancedRecord,
 } from '@/lib/operationalProvenance';
@@ -206,9 +207,11 @@ export function useDeploymentManifest(_deploymentId: string): DeploymentManifest
 export function usePairWorkspace(pairId: string) {
   const world = useWorld();
   return useMemo(() => {
-    const trades = world.liveTrades.filter((t) => t.scenarioKey.startsWith(`${pairId}:`));
-    const ghosts = world.ghostTrades.filter((g) => g.scenarioKey.startsWith(`${pairId}:`));
-    const blocked = world.blockedIntents.filter((b) => b.scenarioKey.startsWith(`${pairId}:`));
+    // M-TRADES-1: fixture trades, ghosts and blocked intents no longer reach a
+    // pair workspace on an ordinary route.
+    const trades: LiveTrade[] = [];
+    const ghosts: GhostTrade[] = [];
+    const blocked: BlockedIntent[] = [];
     // M-FLEET-2: fixture deployments no longer reach a pair workspace.
     const deployments: Deployment[] = [];
     const marketState = world.marketStateSnapshots.find((m) => m.instrument === pairId);
@@ -255,14 +258,72 @@ export function usePolicyMatrix(instrument: string, packageVersion?: number): Po
  * the old client-side selector had (lane filters live + blocked only — ghost
  * is itself a lane). Trade/order commands invalidate `QK.trades`.
  */
-export function useTrades(scope?: { pair?: string; lane?: string }): {
+/**
+ * M-TRADES-1 — the AUTHORITATIVE operational trade surface.
+ *
+ * `useTrades` previously returned `/api/trades`: two authored live trades with
+ * entry/SL/TP and R values, three ghost trades with outcomes, five blocked
+ * intents. Nine surfaces consumed it, including the chart overlay and the
+ * analytics engine.
+ *
+ * It now reads open POSITIONS and open ORDERS from the operational projection
+ * through the same provenance gate M-FLEET-2 established. The laundering risk
+ * is live here: under the mock adapter `/api/operations/positions` returns a
+ * position complete with `entryPrice` and `currentPrice`, stamped
+ * `mock-fixture`. It is rejected, and this reports `unavailable`.
+ *
+ * Positions and orders are kept as SEPARATE collections. They are different
+ * domain facts and merging them into one "trades" list would blur an open
+ * exposure with a resting instruction.
+ */
+export function useOperationalTrades(pair?: string): {
+  positions: PositionOperationalView[];
+  orders: OrderOperationalView[];
+  status: OperationalStatus;
+  detail: string;
+} {
+  const [{ data: posRes }, { data: ordRes }] = useSuspenseQueries({
+    queries: [
+      { queryKey: QK.operationsPositions, queryFn: api.operationsPositions },
+      { queryKey: QK.operationsOrders, queryFn: api.operationsOrders },
+    ],
+  });
+  return useMemo(() => {
+    const rawPos = posRes?.positions ?? [];
+    const rawOrd = ordRes?.orders ?? [];
+    const keep = (rs: unknown[]) => authoritativeOnly(rs as ProvenancedRecord[]);
+    let positions = keep(rawPos) as unknown as PositionOperationalView[];
+    let orders = keep(rawOrd) as unknown as OrderOperationalView[];
+    if (pair) {
+      positions = positions.filter((p) => p.instrument === pair);
+      orders = orders.filter((o) => o.instrument === pair);
+    }
+    const rejected = (rawPos.length - keep(rawPos).length) + (rawOrd.length - keep(rawOrd).length);
+    const status = classify([...positions, ...orders] as unknown as ProvenancedRecord[], {
+      sourceAnswered: Boolean(posRes || ordRes),
+      rejectedCount: rejected,
+    });
+    return {
+      positions,
+      orders,
+      status,
+      detail: status === 'available' || status === 'stale' ? '' : TRADES_UNAVAILABLE_DETAIL,
+    };
+  }, [posRes, ordRes, pair]);
+}
+
+/**
+ * M-TRADES-1 — DEVELOPMENT FIXTURE PREVIEW ONLY. NOT FOR ORDINARY SURFACES.
+ * Guarded by a repository-wide source check; reachable from `/dev/fixture-trades`.
+ */
+export function useFixtureTradesPreview(scope?: { pair?: string; lane?: string }): {
   live: LiveTrade[];
   ghost: GhostTrade[];
   blocked: BlockedIntent[];
 } {
   const { data } = useSuspenseQuery({
-    queryKey: QK.tradesFor(scope?.pair, scope?.lane),
-    queryFn: () => api.trades(scope?.pair, scope?.lane),
+    queryKey: QK.fixtureTradesPreview,
+    queryFn: () => api.fixtureTradesPreview(scope?.pair, scope?.lane),
     staleTime: Infinity,
   });
   return data;
