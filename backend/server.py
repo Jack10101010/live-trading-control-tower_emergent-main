@@ -4850,8 +4850,15 @@ def _node_beacon():
 
 
 def _live_status_entry(instance_id: str, record: dict, now: datetime) -> dict:
-    """Wrap one stored record in the read-side observation envelope."""
-    entry = live_telemetry.observation(record["snapshot"], now=now)
+    """Wrap one stored record in the read-side observation envelope.
+
+    The arrival time this endpoint already records is now PASSED IN rather than
+    only attached afterwards, so freshness is judged on the tower's own clock.
+    Previously it was persisted and then discarded by the freshness calculation,
+    which left liveness resting on a timestamp the node chose for itself.
+    """
+    entry = live_telemetry.observation(record["snapshot"], now=now,
+                                       received_at=record.get("received_at"))
     entry["received_at"] = record.get("received_at")
     entry["source"] = "node"
     return entry

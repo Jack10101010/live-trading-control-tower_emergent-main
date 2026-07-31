@@ -171,9 +171,70 @@ run backwards relative to the other. The rule is per instance.
 
 `GET /api/live/status` returns the validated snapshot wrapped in an observation
 envelope: `published_at` (node), `observed_at` (server), `received_at`,
-`age_seconds`, `stale` (default threshold 120 s), `schema_version`,
-`legacy_source`. An absent node yields an explicit `emptyState` string rather than
-zeros. Nothing is augmented from the fixture world, and no package hash is
+`age_seconds`, `stale`, `stale_after_seconds`, `schema_version`,
+`legacy_source`, plus the freshness diagnostics below. An absent node yields an
+explicit `emptyState` string rather than zeros.
+
+### Freshness: server-observed, phase-aware
+
+Freshness is judged on **server-observed arrival** (`received_at`, recorded by the
+ingest endpoint), not on the node's own `published_at`. A node therefore cannot
+make itself appear fresh by publishing a manipulated timestamp — the only clock
+that decides liveness is the tower's. Where no arrival time exists (the pull path
+via `node_client`, or a record persisted before this was carried through),
+freshness falls back to `published_at`, which is the previous behaviour.
+`freshness_basis` states which was used.
+
+**Liveness and data currency are separate facts, and both must hold.**
+
+| Field | Meaning |
+|---|---|
+| `age_seconds` | Age of the **observation** (`published_at`). Unchanged meaning. |
+| `liveness_age_seconds` | Age since **arrival** — how long the node has been quiet. |
+| `data_stale` | The observations are old, however recently they arrived. |
+| `liveness_stale` | The node has gone quiet beyond its budget. |
+| `stale` | `liveness_stale OR data_stale` — the single boolean, unchanged in name and never more permissive than the facts behind it. |
+
+A packet that arrives now but carries hour-old observations is **not** healthy;
+a node recomputing for ten minutes without publishing is **not** dead.
+
+### Known duplication — deferred, NOT addressed in M-TEL-1
+
+`backend/connection_state.telemetry_state()` still re-implements telemetry
+staleness independently, judged on `published_at` against a flat threshold. It is
+therefore a second staleness authority that can disagree with `/api/live/status`
+about whether the same node is stale — it does not benefit from the
+server-observed basis or the phase-aware budget above.
+
+Now that `/api/live/status` publishes authoritative `liveness_stale` /
+`data_stale` verdicts, `connection_state` should eventually consume the canonical
+verdict instead of maintaining its own. Recorded here so the divergence is known
+rather than discovered later; deliberately out of scope for M-TEL-1, which
+changes exactly one read path.
+
+Clock skew is deliberately **not** a published field: it is `published_at` minus
+`received_at`, both already in this envelope, and `clock_skew_seconds` already
+names an unrelated concept (`arming.ArmPolicy`, permitted arm-request tolerance).
+Skew nonetheless affects the verdict — a snapshot dated beyond the budget into the
+future reads stale, never maximally fresh.
+
+**Phase-aware thresholds** replace the former flat 120 s timeout, which marked a
+healthy node stale roughly two minutes into a legitimate recompute:
+
+| Cycle status | Budget | Why |
+|---|---|---|
+| `no_new_bar` (idle) | **120 s** (`DEFAULT_STALE_AFTER_S`, unchanged) | Between bars the node publishes at least every 60 s, so this is two missed publishes. |
+| `ok`, `bootstrap`, frozen, absent/unknown | **900 s** (`RECOMPUTE_STALE_AFTER_S`) | One full 15 m bar interval — a recompute legitimately publishes nothing while it runs. |
+
+The recompute budget is deliberately **not** generous. A measured warm recompute of
+~1119 s exceeds one bar interval and is reported stale, because a node that cannot
+finish within its own cadence has a genuine capacity problem the tower must keep
+signalling. `RECOMPUTE_STALE_AFTER_S` mirrors `live/shadow_report.BAR_INTERVAL_S`,
+which gates the `no_boundary_overrun` promotion check on the same threshold; the
+two are duplicated to keep `live_telemetry` free of any `live.*` dependency, and an
+anti-drift test asserts they stay equal. An unknown or absent cycle status takes the
+larger budget: misreading a working node as dead is the defect being corrected, and
+a genuine outage still trips that budget shortly afterwards. Nothing is augmented from the fixture world, and no package hash is
 fabricated: the live-ingest narration events now carry `packageHash: null`, because
 the node runs the Lux strategy core and the backend's active fixture package is
 unrelated to it.

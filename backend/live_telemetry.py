@@ -55,7 +55,32 @@ _REQUIRED_MAPPINGS = ("cycle", "runtime", "engine", "account", "arming", "market
 
 # Freshness policy for the read side. Purely an observation age; it never implies
 # anything about whether the node is healthy — the node says that itself.
+#: IDLE freshness budget. A node between bars publishes at least every
+#: `CADENCE_MAX_IDLE_SLEEP_S` (60s, `live/main.py`), so 120s is two missed
+#: publishes — unchanged, and the documented v1 default.
 DEFAULT_STALE_AFTER_S = 120.0
+
+#: RECOMPUTE freshness budget: one full 15m bar interval.
+#:
+#: THE DEFECT THIS FIXES: a healthy node was marked stale ~2 minutes into a
+#: legitimate recompute, because one flat 120s timeout was applied to both
+#: phases. A warm recompute legitimately exceeds 120s and publishes nothing
+#: while it runs.
+#:
+#: THE LIMIT IS DELIBERATELY NOT GENEROUS. A measured warm recompute of ~1119s
+#: EXCEEDS one bar interval, and that is a genuine capacity problem the tower
+#: must keep signalling. Silence beyond one whole bar means the node cannot
+#: keep up with its own cadence, so it is late — by design, not by accident.
+#:
+#: MIRRORS `live/shadow_report.py:BAR_INTERVAL_S`, which gates the
+#: `no_boundary_overrun` promotion check on exactly the same threshold. It is
+#: duplicated rather than imported to keep this module free of any `live.*`
+#: dependency; an anti-drift test asserts the two values stay equal.
+RECOMPUTE_STALE_AFTER_S = 900.0
+
+#: Cycle statuses meaning "between bars, nothing to recompute" — the runner's
+#: own vocabulary (`live/runner.py`), not a new one.
+IDLE_CYCLE_STATUSES = frozenset({"no_new_bar"})
 
 
 class TelemetryError(ValueError):
@@ -336,31 +361,102 @@ def coerce_snapshot(payload: Any) -> tuple[dict, bool]:
     return validate_snapshot(payload), False
 
 
+def stale_budget_for(snapshot: dict, *,
+                     idle_after_s: float = DEFAULT_STALE_AFTER_S,
+                     recompute_after_s: float = RECOMPUTE_STALE_AFTER_S) -> float:
+    """The freshness budget for THIS snapshot's lifecycle phase.
+
+    Idle (`no_new_bar`) keeps the documented 120s. Every other status — `ok`,
+    `bootstrap`, a frozen recovery, or an ABSENT/unknown status — gets the bar
+    interval, because those are the states in which a node legitimately goes
+    quiet while it recomputes. Unknown maps to the larger budget deliberately:
+    misreading a working node as dead is the defect being fixed, and a genuine
+    outage still trips the larger budget shortly afterwards.
+    """
+    cycle = snapshot.get("cycle")
+    status = cycle.get("status") if isinstance(cycle, dict) else None
+    return idle_after_s if status in IDLE_CYCLE_STATUSES else recompute_after_s
+
+
 def observation(snapshot: dict, *, now: datetime | None = None,
-                stale_after_s: float = DEFAULT_STALE_AFTER_S) -> dict:
-    """Read-side freshness envelope. Pure; adds no node claims."""
+                stale_after_s: float | None = None,
+                received_at: str | None = None,
+                recompute_stale_after_s: float = RECOMPUTE_STALE_AFTER_S) -> dict:
+    """Read-side freshness envelope. Pure; adds no node claims.
+
+    FRESHNESS IS SERVER-OBSERVED. When the caller supplies `received_at` — the
+    arrival time the ingest endpoint already records and persists — liveness is
+    judged on ARRIVAL, not on the node's own `published_at`. A node therefore
+    cannot make itself look fresh by publishing a manipulated timestamp: the
+    only clock that decides liveness is the tower's.
+
+    LIVENESS AND DATA CURRENCY ARE SEPARATE FACTS, and both must hold:
+      * `liveness_stale` — has the node gone quiet (arrival age vs the budget);
+      * `data_stale` — are the OBSERVATIONS old, however recently they arrived.
+    A packet that arrives now but carries hour-old observations is not healthy,
+    and a node that recomputes for ten minutes without publishing is not dead.
+    `stale` stays the single boolean existing consumers read, and is true if
+    EITHER fails — so it can never become more permissive than the fact behind
+    it.
+
+    `stale_after_s` overrides the phase-aware budget when supplied, preserving
+    the existing keyword for callers that pin a threshold explicitly.
+
+    CLOCK SKEW IS DELIBERATELY NOT A FIELD HERE. It is `published_at` minus the
+    caller's arrival time — both already present in the `/api/live/status`
+    envelope — so publishing it would add derivable public surface with no
+    consumer, and the identifier `clock_skew_seconds` already means something
+    unrelated in this repository (`arming.ArmPolicy`: permitted arm-request
+    clock tolerance). Skew still CHANGES THE VERDICT: a future-dated snapshot
+    beyond the budget reads stale rather than maximally fresh.
+    """
     now = now or datetime.now(timezone.utc)
+    budget = (stale_after_s if stale_after_s is not None
+              else stale_budget_for(snapshot, recompute_after_s=recompute_stale_after_s))
     published = parse_iso(snapshot.get("published_at"))
-    if published is None:
-        age: float | None = None
-        stale = True
+    arrived = parse_iso(received_at)
+
+    # Displayed age is never negative. Freshness is judged on the SIGNED delta:
+    # a snapshot dated implausibly in the FUTURE (beyond the window, e.g. from
+    # clock skew or a malformed node clock) is not a current observation and must
+    # not read as maximally fresh. Small skew within the window still clamps to
+    # fresh — symmetric tolerance, one threshold.
+    def _age(instant):
+        if instant is None:
+            return None, True
+        delta = (now - instant).total_seconds()
+        return max(delta, 0.0), abs(delta) > budget
+
+    data_age, data_stale = _age(published)
+    arrival_age, arrival_stale = _age(arrived)
+
+    if arrived is None:
+        # No server-observed arrival (the pull path, or a legacy record written
+        # before arrival was carried through). Fall back to the node's own
+        # timestamp — the previous behaviour, so nothing regresses.
+        liveness_age, liveness_stale = data_age, data_stale
+        basis = "published_at"
     else:
-        delta = (now - published).total_seconds()
-        # Displayed age is never negative. Freshness, however, is judged on the
-        # SIGNED delta: a snapshot dated implausibly in the FUTURE (beyond the stale
-        # window, e.g. from clock skew or a malformed node clock) is not a current
-        # observation and must not read as maximally fresh. Small skew within the
-        # window still clamps to fresh — symmetric tolerance, one threshold.
-        age = max(delta, 0.0)
-        stale = abs(delta) > stale_after_s
+        liveness_age, liveness_stale = arrival_age, arrival_stale
+        basis = "received_at"
+
     return {
         "instance_id": snapshot.get("instance_id"),
         "schema_version": snapshot.get("schema_version"),
         "legacy_source": bool(snapshot.get("legacy_source")),
         "published_at": snapshot.get("published_at"),
         "observed_at": now.isoformat().replace("+00:00", "Z"),
-        "age_seconds": None if age is None else round(age, 3),
-        "stale": stale,
-        "stale_after_seconds": stale_after_s,
+        # `age_seconds` KEEPS ITS DOCUMENTED MEANING: the age of the
+        # OBSERVATION. Repointing it at arrival would display "0s" for hour-old
+        # data that merely arrived a moment ago — hiding precisely the condition
+        # an operator needs to see. Liveness age is reported ALONGSIDE it.
+        "age_seconds": None if data_age is None else round(data_age, 3),
+        "stale": bool(liveness_stale or data_stale),
+        "stale_after_seconds": budget,
+        # Diagnostics — additive; nothing existing was renamed or removed.
+        "freshness_basis": basis,
+        "liveness_age_seconds": None if liveness_age is None else round(liveness_age, 3),
+        "liveness_stale": bool(liveness_stale),
+        "data_stale": bool(data_stale),
         "snapshot": snapshot,
     }
