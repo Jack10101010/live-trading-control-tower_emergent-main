@@ -120,6 +120,25 @@ class LiveConfig:
     def golden_config_path(self) -> Path:
         return self.lux_root / GOLDEN_CONFIG_RELPATH
 
+    @property
+    def maintenance_marker(self) -> Path:
+        """Operator marker that tells the supervisor NOT to restore the node.
+
+        Supervision is a repeating Task Scheduler trigger, so an intentional stop
+        would otherwise be resurrected within one interval. This marker is the
+        only thing that distinguishes "stopped on purpose" from "unexpectedly
+        absent"; without it a maintenance window is impossible.
+
+        PRESENCE is the signal — the file's content is a human-readable reason and
+        is never parsed. A parsed marker (`enabled=1`) would reintroduce exactly
+        the malformed-content ambiguity the marker exists to avoid; with no parse
+        step there is no malformed state. The launcher reads it BEFORE starting
+        Python, so this property is only for reporting (`live.status`), never a
+        gate — the gate lives in the launcher because Python must not start at all
+        during maintenance.
+        """
+        return self.state_dir / "ops" / "MAINTENANCE"
+
     def ensure_dirs(self) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.market_data_dir.mkdir(parents=True, exist_ok=True)

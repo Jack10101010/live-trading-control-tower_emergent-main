@@ -291,6 +291,30 @@ def collect(cfg: LiveConfig, probe_mt5: bool = True) -> None:
     row("mode + kill switch", FAIL if cfg.mode == "live" else OK,
         f"LIVE_MODE={cfg.mode}, KILL {'PRESENT (opens blocked)' if cfg.kill_file.exists() else 'absent'}")
 
+    # ── supervision maintenance marker ───────────────────────────────────────
+    # Supervision is a repeating scheduled trigger, so a node that is simply
+    # stopped comes back within one interval. This marker is what makes an
+    # intentional stop stick — and a marker left behind by accident means the
+    # node will NEVER be auto-restored, which is silent unless it is surfaced
+    # here. WARN, not FAIL: it is a legitimate operator state, but never the
+    # steady state.
+    try:
+        marker = cfg.maintenance_marker
+        if marker.exists():
+            reason = ""
+            try:
+                reason = (marker.read_text(errors="replace").strip().splitlines() or [""])[0]
+            except OSError as exc:
+                reason = f"<unreadable: {type(exc).__name__}>"
+            row("supervision maintenance?", WARN,
+                "MAINTENANCE ACTIVE — the supervisor will NOT start the node; "
+                f"reason: {reason[:80] or '<none recorded>'}")
+        else:
+            row("supervision maintenance?", OK,
+                "marker absent — supervisor may restore the node (<=5 min)")
+    except Exception as exc:  # never let diagnostics throw
+        row("supervision maintenance?", FAIL, f"{type(exc).__name__}: {exc}"[:90])
+
     # ── MT5 (optional, read-only) ────────────────────────────────────────────
     if not probe_mt5:
         row("MT5 healthy?", NA, "--no-mt5")
