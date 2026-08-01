@@ -31,7 +31,7 @@ from typing import Any
 
 import trade_ledger_domain as tld
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2      # M-LEDGER-ORIGIN-1: + execution_origin
 
 
 #: Which event records arrival at each working status.
@@ -119,7 +119,35 @@ class TradeLedgerStore:
                 schema_version TEXT NOT NULL,
                 UNIQUE (trade_id, sequence)
             )""")
+        self._migrate_execution_origin(conn)
         conn.commit()
+
+    # ── M-LEDGER-ORIGIN-1 migration ──────────────────────────────────────────
+    def _migrate_execution_origin(self, conn) -> None:
+        """Add the indexed `execution_origin` column. Additive and idempotent.
+
+        Existing rows become `unknown` and STAY unknown. There is deliberately
+        no backfill: a legacy row's adapter was never persisted as a column, and
+        inferring `mt5` from broker-looking fields is precisely the heuristic
+        promotion this contract exists to prevent. An unknown record is honest;
+        a guessed one is not, and it would be indistinguishable afterwards.
+
+        Idempotent by inspection rather than by exception-swallowing, so a
+        second run is a no-op and a genuine failure still surfaces.
+        """
+        columns = {r["name"] for r in conn.execute(
+            "PRAGMA table_info(ledger_entries)").fetchall()}
+        if "execution_origin" not in columns:
+            conn.execute(
+                "ALTER TABLE ledger_entries ADD COLUMN execution_origin "
+                f"TEXT NOT NULL DEFAULT '{tld.ExecutionOrigin.UNKNOWN}'")
+        # Compound index: every admission query filters execution_origin and
+        # then status (closed history). A standalone index would leave the
+        # status predicate to a scan over the admitted set.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_exec_origin_status "
+                     "ON ledger_entries (execution_origin, status)")
+        conn.execute("UPDATE ledger_meta SET value=? WHERE key='schema_version'",
+                     (str(SCHEMA_VERSION),))
 
     def schema_version(self) -> int:
         with self._conn() as conn:
@@ -159,16 +187,23 @@ class TradeLedgerStore:
         conn.execute(
             """INSERT INTO ledger_entries (trade_id, status, version, instrument,
                 side, scenario_id, node_id, account_fingerprint, origin,
+                execution_origin,
                 opened_at, closed_at, gross_realized_pnl, net_realized_pnl,
                 total_costs, realized_r, exit_classification, entry_json,
                 observed_at, finalized_at, amended_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(trade_id) DO UPDATE SET
                  status=excluded.status, version=excluded.version,
                  instrument=excluded.instrument, side=excluded.side,
                  scenario_id=excluded.scenario_id, node_id=excluded.node_id,
                  account_fingerprint=excluded.account_fingerprint,
-                 origin=excluded.origin, opened_at=excluded.opened_at,
+                 origin=excluded.origin,
+                 -- M-LEDGER-ORIGIN-1: execution_origin is IMMUTABLE. It is
+                 -- deliberately absent from this UPDATE list, so an amendment,
+                 -- finalisation or reconciliation pass cannot rewrite which
+                 -- adapter produced the record. Reconciliation records its own
+                 -- status separately and never becomes the execution origin.
+                 opened_at=excluded.opened_at,
                  closed_at=excluded.closed_at,
                  gross_realized_pnl=excluded.gross_realized_pnl,
                  net_realized_pnl=excluded.net_realized_pnl,
@@ -183,6 +218,10 @@ class TradeLedgerStore:
              lineage.node_id if lineage else None,
              lineage.account_fingerprint if lineage else None,
              lineage.origin if lineage else None,
+             # Derived from the adapter the reconstruction pipeline recorded.
+             # `normalize` cannot produce MT5 from anything but the literal
+             # adapter kind, so no writer can silently inherit broker authority.
+             tld.ExecutionOrigin.normalize(lineage.adapter if lineage else None),
              trade.timing.opened_at if trade else None,
              trade.timing.closed_at if trade else None,
              trade.gross_realized_pnl if trade else None,
@@ -510,7 +549,11 @@ class _StoredTrade:
 def _lineage_fields(raw: dict) -> dict:
     return {"scenario_id": raw.get("scenarioId"), "node_id": raw.get("nodeId"),
             "account_fingerprint": raw.get("accountFingerprint"),
-            "origin": raw.get("origin")}
+            "origin": raw.get("origin"),
+            # M-LEDGER-ORIGIN-1: the rebuilt view must carry the adapter too,
+            # or a rebuild-then-write cycle would silently downgrade a genuine
+            # mt5 record to unknown.
+            "adapter": raw.get("adapter")}
 
 
 class _Group:

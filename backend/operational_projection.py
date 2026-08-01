@@ -33,6 +33,8 @@ FRESHNESS AND PROVENANCE
 
 from __future__ import annotations
 
+import trade_ledger_domain as _tld
+
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -439,6 +441,10 @@ class ClosedTradeOperationalView:
     duration_seconds: float | None = None
     scenario_id: str | None = None
     origin: str | None = None
+    #: M-LEDGER-ORIGIN-1: which adapter produced/observed the record. A SEPARATE
+    #: axis from `origin` (initiation) and from `provenance` (storage class).
+    #: Only this field may grant admission to broker history or analytics.
+    execution_origin: str | None = None
     cost_completeness: str | None = None
     risk_completeness: str | None = None
     warnings: tuple = field(default_factory=tuple)
@@ -463,6 +469,7 @@ class ClosedTradeOperationalView:
             "openedAt": self.opened_at, "closedAt": self.closed_at,
             "durationSeconds": self.duration_seconds,
             "scenarioId": self.scenario_id, "origin": self.origin,
+            "executionOrigin": self.execution_origin,
             "costCompleteness": self.cost_completeness,
             "riskCompleteness": self.risk_completeness,
             "warnings": list(self.warnings), "conflicts": list(self.conflicts),
@@ -545,6 +552,9 @@ def _ledger_entry_view(entry: Any, *, provenance: str) -> ClosedTradeOperational
         opened_at=trade.get("openedAt"), closed_at=trade.get("closedAt"),
         duration_seconds=trade.get("durationSeconds"),
         scenario_id=lineage.get("scenarioId"), origin=lineage.get("origin"),
+        # Derived at projection time from the adapter the ledger recorded, via
+        # the canonical taxonomy — never a raw string from the payload.
+        execution_origin=_tld.ExecutionOrigin.normalize(lineage.get("adapter")),
         cost_completeness=trade.get("costCompleteness"),
         risk_completeness=trade.get("riskCompleteness"),
         warnings=tuple(raw.get("warnings") or ()),

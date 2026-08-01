@@ -171,3 +171,29 @@ M-FLAGS-1 → M-GATE-1 → M-PKG-1 → (deferred: replay).
 
 Definition of done for the migration: every row ☑, zero RED borders rendered,
 and the temporary border system itself retired (final milestone).
+
+## M-LEDGER-ORIGIN-1 — the ledger three-axis origin contract
+
+`/api/ledger/*` exposed only `provenance: "durable-store"` — a STORAGE class. The
+same store holds trades reconstructed from the mock adapter, so admitting on it
+would have laundered simulated fills into broker history. Three independent axes
+now exist and are never collapsed:
+
+| Axis | Field | Question | Vocabulary |
+|---|---|---|---|
+| initiation | `origin` | who caused the trade? | CONTROL_TOWER / MANUAL_BROKER / EXTERNAL_SYSTEM / LEGACY_IMPORT / UNKNOWN |
+| **execution** | **`executionOrigin`** | **which adapter produced/observed it?** | **mt5 / mock / unknown** |
+| storage | `provenance` | where is it kept? | durable-store |
+| reconciliation | its own status fields | how was it assembled? | unchanged |
+
+`execution_origin` is persisted (indexed, NOT NULL DEFAULT 'unknown', schema v2),
+derived from the `TradeLineage.adapter` the pipeline already carried, and
+**immutable** — deliberately absent from the upsert's UPDATE list so no
+amendment, finalisation or reconciliation pass can rewrite it.
+
+`ledger_admission.py` is the one policy seam: only `mt5` admits, to history or
+analytics. Storage class and initiation origin never grant admission — the
+decisive case is CONTROL_TOWER + mock (real initiation, simulated price), which
+stays rejected. `unknown` fails closed; legacy rows migrate to `unknown` and stay
+there, because inferring `mt5` from broker-looking fields is exactly the
+heuristic promotion this contract forbids.

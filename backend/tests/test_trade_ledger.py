@@ -627,7 +627,7 @@ def test_ledger_lifecycle_transitions_are_explicit():
 
 def test_store_ingests_and_walks_the_legal_path(tmp_path):
     store = _store(tmp_path)
-    assert store.schema_version() == 1
+    assert store.schema_version() == 2   # M-LEDGER-ORIGIN-1: + execution_origin
     entry = store.ingest_broker_history(_reconstruct(_simple()), now=NOW,
                                         provenance="mock-fixture")[0]
     assert entry.status == tld.TradeLedgerStatus.READY_TO_FINALIZE

@@ -264,7 +264,55 @@ def classify_exit(*, broker_reason: str | None, exit_price: float | None,
     return ExitClassification.UNKNOWN
 
 
-# ── trade origin (PART 19) ────────────────────────────────────────────────────
+# ── the three independent origin axes (M-LEDGER-ORIGIN-1) ────────────────────
+#
+# These answer DIFFERENT questions and must never be collapsed:
+#
+#   TradeOrigin      "who caused this trade?"        CONTROL_TOWER | MANUAL_BROKER | ...
+#   ExecutionOrigin  "which adapter produced it?"    mt5 | mock | unknown
+#   storage class    "where is it kept?"             durable-store  (response metadata)
+#   reconciliation   "how was it reconstructed?"     its own status fields
+#
+# The combination that matters: a CONTROL_TOWER-initiated trade executed by the
+# MOCK adapter is NOT broker history, however genuine its initiation was. Before
+# this contract existed a consumer could only see `provenance: "durable-store"`,
+# which describes persistence and grants no authority whatsoever.
+
+
+class ExecutionOrigin:
+    """Which execution authority produced or observed the record.
+
+    Derived from `TradeLineage.adapter`, which the reconstruction pipeline
+    already carries (`server.py` passes `broker_adapter.active_kind()`). The
+    vocabulary is exactly the adapter registry — `broker_adapter.known_kinds()`
+    is `("mock", "mt5")` — plus an explicit UNKNOWN.
+
+    UNKNOWN is a deliberate state, never a convenience default. It means the
+    adapter was not recorded, and it FAILS CLOSED: no consumer may admit it, and
+    nothing may promote it to MT5 on the strength of broker-looking fields.
+    """
+
+    MT5 = "mt5"
+    MOCK = "mock"
+    UNKNOWN = "unknown"
+
+    #: Every value this system may persist. Anything else normalises to UNKNOWN.
+    KNOWN = frozenset({MT5, MOCK, UNKNOWN})
+
+    @classmethod
+    def normalize(cls, adapter: str | None) -> str:
+        """Map a recorded adapter kind to a canonical execution origin.
+
+        Fails closed by construction: an absent, blank, unrecognised or
+        wrong-typed adapter becomes UNKNOWN. There is deliberately no branch
+        that can produce MT5 from anything other than the literal adapter kind.
+        """
+        if not isinstance(adapter, str):
+            return cls.UNKNOWN
+        value = adapter.strip().lower()
+        return value if value in cls.KNOWN and value != cls.UNKNOWN else (
+            value if value in (cls.MT5, cls.MOCK) else cls.UNKNOWN)
+
 
 class TradeOrigin:
     CONTROL_TOWER = "CONTROL_TOWER"
