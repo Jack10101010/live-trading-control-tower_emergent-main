@@ -1,4 +1,4 @@
-import { useFixtureFleetPreview } from '@/hooks/useRepository';
+import { useFixtureFleetPreview, useFixturePackagesPreview, useFixtureActivePackagePreview } from '@/hooks/useRepository';
 import { Panel, EmptyState } from '@/components/structures/Panel';
 
 /**
@@ -43,6 +43,7 @@ export function FixtureFleetPreview() {
         </p>
       </div>
 
+      <FixturePackages />
       {!available ? (
         <EmptyState title="Fixture world not loaded" description={provenanceDetail} />
       ) : (
@@ -75,5 +76,31 @@ export function FixtureFleetPreview() {
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * M-PKG-1: the fixture's authored strategy packages. They used to drive the
+ * Policy Engine, Versioning, StrategyPackages and System views — every version,
+ * hash and promotion date an operator saw. No package registry exists.
+ */
+function FixturePackages() {
+  const packages = useFixturePackagesPreview();
+  const active = useFixtureActivePackagePreview();
+  return (
+    <Panel provenance="fixture" title={`Fixture packages (${packages.length})`}>
+      <p className="text-2xs text-text-muted mb-2" data-testid="fixture-packages-note">
+        Authored packages. No strategy-package registry exists; ordinary operator
+        routes report this domain as unavailable.
+      </p>
+      <ul className="text-xs mono space-y-1" data-testid="fixture-packages-list">
+        {packages.map((p) => (
+          <li key={`${p.packageId}-v${p.version}`}>
+            v{p.version} · {p.label} · {p.status}
+            {active && p.packageHash === active.packageHash ? ' · (active in fixture)' : ''}
+          </li>
+        ))}
+      </ul>
+    </Panel>
   );
 }

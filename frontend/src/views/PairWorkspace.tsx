@@ -84,7 +84,7 @@ export function PairWorkspace() {
         <div className="h-8 w-px" style={{ background: 'var(--border-subtle)' }} />
 
         {ms && <MarketStateBadge state={ms.state} confidence={ms.confidence} confirmed={ms.confirmed} />}
-        <PackageVersionChip version={pkg.version} hash={pkg.packageHash} />
+        <PackageVersionChip version={pkg?.version} hash={pkg?.packageHash} />
 
         <div className="ml-auto flex items-center gap-5 text-xs">
           <HeaderStat label="Deployments" value={ws.deployments.length} mono />

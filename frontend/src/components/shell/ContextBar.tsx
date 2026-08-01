@@ -81,7 +81,7 @@ export function ContextBar() {
         )}
         {inPair && (
           <div className="text-xs">
-            <PackageVersionChip version={pkg.version} hash={pkg.packageHash} />
+            <PackageVersionChip version={pkg?.version} hash={pkg?.packageHash} />
           </div>
         )}
         {/* M-CONF-1: the three fixture confidence signal chips are GONE —

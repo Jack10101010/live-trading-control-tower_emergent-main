@@ -26,7 +26,7 @@ DYNAMIC = flips green automatically when its real source activates.
 | 11 | Broker Health view | fixture | RED | WORLD.brokerHealth | real MT5 health telemetry | demo MT5 + health surface | Med | High | M-MT5-READ-2 | ☐ |
 | 12 | Edge Monitor (main view + pair edge tab + Pair Health expectancy/win-rate) | **removed** | RED (honest placeholder surfaces) | `/api/edge-monitor` — **honest `computed:false`; WORLD.edgeMonitor severed, fixture-immune (tested)** | ledger + broker-history derived metrics (M-TRADES-2 and beyond) | no performance model exists; needs real trade history | Low | **Resolved** (no fabricated track record) | **M-EDGE-1** | ☑ |
 | 13 | Recommendations / drafts / decision chains (fixture) | fixture | RED | WORLD | durable trade-recommendation store (exists) | consumer migration | Med | Med | M-REC-1 | ☐ |
-| 14 | Packages / versioning / comparisons / policy panels | fixture | RED | WORLD.packages | real package registry (later) | package model | High | Med | M-PKG-1 | ☐ |
+| 14 | Packages / versioning / comparisons / policy panels | **removed from operator UI** | n/a (unavailable states) | none — no registry exists | a real package registry (unbuilt) | the registry itself | High | **Resolved** (no fabricated versions) | **M-PKG-1** | ☑ |
 | 15 | Events feed (journal) | **runtime only** | n/a (no fixture rows) | `events.db` (runtime) | — | — | Low | **Resolved** (no merged stream) | **M-EVENTS-1** | ☑ |
 | 16 | Feed Health card | mixed | RED | runtime health + placeholders | split: provider row GREEN / unwired rows placeholder | split work only | Low | Low | M-EVENTS-1 | ☐ |
 | 17 | Feature flags (Settings + System cards + gates) | constants | RED | hardcoded dict `server.py:4510` | env/deployment-manifest config | config mechanism | Low | Low | M-FLAGS-1 | ☐ |
@@ -57,6 +57,18 @@ DYNAMIC = flips green automatically when its real source activates.
   that still read WORLD answer `501 fixture_world_unavailable` instead of fabricated
   data; each is still retired by its own milestone. Development behaviour is unchanged,
   so no row's colour changes here.
+- **M-PKG-1 complete:** every operator-facing package, version, hash, promotion date,
+  policy matrix and package comparison is gone. This milestone found no source to switch
+  to: **there is no package registry module anywhere in the backend** — it was never
+  built — so `/api/packages`, `/api/packages/active` and `/api/policy/{i}/matrix` all
+  read `WORLD["packages"]`. Every version number an operator has ever seen was written
+  by hand. It therefore resolves to unavailable, deliberately: synthesising a version
+  from configuration would assert that a specific strategy build is deployed and
+  governing decisions, which nothing here can support — and it would look *derived*
+  rather than authored, making it more dangerous than the fixture. PolicyEngineView and
+  the two Versioning views became unavailable states; StrategyPackages, the System
+  packages panel and the pair package panels likewise; `PackageVersionChip` renders "no
+  package registry" instead of a version. Fixture packages remain at `/dev/fixture-fleet`.
 - **M-EVENTS-1 complete:** the last mixed-origin stream is gone. `/api/events` merged
   `WORLD["events"]` with `events.db` into one seq-ordered collection, and the merge was
   invisible — the three seeds carry no marker, so an operator reading the audit trail

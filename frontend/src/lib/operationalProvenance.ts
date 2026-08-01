@@ -151,3 +151,18 @@ export const TRADES_UNAVAILABLE_DETAIL =
 export function analyticsInputAdmissible(status: OperationalStatus): boolean {
   return status === 'available' || status === 'stale';
 }
+
+/**
+ * M-PKG-1 — there is no package registry.
+ *
+ * Every package, version, hash, promotion date and policy matrix on the
+ * operator surfaces came from the development fixture. No registry module
+ * exists in the backend; it was never built. The honest answer is unavailable,
+ * and it must stay unavailable: deriving a "version" from configuration would
+ * assert that a specific strategy build is deployed and governing decisions,
+ * which nothing in this system can currently support.
+ */
+export const PACKAGES_UNAVAILABLE_DETAIL =
+  'No strategy-package registry exists. Package identity, version, hash, promotion ' +
+  'history and policy matrices have no authoritative source, so no package state ' +
+  'can be reported. This is a missing capability, not a missing connection.';

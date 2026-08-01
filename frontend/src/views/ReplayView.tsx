@@ -192,7 +192,7 @@ export function ReplayView() {
           <Panel provenance="replay" title="Policy state at cursor" dense>
             <div className="space-y-2 text-xs text-text-2">
               <div className="flex items-center gap-2">
-                <PackageVersionChip version={pkg.version} hash={pkg.packageHash} />
+                <PackageVersionChip version={pkg?.version} hash={pkg?.packageHash} />
               </div>
               {marketState && (
                 <MarketStateBadge state={marketState.state} confidence={marketState.confidence} confirmed={marketState.confirmed} />

@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { PACKAGES_UNAVAILABLE_DETAIL } from '@/lib/operationalProvenance';
 import { ConnectionPanel } from '@/components/domain/ConnectionPanel';
 import { SecurityBaselinePanel } from '@/components/domain/SecurityBaselinePanel';
 import { OperatorCommandPanel } from '@/components/domain/OperatorCommandPanel';
@@ -11,7 +12,7 @@ import { ScenarioPanel } from '@/components/domain/ScenarioPanel';
 import { TradeLedgerPanel } from '@/components/domain/TradeLedgerPanel';
 import { LiveRuntimePanel } from '@/components/domain/LiveRuntimePanel';
 import { RecommendationPanel } from '@/components/domain/RecommendationPanel';
-import { useOperationalFleet, usePackages, useFeatureFlags, useRuntimeHealth, useBrokerReconciliation, useStrategyEvaluation, useSchedulerStatus, useMarketSnapshot, useRiskLimits, useActivePackage, useBackendHealth, useOperator } from '@/hooks/useRepository';
+import { useOperationalFleet, useFeatureFlags, useRuntimeHealth, useBrokerReconciliation, useStrategyEvaluation, useSchedulerStatus, useMarketSnapshot, useRiskLimits, useActivePackage, useBackendHealth, useOperator } from '@/hooks/useRepository';
 import { api, QK } from '@/lib/api';
 import { queryClient } from '@/lib/queryClient';
 import { Panel, ProvenanceFrame } from '@/components/structures/Panel';
@@ -29,7 +30,7 @@ export function SystemView() {
   // M-FLEET-2: authoritative nodes only. The Deployments & Manifests and
   // Brokers panels below listed fixture records on an ordinary route.
   const { nodes, status: fleetStatus } = useOperationalFleet();
-  const packages = usePackages();
+
   const flags = useFeatureFlags();
   const runtime = useRuntimeHealth();
   const recon = useBrokerReconciliation();
@@ -768,24 +769,12 @@ export function SystemView() {
         )}
       </Panel>
 
-      <Panel provenance="fixture" title="Packages">
-        <ul className="space-y-2">
-          {packages.map((pkg) => (
-            <li
-              key={`${pkg.packageId}-v${pkg.version}`}
-              className="rounded-md border p-3 flex items-center gap-3"
-              style={{ borderColor: 'var(--border-subtle)' }}
-            >
-              <PackageVersionChip version={pkg.version} hash={pkg.packageHash} />
-              <span className="text-xs text-text">{pkg.label}</span>
-              <Badge variant="status">{pkg.status}</Badge>
-              <Badge variant="validation">{pkg.validation.badge}</Badge>
-              <span className="ml-auto text-2xs text-text-muted">
-                {pkg.promotedAt ? <TimestampUTC iso={pkg.promotedAt} /> : 'not promoted'}
-              </span>
-            </li>
-          ))}
-        </ul>
+      <Panel provenance="placeholder" title="Packages">
+        {/* M-PKG-1: listed the fixture's authored packages with versions,
+            hashes, validation badges and promotion dates. No registry exists. */}
+        <div className="text-xs text-text-muted" data-testid="system-packages-unavailable">
+          {PACKAGES_UNAVAILABLE_DETAIL}
+        </div>
       </Panel>
 
       <Panel provenance="live" title="Brokers" dense>

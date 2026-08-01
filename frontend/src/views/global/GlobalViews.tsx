@@ -4,15 +4,14 @@
  * otherwise we render placeholder-but-shaped content.
  */
 import { useState } from 'react';
+import { PACKAGES_UNAVAILABLE_DETAIL } from '@/lib/operationalProvenance';
 import {
   useOperationalFleet,
   useConfiguredInstruments,
-  usePackages,
   useFeatureFlags,
   useVocabulary,
   useMarketState,
   useOperator,
-  useActivePackage,
   useRuntimeHealth,
 } from '@/hooks/useRepository';
 import { useShellStore } from '@/store/shellStore';
@@ -236,65 +235,12 @@ function PLKpi({ label, value }: { label: string; value: React.ReactNode }) {
 /* -------------------------------------------------------------------------- */
 
 export function StrategyPackagesView() {
-  const packages = usePackages();
-  const active = useActivePackage();
-  const openInspector = useShellStore((s) => s.openInspector);
-
-  const cols: Column<Package>[] = [
-    { key: 'version', header: 'Version', cell: (p) => <PackageVersionChip version={p.version} hash={p.packageHash} /> },
-    { key: 'label', header: 'Label', cell: (p) => <span className="text-xs text-text">{p.label}</span> },
-    { key: 'stage', header: 'Stage', cell: (p) => p.stage },
-    { key: 'status', header: 'Status', cell: (p) => <Badge variant="status">{p.status}</Badge> },
-    { key: 'validation', header: 'Validation', cell: (p) => <ValidationBadgeChip badge={p.validation.badge} /> },
-    { key: 'nD', header: 'nDecided', align: 'right', mono: true, cell: (p) => p.validation.nDecided },
-    { key: 'dn', header: 'Δ netR', align: 'right', cell: (p) => <RValue value={p.validation.portfolioDeltas.netR} /> },
-    { key: 'stab', header: 'Stability', align: 'right', mono: true, cell: (p) => p.validation.portfolioDeltas.stability.toFixed(2) },
-    { key: 'promoted', header: 'Promoted', cell: (p) => (p.promotedAt ? <TimestampUTC iso={p.promotedAt} /> : '—') },
-  ];
-
+  // M-PKG-1: listed the fixture's authored strategy packages with versions,
+  // hashes, stages and promotion dates. No package registry exists.
   return (
-    <WorkspacePage
-      title="Strategy Packages"
-      subtitle="Every package version · immutable · atomic promotion chain"
-      toolbar={
-        <>
-          <ToolbarLabel>Filter</ToolbarLabel>
-          <ToolbarChip active count={packages.length}>All</ToolbarChip>
-          <ToolbarChip count={packages.filter((p) => p.status === 'active').length}>Active</ToolbarChip>
-          <ToolbarChip count={packages.filter((p) => p.status === 'superseded').length}>Superseded</ToolbarChip>
-          <ToolbarChip count={packages.filter((p) => p.status === 'draft').length}>Drafts</ToolbarChip>
-          <ToolbarSpacer />
-          <NavLink to="/package-comparison" className="text-2xs text-text-2 hover:text-text underline underline-offset-4">
-            Compare versions →
-          </NavLink>
-        </>
-      }
-    >
-      <div className="grid grid-cols-12 gap-4">
-        <Panel provenance="fixture" title="Active Package" className="col-span-4">
-          <KeyValueGrid
-            items={[
-              { label: 'Label', value: active.label },
-              { label: 'Version', value: `v${active.version}`, mono: true },
-              { label: 'Stage', value: active.stage },
-              { label: 'Domain', value: active.domain },
-              { label: 'Instruments', value: active.instruments.join(', ') },
-              { label: 'Hash', value: active.packageHash.slice(0, 20) + '…', mono: true },
-              { label: 'Validation', value: <ValidationBadgeChip badge={active.validation.badge} /> },
-              { label: 'Promoted by', value: active.promotedBy ?? '—' },
-            ]}
-          />
-        </Panel>
-
-        <Panel provenance="fixture" title="Portfolio delta trajectory" className="col-span-8" bodyClassName="p-3">
-          <PlaceholderChart height={260} variant="area" />
-        </Panel>
-
-        <Panel provenance="fixture" title="All Packages" className="col-span-12" bodyClassName="p-0">
-          <DataTable columns={cols} data={packages} rowKey={(p) => `${p.packageId}-${p.version}`} />
-        </Panel>
-      </div>
-    </WorkspacePage>
+    <div className="p-6" data-testid="strategy-packages-unavailable">
+      <EmptyState title="No strategy-package registry" description={PACKAGES_UNAVAILABLE_DETAIL} />
+    </div>
   );
 }
 

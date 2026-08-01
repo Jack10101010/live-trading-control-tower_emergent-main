@@ -35,7 +35,7 @@ export function PolicyCellRenderer({ instrument, cellKey }: { instrument: string
       <div className="space-y-1.5">
         <div className="flex items-baseline justify-between gap-3">
           <div className="mono text-xs text-text-muted truncate">{cell.policyCellKey}</div>
-          <PackageVersionChip version={pkg.version} hash={pkg.packageHash} />
+          <PackageVersionChip version={pkg?.version} hash={pkg?.packageHash} />
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <CohortChip

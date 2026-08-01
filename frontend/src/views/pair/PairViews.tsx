@@ -4,6 +4,7 @@
  * Each view uses <WorkspacePage> for consistent shell + toolbar + inspector.
  */
 import { useOutletContext } from 'react-router-dom';
+import { PACKAGES_UNAVAILABLE_DETAIL } from '@/lib/operationalProvenance';
 import { useRuntimeHealth } from '@/hooks/useRepository';
 import { candleCardProvenance } from '@/lib/cardProvenance';
 import { useMemo, useState } from 'react';
@@ -81,7 +82,7 @@ export function PairDashboardView() {
       subtitle="Pair health · market state · recent decisions"
       right={
         <div className="text-2xs text-text-muted mono">
-          {pkg.label} · v{pkg.version}
+          {pkg?.label} · v{pkg?.version}
         </div>
       }
     >
@@ -265,7 +266,7 @@ export function PairOrdersView() {
       cell: () => <span className="text-2xs text-text-muted">—</span>,
     },
     { key: 'lane', header: 'Lane', cell: (t) => <LaneChip lane={t.lane} /> },
-    { key: 'pkg', header: 'Package', cell: () => <Badge variant="status">v{pkg.version}</Badge> },
+    { key: 'pkg', header: 'Package', cell: () => <Badge variant="status">v{pkg?.version}</Badge> },
     { key: 'session', header: 'Session', cell: (t) => <span className="text-2xs text-text-2">{parseScenarioKey(t.scenarioKey).session}</span> },
     { key: 'entry', header: 'Entry', align: 'right', mono: true, cell: (t) => fmtPrice(t.entry) },
     { key: 'sl', header: 'Stop', align: 'right', mono: true, cell: (t) => fmtPrice(t.sl) },
@@ -632,31 +633,13 @@ export function PairStrategyHealthView() {
           </div>
         </Panel>
 
-        <Panel provenance="fixture" title="Package Integrity" className="col-span-6">
-          <KeyValueGrid
-            items={[
-              { label: 'Version', value: `v${pkg.version}`, mono: true },
-              { label: 'Contract', value: pkg.contractVersion, mono: true },
-              { label: 'Domain', value: pkg.domain },
-              { label: 'Instruments', value: pkg.instruments.join(', ') },
-              { label: 'Hash', value: pkg.packageHash.slice(0, 24) + '…', mono: true },
-              { label: 'Validation ID', value: pkg.validation.validationId ?? '—', mono: true },
-              { label: 'Δ netR', value: <RValue value={pkg.validation.portfolioDeltas.netR} />, mono: true },
-              { label: 'Stability', value: pkg.validation.portfolioDeltas.stability.toFixed(2), mono: true },
-            ]}
-          />
-        </Panel>
-
-        <Panel provenance="fixture" title="Component versions" className="col-span-6">
-          <ul className="space-y-1.5 text-xs">
-            {Object.entries(pkg.componentVersions).map(([k, v]) => (
-              <li key={k} className="flex items-center gap-2">
-                <HealthDot state="ok" />
-                <span className="text-text-2">{k}</span>
-                <span className="ml-auto mono text-text-muted">{v}</span>
-              </li>
-            ))}
-          </ul>
+        <Panel provenance="placeholder" title="Strategy package" className="col-span-6">
+          {/* M-PKG-1: rendered the fixture package's domain, instruments, hash,
+              validation id, portfolio deltas and component versions. No package
+              registry exists, so none of it had a source. */}
+          <div className="text-xs text-text-muted" data-testid="pair-package-unavailable">
+            {PACKAGES_UNAVAILABLE_DETAIL}
+          </div>
         </Panel>
 
         <Panel provenance="fixture" title="Warning signals" className="col-span-12">

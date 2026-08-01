@@ -165,8 +165,26 @@ export function SampleSize({ n }: { n: number }) {
 /* -------------------------------------------------------------------------- */
 
 import { GitBranch } from 'lucide-react';
-export function PackageVersionChip({ version, hash }: { version: number; hash?: string }) {
+/**
+ * M-PKG-1: `version` is now optional. A package version asserts that a specific
+ * strategy build is deployed and governing decisions; with no registry there is
+ * no such fact, and rendering "v" followed by nothing — or worse a default —
+ * would make the absence look like a value. The chip says so instead.
+ */
+export function PackageVersionChip({ version, hash }: { version?: number; hash?: string }) {
   const short = hash ? (hash.startsWith('sha256:') ? hash.slice(7, 15) : hash.slice(0, 8)) : '';
+  if (version === undefined || version === null) {
+    return (
+      <span
+        className="inline-flex items-center gap-1.5 text-xs text-text-muted"
+        data-testid="package-version-unavailable"
+        title="No strategy-package registry exists, so no package version can be reported."
+      >
+        <GitBranch size={12} strokeWidth={2} />
+        <span>no package registry</span>
+      </span>
+    );
+  }
   return (
     <span className="inline-flex items-center gap-1.5 text-xs text-text-2">
       <GitBranch size={12} strokeWidth={2} />

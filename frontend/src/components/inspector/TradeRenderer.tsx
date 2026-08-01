@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import type { Package } from '@/types/domain';
 import type { EventEntry } from '@/types/domain';
 import type { LiveTrade } from '@/types/domain';
 import {
@@ -50,7 +51,10 @@ export function TradeRenderer({ tradeId }: { tradeId: string }) {
   const trade = live.find((t) => t.tradeId === tradeId);
   const decision = useDecisionChain(trade?.decisionId ?? '');
   const manifest = useDeploymentManifest(trade?.deploymentId ?? '');
-  const pkg = world.packages.find((p) => p.packageHash === trade?.packageHash);
+  // M-PKG-1: resolved the FIXTURE package behind this record's hash, so the
+  // inspector displayed an authored version and validation badge. No package
+  // registry exists.
+  const pkg = undefined as Package | undefined;
   const { instrument, session, structure, direction, marketState } = parseScenarioKey(trade?.scenarioKey ?? 'X:x:BOS:long:BullExpand');
   const currentMs = useMarketState(instrument);
 
@@ -82,7 +86,7 @@ export function TradeRenderer({ tradeId }: { tradeId: string }) {
         <div className="flex items-center gap-2 flex-wrap">
           <Badge variant="status">{trade.state}</Badge>
           <LaneChip lane={trade.lane} />
-          {pkg && <PackageVersionChip version={pkg.version} hash={pkg.packageHash} />}
+          {pkg && <PackageVersionChip version={pkg?.version} hash={pkg?.packageHash} />}
         </div>
         <div className="grid grid-cols-3 gap-2">
           <MiniStat label="Floating R" value={<RValue value={trade.currentR} />} />
@@ -191,10 +195,10 @@ export function TradeRenderer({ tradeId }: { tradeId: string }) {
         <section className="space-y-2">
           <SectionHeader>Validation</SectionHeader>
           <div className="flex items-center gap-2">
-            <ValidationBadgeChip badge={pkg.validation.badge} />
+            <ValidationBadgeChip badge={pkg?.validation.badge} />
             <span className="text-2xs text-text-muted mono">Δ netR</span>
-            <RValue value={pkg.validation.portfolioDeltas.netR} />
-            <span className="text-2xs text-text-muted mono">n={pkg.validation.nDecided}</span>
+            <RValue value={pkg?.validation.portfolioDeltas.netR} />
+            <span className="text-2xs text-text-muted mono">n={pkg?.validation.nDecided}</span>
           </div>
         </section>
       )}

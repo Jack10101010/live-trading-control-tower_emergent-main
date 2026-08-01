@@ -1994,6 +1994,13 @@ async def deployment(deployment_id: str):
     raise HTTPException(status_code=404, detail="Deployment not found")
 
 
+# M-PKG-1: `/api/packages`, `/api/packages/active` and `/api/policy/{i}/matrix`
+# read `WORLD["packages"]`. There is NO package registry module in this backend —
+# it was never built — so every version, hash, promotion date and policy verdict
+# these serve was authored by hand. They are retained as DEVELOPMENT FIXTURE
+# endpoints for the preview route and tests; no ordinary operator surface calls
+# them (enforced by a frontend source guard), and M-ENV-1 refuses them in
+# production because the fixture world is never loaded there.
 @api_router.get("/packages")
 async def packages():
     if not _fixture_available():

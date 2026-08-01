@@ -11,6 +11,7 @@ import {
   classify,
   UNAVAILABLE_DETAIL,
   TRADES_UNAVAILABLE_DETAIL,
+  PACKAGES_UNAVAILABLE_DETAIL,
   type OperationalStatus,
   type ProvenancedRecord,
 } from '@/lib/operationalProvenance';
@@ -582,9 +583,29 @@ export function useSystemConfidence(): SystemConfidence {
   return data;
 }
 
-/** Packages list via `/api/packages` (migrated off `/api/world`, Step 4). Nests
- *  under the `packages` key so package commands' `invalidates:['packages']` refresh it. */
-export function usePackages(): Package[] {
+/**
+ * M-PKG-1 — the AUTHORITATIVE package registry. There isn't one.
+ *
+ * `/api/packages` reads `WORLD["packages"]`: authored strategy packages with
+ * version numbers, promotion timestamps, component versions and policy
+ * matrices. No package registry module exists anywhere in the backend — it was
+ * never built. So every version number, hash and promotion date an operator
+ * has ever seen on these surfaces was written by hand.
+ *
+ * This resolves to UNAVAILABLE, not to replacement data. Synthesising a version
+ * from configuration would be the same fabrication in a new coat: a package
+ * hash asserts that a specific strategy build is deployed and running, which is
+ * a claim no part of this system can currently support.
+ *
+ * Fixture packages remain available at `useFixturePackagesPreview` for the
+ * development route.
+ */
+export function usePackageRegistry(): { packages: Package[]; status: OperationalStatus; detail: string } {
+  return { packages: [], status: 'unavailable', detail: PACKAGES_UNAVAILABLE_DETAIL };
+}
+
+/** M-PKG-1 — DEVELOPMENT FIXTURE PREVIEW ONLY. NOT AN OPERATIONAL SOURCE. */
+export function useFixturePackagesPreview(): Package[] {
   const { data } = useSuspenseQuery({
     queryKey: QK.packagesList,
     queryFn: api.packages,
@@ -602,7 +623,16 @@ export function useReplaySessionForPair(pair: string): ReplaySession | undefined
   return world.replaySessions.find((r) => r.scope.pair === pair) ?? world.replaySessions[0];
 }
 
-export function usePackageComparisons(): PackageComparison[] {
+/**
+ * M-PKG-1: package comparisons were fixture diffs between authored packages —
+ * cell-level changes that never happened between builds that never existed.
+ */
+export function usePackageComparisons(): { comparisons: PackageComparison[]; status: OperationalStatus } {
+  return { comparisons: [], status: 'unavailable' };
+}
+
+/** M-PKG-1 — DEVELOPMENT FIXTURE PREVIEW ONLY. */
+export function useFixturePackageComparisonsPreview(): PackageComparison[] {
   return useWorld().packageComparisons;
 }
 
@@ -613,8 +643,18 @@ export function useDeploymentsForPackage(packageHash: string): Deployment[] {
   return useOperationalFleet().deployments;
 }
 
-/** Active package through `/api/packages/active`. */
-export function useActivePackage(): Package {
+/**
+ * M-PKG-1: the "active package" is the sharpest claim on these surfaces — it
+ * asserts a specific strategy build is deployed and governing decisions right
+ * now. No registry exists to support it, so it resolves to undefined and every
+ * consumer renders an explicit unavailable state.
+ */
+export function useActivePackage(): Package | undefined {
+  return undefined;
+}
+
+/** M-PKG-1 — DEVELOPMENT FIXTURE PREVIEW ONLY. */
+export function useFixtureActivePackagePreview(): Package {
   const { data } = useSuspenseQuery({
     queryKey: QK.activePackage,
     queryFn: api.activePackage,
