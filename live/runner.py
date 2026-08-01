@@ -95,6 +95,59 @@ def assemble_candles(frozen_csv: Path, live_segment_csv: Path) -> pd.DataFrame:
     return frozen
 
 
+def _file_identity(path: Path) -> tuple | None:
+    """(size, mtime_ns) — cheap content-change proxy for an append-only file."""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (st.st_size, st.st_mtime_ns)
+
+
+def frozen_max_time(frozen_csv: Path, cache: dict) -> pd.Timestamp:
+    """Max timestamp of the frozen history, parsed at most once per file version.
+
+    MEASURED COST OF NOT DOING THIS: the frozen dataset is a 260 MB / 4.31 M-row
+    CSV. Reading it costs ~23.6 s and `pd.to_datetime(...).max()` over the result
+    a further ~11.2 s. `run_once` paid both on EVERY poll — including the polls
+    that immediately returned `no_new_bar` — which is why an idle cycle was
+    observed taking ~36 s while doing no work at all.
+
+    The frozen file is immutable by design (it is the pinned research dataset;
+    the bridge only ever appends to the SEPARATE live segment). It is not assumed
+    immutable, though: the cache is keyed on (size, mtime_ns), so replacing or
+    re-baselining the dataset invalidates it on the next call rather than serving
+    a stale frontier. Only the `time` column is read.
+    """
+    ident = _file_identity(frozen_csv)
+    if cache.get("identity") == ident and ident is not None:
+        return cache["max_time"]
+    value = pd.to_datetime(pd.read_csv(frozen_csv, usecols=["time"])["time"]).max()
+    cache.clear()
+    cache.update(identity=ident, max_time=value)
+    return value
+
+
+def frontier_time(frozen_csv: Path, live_segment_csv: Path, cache: dict) -> pd.Timestamp:
+    """Newest M1 timestamp across frozen + live, without materialising history.
+
+    Equivalent by construction to `pd.to_datetime(assemble_candles(...)["time"]).max()`:
+    assemble_candles keeps every frozen row and only those live rows strictly
+    after the frozen end, so the maximum of the union is exactly
+    max(frozen_max, max(live rows > frozen_max)) — and any live row that survives
+    the filter is by definition > frozen_max. `test_runner_frontier` pins that
+    equivalence against the real assembly.
+    """
+    fmax = frozen_max_time(frozen_csv, cache)
+    if live_segment_csv.exists():
+        live = pd.read_csv(live_segment_csv, usecols=["time"])
+        if len(live):
+            lmax = pd.to_datetime(live["time"]).max()
+            if pd.notna(lmax) and lmax > fmax:
+                return lmax
+    return fmax
+
+
 def latest_closed_boundary(last_m1_time: pd.Timestamp) -> pd.Timestamp:
     """A 15m bar [B, B+15) is confirmed closed once M1 data reaches B+15.
     With next_open = close time of the last stored M1 bar, the latest closed
@@ -113,6 +166,7 @@ class LiveRunner:
         self._pipeline = pipeline                    # injectable for tests
         self._candles_provider = candles_provider    # injectable for rehearsal (P0)
         self._pending_commit: tuple | None = None    # LR-1: see commit_cycle()
+        self._frozen_cache: dict = {}                # see frozen_max_time()
 
     # ── pipeline (mirrors the Golden driver stage-for-stage) ─────────────────
     def golden_pipeline(self, candles_raw: pd.DataFrame, frontier_date: str,
@@ -194,12 +248,18 @@ class LiveRunner:
         Deliberately placed after the `no_new_bar` short-circuit so quiet polls
         stay silent — this fires only when a long phase is genuinely starting.
         """
+        # Decide whether there is work BEFORE materialising 4.31 M rows of
+        # history. An injected provider keeps the original order untouched — its
+        # frames are small and it has no frozen file to key a cache on.
+        candles = None
         if self._candles_provider is not None:
             candles = self._candles_provider()
+            last_m1 = pd.to_datetime(candles["time"]).max()
+            frozen_csv = None
         else:
             frozen_csv = self.config.lux_root / "data" / "candles" / "EURUSD_1m_extended_2015_2026.csv"
-            candles = assemble_candles(frozen_csv, self.config.live_segment_csv)
-        last_m1 = pd.to_datetime(candles["time"]).max()
+            last_m1 = frontier_time(frozen_csv, self.config.live_segment_csv,
+                                    self._frozen_cache)
         boundary = latest_closed_boundary(last_m1)
         boundary_str = str(boundary)
 
@@ -208,6 +268,10 @@ class LiveRunner:
 
         if on_work_start is not None:
             on_work_start(boundary_str)
+
+        # Only a cycle that will actually recompute pays for full history.
+        if candles is None:
+            candles = assemble_candles(frozen_csv, self.config.live_segment_csv)
 
         pipeline = self._pipeline or self.golden_pipeline
         frontier_date = str(boundary.date())

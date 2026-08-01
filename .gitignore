@@ -106,3 +106,8 @@ golden/run-001/reference/candles.csv
 # Live-slice runtime state (ledger, ops logs, bar segments, reports)
 live_state/
 rehearsal_out/
+
+# M-CAPACITY-1 offline benchmark: copied production market data and profiling
+# dumps. Inputs and outputs only, never source -- these must not enter history.
+bench_state/
+bench/out/
