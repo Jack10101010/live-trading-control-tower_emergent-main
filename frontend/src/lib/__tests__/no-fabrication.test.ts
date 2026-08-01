@@ -68,8 +68,11 @@ describe('hardcoded operational claims are gone', () => {
 describe('no silent fallbacks', () => {
   it('does not swallow policy-matrix failures into a fabricated grid', () => {
     const s = read('hooks/useRepository.ts');
-    expect(s).not.toContain('api.policyMatrix(instrument, packageVersion).catch(() => null)');
-    expect(s).toContain('queryFn: () => api.policyMatrix(instrument, packageVersion),');
+    // M-PKG-1/M-REC-1: the hook no longer fetches the matrix at all. Its cells
+    // were derived from WORLD packages and no package registry exists, so not
+    // fetching is strictly stronger than not swallowing a failure.
+    expect(s).not.toContain('api.policyMatrix(');
+    expect(s).toContain('there is no matrix');
   });
 
   it('does not derive the health timestamp from the fixture world', () => {

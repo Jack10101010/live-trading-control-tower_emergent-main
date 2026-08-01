@@ -166,7 +166,8 @@ describe('structural guards', () => {
   it('risk/accounts, edge monitor, system confidence and broker health stay RED', () => {
     // M-FLEET-2: AccountsProtectionView no longer holds fixture accounts.
     expect(read('views/BrokerHealthView.tsx')).toContain('provenance="fixture"');
-    expect(read('views/EdgeMonitorView.tsx')).toContain('provenance="fixture"');
+    // M-REC-1: the recommendation pipeline panel is durable-store backed now.
+    expect(read('views/EdgeMonitorView.tsx')).toContain('provenance="live"');
     const sys = read('views/SystemView.tsx');
     expect(sys).toContain('provenance="fixture"');           // system confidence + fixture panels
     expect(sys).toContain('provenance="placeholder"');       // feature flags card

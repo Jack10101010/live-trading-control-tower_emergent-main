@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import type { Recommendation } from '@/types/domain';
 import type { Package } from '@/types/domain';
 import type { EventEntry } from '@/types/domain';
 import type { LiveTrade } from '@/types/domain';
@@ -65,7 +66,10 @@ export function TradeRenderer({ tradeId }: { tradeId: string }) {
   // showed authored audit entries beside a trade. The runtime audit stream is
   // /api/events; there is no per-scenario authoritative event query yet.
   const relatedEvents: EventEntry[] = [];
-  const relatedRecs = world.recommendations.filter((r) => r.scenarioKey === trade.scenarioKey);
+  // M-REC-1: joined FIXTURE recommendations by scenario key. Durable
+  // recommendations use their own identity space and are not joinable to a
+  // fixture scenario key.
+  const relatedRecs: Recommendation[] = [];
 
   const toReplay = (iso: string) => navigate(`/pair/${instrument}/replay?t=${isoToUnix(iso)}`);
 

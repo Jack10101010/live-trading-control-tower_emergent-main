@@ -166,3 +166,20 @@ export const PACKAGES_UNAVAILABLE_DETAIL =
   'No strategy-package registry exists. Package identity, version, hash, promotion ' +
   'history and policy matrices have no authoritative source, so no package state ' +
   'can be reported. This is a missing capability, not a missing connection.';
+
+/**
+ * M-REC-1 — the durable recommendation store is a genuine authority.
+ *
+ * Unlike `/api/ledger/*` (rejected in M-TRADES-1 because `durable-store` names
+ * storage, not origin), the trade-recommendation store has a verified
+ * ingestion path: records enter only through operator action, and
+ * `recommendation_store.py` contains no fixture read of any kind. Durable and
+ * fixture recommendations have therefore never been able to mix, which is why
+ * this domain can be migrated rather than merely emptied.
+ *
+ * Note the asymmetry deliberately: storage class alone still proves nothing.
+ * What admits this store is the audited absence of any fixture path INTO it.
+ */
+export const RECOMMENDATIONS_UNAVAILABLE_DETAIL =
+  'The durable recommendation store is not reporting. No recommendation, decision ' +
+  'or evidence can be shown.';

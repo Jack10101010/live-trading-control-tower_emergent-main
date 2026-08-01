@@ -25,7 +25,7 @@ DYNAMIC = flips green automatically when its real source activates.
 | 10 | Market State snapshot cards | fixture | RED | WORLD.marketStateSnapshots | node-published market state | node telemetry | Med | Med | M-NODE-TEL-1 | ☐ |
 | 11 | Broker Health view | fixture | RED | WORLD.brokerHealth | real MT5 health telemetry | demo MT5 + health surface | Med | High | M-MT5-READ-2 | ☐ |
 | 12 | Edge Monitor (main view + pair edge tab + Pair Health expectancy/win-rate) | **removed** | RED (honest placeholder surfaces) | `/api/edge-monitor` — **honest `computed:false`; WORLD.edgeMonitor severed, fixture-immune (tested)** | ledger + broker-history derived metrics (M-TRADES-2 and beyond) | no performance model exists; needs real trade history | Low | **Resolved** (no fabricated track record) | **M-EDGE-1** | ☑ |
-| 13 | Recommendations / drafts / decision chains (fixture) | fixture | RED | WORLD | durable trade-recommendation store (exists) | consumer migration | Med | Med | M-REC-1 | ☐ |
+| 13 | Recommendations / drafts / decision chains (fixture) | **migrated to durable store** | n/a | `/api/trade-recommendations*` | — | — | Med | **Resolved** (no fixture recs) | **M-REC-1** | ☑ |
 | 14 | Packages / versioning / comparisons / policy panels | **removed from operator UI** | n/a (unavailable states) | none — no registry exists | a real package registry (unbuilt) | the registry itself | High | **Resolved** (no fabricated versions) | **M-PKG-1** | ☑ |
 | 15 | Events feed (journal) | **runtime only** | n/a (no fixture rows) | `events.db` (runtime) | — | — | Low | **Resolved** (no merged stream) | **M-EVENTS-1** | ☑ |
 | 16 | Feed Health card | mixed | RED | runtime health + placeholders | split: provider row GREEN / unwired rows placeholder | split work only | Low | Low | M-EVENTS-1 | ☐ |
@@ -57,6 +57,18 @@ DYNAMIC = flips green automatically when its real source activates.
   that still read WORLD answer `501 fixture_world_unavailable` instead of fabricated
   data; each is still retired by its own milestone. Development behaviour is unchanged,
   so no row's colour changes here.
+- **M-REC-1 complete:** the first genuine MIGRATION rather than a removal. The decisive
+  audit finding was that `recommendation_store.py` contains no WORLD read of any kind —
+  durable and fixture recommendations have never been able to mix — so the durable store
+  could be admitted where `/api/ledger/*` could not. `useRecommendations` now reads
+  `/api/trade-recommendations`; the Edge Monitor pipeline is durable-backed with distinct
+  empty/unavailable states. Authored evidence (p-values, sample sizes, NATIVE badges) was
+  NOT carried across: the durable record has its own contract and a field the old card
+  expected is not a reason to invent one. Drafts and decision chains report unavailable —
+  no durable draft store exists, and turning recommendations into "drafts" would invent a
+  lifecycle state the system does not implement. Also closed a gap M-PKG-1 left:
+  `usePolicyMatrix` still fetched `/api/policy/{i}/matrix`, whose 144 cells derive from
+  `WORLD["packages"]`; it no longer fetches at all.
 - **M-PKG-1 complete:** every operator-facing package, version, hash, promotion date,
   policy matrix and package comparison is gone. This milestone found no source to switch
   to: **there is no package registry module anywhere in the backend** — it was never

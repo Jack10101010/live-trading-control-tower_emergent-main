@@ -1,4 +1,5 @@
 import { usePolicyMatrix, useActivePackage, useRecommendations, useMarketState } from '@/hooks/useRepository';
+import type { Recommendation } from '@/types/domain';
 import {
   Badge,
   CohortChip,
@@ -20,15 +21,17 @@ export function PolicyCellRenderer({ instrument, cellKey }: { instrument: string
   const matrix = usePolicyMatrix(instrument);
   const pkg = useActivePackage();
   const cell = matrix.cells[cellKey];
-  const recs = useRecommendations();
+  const { recommendations: recs } = useRecommendations();
   const marketState = useMarketState(instrument);
   const openInspector = useShellStore((s) => s.openInspector);
 
   if (!cell) return <div className="p-4 text-text-muted">Cell not found</div>;
 
-  const linkedRec = cell.provenanceRecommendationId
-    ? recs.find((r) => r.recommendationId === cell.provenanceRecommendationId)
-    : null;
+  // M-REC-1: resolved the FIXTURE recommendation behind a policy cell's
+  // provenance id. Durable recommendations use their own identity space and are
+  // not joinable to fixture policy cells, so no link is claimed.
+  void recs;
+  const linkedRec = null as Recommendation | null;
 
   return (
     <div className="p-4 space-y-5">

@@ -19,7 +19,7 @@ import { DiffView } from '@/components/structures/Panel';
  * Not Analytics (which describes what happened).
  */
 export function EdgeMonitorView() {
-  const recs = useRecommendations();
+  const { recommendations: recs, status: recStatus, detail: recDetail } = useRecommendations();
   const openInspector = useShellStore((s) => s.openInspector);
 
   return (
@@ -49,34 +49,40 @@ export function EdgeMonitorView() {
       </Panel>
 
       <Panel
-        provenance="fixture"
+        provenance="live"
         title={<>Recommendation Pipeline <span className="text-text-muted mono ml-2">({recs.length})</span></>}
         className="col-span-12"
       >
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {recs.map((r) => (
-            <button
-              key={r.recommendationId}
-              onClick={() => openInspector({ kind: 'recommendation', recommendationId: r.recommendationId })}
-              className="text-left rounded-md border p-3 hover:bg-[color:var(--panel-2)] transition-colors"
-              style={{ borderColor: 'var(--border-subtle)' }}
-            >
-              <div className="flex items-center gap-2 mb-2">
-                <Badge variant="recommendation">{r.status}</Badge>
-                <ValidationBadgeChip badge={r.evidence.nativeValidation.badge} />
-                <span className="mono text-2xs text-text-muted ml-auto"><TimestampUTC iso={r.createdAt} /></span>
-              </div>
-              <div className="text-xs text-text mb-2 mono truncate">{r.scenarioKey}</div>
-              <DiffView label={r.proposedChange.field} before={String(r.proposedChange.from)} after={String(r.proposedChange.to)} />
-              <div className="mt-2 text-2xs text-text-2 line-clamp-2">{r.evidence.evidenceSummary}</div>
-              <div className="mt-2 flex items-center gap-2">
-                <SampleSize n={r.evidence.sampleSize} />
-                <span className="mono text-2xs text-text-muted">{fmtProbability(r.evidence.supportingStats.pBetter ?? 0)}</span>
-                <ConfidenceMeter value={r.evidence.confidence} width={60} />
-              </div>
-            </button>
-          ))}
-        </div>
+        {/* M-REC-1: listed FIXTURE recommendations carrying authored p-values,
+            sample sizes and NATIVE validation badges — the most persuasive
+            fabrication in the application. These come from the durable operator
+            store now, and no evidence field is carried over from the old card. */}
+        {recStatus === 'unavailable' ? (
+          <div className="text-xs text-text-muted" data-testid="recommendations-unavailable">
+            {recDetail}
+          </div>
+        ) : recs.length === 0 ? (
+          <div className="text-xs text-text-muted" data-testid="recommendations-empty">
+            No recommendations recorded. The durable store answered and is empty —
+            a genuine result, not missing data.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {recs.map((r) => (
+              <button
+                key={r.recommendationId}
+                onClick={() => openInspector({ kind: 'recommendation', recommendationId: r.recommendationId })}
+                className="text-left rounded-md border p-3 hover:bg-[color:var(--panel-2)] transition-colors"
+                style={{ borderColor: 'var(--border-subtle)' }}
+                data-testid={`durable-recommendation-${r.recommendationId}`}
+              >
+                <div className="mono text-2xs text-text-muted truncate">{r.recommendationId}</div>
+                <div className="text-xs text-text mt-1">{r.instrument ?? '—'} · {r.direction ?? '—'}</div>
+                <div className="text-2xs text-text-muted mt-1">{r.status ?? 'unknown'}</div>
+              </button>
+            ))}
+          </div>
+        )}
       </Panel>
     </div>
   );

@@ -142,7 +142,7 @@ describe('structural isolation of fixture fleet data', () => {
   it('no ordinary component imports the fixture-preview hook', () => {
     const offenders = allSources(SRC)
       .filter((f) => !FIXTURE_ALLOWLIST.has(rel(f)))
-      .filter((f) => /useFixtureFleetPreview|useFixtureTradesPreview|useFixtureEventsPreview|useFixturePackagesPreview|useFixtureActivePackagePreview|useFixturePackageComparisonsPreview/.test(readFileSync(f, 'utf8')))
+      .filter((f) => /useFixtureFleetPreview|useFixtureTradesPreview|useFixtureEventsPreview|useFixturePackagesPreview|useFixtureActivePackagePreview|useFixturePackageComparisonsPreview|useFixtureRecommendationsPreview/.test(readFileSync(f, 'utf8')))
       .map(rel);
     expect(offenders, offenders.join('\n')).toEqual([]);
   });
@@ -165,6 +165,39 @@ describe('structural isolation of fixture fleet data', () => {
     const offenders = allSources(SRC)
       .filter((f) => /\buseTrades\b/.test(stripComments(readFileSync(f, 'utf8'))))
       .map(rel);
+    expect(offenders, offenders.join('\n')).toEqual([]);
+  });
+
+  it('M-REC-1: no ordinary source reads WORLD recommendations, drafts or decisions', () => {
+    const offenders: string[] = [];
+    for (const f of allSources(SRC)) {
+      if (/world\.(recommendations|drafts|decisionChains)\b/.test(stripComments(readFileSync(f, 'utf8')))) {
+        offenders.push(rel(f));
+      }
+    }
+    expect(offenders, offenders.join('\n')).toEqual([]);
+  });
+
+  it('M-REC-1: no ordinary source calls the fixture recommendation endpoints', () => {
+    const offenders = allSources(SRC)
+      .filter((f) => !FIXTURE_ALLOWLIST.has(rel(f)))
+      .filter((f) => /apiFetch<[^>]*>\('\/recommendations'\)|apiFetch<[^>]*>\(`\/decisions\//.test(readFileSync(f, 'utf8')))
+      .map(rel);
+    expect(offenders, offenders.join('\n')).toEqual([]);
+  });
+
+  it('M-REC-1: no authored recommendation evidence survives in ordinary source', () => {
+    // The fixture's statistical claims were the most persuasive fabrication in
+    // the app: "n=67, P=0.94, NATIVE" reads as a research finding.
+    // Scoped to fixture RECORD identifiers. `NATIVE`/`sampleSize`/`pValue` are
+    // also policy-cell VOCABULARY, still rendered by the matrix surfaces that
+    // M-PKG-1 emptied — those are a documented carry-over, not this guard's job.
+    const SENTINELS = ['rec_01J8Z', 'dec_01J8ZC', 'draft_01J8Z'];
+    const offenders: string[] = [];
+    for (const f of allSources(SRC)) {
+      const t = stripComments(readFileSync(f, 'utf8'));
+      for (const x of SENTINELS) if (t.includes(x)) offenders.push(`${rel(f)}: ${x}`);
+    }
     expect(offenders, offenders.join('\n')).toEqual([]);
   });
 

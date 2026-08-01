@@ -5,13 +5,14 @@ import { deriveFairValueGaps, type FairValueGap } from '@/lib/fairValueGaps';
 import { deriveLiquidityPools, type LiquidityPool } from '@/lib/liquidity';
 import { deriveMarketStructure, type MarketStructure } from '@/lib/marketStructure';
 import { type Candle } from '@/lib/chartData';
-import { api, QK, type BackendHealth, type BrokerReconciliation, type OperatorPreferences, type RuntimeHealth, type StrategyEvaluation, type SchedulerStatus, type MarketSnapshot, type RiskLimits, type MarketCandles, type FleetProvenance, type NodeOperationalView, type AccountOperationalView, type PositionOperationalView, type OrderOperationalView } from '@/lib/api';
+import { api, QK, type BackendHealth, type BrokerReconciliation, type OperatorPreferences, type RuntimeHealth, type StrategyEvaluation, type SchedulerStatus, type MarketSnapshot, type RiskLimits, type MarketCandles, type FleetProvenance, type NodeOperationalView, type AccountOperationalView, type PositionOperationalView, type OrderOperationalView, type RecommendationOperationalView } from '@/lib/api';
 import {
   authoritativeOnly,
   classify,
   UNAVAILABLE_DETAIL,
   TRADES_UNAVAILABLE_DETAIL,
   PACKAGES_UNAVAILABLE_DETAIL,
+  RECOMMENDATIONS_UNAVAILABLE_DETAIL,
   type OperationalStatus,
   type ProvenancedRecord,
 } from '@/lib/operationalProvenance';
@@ -229,7 +230,8 @@ export function usePairWorkspace(pairId: string) {
     // M-FLEET-2: fixture deployments no longer reach a pair workspace.
     const deployments: Deployment[] = [];
     const marketState = world.marketStateSnapshots.find((m) => m.instrument === pairId);
-    const decisions = world.decisionChains.filter((d) => d.scenarioKey.startsWith(`${pairId}:`));
+    // M-REC-1: fixture decision chains no longer reach a pair workspace.
+    const decisions: DecisionChain[] = [];
     // M-EVENTS-1: the pair workspace no longer surfaces fixture events.
     const events: EventEntry[] = [];
     return { pair: pairId, trades, ghosts, blocked, deployments, marketState, decisions, events };
@@ -245,26 +247,13 @@ const matrixCache = new Map<string, PolicyMatrixData>();
  * Phase 4.5). The endpoint returns the representative cells; `expandMatrix`
  * builds the full 24×6 grid client-side (unchanged), memoised by instrument@version.
  */
-export function usePolicyMatrix(instrument: string, packageVersion?: number): PolicyMatrixData {
-  const { data: source } = useSuspenseQuery({
-    // UI-0: NO silent fallback. This previously swallowed every failure
-    // (`.catch(() => null)`) and then synthesized all 144 cells — complete with
-    // NATIVE badges and sample sizes — so a dead endpoint rendered as a confident
-    // policy grid. The error now propagates to the route boundary and the operator
-    // sees an explicit unavailable state instead of invented policy.
-    queryKey: QK.policyMatrix(instrument, packageVersion),
-    queryFn: () => api.policyMatrix(instrument, packageVersion),
-    staleTime: Infinity,
-    retry: false,
-  });
-  return useMemo(() => {
-    const cacheKey = `${instrument}@${packageVersion ?? 'active'}`;
-    const hit = matrixCache.get(cacheKey);
-    if (hit) return hit;
-    const built = expandMatrix(instrument, source);
-    matrixCache.set(cacheKey, built);
-    return built;
-  }, [source, instrument, packageVersion]);
+export function usePolicyMatrix(_instrument: string, _packageVersion?: number): PolicyMatrixData {
+  // M-PKG-1 / M-REC-1: `/api/policy/{i}/matrix` derives its cells from
+  // `WORLD["packages"]`, so every eligibility verdict, sample size and p-value
+  // in the 144-cell grid was authored. M-PKG-1 removed the views that displayed
+  // the grid but left this hook fetching it; the recommendation-evidence guard
+  // caught the remainder. No package registry exists, so there is no matrix.
+  return { cells: {}, synthesizedCells: 0 } as PolicyMatrixData;
 }
 
 /**
@@ -535,17 +524,55 @@ export function useAccountsProtection(): {
 
 /** Decision chain via `/api/decisions/{id}` (migrated off `/api/world`, Phase 4.5).
  *  Per-id query key; returns undefined on 404. */
-export function useDecisionChain(decisionId: string): DecisionChain | undefined {
-  const { data } = useSuspenseQuery({
-    queryKey: QK.decision(decisionId),
-    queryFn: () => api.decision(decisionId).catch(() => null),
-    staleTime: Infinity,
-  });
-  return data ?? undefined;
+export function useDecisionChain(_decisionId: string): DecisionChain | undefined {
+  // M-REC-1: `/api/decisions/{id}` reads `WORLD["decisionChains"]` — authored
+  // narrative chains describing reasoning that never occurred. Genuine operator
+  // decisions are recorded per recommendation at
+  // `/api/trade-recommendations/{id}/decisions`; there is no authoritative
+  // chain-by-decision-id lookup, so this resolves to nothing.
+  return undefined;
 }
 
-/** Recommendations via `/api/recommendations` (migrated off `/api/world`, Step 4). */
-export function useRecommendations(): Recommendation[] {
+/**
+ * M-REC-1 — recommendations from the DURABLE OPERATOR STORE.
+ *
+ * `useRecommendations` read `/api/recommendations`, which returns
+ * `WORLD["recommendations"]`: authored proposals carrying p-values, sample
+ * sizes and NATIVE validation badges. Those numbers are the most persuasive
+ * fabrication in the application — a recommendation with "n=67, P=0.94" reads
+ * as a research finding.
+ *
+ * A genuine durable store already exists (`/api/trade-recommendations`), and
+ * critically it is NOT seeded from the fixture: `recommendation_store.py`
+ * contains no WORLD read of any kind, so durable and fixture records have never
+ * been able to mix. That is what makes this a migration rather than a removal.
+ *
+ * The two authorities stay separate. Nothing merges them, and no evidence field
+ * is carried over — the durable record has its own contract, and a field the
+ * old card expected does not become a reason to invent one.
+ */
+export function useRecommendations(): {
+  recommendations: RecommendationOperationalView[];
+  status: OperationalStatus;
+  detail: string;
+} {
+  const { data } = useSuspenseQuery({
+    queryKey: QK.tradeRecommendations,
+    queryFn: () => api.tradeRecommendations({}),
+    staleTime: Infinity,
+  });
+  return useMemo(() => {
+    const recs = data?.recommendations ?? [];
+    return {
+      recommendations: recs,
+      status: data ? (recs.length ? 'available' : 'empty') : 'unavailable',
+      detail: data ? '' : RECOMMENDATIONS_UNAVAILABLE_DETAIL,
+    };
+  }, [data]);
+}
+
+/** M-REC-1 — DEVELOPMENT FIXTURE PREVIEW ONLY. */
+export function useFixtureRecommendationsPreview(): Recommendation[] {
   const { data } = useSuspenseQuery({
     queryKey: QK.recommendations,
     queryFn: api.recommendations,
@@ -554,8 +581,11 @@ export function useRecommendations(): Recommendation[] {
   return data;
 }
 
-export function useDrafts(): Draft[] {
-  return useWorld().drafts;
+export function useDrafts(): { drafts: Draft[]; status: OperationalStatus } {
+  // M-REC-1: drafts came from `WORLD["drafts"]`. No durable draft store exists,
+  // and transforming durable recommendations into "drafts" would invent a
+  // lifecycle state the system does not implement.
+  return { drafts: [], status: 'unavailable' };
 }
 
 /**

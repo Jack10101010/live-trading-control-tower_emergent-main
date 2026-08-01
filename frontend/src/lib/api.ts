@@ -1708,6 +1708,8 @@ export const QK = {
   edgeMonitor: ['edge-monitor'] as const,
   systemConfidence: ['system-confidence'] as const,
   recommendations: ['recommendations'] as const,
+  /** M-REC-1: the durable operator recommendation store. */
+  tradeRecommendations: ['trade-recommendations'] as const,
   runtimeHealth: ['runtime-health'] as const,
   brokerReconciliation: ['broker-reconciliation'] as const,
   strategyDecisions: ['strategy-decisions'] as const,
