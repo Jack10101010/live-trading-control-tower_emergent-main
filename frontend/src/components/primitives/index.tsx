@@ -236,7 +236,28 @@ export function CohortChip({
 /*  MarketStateBadge — Badge variant                                           */
 /* -------------------------------------------------------------------------- */
 
-export function MarketStateBadge({ state, confidence, confirmed = true }: { state: string; confidence?: number; confirmed?: boolean }) {
+/**
+ * M-NODE-TEL-1: `state` is now optional. The badge rendered an authored regime
+ * (`BullExpand`) at an authored confidence (96%) from an authored model
+ * (`regime@2.3.0`). No node publishes market state, so absence must read as
+ * absence — not as a neutral regime and not as zero confidence, either of which
+ * would be a claim about the market.
+ */
+export function MarketStateBadge({ state, confidence, confirmed = true }: { state?: string; confidence?: number; confirmed?: boolean }) {
+  if (!state) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-2xs text-text-muted"
+        data-testid="market-state-unavailable"
+        title="No market-state model publishes to this process. Regime and confidence are unavailable — not neutral, and not zero."
+      >
+        market state unavailable
+      </span>
+    );
+  }
+  return <MarketStateBadgeInner state={state} confidence={confidence} confirmed={confirmed} />;
+}
+function MarketStateBadgeInner({ state, confidence, confirmed = true }: { state: string; confidence?: number; confirmed?: boolean }) {
   const color = marketStateVar(state);
   return (
     <Badge variant="marketState" color={color} glyph={<span className="mono text-2xs">{marketStateGlyph(state)}</span>}>

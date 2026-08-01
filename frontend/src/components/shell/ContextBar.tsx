@@ -77,7 +77,7 @@ export function ContextBar() {
 
       <div className="flex items-center gap-4 px-4 shrink-0">
         {inPair && marketState && (
-          <MarketStateBadge state={marketState.state} confidence={marketState.confidence} confirmed={marketState.confirmed} />
+          <MarketStateBadge state={marketState?.state} confidence={marketState?.confidence} confirmed={marketState?.confirmed} />
         )}
         {inPair && (
           <div className="text-xs">

@@ -230,7 +230,8 @@ export function usePairWorkspace(pairId: string) {
     const blocked: BlockedIntent[] = [];
     // M-FLEET-2: fixture deployments no longer reach a pair workspace.
     const deployments: Deployment[] = [];
-    const marketState = world.marketStateSnapshots.find((m) => m.instrument === pairId);
+    // M-NODE-TEL-1: no authoritative market state exists for a pair workspace.
+    const marketState = undefined;
     // M-REC-1: fixture decision chains no longer reach a pair workspace.
     const decisions: DecisionChain[] = [];
     // M-EVENTS-1: the pair workspace no longer surfaces fixture events.
@@ -694,21 +695,44 @@ export function useFixtureActivePackagePreview(): Package {
   return data;
 }
 
-export function useMarketState(instrument: string):
-  | {
-      state: MarketState;
-      confidence: number;
-      confirmed: boolean;
-      stateKnownAt: string;
-      shiftedDays: number;
-      source: string;
-      modelVersion: string;
-      components: Record<string, unknown>;
-      asOf: string;
-    }
-  | undefined {
-  const world = useWorld();
-  return world.marketStateSnapshots.find((m) => m.instrument === instrument);
+/**
+ * M-NODE-TEL-1 — market state has NO authoritative source.
+ *
+ * This returned `WORLD.marketStateSnapshots`: a single authored record claiming
+ * `BullExpand` at 96% confidence, confirmed, from model `regime@2.3.0`. Every
+ * part of that is invented — the regime, the confidence, the model identity and
+ * the timestamp — and it drove the shell badge, the pair header, chart
+ * annotations and policy-cell context.
+ *
+ * Audited against the node contract: `ct.node-telemetry.v1` publishes NO
+ * market-state, regime or confidence field of any kind. The fixture was the
+ * sole source, so this resolves to undefined and every consumer reports
+ * unavailable.
+ *
+ * Deliberately NOT replaced with a client-side heuristic. Deriving a regime
+ * from candles — a moving average, a volatility band — would produce a label
+ * that looks like a model output and is not one, which is a worse fabrication
+ * than the fixture because it would appear computed. A market-state model must
+ * publish its own explicit contract before this surface can claim anything.
+ */
+export interface MarketStateSnapshot {
+  state: MarketState;
+  confidence: number;
+  confirmed: boolean;
+  stateKnownAt: string;
+  shiftedDays: number;
+  source: string;
+  modelVersion: string;
+  asOf: string;
+}
+
+export function useMarketState(_instrument: string): MarketStateSnapshot | undefined {
+  return undefined;
+}
+
+/** M-NODE-TEL-1 — DEVELOPMENT FIXTURE PREVIEW ONLY. Authored regime data. */
+export function useFixtureMarketStatePreview(): Array<Record<string, unknown>> {
+  return useWorld().marketStateSnapshots as unknown as Array<Record<string, unknown>>;
 }
 
 /**

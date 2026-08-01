@@ -142,7 +142,7 @@ describe('structural isolation of fixture fleet data', () => {
   it('no ordinary component imports the fixture-preview hook', () => {
     const offenders = allSources(SRC)
       .filter((f) => !FIXTURE_ALLOWLIST.has(rel(f)))
-      .filter((f) => /useFixtureFleetPreview|useFixtureTradesPreview|useFixtureEventsPreview|useFixturePackagesPreview|useFixtureActivePackagePreview|useFixturePackageComparisonsPreview|useFixtureRecommendationsPreview/.test(readFileSync(f, 'utf8')))
+      .filter((f) => /useFixtureFleetPreview|useFixtureTradesPreview|useFixtureEventsPreview|useFixturePackagesPreview|useFixtureActivePackagePreview|useFixturePackageComparisonsPreview|useFixtureRecommendationsPreview|useFixtureMarketStatePreview/.test(readFileSync(f, 'utf8')))
       .map(rel);
     expect(offenders, offenders.join('\n')).toEqual([]);
   });
@@ -164,6 +164,41 @@ describe('structural isolation of fixture fleet data', () => {
     // including the chart overlay and the analytics engine.
     const offenders = allSources(SRC)
       .filter((f) => /\buseTrades\b/.test(stripComments(readFileSync(f, 'utf8'))))
+      .map(rel);
+    expect(offenders, offenders.join('\n')).toEqual([]);
+  });
+
+  it('M-NODE-TEL-1: no ordinary source reads WORLD market state directly', () => {
+    const offenders: string[] = [];
+    for (const f of allSources(SRC)) {
+      // hooks/useRepository.ts DEFINES the isolated preview hook.
+      if (rel(f) === 'hooks/useRepository.ts') continue;
+      if (/world\.marketStateSnapshots|useWorld\(\)\.marketStateSnapshots/.test(stripComments(readFileSync(f, 'utf8')))) {
+        offenders.push(rel(f));
+      }
+    }
+    expect(offenders, offenders.join('\n')).toEqual([]);
+  });
+
+  it('M-NODE-TEL-1: no fixture regime, confidence or model sentinel survives', () => {
+    // The authored MODEL IDENTITY. `BullExpand` is deliberately NOT a sentinel:
+    // it is a legitimate `MarketState` enum member used by the type, the matrix
+    // expander and the label utils. A vocabulary term is not a fabricated
+    // record — what must not survive is the invented model that produced it.
+    const SENTINELS = ['regime@2.3.0'];
+    const offenders: string[] = [];
+    for (const f of allSources(SRC)) {
+      const t = stripComments(readFileSync(f, 'utf8'));
+      for (const x of SENTINELS) if (t.includes(x)) offenders.push(`${rel(f)}: ${x}`);
+    }
+    expect(offenders, offenders.join('\n')).toEqual([]);
+  });
+
+  it('M-NODE-TEL-1: no frontend regime heuristic was introduced', () => {
+    // Deriving a regime from candles would look computed and would not be a
+    // model output — a worse fabrication than the fixture it replaced.
+    const offenders = allSources(SRC)
+      .filter((f) => /function\s+derive(Regime|MarketState)|computeRegime|inferRegime/.test(stripComments(readFileSync(f, 'utf8'))))
       .map(rel);
     expect(offenders, offenders.join('\n')).toEqual([]);
   });

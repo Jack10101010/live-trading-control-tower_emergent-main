@@ -1,4 +1,4 @@
-import { useFixtureFleetPreview, useFixturePackagesPreview, useFixtureActivePackagePreview } from '@/hooks/useRepository';
+import { useFixtureFleetPreview, useFixturePackagesPreview, useFixtureActivePackagePreview, useFixtureMarketStatePreview } from '@/hooks/useRepository';
 import { Panel, EmptyState } from '@/components/structures/Panel';
 
 /**
@@ -44,6 +44,7 @@ export function FixtureFleetPreview() {
       </div>
 
       <FixturePackages />
+      <FixtureMarketState />
       {!available ? (
         <EmptyState title="Fixture world not loaded" description={provenanceDetail} />
       ) : (
@@ -98,6 +99,32 @@ function FixturePackages() {
           <li key={`${p.packageId}-v${p.version}`}>
             v{p.version} · {p.label} · {p.status}
             {active && p.packageHash === active.packageHash ? ' · (active in fixture)' : ''}
+          </li>
+        ))}
+      </ul>
+    </Panel>
+  );
+}
+
+/**
+ * M-NODE-TEL-1: the authored market-state snapshot. It claimed `BullExpand` at
+ * 96% confidence, confirmed, from model `regime@2.3.0` — a complete regime
+ * model that does not exist. No node publishes market state.
+ */
+function FixtureMarketState() {
+  const snapshots = useFixtureMarketStatePreview();
+  return (
+    <Panel provenance="fixture" title={`Fixture market state (${snapshots.length})`}>
+      <p className="text-2xs text-text-muted mb-2" data-testid="fixture-market-state-note">
+        The regime, confidence and model version below are authored demonstration
+        data. No market-state model publishes to the Control Tower; ordinary
+        routes report this domain as unavailable.
+      </p>
+      <ul className="text-xs mono space-y-1" data-testid="fixture-market-state-list">
+        {snapshots.map((m, i) => (
+          <li key={String(m.instrument ?? i)}>
+            {String(m.instrument)} · {String(m.state)} · conf {String(m.confidence)} ·{' '}
+            {String(m.modelVersion)}
           </li>
         ))}
       </ul>

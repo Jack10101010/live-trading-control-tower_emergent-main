@@ -22,7 +22,7 @@ DYNAMIC = flips green automatically when its real source activates.
 | 7 | Live Runtime panel | adapter-fed | DYNAMIC | `/api/live-runtime` (mock adapter) | same, real adapter | demo MT5 connection | Low | Med | M-MT5-READ-1 | ☐ |
 | 8 | Trade Ledger panel | adapter-fed durable | DYNAMIC | `/api/ledger/*` (mock-ingested) | same, real broker history | demo MT5 connection | Low | Med | M-MT5-READ-1 | ☐ |
 | 9 | Charts (market-data + pair) + derived overlays | provider-dep. | DYNAMIC | market_data engine (provider=fixture) | provider=mt5 or store/polygon | MT5/store feed wired as default | Med | Med | M-FEED-1 | ☐ |
-| 10 | Market State snapshot cards | fixture | RED | WORLD.marketStateSnapshots | node-published market state | node telemetry | Med | Med | M-NODE-TEL-1 | ☐ |
+| 10 | Market State snapshot cards | **removed** | n/a (unavailable) | none — no model publishes | a real market-state model (unbuilt) | the model + its contract | Med | **Resolved** (no fabricated regime) | **M-NODE-TEL-1** | ☑ |
 | 11 | Broker Health view | fixture | RED | WORLD.brokerHealth | real MT5 health telemetry | demo MT5 + health surface | Med | High | M-MT5-READ-2 | ☐ |
 | 12 | Edge Monitor (main view + pair edge tab + Pair Health expectancy/win-rate) | **removed** | RED (honest placeholder surfaces) | `/api/edge-monitor` — **honest `computed:false`; WORLD.edgeMonitor severed, fixture-immune (tested)** | ledger + broker-history derived metrics (M-TRADES-2 and beyond) | no performance model exists; needs real trade history | Low | **Resolved** (no fabricated track record) | **M-EDGE-1** | ☑ |
 | 13 | Recommendations / drafts / decision chains (fixture) | **migrated to durable store** | n/a | `/api/trade-recommendations*` | — | — | Med | **Resolved** (no fixture recs) | **M-REC-1** | ☑ |
@@ -32,7 +32,7 @@ DYNAMIC = flips green automatically when its real source activates.
 | 17 | Feature flags (Settings + System cards + gates) | **capability states** | n/a | `/api/feature-flags` — state + source per capability | env/manifest control (future) | — | Low | **Resolved** (no fabricated availability) | **M-FLAGS-1** | ☑ |
 | 18 | Replay panels | replay | RED | WORLD.replaySessions | real replay engine output | replay engine | High | Low | (deferred) | ☐ |
 | 19 | Placeholders (latency histogram, snapshot integrity, tick/news rows) | placeholder | RED | none | node reconciliation + feed telemetry | node telemetry | Med | Low | M-NODE-TEL-2 | ☐ |
-| 20 | Engine Components / Deployments & Manifests (System) | fixture | RED | WORLD | node-published manifest | node telemetry | Med | Med | M-NODE-TEL-1 | ☐ |
+| 20 | Engine Components / Deployments & Manifests (System) | **removed** | n/a (unavailable) | none — no component contract | node-published component telemetry | `ct.node-telemetry.v1` has no component contract | Med | **Resolved** | **M-NODE-TEL-1** | ☑ |
 | 21 | Settings (profile/appearance/notifications/shortcuts) | runtime-config | **GREEN** | `/api/operator/preferences` | — | — | — | — | done | ☑ |
 | 22 | Storage & Feeds (System) | live | **GREEN** | `/runtime/health` | — | — | — | — | done | ☑ |
 | 23 | Security Baseline | live | **GREEN** | `/api/security/config` | — | — | — | — | done | ☑ |
@@ -57,6 +57,21 @@ DYNAMIC = flips green automatically when its real source activates.
   that still read WORLD answer `501 fixture_world_unavailable` instead of fabricated
   data; each is still retired by its own milestone. Development behaviour is unchanged,
   so no row's colour changes here.
+- **M-NODE-TEL-1 complete:** the authored regime model is gone. `WORLD.marketStateSnapshots`
+  held one record claiming `BullExpand` at 96% confidence, confirmed, from model
+  `regime@2.3.0` — the regime, the confidence, the model identity and the timestamp were
+  all invented, and it drove the shell badge, the pair header and policy-cell context.
+  Verified rather than assumed: `ct.node-telemetry.v1` publishes **no** market-state,
+  regime or confidence field of any kind, so the fixture was the sole source and this
+  resolves to unavailable. Deliberately NOT replaced with a candle heuristic — a regime
+  derived from a moving average would look computed and would not be a model output,
+  which is worse than the fixture. `MarketStateBadge` renders "market state unavailable"
+  rather than a neutral regime or zero confidence, either of which is a claim about the
+  market. Engine Components listed per-component versions taken from the fixture package:
+  module presence is not component readiness, and the node publishes cycle/lifecycle
+  state only. **MISSING CONTRACT:** a market-state model and a component-telemetry
+  contract must each publish their own explicit schema before these surfaces can claim
+  anything. No VPS change was made.
 - **M-FLAGS-1 complete:** the 17-key hardcoded boolean dict is gone. 16 of the 17 were
   `True`, each asserting a module was available while nothing consulted the capability —
   and by the end of this programme several had become actively FALSE: the flags claimed

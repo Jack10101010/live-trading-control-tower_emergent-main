@@ -56,7 +56,11 @@ export function TradeRenderer({ tradeId }: { tradeId: string }) {
   // inspector displayed an authored version and validation badge. No package
   // registry exists.
   const pkg = undefined as Package | undefined;
-  const { instrument, session, structure, direction, marketState } = parseScenarioKey(trade?.scenarioKey ?? 'X:x:BOS:long:BullExpand');
+  // M-NODE-TEL-1: the fallback scenario key ended in `BullExpand`, so a trade
+  // with no scenario key rendered an invented regime label. An absent key has
+  // no regime; the parser is given an explicitly empty one.
+  const { instrument, session, structure, direction, marketState } =
+    parseScenarioKey(trade?.scenarioKey ?? '');
   const currentMs = useMarketState(instrument);
 
   if (!trade) return <div className="p-4 text-text-muted">Trade not found</div>;
@@ -124,7 +128,7 @@ export function TradeRenderer({ tradeId }: { tradeId: string }) {
         </div>
         <div className="flex items-center gap-3 text-2xs">
           <div className="flex items-center gap-1.5"><span className="text-text-muted uppercase tracking-widest">Original</span><MarketStateBadge state={marketState} /></div>
-          {currentMs && <div className="flex items-center gap-1.5"><span className="text-text-muted uppercase tracking-widest">Current</span><MarketStateBadge state={currentMs.state} confidence={currentMs.confidence} confirmed={currentMs.confirmed} /></div>}
+          {currentMs && <div className="flex items-center gap-1.5"><span className="text-text-muted uppercase tracking-widest">Current</span><MarketStateBadge state={currentMs?.state} confidence={currentMs?.confidence} confirmed={currentMs?.confirmed} /></div>}
         </div>
         <div className="mono text-2xs text-text-muted break-all">scenario: {trade.scenarioKey}</div>
       </section>

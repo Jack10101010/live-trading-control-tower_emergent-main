@@ -89,10 +89,10 @@ export function PolicyCellRenderer({ instrument, cellKey }: { instrument: string
           <SectionHeader>Current Market State</SectionHeader>
           <KeyValueGrid
             items={[
-              { label: 'State', value: <MarketStateBadge state={marketState.state} confidence={marketState.confidence} /> },
-              { label: 'Known at', value: marketState.stateKnownAt, mono: true },
-              { label: 'Shifted', value: `${marketState.shiftedDays}d prior-day` },
-              { label: 'Source', value: marketState.source },
+              { label: 'State', value: <MarketStateBadge state={marketState?.state} confidence={marketState?.confidence} /> },
+              { label: 'Known at', value: marketState?.stateKnownAt, mono: true },
+              { label: 'Shifted', value: `${marketState?.shiftedDays}d prior-day` },
+              { label: 'Source', value: marketState?.source },
             ]}
           />
         </section>

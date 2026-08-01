@@ -196,32 +196,20 @@ export function SystemView() {
             carry no health claim — the Control Tower cannot observe engine health
             until a node publishes it. */}
         <Panel
-          provenance="fixture"
-          title={
-            <span className="flex items-center gap-2">
-              Engine Components
-              <ProvenanceChip provenance="fixture" detail="From the active strategy package." />
-            </span>
-          }
+          provenance="placeholder"
+          title="Engine Components"
           className="col-span-4"
         >
-          {componentVersions.length > 0 ? (
-            <ul className="space-y-2 text-xs" data-testid="engine-components">
-              {componentVersions.map(([name, v]) => (
-                <li key={name} className="flex items-center gap-2">
-                  <span className="text-text">{name}</span>
-                  <span className="ml-auto mono text-text-muted">{String(v)}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="text-xs text-text-muted italic">
-              No component versions in the active package.
-            </div>
-          )}
-          <div className="mt-3 pt-2 border-t text-2xs text-text-muted leading-relaxed" style={{ borderColor: 'var(--border-subtle)' }}>
-            Engine health is not observable from the Control Tower. A live execution node
-            must publish it.
+          {/* M-NODE-TEL-1: listed per-component names and versions taken from the
+              FIXTURE strategy package, presented as engine component state. That
+              was configuration at best and authored data in fact — module
+              presence is not component readiness. `ct.node-telemetry.v1`
+              publishes broad cycle and lifecycle state only; it has no
+              component-level contract, so none is claimed. */}
+          <div className="text-xs text-text-muted" data-testid="engine-components-unavailable">
+            No component-level telemetry contract exists. The node publishes
+            cycle and lifecycle state, which is shown above; per-component
+            health, readiness and versions are not reported by any source.
           </div>
         </Panel>
 
