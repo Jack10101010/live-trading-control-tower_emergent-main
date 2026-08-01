@@ -4737,24 +4737,78 @@ async def runtime_reset() -> dict[str, Any]:
 
 @api_router.get("/feature-flags")
 async def feature_flags() -> dict[str, Any]:
+    """M-FLAGS-1 — CAPABILITY REPORTING, not a hardcoded availability claim.
+
+    This returned a dict of 17 booleans, 16 of them `True`. Each one asserted
+    that a module was available and working, and the assertion was made by a
+    literal in this function — nothing consulted the capability itself.
+
+    By the end of the honesty programme several had become actively false. It
+    still claimed `versionHistory: True` and `packageComparison: True` for views
+    that M-PKG-1 had reduced to "no strategy-package registry exists"; it claimed
+    `edgeMonitor: True` for a surface reporting `computed:false`; it claimed
+    `ghostTrading: True` with no authoritative ghost-execution source anywhere.
+    A flag that says a capability is present when the capability reports its own
+    absence is the same fabrication class as an invented balance.
+
+    The response now reports STATE and SOURCE per capability:
+      available   — the capability exists and its source is reporting
+      disabled    — it exists but is switched off (a real, deliberate choice)
+      unsupported — this build genuinely cannot do it
+      unavailable — it should exist but no source is reporting
+      unknown     — origin cannot be established; FAILS CLOSED (gated off)
+
+    `source` distinguishes runtime from configuration so the two are never
+    conflated: a route existing in the bundle is configuration, not evidence
+    that the capability behind it works.
+    """
+    def cap(state: str, source: str, detail: str) -> dict:
+        return {"state": state, "source": source, "detail": detail}
+
+    NAV = "route configured in this build; the surface reports its own data state"
+    RETIRED = "no authoritative source exists; the surface reports unavailable"
+
     return {
-        "ghostTrading": True,
-        "replay": True,
-        "edgeMonitor": True,
-        "researchForward": True,
-        "brokerHealth": True,
-        "notifications": True,
-        "analytics": True,
-        "newsIntegration": False,
-        "experimentalFeatures": True,
-        "aiRecommendations": True,
-        "commandPalette": True,
-        "whyWorkflow": True,
-        "decisionChainInspector": True,
-        "accountsProtection": True,
-        "charts": True,
-        "versionHistory": True,
-        "packageComparison": True,
+        "schemaVersion": 1,
+        "capabilities": {
+            # Genuine UI capabilities: the route exists and the view is honest
+            # about its own data. Configuration, and labelled as configuration.
+            "commandPalette": cap("available", "configuration", NAV),
+            "charts": cap("available", "configuration", NAV),
+            "notifications": cap("available", "configuration", NAV),
+            "accountsProtection": cap("available", "configuration", NAV),
+            "brokerHealth": cap("available", "configuration", NAV),
+            "whyWorkflow": cap("available", "configuration", NAV),
+
+            # Surfaces whose DOMAIN has no authoritative source. Reporting these
+            # as available was the core defect: the flag disagreed with the view.
+            "edgeMonitor": cap("unavailable", "none",
+                               "no performance model exists (M-EDGE-1)"),
+            "analytics": cap("unavailable", "none",
+                             "no authoritative trade history (M-TRADES-1/2)"),
+            "versionHistory": cap("unavailable", "none",
+                                  "no strategy-package registry (M-PKG-1)"),
+            "packageComparison": cap("unavailable", "none",
+                                     "no strategy-package registry (M-PKG-1)"),
+            "ghostTrading": cap("unavailable", "none",
+                                "no authoritative ghost-execution source (M-TRADES-1)"),
+            "aiRecommendations": cap("unavailable", "none",
+                                     "no recommendation model exists; the durable "
+                                     "store records operator decisions only"),
+            "decisionChainInspector": cap("unavailable", "none",
+                                          "no authoritative decision-chain source (M-REC-1)"),
+            "researchForward": cap("unavailable", "none", RETIRED),
+
+            # Replay is fixture-backed and deliberately not promoted.
+            "replay": cap("unavailable", "none",
+                          "no real replay engine output (deferred milestone)"),
+
+            # Genuinely not built.
+            "newsIntegration": cap("unsupported", "none",
+                                   "not implemented in this build"),
+            "experimentalFeatures": cap("disabled", "configuration",
+                                        "no experimental capability is switched on"),
+        },
     }
 
 

@@ -29,7 +29,7 @@ DYNAMIC = flips green automatically when its real source activates.
 | 14 | Packages / versioning / comparisons / policy panels | **removed from operator UI** | n/a (unavailable states) | none — no registry exists | a real package registry (unbuilt) | the registry itself | High | **Resolved** (no fabricated versions) | **M-PKG-1** | ☑ |
 | 15 | Events feed (journal) | **runtime only** | n/a (no fixture rows) | `events.db` (runtime) | — | — | Low | **Resolved** (no merged stream) | **M-EVENTS-1** | ☑ |
 | 16 | Feed Health card | mixed | RED | runtime health + placeholders | split: provider row GREEN / unwired rows placeholder | split work only | Low | Low | M-EVENTS-1 | ☐ |
-| 17 | Feature flags (Settings + System cards + gates) | constants | RED | hardcoded dict `server.py:4510` | env/deployment-manifest config | config mechanism | Low | Low | M-FLAGS-1 | ☐ |
+| 17 | Feature flags (Settings + System cards + gates) | **capability states** | n/a | `/api/feature-flags` — state + source per capability | env/manifest control (future) | — | Low | **Resolved** (no fabricated availability) | **M-FLAGS-1** | ☑ |
 | 18 | Replay panels | replay | RED | WORLD.replaySessions | real replay engine output | replay engine | High | Low | (deferred) | ☐ |
 | 19 | Placeholders (latency histogram, snapshot integrity, tick/news rows) | placeholder | RED | none | node reconciliation + feed telemetry | node telemetry | Med | Low | M-NODE-TEL-2 | ☐ |
 | 20 | Engine Components / Deployments & Manifests (System) | fixture | RED | WORLD | node-published manifest | node telemetry | Med | Med | M-NODE-TEL-1 | ☐ |
@@ -57,6 +57,18 @@ DYNAMIC = flips green automatically when its real source activates.
   that still read WORLD answer `501 fixture_world_unavailable` instead of fabricated
   data; each is still retired by its own milestone. Development behaviour is unchanged,
   so no row's colour changes here.
+- **M-FLAGS-1 complete:** the 17-key hardcoded boolean dict is gone. 16 of the 17 were
+  `True`, each asserting a module was available while nothing consulted the capability —
+  and by the end of this programme several had become actively FALSE: the flags claimed
+  `versionHistory: true` and `packageComparison: true` for views M-PKG-1 had reduced to
+  "no strategy-package registry exists", and `edgeMonitor: true` for a surface reporting
+  `computed:false`. A flag asserting presence while the capability reports its own
+  absence is the same fabrication class as an invented balance. `/api/feature-flags` now
+  reports `state` (available / disabled / unsupported / unavailable) and `source`
+  (runtime / configuration / none) per capability — 6 available, 9 unavailable, 1
+  unsupported, 1 disabled. `unknown` is client-assigned and fails closed. FeatureGate
+  states the real reason instead of "Module disabled", which implied a false affordance:
+  nothing had been switched off.
 - **M-REC-1 complete:** the first genuine MIGRATION rather than a removal. The decisive
   audit finding was that `recommendation_store.py` contains no WORLD read of any kind —
   durable and fixture recommendations have never been able to mix — so the durable store

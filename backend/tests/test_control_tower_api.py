@@ -202,11 +202,26 @@ class TestSignals:
         assert isinstance(r.json(), list)
 
     def test_feature_flags(self, api):
+        """M-FLAGS-1: capabilities report STATE and SOURCE, never a bare bool.
+
+        A boolean cannot distinguish "switched off" from "never built" from
+        "should exist but nothing is reporting", and the old dict asserted
+        availability for surfaces that report their own absence."""
         r = api.get(f"{BASE_URL}/api/feature-flags")
         assert r.status_code == 200
         d = r.json()
+        assert d["schemaVersion"] == 1
+        caps = d["capabilities"]
+        VALID = {"available", "disabled", "unsupported", "unavailable"}
         for k in ("ghostTrading", "replay", "edgeMonitor", "commandPalette"):
-            assert k in d and isinstance(d[k], bool)
+            assert k in caps, k
+            assert not isinstance(caps[k], bool), f"{k} is still a bare boolean"
+            assert caps[k]["state"] in VALID, caps[k]
+            assert caps[k]["source"] in {"runtime", "configuration", "none"}
+        # A capability whose domain reports its own absence must not claim to be
+        # available — that disagreement was the defect this milestone removed.
+        for retired in ("edgeMonitor", "versionHistory", "packageComparison"):
+            assert caps[retired]["state"] == "unavailable", retired
 
     def test_active_package(self, api):
         r = api.get(f"{BASE_URL}/api/packages/active")

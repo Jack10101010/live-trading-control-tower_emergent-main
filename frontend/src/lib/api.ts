@@ -363,6 +363,22 @@ export interface InstrumentsResponse {
   instruments: Array<{ symbol: string }>;
 }
 
+/**
+ * M-FLAGS-1 — capability STATE and SOURCE, never a bare boolean.
+ * `unknown` is not a value the backend sends; it is what the client assigns to
+ * anything it cannot classify, and it fails closed.
+ */
+export type CapabilityState = 'available' | 'disabled' | 'unsupported' | 'unavailable' | 'unknown';
+export interface Capability {
+  state: CapabilityState;
+  source: 'runtime' | 'configuration' | 'none';
+  detail: string;
+}
+export interface CapabilityResponse {
+  schemaVersion: number;
+  capabilities: Record<string, Capability>;
+}
+
 export interface FleetResponse {
   /** False = no production source. Empty arrays then mean "unknown", NOT "none". */
   available: boolean;
@@ -1580,7 +1596,7 @@ export const api = {
   edgeMonitor: () => apiFetch<EdgeMonitor>('/edge-monitor'),
   systemConfidence: () => apiFetch<SystemConfidence>('/system-confidence'),
   recommendations: () => apiFetch<Recommendation[]>('/recommendations'),
-  featureFlags: () => apiFetch<Record<string, boolean>>('/feature-flags'),
+  featureFlags: () => apiFetch<CapabilityResponse>('/feature-flags'),
   brokerHealth: () => apiFetch<{ brokers: Broker[]; health: BrokerHealth[] }>('/broker-health'),
   runtimeHealth: () => apiFetch<RuntimeHealth>('/runtime/health'),
   brokerReconciliation: () => apiFetch<BrokerReconciliation>('/broker/reconciliation'),

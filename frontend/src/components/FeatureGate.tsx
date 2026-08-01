@@ -1,14 +1,22 @@
 import type { ReactNode } from 'react';
 import { Lock } from 'lucide-react';
-import { useFeatureFlag } from '@/hooks/useRepository';
+import { useCapability } from '@/hooks/useRepository';
+import { isUsable, stateOf, reasonFor, titleFor } from '@/lib/capability';
 import type { FeatureFlag } from '@/types/domain';
 import { EmptyState } from '@/components/structures/Panel';
 
 /**
- * FeatureGate — the single flag-gating primitive (§B.1). A view/workspace/nav
- * item renders only when its flag resolves enabled; otherwise it shows a
- * "module disabled" state (or a supplied fallback / nothing). Adding or
- * retiring a module is configuration, never code.
+ * M-FLAGS-1 — FeatureGate reports WHY a capability is not usable.
+ *
+ * It previously showed "Module disabled" for every closed gate, which was
+ * wrong in the majority of cases: nothing had been disabled. `versionHistory`
+ * is not switched off — no strategy-package registry exists. `newsIntegration`
+ * is not switched off — it was never built. Telling an operator a capability is
+ * "disabled" implies someone could turn it on, which is a false affordance.
+ *
+ * The four non-usable states stay distinct, and anything unrecognised resolves
+ * to `unknown` and gates OFF — the same fail-closed rule the provenance gate
+ * applies to an unrecognised provenance.
  */
 export function FeatureGate({
   flag,
@@ -19,16 +27,17 @@ export function FeatureGate({
   children: ReactNode;
   fallback?: ReactNode;
 }) {
-  const enabled = useFeatureFlag(flag);
-  if (enabled) return <>{children}</>;
+  const capability = useCapability(flag);
+  if (isUsable(capability)) return <>{children}</>;
   if (fallback !== undefined) return <>{fallback}</>;
+
+  const state = stateOf(capability);
   return (
-    <div className="h-full flex items-center justify-center" data-testid={`feature-disabled-${flag}`}>
-      <EmptyState
-        title="Module disabled"
-        description={`This workspace is turned off by the "${flag}" feature flag. Flags are currently hardcoded backend constants (see /api/feature-flags); environment/manifest control is not yet wired.`}
-        icon={<Lock size={18} />}
-      />
+    <div
+      className="h-full flex items-center justify-center"
+      data-testid={`capability-${state}-${flag}`}
+    >
+      <EmptyState title={titleFor(state)} description={reasonFor(capability)} icon={<Lock size={18} />} />
     </div>
   );
 }

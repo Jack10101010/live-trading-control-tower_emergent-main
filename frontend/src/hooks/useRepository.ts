@@ -5,7 +5,7 @@ import { deriveFairValueGaps, type FairValueGap } from '@/lib/fairValueGaps';
 import { deriveLiquidityPools, type LiquidityPool } from '@/lib/liquidity';
 import { deriveMarketStructure, type MarketStructure } from '@/lib/marketStructure';
 import { type Candle } from '@/lib/chartData';
-import { api, QK, type BackendHealth, type BrokerReconciliation, type OperatorPreferences, type RuntimeHealth, type StrategyEvaluation, type SchedulerStatus, type MarketSnapshot, type RiskLimits, type MarketCandles, type FleetProvenance, type NodeOperationalView, type AccountOperationalView, type PositionOperationalView, type OrderOperationalView, type RecommendationOperationalView } from '@/lib/api';
+import { api, QK, type BackendHealth, type BrokerReconciliation, type OperatorPreferences, type RuntimeHealth, type StrategyEvaluation, type SchedulerStatus, type MarketSnapshot, type RiskLimits, type MarketCandles, type FleetProvenance, type NodeOperationalView, type AccountOperationalView, type PositionOperationalView, type OrderOperationalView, type RecommendationOperationalView, type Capability } from '@/lib/api';
 import {
   authoritativeOnly,
   classify,
@@ -16,6 +16,7 @@ import {
   type OperationalStatus,
   type ProvenancedRecord,
 } from '@/lib/operationalProvenance';
+import { isUsable } from '@/lib/capability';
 import { expandMatrix } from '@/lib/matrixExpand';
 import { queryClient } from '@/lib/queryClient';
 import { applyEvents, resetLastAppliedSeq, seedLastAppliedSeq } from '@/lib/realtime';
@@ -715,17 +716,35 @@ export function useMarketState(instrument: string):
  * via TanStack Query; backend returns the same defaults so behaviour is
  * identical to hardcoded flags today but flippable at the edge later.
  */
-export function useFeatureFlags(): Record<FeatureFlag, boolean> {
+export function useCapabilities(): Record<string, Capability> {
   const { data } = useSuspenseQuery({
     queryKey: QK.featureFlags,
     queryFn: api.featureFlags,
     staleTime: Infinity,
   });
-  return data as Record<FeatureFlag, boolean>;
+  return data?.capabilities ?? {};
 }
 
+/** M-FLAGS-1: the capability record, or undefined when the seam has no entry. */
+export function useCapability(name: string): Capability | undefined {
+  return useCapabilities()[name];
+}
+
+/**
+ * M-FLAGS-1: usable ONLY when `available`. Everything else — disabled,
+ * unsupported, unavailable, unknown, or absent from the response — fails closed.
+ */
 export function useFeatureFlag(flag: FeatureFlag): boolean {
-  return useFeatureFlags()[flag];
+  return isUsable(useCapabilities()[flag]);
+}
+
+/** Back-compat for nav gating: a usable-only boolean map. */
+export function useFeatureFlags(): Record<string, boolean> {
+  const caps = useCapabilities();
+  return useMemo(
+    () => Object.fromEntries(Object.entries(caps).map(([k, v]) => [k, isUsable(v)])),
+    [caps]
+  );
 }
 
 /**
