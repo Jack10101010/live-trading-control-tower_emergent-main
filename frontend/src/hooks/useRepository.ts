@@ -346,13 +346,18 @@ export function useFixtureTradesPreview(scope?: { pair?: string; lane?: string }
 }
 
 /** Broker health via `/api/broker-health` (migrated off `/api/world`, Step 4). */
-export function useBrokerHealth(): { brokers: Broker[]; health: BrokerHealth[] } {
+export function useBrokerHealth(): { available: boolean; detail: string } {
+  // M-HONESTY-FINAL: returned fixture broker records with invented latency and
+  // health. No broker-health telemetry source exists.
   const { data } = useSuspenseQuery({
     queryKey: QK.brokerHealth,
     queryFn: api.brokerHealth,
     staleTime: Infinity,
   });
-  return data;
+  return {
+    available: Boolean(data?.available),
+    detail: data?.detail ?? 'No broker-health telemetry source exists.',
+  };
 }
 
 /** Edge monitor via `/api/edge-monitor` (migrated off `/api/world`, Step 4). */

@@ -4549,7 +4549,42 @@ async def trades(pair: str | None = None, lane: str | None = None):
 
 @api_router.get("/broker-health")
 async def broker_health():
-    return {"brokers": WORLD.get("brokers", []), "health": WORLD.get("brokerHealth", [])}
+    """M-HONESTY-FINAL — broker health has no authoritative source.
+
+    This returned `WORLD["brokers"]` + `WORLD["brokerHealth"]`: authored broker
+    records with invented latency, reconnect counts, execution speed, spread and
+    slippage. The final certification audit found it still reachable — the
+    `brokerHealth` capability reported `available`, so an operator could open the
+    route and read fabricated connectivity metrics.
+
+    Real broker health requires MT5 health telemetry, which no source publishes.
+    The fixture records remain available to the development preview via
+    `/api/dev/fixture-broker-health`.
+    """
+    return {
+        "schemaVersion": 1,
+        "available": False,
+        "code": "broker_health_unavailable",
+        "detail": ("No broker-health telemetry source exists. Latency, reconnects, "
+                   "execution speed, spread and slippage require a live MT5 health "
+                   "surface; none is published to this process."),
+        "brokers": [],
+        "health": [],
+    }
+
+
+@api_router.get("/dev/fixture-broker-health")
+async def dev_fixture_broker_health():
+    """M-HONESTY-FINAL — DEVELOPMENT FIXTURE BROKER HEALTH. Not operational."""
+    if not _fixture_available():
+        return _fixture_unavailable("dev_fixture_broker_health")
+    return {"schemaVersion": 1, "provenance": "fixture",
+            "source": "development_fixture",
+            "detail": ("Authored broker records with invented latency and health. "
+                       "The operational surface is /api/broker-health, which "
+                       "reports unavailable."),
+            "brokers": list(WORLD.get("brokers", [])),
+            "health": list(WORLD.get("brokerHealth", []))}
 
 
 @api_router.get("/edge-monitor")
@@ -4809,15 +4844,23 @@ async def feature_flags() -> dict[str, Any]:
             "charts": cap("available", "configuration", NAV),
             "notifications": cap("available", "configuration", NAV),
             "accountsProtection": cap("available", "configuration", NAV),
-            "brokerHealth": cap("available", "configuration", NAV),
+
             "whyWorkflow": cap("available", "configuration", NAV),
 
             # Surfaces whose DOMAIN has no authoritative source. Reporting these
             # as available was the core defect: the flag disagreed with the view.
             "edgeMonitor": cap("unavailable", "none",
                                "no performance model exists (M-EDGE-1)"),
-            "analytics": cap("unavailable", "none",
-                             "no authoritative trade history (M-TRADES-1/2)"),
+            # M-TRADES-2 built a working authoritative analytics capability: it
+            # reads the ledger and honestly reports available/empty/unavailable.
+            # Leaving this `unavailable` made the gate hide the view's own, more
+            # informative message behind a less informative one.
+            "analytics": cap("available", "runtime",
+                             "computed from admissible ledger records; the view "
+                             "reports its own data state"),
+            "brokerHealth": cap("unavailable", "none",
+                                "no broker-health telemetry source exists "
+                                "(M-HONESTY-FINAL)"),
             "versionHistory": cap("unavailable", "none",
                                   "no strategy-package registry (M-PKG-1)"),
             "packageComparison": cap("unavailable", "none",

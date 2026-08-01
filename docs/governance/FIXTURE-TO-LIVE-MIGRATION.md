@@ -227,3 +227,35 @@ are never treated as zero.
 answered with nothing admissible reports `empty` with a full exclusion account —
 never a zero-performance report. Under the mock adapter every ledger record is
 `mock`, so development correctly shows `empty`.
+
+## M-HONESTY-FINAL — zero-mock certification
+
+Three genuine contaminations survived the twelve milestones and were found by
+tracing code and probing live responses, not by reading this document:
+
+1. **`/api/broker-health` served `WORLD.brokers` + `WORLD.brokerHealth`** — authored
+   broker records with invented latency, reconnects, execution speed, spread and
+   slippage — and its capability reported `available`, so the route was reachable.
+   Severed; fixture records moved to `/api/dev/fixture-broker-health`.
+2. **`OperationalDashboard` (mounted on `/system`, an ordinary route) rendered
+   `account.balance` and `account.equity` with only a MOCK badge.** Under the mock
+   adapter that is the $100,000 / $100,412 fixture figure. Badging is M-FLEET-1-era
+   treatment; it now applies the same provenance gate as every other surface and
+   reports "no authoritative source" when nothing is admitted.
+3. **Two stale capability states.** `analytics` still said `unavailable` after
+   M-TRADES-2 made it genuinely work, so the gate hid the view's own more
+   informative message; `brokerHealth` said `available` for a fixture-backed
+   surface. Both corrected.
+
+**Live endpoint probe.** Every endpoint an ordinary hook calls was checked for
+fixture sentinels. Clean except `/operations/{accounts,positions,summary}`, which
+emit `mock-fixture`-stamped records — rejected by the frontend gate, and now by
+`OperationalDashboard` too. The values cross the wire; nothing renders them.
+
+**Remaining red borders on ordinary routes (~20).** Concentrated in PairViews
+(Pair Health, Market State, Today's Posture, Warning signals, Health Score, Cell
+Coverage), GlobalViews (Feed Health, Market State Provenance, latency histogram,
+flags) and SystemView. Most now frame EMPTY cards whose fixture content was
+severed by earlier milestones — the border outlived the data. Reclassifying each
+requires per-card verification and is **outstanding work**, tracked here rather
+than claimed complete.

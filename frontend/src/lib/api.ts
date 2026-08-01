@@ -1629,7 +1629,10 @@ export const api = {
   systemConfidence: () => apiFetch<SystemConfidence>('/system-confidence'),
   recommendations: () => apiFetch<Recommendation[]>('/recommendations'),
   featureFlags: () => apiFetch<CapabilityResponse>('/feature-flags'),
-  brokerHealth: () => apiFetch<{ brokers: Broker[]; health: BrokerHealth[] }>('/broker-health'),
+  brokerHealth: () => apiFetch<{
+    schemaVersion: number; available: boolean; code?: string; detail: string;
+    brokers: Broker[]; health: BrokerHealth[];
+  }>('/broker-health'),
   runtimeHealth: () => apiFetch<RuntimeHealth>('/runtime/health'),
   brokerReconciliation: () => apiFetch<BrokerReconciliation>('/broker/reconciliation'),
   /** Run one reconciliation cycle (appends one BotEvent). Drives the poll loop. */

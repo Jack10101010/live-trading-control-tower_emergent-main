@@ -37,7 +37,7 @@ function node(over: Partial<NodeOperationalView> = {}): NodeOperationalView {
     executionMode: 'observe', authorizationSummary: null,
     reconciliationState: 'clean', openPositionCount: 1, openOrderCount: 0,
     activeScenarioCount: 0, lastActivity: '2026-07-27T12:00:00Z',
-    telemetryAgeSeconds: 3, warnings: [], provenance: 'node-telemetry',
+    telemetryAgeSeconds: 3, warnings: [], provenance: 'live_mt5',
     freshness: fresh(), ...over,
   };
 }
@@ -47,7 +47,7 @@ function account(over: Partial<AccountOperationalView> = {}): AccountOperational
     accountFingerprint: 'acct_1', broker: 'brk_x', server: 'Demo', balance: 100000,
     equity: 100412, margin: 0, marginLevel: 0, leverage: 100, currency: 'USD',
     unrealizedPnL: 12.5, realizedPnLToday: null, openRisk: null,
-    connectionState: 'Connected', provenance: 'mock-fixture', freshness: fresh(),
+    connectionState: 'Connected', provenance: 'live_mt5', freshness: fresh(),
     ...over,
   };
 }
@@ -59,7 +59,7 @@ function order(over: Partial<OrderOperationalView> = {}): OrderOperationalView {
     requestedPrice: null, currentState: 'acknowledged', lifecycle: [],
     brokerStatus: 'pending', scenarioId: 'EURUSD:london',
     timestamps: { createdAt: '2026-07-27T12:00:00Z', updatedAt: null },
-    reconciliation: { required: false }, nodeId: null, provenance: 'mock-fixture',
+    reconciliation: { required: false }, nodeId: null, provenance: 'live_mt5',
     ...over,
   };
 }
@@ -70,7 +70,7 @@ function position(over: Partial<PositionOperationalView> = {}): PositionOperatio
     entryPrice: 1.1, currentPrice: null, unrealizedPnL: 12.5, stopLoss: 1.095,
     takeProfit: 1.11, ageSeconds: null, lifecycle: [], protectionState: 'protected',
     reconciliation: { required: false, locked: false }, scenarioId: null,
-    nodeId: null, accountFingerprint: 'acctfp_live1', provenance: 'mock-fixture',
+    nodeId: null, accountFingerprint: 'acctfp_live1', provenance: 'live_mt5',
     ...over,
   };
 }
@@ -130,13 +130,23 @@ describe('OperationalDashboard', () => {
     expect(screen.getByTestId('positions-table').textContent).toContain('protected');
   });
 
-  it('shows a MOCK badge for fixture provenance and LIVE for live_mt5', async () => {
-    vi.spyOn(api, 'operationsSummary').mockResolvedValue(summary());
-    const { unmount } = mount();
-    await waitFor(() => screen.getByTestId('account-card'));
-    expect(screen.getByTestId('account-card').textContent).toContain('MOCK');
-    unmount();
-    cleanup();
+  it('M-HONESTY-FINAL: rejects mock-fixture records instead of badging them', async () => {
+    // This dashboard rendered account BALANCE and EQUITY from the projection
+    // with only a MOCK badge — under the mock adapter that is the $100,000
+    // fixture figure on an ordinary route (/system). Badging is M-FLEET-1-era
+    // treatment; it now applies the same provenance gate as every other surface.
+    vi.spyOn(api, 'operationsSummary').mockResolvedValue(summary({
+      nodes: [], accounts: [account({ provenance: 'mock-fixture', balance: 100000 })],
+    }));
+    mount();
+    await waitFor(() => screen.getByTestId('operational-dashboard-unauthoritative'));
+    expect(document.body.innerHTML).not.toContain('100000');
+    expect(screen.queryByTestId('account-card')).toBeNull();
+  });
+
+  it('badges an admitted live_mt5 account as LIVE', async () => {
+    // The MOCK half of this test is gone: a mock-fixture account can no longer
+    // reach a card at all, so there is nothing left to badge MOCK.
     vi.spyOn(api, 'operationsSummary').mockResolvedValue(
       summary({ accounts: [account({ provenance: 'live_mt5' })] }));
     mount();

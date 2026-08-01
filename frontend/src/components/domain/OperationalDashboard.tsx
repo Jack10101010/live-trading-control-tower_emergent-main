@@ -13,7 +13,7 @@
  *   RECONCILIATION REQUIRED  — the projection says this entity needs evidence
  */
 import { useQuery } from '@tanstack/react-query';
-import { isAuthoritative } from '@/lib/operationalProvenance';
+import { isAuthoritative, authoritativeOnly } from '@/lib/operationalProvenance';
 import {
   api,
   type AccountOperationalView,
@@ -383,21 +383,40 @@ export function OperationalDashboard() {
 
   return (
     <div className="space-y-4" data-testid="operational-dashboard">
+      {/* M-HONESTY-FINAL: this rendered account BALANCE and EQUITY straight from
+          the projection with only a MOCK badge — under the mock adapter that is
+          the $100,000 fixture figure on an ordinary route. Badging is
+          M-FLEET-1-era treatment; every other surface applies the provenance
+          gate. It does now: only authoritative records render, and a rejected
+          set reports absence rather than showing labelled fabrications. */}
+      {authoritativeOnly(data.accounts as never[]).length === 0
+        && authoritativeOnly(data.nodes as never[]).length === 0 ? (
+        <section className="rounded-md border border-[color:var(--border)] bg-[color:var(--panel)] p-3"
+                 data-testid="operational-dashboard-unauthoritative">
+          <span className={BADGE} style={C.bad}>NO AUTHORITATIVE SOURCE</span>
+          <p className="text-2xs text-text-muted mt-2">
+            The operational projection answered, but no record carries authoritative
+            provenance. The active broker adapter is not a live MT5 connection, so no
+            node, account, order or position can be shown as operational truth.
+          </p>
+        </section>
+      ) : (
+      <>
       <div className="grid grid-cols-12 gap-4">
-        {data.nodes.map((n) => (
+        {authoritativeOnly(data.nodes as never[]).map((n: typeof data.nodes[number]) => (
           <div key={n.nodeId} className="col-span-12 lg:col-span-6">
             <NodeCard node={n} />
           </div>
         ))}
-        {data.accounts.map((a, i) => (
+        {authoritativeOnly(data.accounts as never[]).map((a: typeof data.accounts[number], i: number) => (
           <div key={a.accountFingerprint ?? i} className="col-span-12 lg:col-span-6">
             <AccountCard account={a} />
           </div>
         ))}
       </div>
       <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-12"><OrdersTable orders={data.activeOrders} /></div>
-        <div className="col-span-12"><PositionsTable positions={data.openPositions} /></div>
+        <div className="col-span-12"><OrdersTable orders={authoritativeOnly(data.activeOrders as never[]) as typeof data.activeOrders} /></div>
+        <div className="col-span-12"><PositionsTable positions={authoritativeOnly(data.openPositions as never[]) as typeof data.openPositions} /></div>
       </div>
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-12 lg:col-span-4"><OperationsCard summary={data} /></div>
@@ -405,6 +424,8 @@ export function OperationalDashboard() {
         <div className="col-span-12 lg:col-span-4"><WarningsCard summary={data} /></div>
         <div className="col-span-12 lg:col-span-4"><SystemHealthCard summary={data} /></div>
       </div>
+      </>
+      )}
     </div>
   );
 }
