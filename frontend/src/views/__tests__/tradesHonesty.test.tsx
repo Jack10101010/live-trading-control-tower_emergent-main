@@ -96,11 +96,14 @@ describe('analytics safety boundary', () => {
 
 /* ── rendering ─────────────────────────────────────────────────────────────── */
 
-const state = vi.hoisted(() => ({ trades: {} as Record<string, unknown> }));
+const state = vi.hoisted(() => ({ trades: {} as Record<string, unknown>,
+                                  analytics: {} as Record<string, unknown> }));
 
 vi.mock('@/hooks/useRepository', () => ({
   useOperationalTrades: () => state.trades,
   usePolicyMatrix: () => ({ cells: {}, synthesizedCells: 0 }),
+  // M-TRADES-2: AnalyticsView now reads the authoritative backend contract.
+  useLedgerAnalytics: () => state.analytics,
 }));
 vi.mock('react-router-dom', () => ({ useOutletContext: () => ({ pair: 'EURUSD' }) }));
 
@@ -108,16 +111,34 @@ import { AnalyticsView } from '@/views/AnalyticsView';
 
 beforeEach(() => {
   state.trades = { positions: [], orders: [], status: 'unavailable', detail: 'no source' };
+  state.analytics = {
+    schemaVersion: 1, availability: 'empty', admittedCount: 0, excludedCount: 2,
+    exclusions: [{ tradeId: 'a', reason: 'execution_origin_not_admissible' },
+                 { tradeId: 'b', reason: 'execution_origin_not_admissible' }],
+    accountCurrency: null, currenciesSeen: [], wins: 0, losses: 0, breakEven: 0,
+    grossProfit: null, grossLoss: null, grossRealizedPnL: null, winRate: null,
+    averageWin: null, averageLoss: null, profitFactor: null, expectancyGross: null,
+    maxDrawdownGross: null, equityCurveGross: [],
+    netAvailable: false, netRealizedPnL: null, netUnavailableReason: null,
+    rAvailable: false, averageR: null, expectancyR: null, rUnavailableReason: null,
+  };
 });
 
 describe('AnalyticsView under an inadmissible source', () => {
-  it('reports no authoritative history rather than a zero-performance result', () => {
+  it('reports no admissible trades rather than a zero-performance result', () => {
     const { container } = render(<AnalyticsView />);
-    expect(screen.getByTestId('analytics-unavailable')).toBeTruthy();
-    expect(screen.getByText(/No authoritative trade history/i)).toBeTruthy();
+    expect(screen.getByText(/No admissible completed trades/i)).toBeTruthy();
     const html = container.innerHTML;
-    expect(html).not.toMatch(/0\s*%/);
+    // The decisive assertion: an empty admitted set must never render as an
+    // OBSERVED flat result. No rate, no currency figure, no flat curve.
+    expect(html).not.toMatch(/0\.0\s*%/);
     expect(html).not.toMatch(/\$0/);
     expect(html).not.toMatch(/\b0 trades\b/);
+  });
+
+  it('shows the exclusion account so refusals are auditable', () => {
+    render(<AnalyticsView />);
+    expect(screen.getByTestId('analytics-exclusions').textContent)
+      .toMatch(/2 × execution_origin_not_admissible/);
   });
 });

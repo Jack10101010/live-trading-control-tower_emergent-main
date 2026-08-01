@@ -379,6 +379,36 @@ export interface CapabilityResponse {
   capabilities: Record<string, Capability>;
 }
 
+/**
+ * M-TRADES-2 — the authoritative analytics contract. Every metric is computed
+ * by the backend from admitted records; the frontend derives nothing. `null`
+ * means not derivable and must never render as 0.
+ */
+export interface LedgerAnalytics {
+  schemaVersion: number;
+  availability: 'available' | 'empty' | 'unavailable';
+  admittedCount: number;
+  excludedCount: number;
+  exclusions: Array<{ tradeId: string | null; reason: string }>;
+  accountCurrency: string | null;
+  currenciesSeen: string[];
+  wins: number; losses: number; breakEven: number;
+  grossProfit: number | null; grossLoss: number | null;
+  grossRealizedPnL: number | null;
+  winRate: number | null;
+  averageWin: number | null; averageLoss: number | null;
+  profitFactor: number | null;
+  expectancyGross: number | null;
+  maxDrawdownGross: number | null;
+  equityCurveGross: Array<{ at: string | null; cumulative: number }>;
+  netAvailable: boolean;
+  netRealizedPnL: number | null;
+  netUnavailableReason: string | null;
+  rAvailable: boolean;
+  averageR: number | null; expectancyR: number | null;
+  rUnavailableReason: string | null;
+}
+
 export interface FleetResponse {
   /** False = no production source. Empty arrays then mean "unknown", NOT "none". */
   available: boolean;
@@ -1485,6 +1515,8 @@ export const api = {
     apiFetch<ScenarioOperationalView & { history: ScenarioEventView[] }>(
       `/scenarios/${encodeURIComponent(scenarioId)}`),
   instruments: () => apiFetch<InstrumentsResponse>('/instruments'),
+  /** M-TRADES-2 — performance over admissible MT5-origin ledger records. */
+  ledgerAnalytics: () => apiFetch<LedgerAnalytics>('/ledger/analytics'),
   /** M-EVENTS-1 — DEVELOPMENT FIXTURE EVENTS ONLY. Not the audit stream. */
   fixtureEventsPreview: () =>
     apiFetch<{ provenance: string; detail: string; events: EventEntry[] }>('/dev/fixture-events'),
@@ -1703,6 +1735,7 @@ export const QK = {
   /** M-FLEET-2: DEVELOPMENT FIXTURE ONLY. Ordinary hooks must not use this. */
   fixtureFleetPreview: ['fixture-fleet-preview'] as const,
   instruments: ['instruments'] as const,
+  ledgerAnalytics: ['ledger', 'analytics'] as const,
   fixtureEventsPreview: ['fixture-events-preview'] as const,
   operationsNodes: ['operations', 'nodes'] as const,
   operationsAccounts: ['operations', 'accounts'] as const,

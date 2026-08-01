@@ -5,7 +5,7 @@ import { deriveFairValueGaps, type FairValueGap } from '@/lib/fairValueGaps';
 import { deriveLiquidityPools, type LiquidityPool } from '@/lib/liquidity';
 import { deriveMarketStructure, type MarketStructure } from '@/lib/marketStructure';
 import { type Candle } from '@/lib/chartData';
-import { api, QK, type BackendHealth, type BrokerReconciliation, type OperatorPreferences, type RuntimeHealth, type StrategyEvaluation, type SchedulerStatus, type MarketSnapshot, type RiskLimits, type MarketCandles, type FleetProvenance, type NodeOperationalView, type AccountOperationalView, type PositionOperationalView, type OrderOperationalView, type RecommendationOperationalView, type Capability } from '@/lib/api';
+import { api, QK, type BackendHealth, type BrokerReconciliation, type OperatorPreferences, type RuntimeHealth, type StrategyEvaluation, type SchedulerStatus, type MarketSnapshot, type RiskLimits, type MarketCandles, type FleetProvenance, type NodeOperationalView, type AccountOperationalView, type PositionOperationalView, type OrderOperationalView, type RecommendationOperationalView, type Capability, type LedgerAnalytics } from '@/lib/api';
 import {
   authoritativeOnly,
   classify,
@@ -137,6 +137,16 @@ export function useFixtureEventsPreview(): { events: EventEntry[]; detail: strin
     staleTime: Infinity,
   });
   return { events: data?.events ?? [], detail: data?.detail ?? '' };
+}
+
+/** M-TRADES-2 — the ONLY analytics source. No client-side metric derivation. */
+export function useLedgerAnalytics(): LedgerAnalytics {
+  const { data } = useSuspenseQuery({
+    queryKey: QK.ledgerAnalytics,
+    queryFn: api.ledgerAnalytics,
+    staleTime: Infinity,
+  });
+  return data;
 }
 
 export function useConfiguredInstruments(): { symbols: string[]; configured: boolean } {

@@ -445,6 +445,51 @@ class TradeLedgerStore:
                 params).fetchall()
         return [_entry_from_snapshot(self._row_to_entry(r)) for r in rows]
 
+    def list_admissible_for_analytics(self, *, limit: int = 500) -> list[dict]:
+        """M-TRADES-2 — rows whose EXECUTION ORIGIN admits them to analytics.
+
+        The origin filter is applied in SQL against the indexed
+        `execution_origin` column, so mock and unknown rows are never loaded
+        into the process at all. Everything returned has already passed the
+        origin gate; the analytics module applies the remaining predicates.
+
+        Ordering is deterministic (closed time, then trade id) because drawdown
+        and the equity curve are order-dependent.
+        """
+        import ledger_admission as _adm
+        admissible = tuple(sorted(_adm.ANALYTICS_ADMISSIBLE))
+        placeholders = ",".join("?" for _ in admissible)
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"SELECT entry_json FROM ledger_entries "
+                f"WHERE execution_origin IN ({placeholders}) "
+                f"ORDER BY closed_at ASC, trade_id ASC LIMIT ?",
+                (*admissible, int(limit))).fetchall()
+        out = []
+        for row in rows:
+            try:
+                raw = json.loads(row["entry_json"])
+            except (ValueError, TypeError):
+                continue          # malformed rows are skipped, never guessed at
+            trade = raw.get("trade") or {}
+            lineage = trade.get("lineage") or {}
+            out.append({
+                "tradeId": raw.get("tradeId"), "status": raw.get("status"),
+                "conflicts": raw.get("conflicts") or [],
+                "executionOrigin": tld.ExecutionOrigin.normalize(lineage.get("adapter")),
+                "origin": lineage.get("origin"),
+                "outcome": trade.get("outcome"),
+                "fullyClosed": trade.get("fullyClosed"),
+                "grossRealizedPnL": trade.get("grossRealizedPnL"),
+                "netRealizedPnL": trade.get("netRealizedPnL"),
+                "realizedR": trade.get("realizedR"),
+                "costCompleteness": trade.get("costCompleteness"),
+                "accountCurrency": trade.get("accountCurrency"),
+                "closedAt": trade.get("closedAt"),
+                "instrument": trade.get("instrument"), "side": trade.get("side"),
+            })
+        return out
+
     def count_trades(self, **filters) -> int:
         return len(self.list_trades(limit=100000, **filters))
 

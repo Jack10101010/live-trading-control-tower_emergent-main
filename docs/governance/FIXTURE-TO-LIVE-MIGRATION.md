@@ -17,7 +17,7 @@ DYNAMIC = flips green automatically when its real source activates.
 | 2 | System Confidence (shell gauge, context chips, fleet rail) | **removed** | n/a (no card) | `/api/system-confidence` — **honest `computed:false`; fixture fiction severed (tested)** | future model from genuine telemetry only | a real confidence model (deliberately not built) | Low | **Resolved** (no fabricated certainty) | **M-CONF-1** | ☑ |
 | 3 | Fleet deployment tiles / brokers / accounts | **removed from operator UI** | n/a (no fixture card) | `/api/operations/{nodes,accounts}` filtered to `live_mt5` | same, real MT5 adapter | demo MT5 connection | Med | **Resolved** (no fixture records) | **M-FLEET-2** | ☑ |
 | 4 | Pair trades / ghost trades / pending orders / blocked intents | **removed from operator UI** | n/a (no fixture card) | `/api/operations/{orders,positions}` filtered to `live_mt5` | same, real MT5 adapter | demo MT5 + ledger ORIGIN contract | Med | **Resolved** (no fixture records) | **M-TRADES-1** | ☑ |
-| 5 | Analytics (performance, equity curve) | fixture-derived | RED | computed from WORLD trades | recompute from ledger closes | #4 | Low | High | M-TRADES-2 | ☐ |
+| 5 | Analytics (performance, equity curve) | **authoritative ledger** | n/a | `/api/ledger/analytics` — admissible MT5 records only | same, once real MT5 history exists | demo MT5 connection | Low | **Resolved** (no fabricated performance) | **M-TRADES-2** | ☑ |
 | 6 | Operational Dashboard | adapter-fed | DYNAMIC | `/api/operations/*` (mock adapter) | same endpoints, real adapter | demo MT5 connection | Low | Med | M-MT5-READ-1 | ☐ |
 | 7 | Live Runtime panel | adapter-fed | DYNAMIC | `/api/live-runtime` (mock adapter) | same, real adapter | demo MT5 connection | Low | Med | M-MT5-READ-1 | ☐ |
 | 8 | Trade Ledger panel | adapter-fed durable | DYNAMIC | `/api/ledger/*` (mock-ingested) | same, real broker history | demo MT5 connection | Low | Med | M-MT5-READ-1 | ☐ |
@@ -197,3 +197,33 @@ decisive case is CONTROL_TOWER + mock (real initiation, simulated price), which
 stays rejected. `unknown` fails closed; legacy rows migrate to `unknown` and stay
 there, because inferring `mt5` from broker-looking fields is exactly the
 heuristic promotion this contract forbids.
+
+## M-TRADES-2 — analytics from admissible MT5 ledger records
+
+`computeMetrics([])` returned 0 trades / 0% win rate / $0 expectancy — a
+mathematically valid report of a flat result nobody observed. That, more than the
+fixture numbers themselves, is what made the old analytics dangerous.
+
+Formulas now live in ONE place, `backend/trade_analytics.py`, beside the ledger
+and the admission policy. `frontend/src/lib/analytics.ts` is retired to a single
+presentational helper, so no second metric authority can drift from the first.
+
+**Two independent gates.** *Admission* asks whether a record may count at all
+(execution origin `mt5`, settled status, no conflicts, fully closed, outcome and
+P&L evidence present). *Completeness* asks whether a given metric is derivable
+from it. A perfectly admissible trade may still be unable to support a NET figure
+because its cost evidence is partial — that is a fact about the metric, not the
+record's authority, and merging the two would either drop good trades or publish
+net figures computed from missing costs.
+
+**Reported, with reasons:** gross P&L, gross profit/loss, win rate (break-even
+counted in the denominator), average win/loss, profit factor (`null` when gross
+loss is zero — never infinity), expectancy per trade, max drawdown and the equity
+curve. Net P&L only when EVERY admitted trade has complete cost evidence; R
+metrics only when every trade has a valid initial-risk denominator. Missing costs
+are never treated as zero.
+
+**Unavailable ≠ empty.** Unreadable ledger reports `unavailable`; a ledger that
+answered with nothing admissible reports `empty` with a full exclusion account —
+never a zero-performance report. Under the mock adapter every ledger record is
+`mock`, so development correctly shows `empty`.

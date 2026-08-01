@@ -57,6 +57,7 @@ import scenario_store as scenario_store_layer
 import broker_history as broker_history_layer
 import trade_ledger_domain as ledger_domain
 import trade_ledger_store as ledger_store_layer
+import trade_analytics as trade_analytics_layer
 import trade_reconstruction as reconstruction_layer
 import live_pipeline as live_pipeline_layer
 import live_preflight as live_preflight_layer
@@ -3428,6 +3429,37 @@ def ledger_trades(request: Request, status: str | None = None,
     except Exception:
         logger.exception("ledger trade listing failed")
         return _ledger_unavailable("ledger_listing_failed")
+
+
+@api_router.get("/ledger/analytics")
+def ledger_analytics():
+    """M-TRADES-2 — performance over ADMISSIBLE ledger records only.
+
+    Filtering happens at the STORE boundary against the indexed
+    `execution_origin` column (M-LEDGER-ORIGIN-1), not by loading everything and
+    filtering loosely afterwards. Records that reach the analytics module have
+    already passed the origin gate; the module applies the remaining settled /
+    fully-closed / evidence predicates and reports every exclusion.
+
+    Under the development mock adapter every ledger record is `mock`, so this
+    correctly reports `empty` with an exclusion account. That is the honest
+    outcome, not a shortfall.
+    """
+    try:
+        store = _ledger_store()
+        if store is None:
+            return _projection_response(
+                trade_analytics_layer.AnalyticsResult(
+                    availability=trade_analytics_layer.AVAIL_UNAVAILABLE).as_dict())
+        rows = store.list_admissible_for_analytics(limit=MAX_LEDGER_PAGE)
+        result = trade_analytics_layer.compute(rows, source_available=True)
+        return _projection_response({**result.as_dict(),
+                                     "projectionTimestamp": _now_iso()})
+    except Exception:
+        logger.exception("ledger analytics failed")
+        return _projection_response(
+            trade_analytics_layer.AnalyticsResult(
+                availability=trade_analytics_layer.AVAIL_UNAVAILABLE).as_dict())
 
 
 @api_router.get("/ledger/incomplete")
