@@ -143,7 +143,7 @@ def main() -> int:
     trades = out["results"][0]["trades"]
     total = time.perf_counter() - t0
 
-    tag = args.window
+    tag = args.window if not args.boundary else f"{args.window}@{boundary.date()}"
     trades_csv = OUT / f"trades-{tag}.csv"
     body = trades.astype(str).to_csv(index=False).encode()
     trades_csv.write_bytes(body)
