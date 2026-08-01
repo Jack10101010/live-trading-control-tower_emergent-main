@@ -13,7 +13,7 @@
  *   RECONCILIATION REQUIRED  — the projection says this entity needs evidence
  */
 import { useQuery } from '@tanstack/react-query';
-import { isAuthoritative, authoritativeOnly } from '@/lib/operationalProvenance';
+import { isAuthoritative, authoritativeOnly, accountIdentityKey } from '@/lib/operationalProvenance';
 import {
   api,
   type AccountOperationalView,
@@ -396,8 +396,9 @@ export function OperationalDashboard() {
           <span className={BADGE} style={C.bad}>NO AUTHORITATIVE SOURCE</span>
           <p className="text-2xs text-text-muted mt-2">
             The operational projection answered, but no record carries authoritative
-            provenance. The active broker adapter is not a live MT5 connection, so no
-            node, account, order or position can be shown as operational truth.
+            provenance. This Control Tower has no local MT5 terminal, and no execution
+            node has relayed an account observation, so no node, account, order or
+            position can be shown as operational truth.
           </p>
         </section>
       ) : (
@@ -408,11 +409,18 @@ export function OperationalDashboard() {
             <NodeCard node={n} />
           </div>
         ))}
-        {authoritativeOnly(data.accounts as never[]).map((a: typeof data.accounts[number], i: number) => (
-          <div key={a.accountFingerprint ?? i} className="col-span-12 lg:col-span-6">
-            <AccountCard account={a} />
-          </div>
-        ))}
+        {/* M-MT5-READ-1: a positional key fallback let one account inherit
+            another's row when a relaying node dropped out. The key names the
+            observer AND the observed; an account with neither is not rendered
+            rather than given an invented identity. */}
+        {authoritativeOnly(data.accounts as never[]).map((a: typeof data.accounts[number]) => {
+          const key = accountIdentityKey(a);
+          return key === null ? null : (
+            <div key={key} className="col-span-12 lg:col-span-6">
+              <AccountCard account={a} />
+            </div>
+          );
+        })}
       </div>
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-12"><OrdersTable orders={authoritativeOnly(data.activeOrders as never[]) as typeof data.activeOrders} /></div>

@@ -48,6 +48,10 @@ function account(over: Partial<AccountOperationalView> = {}): AccountOperational
     equity: 100412, margin: 0, marginLevel: 0, leverage: 100, currency: 'USD',
     unrealizedPnL: 12.5, realizedPnLToday: null, openRisk: null,
     connectionState: 'Connected', provenance: 'live_mt5', freshness: fresh(),
+    // M-MT5-READ-1 additive fields. Defaulted to "not reported" here so this
+    // fixture keeps describing a LOCALLY-read account, not a relayed one.
+    freeMargin: null, tradeAllowed: null, tradeExpert: null,
+    nodeId: null, observedAt: null,
     ...over,
   };
 }

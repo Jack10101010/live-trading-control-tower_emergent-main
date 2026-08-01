@@ -127,9 +127,12 @@ describe('Accounts & Protection — the fixture accounts are gone', () => {
   it('never renders zero for an unreported figure', () => {
     setFleet({ status: 'available', accounts: [LIVE_ACCOUNT] });
     render(<AccountsProtectionView />);
-    // realizedPnLToday / unrealizedPnL / openRisk / margin / marginLevel / leverage are null
+    // realizedPnLToday / unrealizedPnL / openRisk / margin / marginLevel / leverage,
+    // plus the three M-MT5-READ-1 fields this fixture does not carry at all
+    // (freeMargin / tradeAllowed / tradeExpert). A field the record simply
+    // OMITS is as unreported as one explicitly null, and must read the same.
     const markers = screen.getAllByTestId('value-not-reported');
-    expect(markers.length).toBe(6);
+    expect(markers.length).toBe(9);
     expect(markers[0].getAttribute('title')).toMatch(/Unknown, not zero/i);
     expect(document.body.innerHTML).not.toMatch(/\$0\.00/);
   });

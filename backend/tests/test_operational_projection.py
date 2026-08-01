@@ -373,11 +373,35 @@ def test_projection_module_performs_no_writes_and_no_execution():
         assert forbidden not in code, f"projection references {forbidden}"
 
 
+#: Modules the projection must never import: they OWN runtime behaviour
+#: (adapters, stores, execution, reconciliation). Pure domain and policy modules
+#: — `trade_ledger_domain`, `broker_provenance` — are not on this list and never
+#: were; they hold no state, perform no I/O, and import nothing themselves.
+FORBIDDEN_PROJECTION_IMPORTS = frozenset({
+    "server", "broker", "broker_adapter", "execution_store",
+    "execution_safety", "reconciliation",
+})
+
+
 def test_projection_imports_no_runtime_owner():
-    code = code_only("operational_projection.py")
-    for forbidden in ("import server", "import broker", "import execution_store",
-                      "import execution_safety", "import reconciliation"):
-        assert forbidden not in code
+    """M-MT5-READ-1 made this guard NAME its modules instead of substring-matching.
+
+    It previously searched for the text `"import broker"`, which matched
+    `import broker_provenance` — a pure policy module with no imports of its
+    own — while a substring guard would equally have missed `from broker import
+    get_broker`. Parsing the imports is both stricter (it still catches
+    `broker_adapter`, and now catches the `from` form) and precise.
+    """
+    import ast
+    source = (BACKEND_DIR / "operational_projection.py").read_text()
+    imported: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            imported.update(a.name.split(".")[0] for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            imported.add(node.module.split(".")[0])
+    offenders = sorted(imported & FORBIDDEN_PROJECTION_IMPORTS)
+    assert offenders == [], offenders
 
 
 # ── the unified read-only API ────────────────────────────────────────────────

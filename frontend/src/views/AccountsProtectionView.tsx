@@ -1,7 +1,7 @@
 import { useAccountsProtection } from '@/hooks/useRepository';
 import { Panel, EmptyState } from '@/components/structures/Panel';
 import { PLValue, Badge, MetricStat } from '@/components/primitives';
-import { numericOrNull } from '@/lib/operationalProvenance';
+import { numericOrNull, accountIdentityKey, PROV_NODE_MT5 } from '@/lib/operationalProvenance';
 import { Wallet } from 'lucide-react';
 
 /**
@@ -60,35 +60,55 @@ export function AccountsProtectionView() {
           reported, not as current state.
         </p>
       )}
-      {accounts.map((acct, i) => {
-        const key = acct.accountFingerprint ?? `account-${i}`;
+      {accounts.map((acct) => {
+        // M-MT5-READ-1: a positional key would let one node's account inherit
+        // another's row when a node goes quiet. An account with no identity at
+        // all is not rendered rather than given an invented one.
+        const key = accountIdentityKey(acct);
+        if (key === null) return null;
+        const relayed = acct.provenance === PROV_NODE_MT5;
         return (
           <Panel
             provenance="live"
             key={key}
             title={
               <span className="flex items-center gap-2">
-                {acct.broker ?? 'Broker unreported'} · {acct.currency ?? '—'}
-                <span className="mono text-text-muted ml-2 text-2xs">{key.slice(0, 20)}…</span>
+                {acct.broker ?? acct.server ?? 'Broker unreported'} · {acct.currency ?? '—'}
+                <span className="mono text-text-muted ml-2 text-2xs">
+                  {(acct.accountFingerprint ?? 'unidentified').slice(0, 20)}…
+                </span>
               </span>
             }
             actions={
               <span data-testid="account-live-badge">
                 <Badge variant="mode" color="var(--mode-live)">
-                  {acct.connectionState ?? 'unknown'}
+                  {relayed
+                    ? `relayed by ${acct.nodeId ?? 'unnamed node'}`
+                    : acct.connectionState ?? 'unknown'}
                 </Badge>
               </span>
             }
           >
+            {relayed && (
+              <p className="text-2xs text-text-muted mb-3" data-testid="account-relay-note">
+                Observed on the execution node&rsquo;s MT5 terminal
+                {acct.observedAt ? ` at ${acct.observedAt}` : ''} and relayed to this
+                Control Tower. The node is the broker authority; this tower holds no
+                connection to the account and computes none of these figures.
+              </p>
+            )}
             <div className="grid grid-cols-4 gap-6 mb-4">
               <Stat label="Balance" value={numericOrNull(acct.balance)} money emphasise />
               <Stat label="Equity" value={numericOrNull(acct.equity)} money emphasise />
               <Stat label="Realised P/L today" value={numericOrNull(acct.realizedPnLToday)} money emphasise />
               <Stat label="Unrealised P/L" value={numericOrNull(acct.unrealizedPnL)} money emphasise />
               <Stat label="Open risk" value={numericOrNull(acct.openRisk)} money />
+              <Stat label="Free margin" value={numericOrNull(acct.freeMargin)} money />
               <Stat label="Margin" value={numericOrNull(acct.margin)} money />
               <Stat label="Margin level" value={numericOrNull(acct.marginLevel)} />
               <Stat label="Leverage" value={numericOrNull(acct.leverage)} />
+              <TriStat label="Terminal trading" value={acct.tradeAllowed} />
+              <TriStat label="Algo trading" value={acct.tradeExpert} />
             </div>
 
             {/* M-RISK-1: unchanged. Funded-account rules must be real
@@ -126,6 +146,41 @@ function Shell({ children }: { children: React.ReactNode }) {
       </div>
       {children}
     </div>
+  );
+}
+
+/**
+ * A tri-state permission flag from the terminal.
+ *
+ * `null` is not `false`. "The observer did not report whether trading is
+ * permitted" and "the terminal forbids trading" are different facts, and the
+ * second is alarming. Rendering the first as the second would raise a false
+ * alarm; rendering it as "allowed" would suppress a real one.
+ */
+function TriStat({ label, value }: { label: string; value: boolean | null | undefined }) {
+  // Anything that is not EXACTLY true or false is unreported. Testing `=== null`
+  // alone let `undefined` fall through to the boolean branch and render
+  // "blocked" — a fabricated denial, from a field the observer never sent.
+  const reported = value === true || value === false;
+  return (
+    <MetricStat
+      label={label}
+      value={
+        !reported ? (
+          <span
+            className="mono text-text-muted"
+            data-testid="value-not-reported"
+            title="Not reported by the observer. Unknown, not denied."
+          >
+            {NOT_DERIVABLE}
+          </span>
+        ) : (
+          <span className="mono" style={{ color: value ? 'var(--positive)' : 'var(--warning)' }}>
+            {value ? 'allowed' : 'blocked'}
+          </span>
+        )
+      }
+    />
   );
 }
 

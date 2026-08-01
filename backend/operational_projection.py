@@ -33,6 +33,9 @@ FRESHNESS AND PROVENANCE
 
 from __future__ import annotations
 
+import math
+
+import broker_provenance as brokerprov
 import trade_ledger_domain as _tld
 
 from dataclasses import asdict, dataclass, field
@@ -42,11 +45,19 @@ from typing import Any, Callable
 SCHEMA_VERSION = "ct.operational-projection.v1"
 
 # ── provenance vocabulary (where a fact came from) ────────────────────────────
-PROV_LIVE_MT5 = "live_mt5"
-PROV_MOCK_FIXTURE = "mock-fixture"
+# M-MT5-READ-1: the BROKER-ORIGIN values are re-exported from the policy seam
+# rather than restated, so there is exactly one definition of each string. The
+# names stay identical, so every existing import keeps working.
+PROV_LIVE_MT5 = brokerprov.PROV_LIVE_MT5
+PROV_NODE_MT5 = brokerprov.PROV_NODE_MT5
+PROV_MOCK_FIXTURE = brokerprov.PROV_MOCK_FIXTURE
+PROV_ABSENT = brokerprov.PROV_ABSENT
+#: The node telemetry ENVELOPE itself (a node view: heartbeat, cycle, health).
+#: Distinct from `node_mt5`, which names BROKER truth the node observed. A node
+#: can be reporting perfectly while having sampled no account at all, and the
+#: two facts must not share one label.
 PROV_NODE_TELEMETRY = "node-telemetry"
 PROV_DURABLE_STORE = "durable-store"
-PROV_ABSENT = "absent"
 
 # ── availability vocabulary (distinct, never collapsed) ───────────────────────
 AVAILABILITY_OK = "ok"
@@ -202,6 +213,22 @@ class AccountOperationalView:
     realized_pnl_today: float | None = None      # None = not derivable from evidence
     open_risk: float | None = None               # None = not derivable from evidence
     connection_state: str | None = None
+    # ── M-MT5-READ-1, all additive and all defaulting to "not reported" ────────
+    #: Free margin. The node publishes `free_margin` and NOT `margin`; the two
+    #: are different quantities and neither is derivable from the other without
+    #: equity arithmetic this tower is not entitled to perform.
+    free_margin: float | None = None
+    #: The terminal's own permission flags, as the node observed them. Tri-state:
+    #: None means "not reported", which is not the same as False ("forbidden").
+    trade_allowed: bool | None = None
+    trade_expert: bool | None = None
+    #: Which execution node relayed this account. None for a locally-read one.
+    #: Part of the record's IDENTITY: two nodes may legitimately report two
+    #: different accounts, and neither may overwrite the other.
+    node_id: str | None = None
+    #: When the OBSERVER sampled the account, as the observer stated it. Kept
+    #: separate from `freshness`, which is the tower's own arrival clock.
+    observed_at: str | None = None
     provenance: str = PROV_ABSENT
     freshness: Freshness | None = None
 
@@ -219,7 +246,12 @@ class AccountOperationalView:
             "unrealizedPnL": self.unrealized_pnl,
             "realizedPnLToday": self.realized_pnl_today,
             "openRisk": self.open_risk,
+            "freeMargin": self.free_margin,
+            "tradeAllowed": self.trade_allowed,
+            "tradeExpert": self.trade_expert,
             "connectionState": self.connection_state,
+            "nodeId": self.node_id,
+            "observedAt": self.observed_at,
             "provenance": self.provenance,
             "freshness": self.freshness.as_dict() if self.freshness else None,
         })
@@ -926,18 +958,163 @@ def _scenario_of(row: dict, payload: dict) -> str | None:
     return str(key) if key else None
 
 
-def _provenance_for(adapter_kind: str) -> str:
-    return PROV_LIVE_MT5 if adapter_kind == "mt5" else PROV_MOCK_FIXTURE
+def _provenance_for(adapter_kind: str, *, observed: bool = True) -> str:
+    """M-MT5-READ-1: provenance is earned by OBSERVATION, not by configuration.
+
+    Delegates to the single policy seam. `observed` must be the caller's
+    evidence that the adapter actually returned this record's data; the previous
+    signature had no way to express that, which is how a configured-but-silent
+    MT5 adapter came to stamp `live_mt5` on an all-null account.
+    """
+    return brokerprov.for_local_adapter(adapter_kind, observed=observed)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Builders — pure, deterministic, injected clock.
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _num_or_none(value: Any) -> float | None:
+    """A finite number, or None. A bool is not a number; a numeric STRING is not
+    a number either.
+
+    DELIBERATELY STRICTER THAN `_num` BELOW, and the two are kept apart on
+    purpose. `_num` coerces (`float("4211.5")` succeeds) and lets NaN through;
+    that is tolerable for the local runtime snapshot, which this process built
+    itself. This one reads a payload that arrived over a network from another
+    machine, where a string where a number belongs is a contract violation and
+    NaN is not a balance. Coercing either would turn a malformed packet into a
+    displayed figure.
+
+    `null is not zero` is the rule this whole projection exists to protect, and
+    it has to hold at every boundary the data crosses — including this one.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) else None
+
+
+def _bool_or_none(value: Any) -> bool | None:
+    """Tri-state. `None` means the observer did not report — NOT `False`.
+
+    Collapsing an unreported `trade_allowed` to False would tell an operator the
+    terminal forbids trading, which is a different and alarming claim from "the
+    node did not say".
+    """
+    return value if isinstance(value, bool) else None
+
+
+def _node_accounts(sources: ProjectionSources, *, now: str,
+                   stale_after_s: float) -> tuple:
+    """Accounts an EXECUTION NODE observed on its MT5 terminal, relayed via
+    `ct.node-telemetry.v1`.
+
+    THE ADMISSION RULE
+        A node view is produced only when the node's own `account.health` or
+        `account.identity` says `available: true`. The arrival of a snapshot is
+        NOT evidence of an account observation: the node samples account state
+        only on cycles that contain an OPEN, so a perfectly healthy node
+        publishes `available: false` most of the time. Treating that as an
+        account reading would invent one, and treating it as "no account exists"
+        would be equally false — so such a node simply contributes nothing here
+        and the surface falls through to UNAVAILABLE.
+
+    WHAT IS DELIBERATELY NOT DERIVED
+        `margin`, `marginLevel` and `leverage` are not published by the node and
+        stay null. `realizedPnLToday` stays null even though the node publishes
+        `risk.daily_realized_r`: R is a risk multiple, not the account currency,
+        and converting one to the other here would fabricate a monetary figure
+        out of a ratio. `unrealizedPnL` stays null because the node's positions
+        carry no price or profit at all (see `live/telemetry.safe_positions`).
+
+    FRESHNESS IS THE TOWER'S CLOCK
+        `Freshness` is computed from `received_at` — when THIS tower received the
+        packet — not from the node's `published_at`. A node cannot make itself
+        look fresh by publishing a manipulated timestamp. The envelope's own
+        `stale` verdict (which is liveness-stale OR data-stale) is then OR-ed in,
+        so this can only ever be more pessimistic than the shared rule, never
+        more permissive.
+    """
+    try:
+        entries = sources.node_entries() or []
+    except Exception:
+        return ()
+    out: list[AccountOperationalView] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        snapshot = entry.get("snapshot")
+        if not isinstance(snapshot, dict):
+            continue
+        account = snapshot.get("account")
+        account = account if isinstance(account, dict) else {}
+        identity = account.get("identity") if isinstance(account.get("identity"), dict) else {}
+        health = account.get("health") if isinstance(account.get("health"), dict) else {}
+        health_seen = health.get("available") is True
+        identity_seen = identity.get("available") is True
+        if not (health_seen or identity_seen):
+            continue                    # the node observed no account this cycle
+        node_id = entry.get("instance_id")
+        # Liveness on the tower's clock; the envelope's verdict can only tighten it.
+        fresh = freshness(now=now, source_at=entry.get("received_at"),
+                          available=True, stale_after_s=stale_after_s,
+                          detail=f"relayed by execution node {node_id}")
+        if entry.get("stale") is not False and fresh.available:
+            fresh = Freshness(projection_at=fresh.projection_at,
+                              source_at=fresh.source_at,
+                              age_seconds=fresh.age_seconds, stale=True,
+                              available=True,
+                              stale_after_seconds=fresh.stale_after_seconds,
+                              detail=fresh.detail)
+        out.append(AccountOperationalView(
+            # Already a one-way SHA-256 fingerprint when the node built it
+            # (`live/telemetry.account_fingerprint`). The login never leaves the
+            # VPS, so there is nothing here to redact a second time.
+            account_fingerprint=identity.get("fingerprint"),
+            # The node reports the SERVER it is connected to. It does not report
+            # a broker company name, and deriving one from the server string
+            # would be a guess.
+            broker=None,
+            server=identity.get("server"),
+            balance=_num_or_none(health.get("balance")) if health_seen else None,
+            equity=_num_or_none(health.get("equity")) if health_seen else None,
+            free_margin=_num_or_none(health.get("free_margin")) if health_seen else None,
+            margin=None, margin_level=None, leverage=None,
+            currency=health.get("currency") if health_seen else identity.get("currency"),
+            unrealized_pnl=None, realized_pnl_today=None, open_risk=None,
+            trade_allowed=_bool_or_none(health.get("trade_allowed")) if health_seen else None,
+            trade_expert=_bool_or_none(health.get("trade_expert")) if health_seen else None,
+            # This tower holds no connection to the account; the node does.
+            connection_state=None,
+            node_id=node_id,
+            observed_at=health.get("observed_at") if health_seen else None,
+            provenance=brokerprov.for_node_observation(observed=True),
+            freshness=fresh))
+    # Stable, total ordering by node then account, so a render key never depends
+    # on arrival order and one node's row can never take another's place.
+    out.sort(key=lambda a: (a.node_id or "", a.account_fingerprint or ""))
+    return tuple(out)
+
+
 def build_accounts(sources: ProjectionSources, *, now: str,
                    stale_after_s: float = DEFAULT_STALE_AFTER_S) -> tuple:
+    """Accounts, from whichever authority actually observed one.
+
+    M-MT5-READ-1 — ORDER OF AUTHORITY, and why it is this way round.
+
+    This process's own broker adapter is tried FIRST, but only counts when it
+    genuinely returned something. On the operator's Mac it never can: the
+    MetaTrader5 binding is Windows local-terminal IPC, so `MT5Adapter._gateway`
+    is None and every read is unavailable. The EXECUTION NODE is the only thing
+    in this system that can see a terminal, so node-relayed account truth is
+    projected whenever the local adapter observed nothing.
+
+    Both paths are gated on observation, so this can never produce two competing
+    accounts for the same reading: the local branch requires a snapshot the
+    adapter returned, the node branch requires the node's own `available: true`.
+    Where neither observed anything, the answer is one explicitly UNAVAILABLE
+    view — never a zeroed balance and never an invented account.
+    """
     kind = sources.adapter_kind()
-    prov = _provenance_for(kind)
     conn = sources.connection_state()
     acct = sources.account_snapshot()
     snap = sources.broker_snapshot()
@@ -945,8 +1122,7 @@ def build_accounts(sources: ProjectionSources, *, now: str,
     if not isinstance(acct, dict):
         # No dedicated account snapshot. Fall back to the accounts the broker
         # snapshot itself reports (real evidence, e.g. the fixture world's
-        # accounts) — still derived, never invented. If neither exists, the view
-        # is explicitly UNAVAILABLE: no zeroed balances, no invented account.
+        # accounts) — still derived, never invented.
         listed = (snap or {}).get("accounts") or []
         first = listed[0] if isinstance(listed, list) and listed else None
         if isinstance(first, dict):
@@ -958,15 +1134,23 @@ def build_accounts(sources: ProjectionSources, *, now: str,
                 margin=None, margin_level=None, leverage=None,
                 currency=first.get("baseCurrency") or first.get("currency"),
                 unrealized_pnl=None, realized_pnl_today=None, open_risk=None,
-                connection_state=conn, provenance=prov,
+                connection_state=conn,
+                provenance=_provenance_for(kind, observed=True),
                 freshness=freshness(now=now, source_at=snap_at, available=True,
                                     stale_after_s=stale_after_s,
                                     detail="derived from broker snapshot accounts")),)
+        # The local adapter observed nothing. Ask the execution nodes.
+        relayed = _node_accounts(sources, now=now, stale_after_s=stale_after_s)
+        if relayed:
+            return relayed
         return (AccountOperationalView(
-            connection_state=conn, provenance=prov,
+            connection_state=conn,
+            # NOT `live_mt5`. Nothing was read, so nothing may claim an origin.
+            provenance=_provenance_for(kind, observed=False),
             freshness=freshness(now=now, source_at=snap_at, available=False,
                                 stale_after_s=stale_after_s,
                                 detail="account snapshot unavailable")),)
+    prov = _provenance_for(kind, observed=True)
     unrealized = None
     if isinstance(snap, dict):
         pnls = [_entity_view(p).get("pnl") for p in (snap.get("positions") or [])]
@@ -992,7 +1176,9 @@ def build_orders(sources: ProjectionSources, *, now: str) -> tuple:
     working orders where a reference matches. Orders and positions stay
     separate concepts — a filled market order becomes a POSITION, not an order."""
     kind = sources.adapter_kind()
-    prov = _provenance_for(kind)
+    # Only ever applied to an order the broker actually reported (`bo` below),
+    # so the observation is genuine by construction.
+    prov = _provenance_for(kind, observed=True)
     snap = sources.broker_snapshot() or {}
     broker_orders = {}
     for o in (snap.get("orders") or []):
@@ -1043,10 +1229,11 @@ def build_positions(sources: ProjectionSources, *, now: str) -> tuple:
     """Open POSITIONS as the broker reports them, enriched with tower lifecycle
     where an intent references the same entity. Broker truth leads."""
     kind = sources.adapter_kind()
-    prov = _provenance_for(kind)
     snap = sources.broker_snapshot()
     if not isinstance(snap, dict):
         return ()                              # unavailable -> no invented positions
+    # Reached only with a snapshot in hand: every position below came from it.
+    prov = _provenance_for(kind, observed=True)
     posture = sources.reconciliation_posture() or {}
     locks = {str(l.get("entity_ref")): l for l in (sources.entity_locks() or [])}
     # Tower lifecycle by entity reference (LIVE-3 operations name their entity).
@@ -1148,14 +1335,27 @@ def scenarios_available(sources: ProjectionSources) -> bool:
     return sources.scenarios() is not None
 
 
+def _node_position_count(snapshot: Any) -> int | None:
+    """How many positions the NODE says it holds, or None if it did not say.
+
+    v1 requires a `positions` list, so a validated snapshot always has one and a
+    genuine empty list is a real measurement of zero — the one case where 0 is
+    the honest answer. A malformed or missing list is not: it yields None.
+    """
+    if not isinstance(snapshot, dict):
+        return None
+    positions = snapshot.get("positions")
+    return len(positions) if isinstance(positions, list) else None
+
+
 def build_nodes(sources: ProjectionSources, *, now: str,
                 stale_after_s: float = DEFAULT_STALE_AFTER_S) -> tuple:
     """One view per node that has published telemetry. When no node has
     published, a single explicitly-UNAVAILABLE view is returned rather than an
     empty list that could read as 'all healthy'."""
     kind = sources.adapter_kind()
-    prov_broker = _provenance_for(kind)
     snap = sources.broker_snapshot()
+    prov_broker = _provenance_for(kind, observed=isinstance(snap, dict))
     posture = sources.reconciliation_posture() or {}
     recon_state = ("unavailable" if not posture else
                    "critical" if posture.get("criticalUnresolved") else
@@ -1192,7 +1392,14 @@ def build_nodes(sources: ProjectionSources, *, now: str,
             connection_state=sources.connection_state(),
             health=None, execution_mode=mode,
             authorization_summary=auth, reconciliation_state=recon_state,
-            open_position_count=len(positions), open_order_count=len(orders),
+            # M-MT5-READ-1: no node has published, so this tower knows NOTHING
+            # about any node's open exposure. These were `len(positions)` /
+            # `len(orders)` — counts of the LOCAL adapter's records, presented on
+            # a view whose entire subject is a node that has never reported. A
+            # count is a measurement; `0` here asserted "that node holds nothing
+            # open", which is exactly the claim the absence of telemetry makes
+            # impossible. Unknown, not zero.
+            open_position_count=None, open_order_count=None,
             active_scenario_count=len(scenarios),
             account_fingerprint_masked=_mask_fingerprint((snap or {}).get("accountIdentity")),
             warnings=_warnings(fresh, None),
@@ -1220,7 +1427,22 @@ def build_nodes(sources: ProjectionSources, *, now: str,
             heartbeat_age_seconds=entry.get("age_seconds"),
             health=health, execution_mode=mode, authorization_summary=auth,
             reconciliation_state=recon_state,
-            open_position_count=len(positions), open_order_count=len(orders),
+            # M-MT5-READ-1 — THE NODE COUNTS ITS OWN POSITIONS.
+            #
+            # These were `len(positions)` and `len(orders)`: the LOCAL broker
+            # adapter's records, attached to a view stamped `node-telemetry` and
+            # displayed on Fleet Overview under that node's name. Under the mock
+            # adapter a node that had never opened anything showed the fixture's
+            # open position as its own. It is a duplicated authority in the most
+            # direct sense — the tower answering a question only the node can
+            # answer, in the node's voice.
+            #
+            # `positions` comes from the node's own mirror (its authoritative
+            # ownership map). `orders` has no counterpart at all: v1 carries no
+            # orders section, so pending-order exposure is UNKNOWN — null, never
+            # the 0 that would read as "nothing resting at the broker".
+            open_position_count=_node_position_count(snapshot),
+            open_order_count=None,
             active_scenario_count=len(scenarios),
             last_activity=published,
             telemetry_age_seconds=entry.get("age_seconds"),
@@ -1495,8 +1717,19 @@ def build_live_runtime(snapshot=None, *, now: str, health=None,
     connected = bool(heartbeat and heartbeat.connection == "Connected")
     broker_availability = (heartbeat.availability(now) if heartbeat
                            else AVAILABILITY_UNAVAILABLE)
-    provenance = (PROV_LIVE_MT5 if (adapter_kind or snapshot_adapter(snapshot)) == "mt5"
-                  else PROV_MOCK_FIXTURE)
+    # M-MT5-READ-1 — the SECOND instance of the configuration-provenance defect,
+    # found by the guard written for the first. This surface already refused to
+    # stamp an origin with no evidence (`provenance if (account or connected)`),
+    # but it made that judgement with its own inline `kind == "mt5"` comparison
+    # sitting beside it. Two copies of a rule are two chances to fix only one of
+    # them, so the evidence is now named once and the decision made in the seam.
+    #
+    # The evidence: the supervisor's tick carried an account, or the heartbeat
+    # says the broker is connected. A tick that produced neither observed no
+    # broker, however healthy the supervisor loop itself is.
+    observed_broker = bool(account or connected)
+    provenance = _provenance_for(adapter_kind or snapshot_adapter(snapshot),
+                                 observed=observed_broker)
 
     broker = BrokerRuntimeView(
         connected=connected,
@@ -1522,9 +1755,11 @@ def build_live_runtime(snapshot=None, *, now: str, health=None,
         reconnect_count=int(getattr(resolved_health, "reconnect_attempts", 0) or 0),
         last_heartbeat_at=(heartbeat.at if heartbeat else None),
         heartbeat_age_seconds=heartbeat_age,
-        availability=(broker_availability if account or connected
+        availability=(broker_availability if observed_broker
                       else AVAILABILITY_UNAVAILABLE),
-        provenance=(provenance if (account or connected) else PROV_ABSENT),
+        # Already `absent` when nothing was observed — the seam decided that
+        # above, so there is no second gate here to fall out of step with it.
+        provenance=provenance,
         freshness=freshness(now=now,
                             source_at=(heartbeat.at if heartbeat else None),
                             available=bool(heartbeat and heartbeat.at)))

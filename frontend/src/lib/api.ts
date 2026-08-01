@@ -879,6 +879,15 @@ export interface AccountOperationalView {
   realizedPnLToday: number | null;
   openRisk: number | null;
   connectionState: string | null;
+  /** M-MT5-READ-1 — additive, all null when the observer did not report them. */
+  freeMargin: number | null;
+  /** Tri-state: `null` is "not reported", which is NOT `false` ("forbidden"). */
+  tradeAllowed: boolean | null;
+  tradeExpert: boolean | null;
+  /** Which execution node relayed this account; null for a locally-read one. */
+  nodeId: string | null;
+  /** When the OBSERVER sampled it — distinct from `freshness` (arrival clock). */
+  observedAt: string | null;
   provenance: string;
   freshness: ProjectionFreshness | null;
 }

@@ -27,14 +27,40 @@
  *   invented balance on an operator's screen. The comparison happens here, once.
  */
 
-/** Values the backend's `operational_projection` can stamp. Keep in sync with
- *  `PROV_LIVE_MT5` / `PROV_MOCK_FIXTURE` / `PROV_ABSENT` in that module. */
+/** Values the backend's `broker_provenance` policy seam can stamp. Keep in sync
+ *  with that module — it is the single definition on the Python side. */
 export const PROV_LIVE_MT5 = 'live_mt5';
+export const PROV_NODE_MT5 = 'node_mt5';
 export const PROV_MOCK_FIXTURE = 'mock-fixture';
 export const PROV_ABSENT = 'absent';
 
-/** The ONLY provenance an ordinary operator surface may render. */
-export const AUTHORITATIVE_PROVENANCE = new Set<string>([PROV_LIVE_MT5]);
+/**
+ * The ONLY provenance values an ordinary operator surface may render.
+ *
+ * M-MT5-READ-1 added `node_mt5`. That is a widening of this gate, so it deserves
+ * to be justified rather than just done:
+ *
+ *   `node_mt5` means an execution NODE read an MT5 terminal and relayed what it
+ *   saw through `ct.node-telemetry.v1`. It is genuine broker truth, and in this
+ *   deployment it is the ONLY genuine broker truth available: the terminal runs
+ *   on the Windows VPS, and the broker client library speaks local-terminal IPC,
+ *   so a Control Tower on another machine can never produce `live_mt5` at all.
+ *
+ *   Crucially, the backend stamps `node_mt5` only when the node's OWN
+ *   `account.health.available` / `account.identity.available` is true — not when
+ *   a snapshot merely arrived. So this value is issued on evidence of an
+ *   observation, which is strictly stronger than what `live_mt5` used to
+ *   require: before this milestone `live_mt5` was issued from the adapter KIND
+ *   alone, meaning an environment variable and no terminal at all was enough to
+ *   get a green LIVE account past this gate. Widening the set while tightening
+ *   what earns membership makes the gate stricter, not looser.
+ *
+ * The two values stay SEPARATE rather than merging into one `mt5`. They differ
+ * in who observed, how far the reading travelled and which clock judges it, and
+ * that difference is the only thing distinguishing a first-hand reading from a
+ * relayed one.
+ */
+export const AUTHORITATIVE_PROVENANCE = new Set<string>([PROV_LIVE_MT5, PROV_NODE_MT5]);
 
 /**
  * Four distinct outcomes that must never collapse into one another:
@@ -112,11 +138,42 @@ export function numericOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+/**
+ * A STABLE identity for an account row.
+ *
+ * THE DEFECT THIS PREVENTS
+ *   React keys of the form `account-${index}` are positional. Two execution
+ *   nodes may legitimately report two different accounts, and the projection
+ *   sorts by node — so the moment one node goes quiet, every row below it shifts
+ *   up and inherits the key, the DOM node and the component state of the row
+ *   that used to be there. One account's balance would be shown under another
+ *   account's identity, with no error anywhere.
+ *
+ * The key is the OBSERVER plus the OBSERVED — a fingerprint alone is not enough,
+ * because the same account genuinely can be reported by two nodes, and those are
+ * two different observations that must not collapse into one row.
+ *
+ * When neither part is present the caller must NOT fall back to an index. It
+ * should render nothing rather than invent an identity; `null` here says so.
+ */
+export function accountIdentityKey(
+  record: { nodeId?: string | null; accountFingerprint?: string | null } | null | undefined
+): string | null {
+  if (!record) return null;
+  const node = typeof record.nodeId === 'string' && record.nodeId ? record.nodeId : null;
+  const fp = typeof record.accountFingerprint === 'string' && record.accountFingerprint
+    ? record.accountFingerprint : null;
+  if (!node && !fp) return null;
+  return `${node ?? 'local'}::${fp ?? 'unidentified'}`;
+}
+
 /** Human-readable reason for an unavailable state — names the missing source. */
 export const UNAVAILABLE_DETAIL =
-  'No authoritative operational source is reporting. The active broker adapter is ' +
-  'not a live MT5 connection, so no deployment, broker or account records can be ' +
-  'presented as operational truth.';
+  'No authoritative operational source is reporting. This Control Tower has no ' +
+  'local MT5 terminal, and no execution node has relayed an account observation, ' +
+  'so no deployment, broker or account records can be presented as operational ' +
+  'truth. A node that is publishing telemetry without having sampled its account ' +
+  'also reaches this state — a healthy node is not an account reading.';
 
 /**
  * M-TRADES-1 — why the durable trade ledger is NOT admitted here.
