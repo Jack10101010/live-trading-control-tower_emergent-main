@@ -30,17 +30,34 @@ export type CardProvenance =
 /** Panels that are pure chrome (nav, forms without data) opt out explicitly. */
 export type PanelProvenance = CardProvenance | 'none';
 
-export type ProvenanceTone = 'green' | 'red' | 'none';
+export type ProvenanceTone = 'green' | 'neutral' | 'red' | 'none';
 
 /** The temporary visual collapse. GREEN only for proven-real classes. */
+/**
+ * M-PROVENANCE-FINAL — three tones, because absence is not fabrication.
+ *
+ * The original mapping collapsed `placeholder` into red alongside `fixture` and
+ * `synthetic`. That was right while most cards still held invented data: red
+ * meant "do not trust this". Now that the fixture content is gone, the same red
+ * would tell an operator that an honestly-empty card is as untrustworthy as a
+ * fabricated balance — and when everything is red, red stops meaning anything.
+ *
+ * So `placeholder` becomes NEUTRAL. It is reserved for cards that make no
+ * operational claim and say so. Red is now reserved for cards that DO show
+ * non-operational data: fixture, synthetic, replay, mixed, and unknown (which
+ * fails closed). The semantic taxonomy is unchanged — only the tone mapping —
+ * so nothing is collapsed back into a boolean.
+ */
 export const PROVENANCE_TONE: Record<CardProvenance, ProvenanceTone> = {
   live: 'green',
   'runtime-config': 'green',
   'derived-live': 'green',
+  // Neutral: no operational claim is made, and the card says so.
+  placeholder: 'neutral',
+  // Red: the card genuinely displays non-operational data.
   fixture: 'red',
   synthetic: 'red',
   replay: 'red',
-  placeholder: 'red',
   mixed: 'red',
   unknown: 'red',
 };
@@ -54,7 +71,9 @@ export function provenanceTone(p: PanelProvenance): ProvenanceTone {
 export function provenanceBadge(p: PanelProvenance): string | null {
   const tone = provenanceTone(p);
   if (tone === 'none') return null;
-  return tone === 'green' ? 'LIVE' : 'NON-LIVE';
+  if (tone === 'green') return 'LIVE';
+  // NOT WIRED states a missing capability; NON-LIVE warns about shown data.
+  return tone === 'neutral' ? 'NOT WIRED' : 'NON-LIVE';
 }
 
 /**

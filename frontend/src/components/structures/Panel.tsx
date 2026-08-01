@@ -20,14 +20,18 @@ interface PanelProps {
 }
 
 /** Border + badge styling for the temporary GREEN/RED provenance system. */
-function provenanceStyle(tone: 'green' | 'red' | 'none'): {
+function provenanceStyle(tone: 'green' | 'neutral' | 'red' | 'none'): {
   border: string; glow: string | undefined; badgeBg: string; badgeFg: string;
 } | null {
   if (tone === 'none') return null;
-  const color = tone === 'green' ? 'var(--positive)' : 'var(--negative)';
+  // M-PROVENANCE-FINAL: neutral uses the ordinary subtle border — an honest
+  // "not wired" card must not look like a fabrication warning.
+  const color = tone === 'green' ? 'var(--positive)'
+    : tone === 'neutral' ? 'var(--border-subtle)' : 'var(--negative)';
   return {
     border: color,
-    glow: `0 0 0 1px ${tone === 'green' ? 'var(--positive)' : 'var(--negative)'} inset`,
+    glow: tone === 'neutral' ? 'none'
+      : `0 0 0 1px ${tone === 'green' ? 'var(--positive)' : 'var(--negative)'} inset`,
     badgeBg: color,
     badgeFg: 'var(--panel)',
   };
@@ -229,7 +233,8 @@ export function ProvenanceFrame({
 }) {
   const tone = provenanceTone(provenance);
   if (tone === 'none') return <>{children}</>;
-  const color = tone === 'green' ? 'var(--positive)' : 'var(--negative)';
+  const color = tone === 'green' ? 'var(--positive)'
+    : tone === 'neutral' ? 'var(--border-subtle)' : 'var(--negative)';
   return (
     <div
       data-provenance={provenance}

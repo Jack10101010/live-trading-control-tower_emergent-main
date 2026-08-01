@@ -146,7 +146,7 @@ export function MarketDataView() {
           </ul>
         </Panel>
 
-        <Panel provenance="fixture" title="Market State (Provenance)" className="col-span-4">
+        <Panel provenance="placeholder" title="Market State (Provenance)" className="col-span-4">
           {ms ? (
             <div className="space-y-2">
               <MarketStateBadge state={ms.state} confidence={ms.confidence} />

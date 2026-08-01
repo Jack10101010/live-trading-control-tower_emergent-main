@@ -278,7 +278,10 @@ export function SystemView() {
       </div>
 
       <Panel
-        provenance="fixture"
+        /* M-PROVENANCE-FINAL: misclassified. This is /runtime/health — genuine
+           process telemetry, never fixture-backed. It was marked NON-LIVE,
+           which understated real data as badly as the reverse overstates it. */
+        provenance="live"
         title={
           <>
             Runtime Health <span className="text-text-muted mono ml-1">runtime layer · not broker</span>

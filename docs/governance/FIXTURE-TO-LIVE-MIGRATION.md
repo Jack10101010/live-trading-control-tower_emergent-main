@@ -259,3 +259,41 @@ flags) and SystemView. Most now frame EMPTY cards whose fixture content was
 severed by earlier milestones — the border outlived the data. Reclassifying each
 requires per-card verification and is **outstanding work**, tracked here rather
 than claimed complete.
+
+## M-PROVENANCE-FINAL — borders match the data
+
+**Tone policy changed, taxonomy unchanged.** `PROVENANCE_TONE` collapsed
+`placeholder` into red beside `fixture` and `synthetic`. That was right while most
+cards held invented data. With the fixture content gone it told an operator that an
+honestly-empty card was as untrustworthy as a fabricated balance — and when
+everything is red, red stops meaning anything.
+
+| tone | classes | badge |
+|---|---|---|
+| green | live, runtime-config, derived-live | LIVE |
+| **neutral** | **placeholder** | **NOT WIRED** |
+| red | fixture, synthetic, replay, mixed, unknown | NON-LIVE |
+
+**The audit was not cosmetic.** Four cards computed over sources earlier
+milestones had emptied:
+
+- **Health Score** rendered `NaN` — `native/cells.length` with `cells.length === 0`
+  after M-PKG-1 — inside a ring whose colour fell through to NEGATIVE. A red
+  "unhealthy" dial derived from nothing.
+- **Cell Coverage** rendered `NaN%` three times.
+- **Pair Health** showed `0` open trades, `0` deployments, `0.0%` risk.
+- **Today's Posture** showed `0` blocked intents.
+
+All four now state the absence. Two cards were misclassified in the OTHER
+direction: **Runtime Health** (genuine `/runtime/health`) was marked `fixture`, and
+the **pair events feed** was still `mixed` after M-EVENTS-1 split the stream. Both
+corrected to `live` — understating real data misleads as badly as overstating it.
+
+**Dead code:** `DeploymentManifestPanel` was provably unreachable
+(`useDeploymentManifest` always returns undefined since M-FLEET-2) and is deleted.
+
+**Remaining red on ordinary routes: 4.** Three ReplayView panels (synthetic by
+design) and Feed Health (genuinely mixed runtime + placeholder rows, tracked as
+row 16). Zero red cards remain whose only reason is absence, emptiness or an
+unimplemented feature. Dev preview routes keep 9 fixture panels — unmistakably red,
+as intended.

@@ -24,13 +24,28 @@ const SRC = path.resolve(__dirname, '../..');
 const read = (rel: string) => readFileSync(path.join(SRC, rel), 'utf8');
 
 describe('provenance → tone mapping', () => {
-  it('maps every real class to green and every non-real class to red', () => {
+  it('maps real classes green, shown-non-real classes red, and absence neutral', () => {
+    // M-PROVENANCE-FINAL: three tones. Red is reserved for cards that DISPLAY
+    // non-operational data; `placeholder` makes no claim and is neutral, so an
+    // honestly-empty card no longer looks like a fabrication warning.
     const green: CardProvenance[] = ['live', 'runtime-config', 'derived-live'];
-    const red: CardProvenance[] = ['fixture', 'synthetic', 'replay', 'placeholder', 'mixed', 'unknown'];
+    const neutral: CardProvenance[] = ['placeholder'];
+    const red: CardProvenance[] = ['fixture', 'synthetic', 'replay', 'mixed', 'unknown'];
     for (const p of green) expect(PROVENANCE_TONE[p], p).toBe('green');
+    for (const p of neutral) expect(PROVENANCE_TONE[p], p).toBe('neutral');
     for (const p of red) expect(PROVENANCE_TONE[p], p).toBe('red');
-    // exhaustive: no class exists outside the two lists
-    expect(Object.keys(PROVENANCE_TONE).sort()).toEqual([...green, ...red].sort());
+    expect(Object.keys(PROVENANCE_TONE).sort())
+      .toEqual([...green, ...neutral, ...red].sort());
+  });
+
+  it('unknown still fails closed to red', () => {
+    expect(PROVENANCE_TONE.unknown).toBe('red');
+  });
+
+  it('badges distinguish a missing capability from shown non-live data', () => {
+    expect(provenanceBadge('placeholder')).toBe('NOT WIRED');
+    expect(provenanceBadge('fixture')).toBe('NON-LIVE');
+    expect(provenanceBadge('live')).toBe('LIVE');
   });
 
   it("chrome ('none') renders no tone and no badge", () => {
@@ -141,39 +156,33 @@ describe('structural guards', () => {
       .toContain('provenance="placeholder"');
   });
 
-  it('fixture fleet and fixture trade cards remain RED', () => {
-    // M-FLEET-2: there are no fixture fleet or account cards left to be RED.
-    // Both views render authoritative records or an honest empty/unavailable
-    // state, so their panels are framed live and the FIXTURE tags are gone.
+  it('M-PROVENANCE-FINAL: ordinary routes hold no unjustified fixture cards', () => {
+    // Every remaining ordinary-route red card must be red because it SHOWS
+    // non-operational data — never merely because data is absent.
     const fleet = read('views/FleetOverview.tsx');
-    expect(fleet).not.toContain('deployment-fixture-tag-');
+    expect(fleet).not.toContain('provenance="fixture"');
     const accounts = read('views/AccountsProtectionView.tsx');
     expect(accounts).not.toContain('account-fixture-tag-');
-    expect(accounts).toContain('provenance="live"');
-    // Fixture records survive ONLY on the isolated development route.
-    const preview = read('views/dev/FixtureFleetPreview.tsx');
-    expect(preview).toContain('provenance="fixture"');
-    expect(preview).toContain('useFixtureFleetPreview');
-    // M-TRADES-1: the trades/orders panels no longer hold fixture records, so
-    // their red frames went with the content; the events feed stays red (mixed
-    // fixture+runtime, retired by M-EVENTS-1) and other fixture panels remain.
+    // Cards whose sources earlier milestones emptied are now placeholders.
     const pair = read('views/pair/PairViews.tsx');
-    expect(pair).toContain('provenance="mixed"');            // events feed stays red
-    expect(pair).toContain('useOperationalTrades');
-    expect(pair).not.toContain('useTrades(');
+    expect(pair).not.toContain('provenance="fixture"');
+    expect(pair).toContain('provenance="placeholder"');
+    // Replay is synthetic BY DESIGN and stays red.
+    expect(read('views/ReplayView.tsx')).toContain('provenance="replay"');
+    // Fixture preview routes stay unmistakably red.
+    expect(read('views/dev/FixtureFleetPreview.tsx')).toContain('provenance="fixture"');
+    expect(read('views/dev/FixtureTradesPreview.tsx')).toContain('provenance="fixture"');
   });
 
-  it('risk/accounts, edge monitor, system confidence and broker health stay RED', () => {
-    // M-FLEET-2: AccountsProtectionView no longer holds fixture accounts.
-    // M-HONESTY-FINAL: BrokerHealthView's fixture broker records are gone; the
-    // view reports unavailable and names the missing telemetry source.
+  it('M-PROVENANCE-FINAL: emptied surfaces are neutral, not red', () => {
+    // BrokerHealthView, EdgeMonitorView and the System packages panel had their
+    // fixture content severed; the border outlived the data until now.
     expect(read('views/BrokerHealthView.tsx')).not.toContain('provenance="fixture"');
-    expect(read('views/BrokerHealthView.tsx')).toContain('Broker health unavailable');
-    // M-REC-1: the recommendation pipeline panel is durable-store backed now.
-    expect(read('views/EdgeMonitorView.tsx')).toContain('provenance="live"');
+    expect(read('views/EdgeMonitorView.tsx')).toContain('provenance="placeholder"');
     const sys = read('views/SystemView.tsx');
-    expect(sys).toContain('provenance="fixture"');           // system confidence + fixture panels
-    expect(sys).toContain('provenance="placeholder"');       // feature flags card
+    expect(sys).toContain('provenance="placeholder"');
+    // Runtime Health is genuine /runtime/health telemetry and is framed live.
+    expect(sys).toContain('provenance="live"');
   });
 
   it('runtime-config settings sections default GREEN and Storage & Feeds is live', () => {
