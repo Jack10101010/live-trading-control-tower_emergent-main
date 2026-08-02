@@ -110,48 +110,66 @@ def test_3_ordinary_endpoints_never_invoke_the_loader(tmp_path):
         c = TestClient(server.app)
         for path in ('/api/health', '/api/live-runtime', '/api/live/status',
                      '/api/operations/nodes', '/api/live/connection',
-                     '/api/integration/diagnostics', '/api/feature-flags'):
+                     '/api/integration/diagnostics', '/api/feature-flags',
+                     # M-MOCK-DECOUPLE-1: the broker-backed operations surface
+                     # joins this list. It used to be excluded because the mock
+                     # adapter pulled the UI fixture through the broker context.
+                     '/api/operations/accounts', '/api/operations/positions',
+                     '/api/operations/orders', '/api/operations/summary'):
             c.get(path)
         print('LOADCOUNT=%d' % fps.load_count())
     """, tmp_path)
     assert "LOADCOUNT=0" in result.stdout, result.stdout + result.stderr
 
 
-def test_3b_the_mock_broker_still_pulls_the_ui_fixture_lazily(tmp_path):
-    """DEFERRED GAP, pinned so it cannot widen or be forgotten.
+def test_3b_the_mock_broker_never_invokes_the_fixture_loader(tmp_path):
+    """M-MOCK-DECOUPLE-1 — INVERTED. This test formerly asserted the opposite.
 
-    `_broker_context` injects fixture callables — `accounts`, `brokers`,
-    `live_trades`, `trade_current` — into the context handed to every adapter.
-    Only `MockBroker` consumes them (that is why `fixture_surfaces` treats
-    `_broker_context` as a boundary), but under the development-default mock
-    adapter a request to `/api/operations/accounts` still reaches those lambdas
-    and loads the UI fixture world.
+    `_broker_context` bound `accounts`, `live_trades`, `trade_current` and
+    `trade_by_order_id` to the UI fixture world for EVERY adapter, though only
+    `MockBroker` consumed them and `MT5Adapter` reads nothing but `ctx.now`. A
+    single request to `/api/operations/accounts` under the development-default
+    mock adapter therefore loaded all 22 authored collections to answer a
+    question about a stub.
 
-    This is now LAZY rather than eager — nothing is read until such a request
-    arrives — which is the milestone's objective. It is not yet DECOUPLED:
-    `MockBroker` should own a small self-contained dataset instead of the
-    22-collection UI fixture. That is M-MOCK-DECOUPLE-1.
-
-    Nothing dishonest reaches an operator either way: those records carry
-    `mock-fixture` provenance and every ordinary surface rejects them. The cost
-    is memory and coupling, not truthfulness.
-
-    This test asserts the CURRENT behaviour deliberately. When the decoupling
-    lands it will fail, and the fix is to move the assertion into `test_3`.
+    The mock adapter now carries its own dataset (`mock_broker_data`), so the
+    whole broker path is fixture-free. The old assertion (`AFTER=1`) is kept in
+    the history as the thing that had to change, not in the suite.
     """
+    result = _child("""
+        import sys; sys.path.insert(0, '.')
+        import server, fixture_preview_service as fps, broker_adapter
+        from fastapi.testclient import TestClient
+        c = TestClient(server.app)
+        c.get('/api/operations/accounts')
+        c.get('/api/operations/positions')
+        # Constructing the adapter directly must not load it either.
+        broker_adapter.get_adapter('mock')
+        print('KIND=%s LOADCOUNT=%d' % (broker_adapter.active_kind(), fps.load_count()))
+    """, tmp_path)
+    assert "KIND=mock" in result.stdout, result.stdout + result.stderr
+    assert "LOADCOUNT=0" in result.stdout, result.stdout
+
+
+def test_3c_the_mock_broker_serves_its_own_records_with_no_fixture_present(tmp_path):
+    """The decoupling proved end to end: no fixture file, full mock surface."""
     result = _child("""
         import sys; sys.path.insert(0, '.')
         import server, fixture_preview_service as fps
         from fastapi.testclient import TestClient
+        fps.configure(['/nonexistent/world.v1.json'])
         c = TestClient(server.app)
-        before = fps.load_count()
-        c.get('/api/operations/accounts')
-        print('BEFORE=%d AFTER=%d' % (before, fps.load_count()))
+        codes = [c.get(p).status_code for p in
+                 ('/api/operations/accounts', '/api/operations/positions',
+                  '/api/operations/orders', '/api/operations/summary')]
+        acct = c.get('/api/operations/accounts').json()['accounts'][0]
+        print('CODES=%s PROV=%s BAL=%s' % (codes, acct['provenance'], acct['balance']))
     """, tmp_path)
-    assert "BEFORE=0" in result.stdout, result.stdout + result.stderr
-    assert "AFTER=1" in result.stdout, (
-        "the mock broker no longer loads the UI fixture — move this assertion "
-        "into test_3 and delete this test: " + result.stdout)
+    assert "CODES=[200, 200, 200, 200]" in result.stdout, result.stdout + result.stderr
+    # Still mock-stamped, still carrying the sentinel every honesty guard scans
+    # for. Moving the data out of the fixture must not promote its authority.
+    assert "PROV=mock-fixture" in result.stdout, result.stdout
+    assert "BAL=100000.0" in result.stdout, result.stdout
 
 
 # ══════════════════════════════════════════════════════════════════════════════

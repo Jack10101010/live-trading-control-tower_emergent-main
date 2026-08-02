@@ -95,6 +95,17 @@ def configure(search_paths) -> None:
     _SEARCH_PATHS = tuple(search_paths)
 
 
+def search_paths() -> tuple:
+    """The paths this service will search. The single source of truth.
+
+    `server._fixture_file_present()` used its own module constant, so a caller
+    that reconfigured the service left the availability probe and the loader
+    disagreeing about where the fixture lives — the probe would report present
+    while the loader searched somewhere else.
+    """
+    return _SEARCH_PATHS
+
+
 def reset() -> None:
     """Drop the cached world. The deterministic seam tests need.
 

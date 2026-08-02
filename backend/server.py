@@ -63,6 +63,7 @@ import live_pipeline as live_pipeline_layer
 import live_preflight as live_preflight_layer
 import fixture_surfaces
 import fixture_preview_service
+import mock_broker_data
 import fixture_world
 import ledger_ingestion as ledger_ingestion_layer
 import market_runtime as market_runtime_layer
@@ -188,7 +189,9 @@ def _fixture_file_present() -> bool:
     """
     if not _ENV_POLICY.world_may_load:
         return False
-    return any(Path(p).exists() for p in FIXTURE_SEARCH_PATHS)
+    # Ask the SERVICE where it will look, so the probe and the loader can
+    # never disagree about which paths matter.
+    return any(Path(p).exists() for p in fixture_preview_service.search_paths())
 
 
 def _preview_world() -> fixture_world.FixtureWorld:
@@ -1069,24 +1072,79 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+# ── M-MOCK-DECOUPLE-1: the mock adapter's own record views ───────────────────
+#
+# These mirror `_live_trades_view` / `_trade_current` / `_trade_by_order_id`
+# exactly, including runtime-overlay application, but read `mock_broker_data`
+# instead of the UI fixture. The overlay store is genuine runtime state
+# (`execution_state.db`) and is unchanged: a mock CLOSE still persists, and
+# reading the trade back still reflects it.
+#
+# They are separate functions rather than a parameter on the originals because
+# the originals are also used by the fixture-backed preview routes
+# (`/api/deployments`, `/api/trades`). Those must keep serving authored records;
+# only the BROKER path is repointed.
+
+def _mock_live_trades_view() -> list[dict]:
+    overlays = _load_overlays("trade")
+    return [_apply_trade_overlay(t, overlays.get(t.get("tradeId")))
+            for t in mock_broker_data.live_trades()]
+
+
+def _mock_trade_current(trade_id: str) -> dict | None:
+    for t in mock_broker_data.live_trades():
+        if t.get("tradeId") == trade_id:
+            return _apply_trade_overlay(t, _get_overlay("trade", trade_id))
+    return None
+
+
+def _mock_trade_by_order_id(order_id: str) -> dict | None:
+    for t in mock_broker_data.live_trades():
+        if t.get("brokerOrderId") == order_id or t.get("tradeId") == order_id:
+            return _apply_trade_overlay(t, _get_overlay("trade", t["tradeId"]))
+    return None
+
+
 def _broker_context(payload: dict, now: str) -> broker_layer.BrokerContext:
     """Build the injection context the active broker executes against. The runtime
     hands the broker only these primitives — the broker never reaches into server
-    internals, and no broker-specific structure leaks back into the runtime."""
+    internals, and no broker-specific structure leaks back into the runtime.
+
+    M-MOCK-DECOUPLE-1 — NO FIXTURE ACCESSOR IS CAPTURED HERE.
+
+    `accounts`, `live_trades`, `trade_current` and `trade_by_order_id` were
+    bound to the UI fixture world. Only `MockBroker` consumed them; `MT5Adapter`
+    reads nothing but `ctx.now` (AST-verified). So every request that touched
+    the broker under the development-default mock adapter loaded all 22 fixture
+    collections to answer a question about a stub.
+
+    The record callables are now selected by ADAPTER KIND:
+
+      mock   -> `mock_broker_data`, a self-contained test double
+      other  -> inert. `MT5Adapter` reads none of them, and an adapter that
+                started reading them would get an empty answer rather than
+                silently inheriting the mock's records — which is the failure
+                direction that matters.
+
+    `brokers` is GONE from the context entirely: an AST scan of `MockBroker`
+    shows it never called `ctx.brokers()`. It was dead, and it was the only
+    remaining reason the fixture's broker collection was reachable from here.
+    """
+    kind = broker_layer.active_kind()
+    is_mock = kind == "mock"
     return broker_layer.BrokerContext(
         now=now,
         reason=payload.get("reason"),
         payload=payload,
         operator_id=_operator_id(),
-        trade_current=_trade_current,
-        trade_by_order_id=_trade_by_order_id,
+        trade_current=_mock_trade_current if is_mock else (lambda _id: None),
+        trade_by_order_id=_mock_trade_by_order_id if is_mock else (lambda _id: None),
         append_trade_management=_append_trade_management,
         mgmt_entry=_mgmt_entry,
         close_trade=_close_trade,
         snake_upper=_snake_upper,
-        live_trades=_live_trades_view,
-        accounts=lambda: _preview_world().get("accounts", []),
-        brokers=lambda: _preview_world().get("brokers", []),
+        live_trades=_mock_live_trades_view if is_mock else list,
+        accounts=mock_broker_data.accounts if is_mock else list,
     )
 
 
@@ -1331,11 +1389,24 @@ def _fresh_broker_snapshot() -> dict | None:
 
 
 def _execution_env() -> execution_layer.ExecutionEnv:
+    """M-MOCK-DECOUPLE-1 — the VALIDATION seam follows the same records.
+
+    `trade` and `order` resolved through the fixture-backed helpers while the
+    broker context resolved through the mock dataset. Repointing only the broker
+    left the two disagreeing: validation asked the fixture whether a trade
+    existed, the broker was operating on mock records, and every command against
+    a mock trade was refused `trade_not_found` before it reached the adapter.
+
+    Two lookups of the same entity must consult the same records. Under any
+    other adapter both answer None, which DENIES — the correct direction for a
+    validator with no record source.
+    """
     brk = broker_layer.get_broker()
+    is_mock = broker_layer.active_kind() == "mock"
     return execution_layer.ExecutionEnv(
         deployment=_deployment_current,
-        trade=_trade_current,
-        order=_trade_by_order_id,
+        trade=_mock_trade_current if is_mock else (lambda _id: None),
+        order=_mock_trade_by_order_id if is_mock else (lambda _id: None),
         active_package_version=lambda: _active_package_runtime().get("current"),
         broker_connection=lambda: brk.connection().state,
         broker_capabilities=lambda: broker_layer.capability_dict(brk.capabilities()),

@@ -507,22 +507,26 @@ def test_conflicting_payload_under_same_key_denies():
 
 
 def test_different_entities_are_independent(monkeypatch):
-    # Deterministic two-position fixture: the pristine world exposes exactly ONE
-    # open ("managing") live trade, so this path previously skipped. Clone that
-    # trade under a fresh tradeId in a DEEP-COPIED world and publish it through the explicit preview service
-    # for this test only — every consumer (_fresh_broker_snapshot projection,
-    # _trade_current, close overlays) reads the preview service at call time, and the
-    # runtime overlay DB is already isolated per-test by `isolated_event_store`.
+    # M-MOCK-DECOUPLE-1: the clone source is now `mock_broker_data`, not the UI
+    # fixture world. The mock dataset exposes exactly ONE `managing` trade, so
+    # this path still needs a second one; it is produced by patching the
+    # dataset's accessor for this test only, which is the supported seam and
+    # cannot leak (the accessor returns fresh deep copies per call).
+    #
+    # The runtime overlay DB is already isolated per-test by
+    # `isolated_event_store`, and `_mock_trade_current` / the projection read
+    # through the patched accessor at call time exactly as before.
     import copy
-    world = copy.deepcopy(fixture_preview_service.get_world())
-    open_trades = [t for t in world.get("liveTrades", []) if t.get("state") == "managing"]
-    assert open_trades, "pristine fixture must expose one open live trade"
+    import mock_broker_data
+    base = mock_broker_data.live_trades()
+    open_trades = [t for t in base if t.get("state") == "managing"]
+    assert open_trades, "the mock dataset must expose one open trade"
     clone = copy.deepcopy(open_trades[0])
     clone["tradeId"] = "tr_TESTINDEPENDENT0000000000A"
-    clone["clientOrderId"] = "cli_TESTINDEPENDENT0000000A"
     clone["brokerOrderId"] = "brk_TESTINDEPENDENT0000000A"
-    world["liveTrades"].append(clone)
-    fixture_preview_service.install_for_test(world)
+    cloned = base + [clone]
+    monkeypatch.setattr(mock_broker_data, "live_trades",
+                        lambda: [copy.deepcopy(t) for t in cloned])
 
     snap = server._fresh_broker_snapshot()
     positions = snap.get("positions") or []

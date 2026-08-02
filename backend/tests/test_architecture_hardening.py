@@ -615,7 +615,13 @@ def test_production_backed_exemptions_all_carry_a_reason():
 
 
 def test_boundary_helpers_are_justified():
-    assert "_broker_context" in fsurf.BOUNDARY_HELPERS
+    # M-MOCK-DECOUPLE-1: `_broker_context` and `_execution_env` LEFT this list.
+    # They were exceptions because they injected fixture callables that only
+    # MockBroker consumed; the mock adapter now carries its own dataset, so they
+    # read no fixture at all and need no exception. An exemption that is no
+    # longer required is one that can start hiding something.
+    assert "_broker_context" not in fsurf.BOUNDARY_HELPERS
+    assert "_execution_env" not in fsurf.BOUNDARY_HELPERS
     surfaces = fsurf.analyse(BACKEND_DIR / "server.py")
     # Operations routes are adapter-backed; gating them would be over-refusal.
     for path in ("/api/operations/positions", "/api/operations/summary"):
@@ -802,11 +808,18 @@ def test_the_unavailable_envelope_matches_repository_conventions():
 
 
 def test_broker_read_classification_is_documented():
-    """The classification reason must state the connected-or-503 rule, so the
-    corrected semantics cannot silently revert to the old false claim."""
+    """M-MOCK-DECOUPLE-1 — these routes no longer need an exemption at all.
+
+    `/api/broker/{positions,orders,accounts}` were listed in PRODUCTION_BACKED
+    because the broker context read the fixture. It no longer does, so they
+    never enter the derived fixture set and their entries were removed. The
+    property they documented — connected-or-503, never a misleading empty list —
+    is unchanged and is asserted by the broker-read contract tests.
+    """
     import fixture_surfaces as fsurf2
     for path in BROKER_READ_PATHS:
-        reason = fsurf2.PRODUCTION_BACKED[path]
-        assert "503" in reason or "connected" in reason, path
-        assert "genuine broker truth" not in reason, (
-            f"{path} still carries the refuted justification")
+        assert path not in fsurf2.PRODUCTION_BACKED, (
+            f"{path} regained a fixture-boundary exemption it no longer needs")
+    surfaces = fsurf2.analyse(BACKEND_DIR / "server.py")
+    for path in BROKER_READ_PATHS:
+        assert path not in surfaces, f"{path} started reading the fixture again"

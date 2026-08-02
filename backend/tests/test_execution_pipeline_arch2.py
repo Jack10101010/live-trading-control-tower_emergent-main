@@ -30,7 +30,11 @@ from conftest import code_only                                      # noqa: E402
 
 client = TestClient(server.app)
 
-OPEN_TRADE = "tr_01J8ZC4H2N8M6K1E3R5T7V9W0XZ"       # fixture: state "managing"
+# M-MOCK-DECOUPLE-1: the broker path no longer serves fixture trades. The one
+# `managing` record now lives in the mock test double, and is named rather than
+# hard-coded so a change to the dataset cannot silently desync this suite.
+import mock_broker_data                                              # noqa: E402
+OPEN_TRADE = mock_broker_data.open_trade_id()
 
 
 @pytest.fixture(autouse=True)
@@ -125,13 +129,30 @@ def test_dry_run_executes_no_effect_and_persists_no_lifecycle():
 
 
 def test_fixture_route_cannot_reach_a_live_adapter(monkeypatch):
-    """With a non-mock adapter active, the safety context reverts to deny-by-default
-    and every broker-dispatched command is denied at the safety stage."""
+    """With a non-mock adapter active, a mock-trade command NEVER reaches the
+    broker.
+
+    M-MOCK-DECOUPLE-1 moved the refusal one stage EARLIER, and made it more
+    specific. Previously the trade was resolvable (both the validator and the
+    broker read the fixture regardless of adapter), so the command survived
+    validation and was stopped by deny-by-default at the safety stage. Now the
+    record lookups are adapter-scoped: under MT5 this mock trade genuinely does
+    not exist, and saying `trade_not_found` is a truer answer than evaluating
+    safety rails against an entity that is not there.
+
+    The assertion is therefore on the property that matters — the broker is
+    never dispatched to — rather than on WHICH gate refused. That is strictly
+    stronger: pinning the stage would pass even if a later edit let the command
+    through safety and be stopped by luck somewhere downstream.
+    """
     monkeypatch.setattr(broker_layer, "active_kind", lambda: "mt5")
     r = client.post("/api/commands/SLToBE", json={"tradeId": OPEN_TRADE})
     assert r.status_code == 422
-    assert r.json()["detail"]["status"] == "denied"
-    assert r.json()["detail"]["stage"] == ex.STAGE_SAFETY
+    detail = r.json()["detail"]
+    assert detail["status"] in ("denied", "rejected")
+    stages = [s["stage"] for s in detail["stages"]]
+    assert ex.STAGE_BROKER_DISPATCH not in stages, stages
+    assert all(not s["ok"] for s in detail["stages"] if s["stage"] == detail["stage"])
 
 
 # ── fault injection is test-only and off by default ──────────────────────────

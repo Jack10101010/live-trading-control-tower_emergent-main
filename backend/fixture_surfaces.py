@@ -44,23 +44,20 @@ from pathlib import Path
 
 #: Helpers whose fixture reads must NOT make their callers fixture-backed.
 #:
-#: `_broker_context` injects fixture callables (`accounts`, `brokers`,
-#: `live_trades`, `trade_current`) into the context handed to EVERY adapter — but
-#: an AST scan of `broker.py` shows every consumer of those callables lives in
-#: `MockBroker`. `MT5Adapter` reads none of them. So a route reaching the broker
-#: is ADAPTER-backed, not fixture-backed: with a live adapter it reports genuine
-#: broker truth, and refusing it because the mock happens to read a fixture would
-#: hide real data.
+#: M-MOCK-DECOUPLE-1 SHRANK THIS LIST, which is the direction it should move.
 #:
-#: Treating these as boundaries is what keeps the derivation honest in BOTH
-#: directions — the earlier regression was under-refusal, and blanket-gating
-#: everything downstream of the broker context would simply be over-refusal.
-#: This list is short and about BOUNDARIES, not routes; the route set stays
-#: derived.
+#: `_broker_context` and `_execution_env` were listed because they injected
+#: fixture callables that only `MockBroker` consumed — so a route reaching the
+#: broker was adapter-backed rather than fixture-backed, and gating it would
+#: have hidden real data under a live adapter.
+#:
+#: They are gone from this list because they no longer read the fixture AT ALL:
+#: the mock adapter carries `mock_broker_data` and every other adapter gets
+#: inert callables. An exception that is no longer needed is an exception that
+#: can start hiding something, so it is removed rather than left as insurance.
+#: A guard below asserts neither function can reacquire a fixture read.
 BOUNDARY_HELPERS = frozenset({
-    "_broker_context",        # fixture callables consumed only by MockBroker
-    "_execution_env",         # same context, execution side
-    "_operator_id",           # now resolves from operator_identity, not WORLD
+    "_operator_id",           # resolves from operator_identity, not the fixture
 })
 
 #: Routes that read the fixture but ALSO have a genuine production source, so an
@@ -82,26 +79,10 @@ PRODUCTION_BACKED: dict[str, str] = {
     # adapter is genuinely connected, so an empty list means CONNECTED-and-flat
     # and nothing else. They stay out of the fixture gate because their owner is
     # the adapter, not the fixture.
-    "/api/broker/positions": (
-        "adapter-owned; returns 503 broker_unavailable unless connected, so an "
-        "empty list means connected-and-flat rather than unreachable"),
-    "/api/broker/orders": "adapter-owned; same connected-or-503 rule as positions",
-    "/api/broker/accounts": "adapter-owned; same connected-or-503 rule as positions",
     "/api/broker-health": "reports adapter connection state, not fixture content",
-    "/api/execution/dry-run": (
-        "simulates against the active adapter; a dry run with no fixture is a "
-        "legitimately empty simulation, not a fabricated one"),
-    "/api/operator/preferences": (
-        "persisted in the runtime overlay store; the fixture only supplies "
-        "defaults"),
-    "/api/operator/commands": (
-        "durable command lifecycle; the fixture only supplies an operator id"),
     # Incidental fixture use — the PAYLOAD comes from a production source and the
     # fixture supplies only metadata (an `asOf`, a seed count). Refusing these
     # would hide genuine data, which is the mirror-image mistake.
-    "/api/runtime/health": (
-        "runtime/event-store liveness; reads fixture event counts only as a "
-        "seed offset. Liveness must answer even with no fixture"),
     "/api/market-data/candles": (
         "served by the market-data engine (fixture/replay/MT5 provider); the "
         "fixture is consulted only for `meta.asOf`"),

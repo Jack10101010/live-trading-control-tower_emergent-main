@@ -208,7 +208,13 @@ class BrokerContext:
     snake_upper: Callable[[str], str]
     live_trades: Callable[[], list]
     accounts: Callable[[], list]
-    brokers: Callable[[], list]
+    # M-MOCK-DECOUPLE-1: `brokers` REMOVED. An AST scan of every adapter shows
+    # nothing ever called it — `MockBroker` reads accounts, live_trades,
+    # trade_current and trade_by_order_id; `MT5Adapter` reads only `now`. It was
+    # dead field on the interface, and the only remaining reason the UI
+    # fixture's broker collection was reachable from the broker path. Narrowing
+    # the interface is the point: a field nobody reads is a field a future edit
+    # can start reading without anyone deciding to.
 
 
 # ---------------------------------------------------------------------------
