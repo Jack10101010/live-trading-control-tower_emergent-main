@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import math
 
+import activation_policy
 import broker_provenance as brokerprov
 import node_provenance as nodeprov
 import trade_ledger_domain as _tld
@@ -326,6 +327,22 @@ class AccountOperationalView:
     observed_at: str | None = None
     provenance: str = PROV_ABSENT
     freshness: Freshness | None = None
+    # ── M-ACTIVATE-READINESS-1 ────────────────────────────────────────────────
+    #: Whether this observation may be presented as operational truth.
+    #:
+    #: SEPARATE FROM PROVENANCE, deliberately. Provenance answers "who observed
+    #: this?" and is earned by evidence; admission answers "is this the account
+    #: this deployment is supposed to be looking at?" and is a question about
+    #: configuration. Collapsing them would mean an identity mismatch either
+    #: rewrote the record's origin (a lie about where it came from) or passed
+    #: unremarked (a lie about what it is).
+    #:
+    #: A rejected record is still RETURNED, carrying its reasons. Dropping it
+    #: would show "unavailable" while a node is loudly reporting real money from
+    #: the wrong account — the operator needs to see that, precisely.
+    admitted: bool = True
+    #: Named refusal codes from `activation_policy`, never a generic failure.
+    admission_reasons: tuple = ()
 
     def as_dict(self) -> dict:
         return _sorted({
@@ -348,6 +365,8 @@ class AccountOperationalView:
             "nodeId": self.node_id,
             "observedAt": self.observed_at,
             "provenance": self.provenance,
+            "admitted": self.admitted,
+            "admissionReasons": list(self.admission_reasons),
             "freshness": self.freshness.as_dict() if self.freshness else None,
         })
 
@@ -1133,6 +1152,10 @@ def _node_accounts(sources: ProjectionSources, *, now: str,
         entries = sources.node_entries() or []
     except Exception:
         return ()
+    # M-ACTIVATE-READINESS-1 — the deployment's pinned identity, if any. Read
+    # once per projection so every record in one answer is judged against the
+    # same expectation.
+    expected_account, expected_server = activation_policy.expected_identity()
     out: list[AccountOperationalView] = []
     for entry in entries:
         if not isinstance(entry, dict):
@@ -1149,6 +1172,8 @@ def _node_accounts(sources: ProjectionSources, *, now: str,
         if not (health_seen or identity_seen):
             continue                    # the node observed no account this cycle
         node_id = entry.get("instance_id")
+        admissible, admission_reasons = activation_policy.account_admissible(
+            entry, expected_account=expected_account, expected_server=expected_server)
         # Liveness on the tower's clock; the envelope's verdict can only tighten it.
         fresh = freshness(now=now, source_at=entry.get("received_at"),
                           available=True, stale_after_s=stale_after_s,
@@ -1183,11 +1208,131 @@ def _node_accounts(sources: ProjectionSources, *, now: str,
             node_id=node_id,
             observed_at=health.get("observed_at") if health_seen else None,
             provenance=brokerprov.for_node_observation(observed=True),
+            # Provenance is earned (the node observed a terminal); admission is
+            # checked (it observed the RIGHT one). An unpinned deployment cannot
+            # perform the second check, so `admitted` is True and the checker
+            # says WARN rather than PASS — an unverifiable claim is not a
+            # verified one.
+            admitted=admissible,
+            admission_reasons=admission_reasons,
             freshness=fresh))
     # Stable, total ordering by node then account, so a render key never depends
     # on arrival order and one node's row can never take another's place.
     out.sort(key=lambda a: (a.node_id or "", a.account_fingerprint or ""))
     return tuple(out)
+
+
+def _local_admission(fingerprint, server, expected_account, expected_server) -> tuple:
+    """The identity pin, applied to a LOCALLY-read account.
+
+    The pin was originally enforced only on node-relayed records, on the
+    reasoning that this Mac cannot read a terminal. That reasoning is about the
+    current host, not about the code — on any host where `live_mt5` is
+    producible the pin would have been silently unenforced while the runbook
+    told the operator it was pinned. The same rule now applies to both sources.
+    """
+    reasons = []
+    if expected_account:
+        if not fingerprint:
+            reasons.append(activation_policy.R_ACCOUNT_IDENTITY_UNVERIFIABLE)
+        elif fingerprint != expected_account:
+            reasons.append(activation_policy.R_ACCOUNT_IDENTITY_MISMATCH)
+    if expected_server:
+        if not server:
+            reasons.append(activation_policy.R_ACCOUNT_IDENTITY_UNVERIFIABLE)
+        elif server != expected_server:
+            reasons.append(activation_policy.R_ACCOUNT_SERVER_MISMATCH)
+    return (not reasons), tuple(dict.fromkeys(reasons))
+
+
+def _local_accounts(sources: ProjectionSources, *, now: str,
+                    stale_after_s: float) -> tuple:
+    """Accounts THIS PROCESS'S OWN broker adapter observed. Never consults nodes.
+
+    Returns `()` when the adapter observed nothing at all, which is the ordinary
+    case on the operator's Mac: the MetaTrader5 binding is Windows local-terminal
+    IPC, so `MT5Adapter._gateway` is None and every read is unavailable.
+
+    Extracted from `build_accounts` so that "what the local adapter saw" and
+    "what the nodes relayed" are two independent answers that can be COMPARED.
+    While they were interleaved in one branching function, the winner was decided
+    by control flow, which is why a contradiction between them had nowhere to be
+    reported: one branch simply returned before the other ran.
+    """
+    kind = sources.adapter_kind()
+    conn = sources.connection_state()
+    acct = sources.account_snapshot()
+    snap = sources.broker_snapshot()
+    snap_at = (snap or {}).get("at")
+    expected_account, expected_server = activation_policy.expected_identity()
+
+    # OBSERVATION IS EVIDENCE, NOT A TYPE CHECK.
+    #
+    # `observed=True` used to follow from "the adapter returned a dict at all",
+    # which meant an adapter answering with an empty or all-null sample produced
+    # `provenance: live_mt5, balance: null` — the very record shape
+    # `broker_provenance` exists to eliminate, arriving through the other door.
+    # The node path has always required a positive `available is True`; the
+    # local path now requires at least one field with something in it.
+    def _carries(sample: dict, fields: tuple) -> bool:
+        return any(sample.get(f) is not None for f in fields)
+
+    if not isinstance(acct, dict):
+        # No dedicated account snapshot. Fall back to the accounts the broker
+        # snapshot itself reports (real evidence, e.g. the fixture world's
+        # accounts) — still derived, never invented.
+        listed = (snap or {}).get("accounts") or []
+        first = listed[0] if isinstance(listed, list) and listed else None
+        if isinstance(first, dict) and _carries(
+                first, ("accountId", "balance", "equity", "brokerId", "broker")):
+            fingerprint = first.get("accountId") or (snap or {}).get("accountIdentity")
+            admitted, reasons = _local_admission(
+                fingerprint, None, expected_account, expected_server)
+            return (AccountOperationalView(
+                account_fingerprint=fingerprint,
+                broker=first.get("brokerId") or first.get("broker"),
+                server=None,
+                balance=_num_or_none(first.get("balance")),
+                equity=_num_or_none(first.get("equity")),
+                margin=None, margin_level=None, leverage=None,
+                currency=first.get("baseCurrency") or first.get("currency"),
+                unrealized_pnl=None, realized_pnl_today=None, open_risk=None,
+                connection_state=conn,
+                provenance=_provenance_for(kind, observed=True),
+                admitted=admitted, admission_reasons=reasons,
+                freshness=freshness(now=now, source_at=snap_at, available=True,
+                                    stale_after_s=stale_after_s,
+                                    detail="derived from broker snapshot accounts")),)
+        return ()
+
+    if not _carries(acct, ("fingerprint", "balance", "equity", "server",
+                           "margin", "leverage", "currency")):
+        return ()                    # a sample carrying nothing observed nothing
+
+    unrealized = None
+    if isinstance(snap, dict):
+        pnls = [_entity_view(p).get("pnl") for p in (snap.get("positions") or [])]
+        numeric = [p for p in pnls if isinstance(p, (int, float)) and not isinstance(p, bool)]
+        unrealized = round(sum(numeric), 2) if numeric else None
+    fingerprint = acct.get("fingerprint") or (snap or {}).get("accountIdentity")
+    admitted, reasons = _local_admission(fingerprint, acct.get("server"),
+                                         expected_account, expected_server)
+    return (AccountOperationalView(
+        account_fingerprint=fingerprint,
+        broker=acct.get("broker_company"),
+        server=acct.get("server"),
+        balance=_num_or_none(acct.get("balance")),
+        equity=_num_or_none(acct.get("equity")),
+        margin=_num_or_none(acct.get("margin")),
+        margin_level=_num_or_none(acct.get("margin_level")),
+        leverage=acct.get("leverage"), currency=acct.get("currency"),
+        unrealized_pnl=unrealized,
+        # Not derivable from current evidence — reported as absent, not zero.
+        realized_pnl_today=None, open_risk=None,
+        connection_state=conn, provenance=_provenance_for(kind, observed=True),
+        admitted=admitted, admission_reasons=reasons,
+        freshness=freshness(now=now, source_at=acct.get("at") or snap_at,
+                            available=True, stale_after_s=stale_after_s)),)
 
 
 def build_accounts(sources: ProjectionSources, *, now: str,
@@ -1196,98 +1341,53 @@ def build_accounts(sources: ProjectionSources, *, now: str,
 
     M-MT5-READ-1 — ORDER OF AUTHORITY, and why it is this way round.
 
-    This process's own broker adapter is tried FIRST, but only counts when it
-    genuinely returned something. On the operator's Mac it never can: the
-    MetaTrader5 binding is Windows local-terminal IPC, so `MT5Adapter._gateway`
-    is None and every read is unavailable. The EXECUTION NODE is the only thing
-    in this system that can see a terminal, so node-relayed account truth is
-    projected whenever the local adapter observed nothing.
+    This process's own broker adapter and the execution nodes are asked
+    INDEPENDENTLY, and `activation_policy.reconcile_account_sources` decides
+    between them. Precedence is by AUTHORITY, not locality: a local read wins
+    only if it is genuine broker truth. `mock-fixture` is not, so the fixture's
+    $100,000 account can never shadow a node relaying real MT5 truth — the
+    defect M-NODE-READ-1 found, where real data was suppressed by invented data
+    and the frontend gate then reported "unavailable".
 
-    Both paths are gated on observation, so this can never produce two competing
-    accounts for the same reading: the local branch requires a snapshot the
-    adapter returned, the node branch requires the node's own `available: true`.
+    M-ACTIVATE-READINESS-1 — WHY THE TWO SOURCES ARE NO LONGER INTERLEAVED.
+
+    The previous shape consulted the nodes only inside the branch where the
+    local adapter had failed, so when BOTH were genuine the local one returned
+    first and the node was never asked. That is unreachable on today's Mac — the
+    local adapter cannot be a real terminal — but it made the contradiction case
+    structurally unrepresentable, and `reconcile_account_sources` had no call
+    site. A documented rule with no call site is the exact defect this programme
+    keeps finding.
+
+    Both sources are now computed and compared. Where they describe the SAME
+    account with DIFFERENT money, both records survive and `build_summary`
+    raises the contradiction as a warning. Nothing is averaged and nothing is
+    silently preferred.
+
     Where neither observed anything, the answer is one explicitly UNAVAILABLE
     view — never a zeroed balance and never an invented account.
     """
-    kind = sources.adapter_kind()
-    conn = sources.connection_state()
-    acct = sources.account_snapshot()
+    local = _local_accounts(sources, now=now, stale_after_s=stale_after_s)
+    relayed = _node_accounts(sources, now=now, stale_after_s=stale_after_s)
+
+    admitted, _warnings = activation_policy.reconcile_account_sources(relayed, local)
+    if admitted:
+        return admitted
+    # Nothing genuine anywhere. An inadmissible local record (the mock adapter's)
+    # still travels to the endpoint carrying its honest `mock-fixture` stamp —
+    # every gate rejects it, and suppressing it here would hide from an operator
+    # that the process is running on a mock adapter at all.
+    if local:
+        return local
+
     snap = sources.broker_snapshot()
-    snap_at = (snap or {}).get("at")
-
-    # M-NODE-READ-1 — PRECEDENCE FIX: FIXTURE DATA MUST NOT SHADOW REAL DATA.
-    #
-    # M-MT5-READ-1 consulted the execution nodes only when the local adapter
-    # observed NOTHING. Under the development-default mock adapter the local
-    # adapter observes plenty — the fixture world's $100,000 account — so it won
-    # the precedence and the node was never asked.
-    #
-    # The consequence, found by this milestone's own test: a node relaying
-    # GENUINE MT5 account truth would be shadowed by a fixture account. The
-    # frontend gate then rejects the fixture record and the operator sees
-    # "unavailable" — real data suppressed by invented data, which is the
-    # inverse of the whole programme.
-    #
-    # The rule is now precedence by AUTHORITY, not by locality: a local read
-    # wins only if it is genuine BROKER TRUTH. `mock-fixture` is not, so the
-    # node is consulted first whenever the local adapter is not a real terminal.
-    local_is_broker_truth = brokerprov.is_broker_truth(
-        _provenance_for(kind, observed=isinstance(acct, dict) or isinstance(snap, dict)))
-    if not local_is_broker_truth:
-        relayed = _node_accounts(sources, now=now, stale_after_s=stale_after_s)
-        if relayed:
-            return relayed
-
-    if not isinstance(acct, dict):
-        # No dedicated account snapshot. Fall back to the accounts the broker
-        # snapshot itself reports (real evidence, e.g. the fixture world's
-        # accounts) — still derived, never invented.
-        listed = (snap or {}).get("accounts") or []
-        first = listed[0] if isinstance(listed, list) and listed else None
-        if isinstance(first, dict):
-            return (AccountOperationalView(
-                account_fingerprint=first.get("accountId") or (snap or {}).get("accountIdentity"),
-                broker=first.get("brokerId") or first.get("broker"),
-                server=None,
-                balance=first.get("balance"), equity=first.get("equity"),
-                margin=None, margin_level=None, leverage=None,
-                currency=first.get("baseCurrency") or first.get("currency"),
-                unrealized_pnl=None, realized_pnl_today=None, open_risk=None,
-                connection_state=conn,
-                provenance=_provenance_for(kind, observed=True),
-                freshness=freshness(now=now, source_at=snap_at, available=True,
-                                    stale_after_s=stale_after_s,
-                                    detail="derived from broker snapshot accounts")),)
-        # The local adapter observed nothing. Ask the execution nodes.
-        relayed = _node_accounts(sources, now=now, stale_after_s=stale_after_s)
-        if relayed:
-            return relayed
-        return (AccountOperationalView(
-            connection_state=conn,
-            # NOT `live_mt5`. Nothing was read, so nothing may claim an origin.
-            provenance=_provenance_for(kind, observed=False),
-            freshness=freshness(now=now, source_at=snap_at, available=False,
-                                stale_after_s=stale_after_s,
-                                detail="account snapshot unavailable")),)
-    prov = _provenance_for(kind, observed=True)
-    unrealized = None
-    if isinstance(snap, dict):
-        pnls = [_entity_view(p).get("pnl") for p in (snap.get("positions") or [])]
-        numeric = [p for p in pnls if isinstance(p, (int, float)) and not isinstance(p, bool)]
-        unrealized = round(sum(numeric), 2) if numeric else None
     return (AccountOperationalView(
-        account_fingerprint=acct.get("fingerprint") or (snap or {}).get("accountIdentity"),
-        broker=acct.get("broker_company"),
-        server=acct.get("server"),
-        balance=acct.get("balance"), equity=acct.get("equity"),
-        margin=acct.get("margin"), margin_level=acct.get("margin_level"),
-        leverage=acct.get("leverage"), currency=acct.get("currency"),
-        unrealized_pnl=unrealized,
-        # Not derivable from current evidence — reported as absent, not zero.
-        realized_pnl_today=None, open_risk=None,
-        connection_state=conn, provenance=prov,
-        freshness=freshness(now=now, source_at=acct.get("at") or snap_at,
-                            available=True, stale_after_s=stale_after_s)),)
+        connection_state=sources.connection_state(),
+        # NOT `live_mt5`. Nothing was read, so nothing may claim an origin.
+        provenance=_provenance_for(sources.adapter_kind(), observed=False),
+        freshness=freshness(now=now, source_at=(snap or {}).get("at"), available=False,
+                            stale_after_s=stale_after_s,
+                            detail="account snapshot unavailable")),)
 
 
 def build_orders(sources: ProjectionSources, *, now: str) -> tuple:
@@ -1657,6 +1757,11 @@ def build_summary(sources: ProjectionSources, *, now: str,
         tower_warnings.append("reconciliation stale")
     elif not posture:
         tower_warnings.append("reconciliation posture unavailable")
+    # M-ACTIVATE-READINESS-1 — a disagreement between two GENUINE sources is a
+    # fact about the whole system, not about either source, so it is raised here
+    # alongside the other tower-level warnings. Derived from the projected
+    # accounts, so it describes exactly what the operator is looking at.
+    tower_warnings.extend(activation_policy.account_contradictions(accounts))
     warnings = tuple(sorted({w for n in nodes for w in n.warnings} | set(tower_warnings)))
     return OperationalSummary(
         projection_timestamp=str(now), nodes=nodes, accounts=accounts,

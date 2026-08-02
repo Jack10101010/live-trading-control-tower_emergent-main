@@ -78,6 +78,12 @@ _LOCAL_ORIGINS = {
 }
 
 
+#: The complete set of values an ordinary operator surface may render as broker
+#: truth. Named so the Python gate, the TypeScript gate and the checker can be
+#: asserted equal to one another instead of to three hand-copied literals.
+AUTHORITATIVE_PROVENANCE = frozenset({PROV_LIVE_MT5, PROV_NODE_MT5})
+
+
 def for_local_adapter(adapter_kind, *, observed: bool) -> str:
     """Provenance for a record produced by THIS process's broker adapter.
 

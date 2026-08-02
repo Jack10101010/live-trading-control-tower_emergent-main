@@ -949,6 +949,10 @@ export interface AccountOperationalView {
   /** When the OBSERVER sampled it — distinct from `freshness` (arrival clock). */
   observedAt: string | null;
   provenance: string;
+  /** M-ACTIVATE-READINESS-1 — admission is separate from provenance: a genuine
+   *  reading of the WRONG account is `node_mt5` and NOT admitted. */
+  admitted: boolean;
+  admissionReasons: string[];
   freshness: ProjectionFreshness | null;
 }
 

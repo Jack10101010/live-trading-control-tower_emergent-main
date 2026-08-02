@@ -26,13 +26,39 @@ import { Wallet } from 'lucide-react';
 const NOT_DERIVABLE = '—';
 
 export function AccountsProtectionView() {
-  const { accounts, status, detail } = useAccountsProtection();
+  // `rejections = []` is a render-boundary default, not laziness: a page that
+  // white-screens because one field was absent tells an operator nothing at
+  // all, which is strictly worse than the state it was trying to describe.
+  const { accounts, status, detail, rejections = [] } = useAccountsProtection();
+
+  // M-ACTIVATE-READINESS-1 — a NAMED refusal is shown before the generic empty
+  // state. "No authoritative account source" is true when a node is reporting
+  // the wrong account, and it is the wrong thing to tell an operator: the two
+  // states require opposite actions — wait, versus stop and check the pinning.
+  const refusals = rejections.length > 0 && (
+    <div
+      className="rounded-md p-3 border mb-3"
+      data-testid="account-admission-refused"
+      style={{ borderColor: 'var(--danger)', background: 'var(--panel-2)' }}
+    >
+      <div className="text-2xs uppercase tracking-widest mb-2"
+           style={{ color: 'var(--danger)' }}>
+        Account observation refused
+      </div>
+      {rejections.map((reason) => (
+        <p key={reason} className="text-xs text-text-muted mb-1">{reason}</p>
+      ))}
+    </div>
+  );
 
   if (status === 'unavailable') {
     return (
       <Shell>
+        {refusals}
         <EmptyState
-          title="No authoritative account source"
+          title={rejections.length > 0
+            ? 'Account observation refused'
+            : 'No authoritative account source'}
           description={detail}
           icon={<Wallet size={16} />}
         />
@@ -54,6 +80,7 @@ export function AccountsProtectionView() {
 
   return (
     <Shell>
+      {refusals}
       {status === 'stale' && (
         <p className="text-2xs text-[color:var(--warning)] mb-3" data-testid="accounts-stale">
           These records are older than their freshness budget. Shown as last

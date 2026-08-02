@@ -82,12 +82,72 @@ export interface Freshness {
 export interface ProvenancedRecord {
   provenance?: string;
   freshness?: Freshness | null;
+  /**
+   * M-ACTIVATE-READINESS-1 — admission, which is NOT provenance.
+   *
+   * Provenance answers "who observed this?" and is earned by evidence.
+   * Admission answers "is this the account this deployment is pinned to?" and
+   * is a question about configuration. A genuine `node_mt5` reading of the
+   * WRONG account has impeccable provenance and must still not be rendered as
+   * this deployment's money.
+   *
+   * Absent means admitted: an unpinned deployment cannot perform the check, and
+   * treating "not checked" as "failed" would blank a correct activation.
+   */
+  admitted?: boolean;
+  admissionReasons?: string[];
 }
 
 /** True only for a record this application is willing to call operational. */
 export function isAuthoritative(record: ProvenancedRecord | null | undefined): boolean {
   if (!record || typeof record.provenance !== 'string') return false;   // fail closed
+  if (record.admitted === false) return false;   // right source, wrong account
   return AUTHORITATIVE_PROVENANCE.has(record.provenance);
+}
+
+/** Named refusal codes, in sync with `activation_policy`. */
+export const R_ACCOUNT_IDENTITY_MISMATCH = 'account_identity_mismatch';
+export const R_ACCOUNT_SERVER_MISMATCH = 'account_server_mismatch';
+export const R_NUMERIC_INVALID = 'numeric_invalid';
+export const R_CONTRADICTORY_SOURCES = 'contradictory_account_sources';
+
+const REJECTION_COPY: Record<string, string> = {
+  [R_ACCOUNT_IDENTITY_MISMATCH]:
+    'An execution node is reporting a genuine MT5 account that is NOT the account ' +
+    'this deployment is pinned to. The reading is real; it is the wrong account. ' +
+    'Nothing is shown, because showing it would attribute another account’s money ' +
+    'to this deployment.',
+  [R_ACCOUNT_SERVER_MISMATCH]:
+    'An execution node is reporting an account on a different broker server from ' +
+    'the one this deployment expects. The reading is real; the destination is not ' +
+    'the expected one.',
+  [R_NUMERIC_INVALID]:
+    'An account observation contained a value that is not a measurement (NaN, ' +
+    'infinity, or a negative where none is possible). The record is refused ' +
+    'rather than partially believed.',
+};
+
+/**
+ * Precise operator copy for records the gate refused, in a stable order.
+ *
+ * A refused record must not vanish silently. "No authoritative account source"
+ * is true but misleading when the truth is "a source is reporting loudly and it
+ * is the wrong account" — the two states need an operator to do opposite
+ * things.
+ */
+export function admissionRejectionCopy(
+  records: readonly ProvenancedRecord[] | null | undefined
+): string[] {
+  if (!Array.isArray(records)) return [];
+  const seen = new Set<string>();
+  for (const record of records) {
+    if (record?.admitted !== false) continue;
+    for (const reason of record.admissionReasons ?? []) {
+      const copy = REJECTION_COPY[reason];
+      if (copy) seen.add(copy);
+    }
+  }
+  return [...seen].sort();
 }
 
 /**

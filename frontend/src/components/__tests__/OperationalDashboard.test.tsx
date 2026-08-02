@@ -70,6 +70,9 @@ function account(over: Partial<AccountOperationalView> = {}): AccountOperational
     // fixture keeps describing a LOCALLY-read account, not a relayed one.
     freeMargin: null, tradeAllowed: null, tradeExpert: null,
     nodeId: null, observedAt: null,
+    // M-ACTIVATE-READINESS-1: admitted by default, because an unpinned
+    // deployment cannot check identity and "not checked" is not "failed".
+    admitted: true, admissionReasons: [],
     ...over,
   };
 }

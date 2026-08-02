@@ -30,7 +30,8 @@ import { AlertTriangle, Layers } from 'lucide-react';
  * fabrication this milestone exists to remove.
  */
 export function FleetOverview() {
-  const { nodes, accounts, status, nodeStatus, nodeDetail } = useOperationalFleet();
+  const { nodes, accounts, status, nodeStatus, nodeDetail, rejections = [] } =
+    useOperationalFleet();
   const noNode = nodeStatus === 'absent';
 
   return (
@@ -53,12 +54,25 @@ export function FleetOverview() {
               </>
             )}
             {' · '}
-            {status === 'unavailable'
-              ? 'account source unavailable'
-              : status === 'empty'
-                ? 'no accounts reported'
-                : `${accounts.length} account${accounts.length === 1 ? '' : 's'}`}
+            {/* A NAMED refusal replaces the generic wording. "account source
+                unavailable" is technically true while a node is loudly
+                reporting the wrong account, and it is the wrong thing to tell
+                an operator: the two states call for opposite actions — wait,
+                versus stop and check the pinning. */}
+            {rejections.length > 0
+              ? 'account observation REFUSED'
+              : status === 'unavailable'
+                ? 'account source unavailable'
+                : status === 'empty'
+                  ? 'no accounts reported'
+                  : `${accounts.length} account${accounts.length === 1 ? '' : 's'}`}
           </p>
+          {rejections.length > 0 && (
+            <p className="text-xs mt-2" data-testid="fleet-account-refused"
+               style={{ color: 'var(--danger)' }}>
+              {rejections.join(' ')}
+            </p>
+          )}
         </header>
 
         <div className="flex-1 overflow-auto px-6 pb-6">

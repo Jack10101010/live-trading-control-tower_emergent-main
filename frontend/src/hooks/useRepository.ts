@@ -8,6 +8,7 @@ import { type Candle } from '@/lib/chartData';
 import { api, QK, type BackendHealth, type BrokerReconciliation, type OperatorPreferences, type RuntimeHealth, type StrategyEvaluation, type SchedulerStatus, type MarketSnapshot, type RiskLimits, type MarketCandles, type FleetProvenance, type NodeOperationalView, type AccountOperationalView, type PositionOperationalView, type OrderOperationalView, type RecommendationOperationalView, type Capability, type LedgerAnalytics, type OperatorIdentity } from '@/lib/api';
 import {
   authoritativeOnly,
+  admissionRejectionCopy,
   classify,
   UNAVAILABLE_DETAIL,
   TRADES_UNAVAILABLE_DETAIL,
@@ -128,6 +129,11 @@ export function useOperationalFleet(): {
   /** NODE admission status. Independent of `status` in both directions. */
   nodeStatus: NodeObservationStatus;
   nodeDetail: string;
+  /** M-ACTIVATE-READINESS-1 — why genuine records were refused, in operator
+   *  words. Empty unless a record was rejected for a NAMED reason; a record
+   *  dropped for provenance alone contributes nothing here, because "the mock
+   *  adapter is running" is not news to anyone. */
+  rejections: string[];
 } {
   const [{ data: nodesRes }, { data: acctRes }] = useSuspenseQueries({
     queries: [
@@ -166,6 +172,7 @@ export function useOperationalFleet(): {
       detail: status === 'available' || status === 'stale' ? '' : UNAVAILABLE_DETAIL,
       nodeStatus,
       nodeDetail: nodeStatus === 'absent' ? NODE_ABSENT_DETAIL : '',
+      rejections: admissionRejectionCopy(rawAccounts as unknown as ProvenancedRecord[]),
     };
   }, [nodesRes, acctRes]);
 }
@@ -600,13 +607,14 @@ export function useAccountsProtection(): {
   accounts: AccountOperationalView[];
   status: OperationalStatus;
   detail: string;
+  rejections: string[];
 } {
   // M-FLEET-2: authoritative accounts only. Under the mock adapter the
   // projection's records carry `mock-fixture` provenance and the same invented
   // balances the fixture serves, so they are rejected and this reports
   // `unavailable` rather than rendering them.
-  const { accounts, status, detail } = useOperationalFleet();
-  return { accounts, status, detail };
+  const { accounts, status, detail, rejections } = useOperationalFleet();
+  return { accounts, status, detail, rejections };
 }
 
 
