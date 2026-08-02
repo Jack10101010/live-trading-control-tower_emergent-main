@@ -114,12 +114,18 @@ tests perform zero — all asserted in `test_world_isolation.py` and
 ## The preview namespace (M-PREVIEW-DELETE-1)
 
 Every fixture-backed route now lives under `/api/dev/` **and** names itself a
-fixture. Seven remain:
+fixture. **Eight remain**, and the list below IS the count — mounted routes,
+derived fixture-backed set and OpenAPI paths all agree, asserted by
+`test_preview_namespace.py::test_1b`:
 
-`/api/dev/fixture-world` · `/api/dev/fixture-fleet` · `/api/dev/fixture-trades` ·
-`/api/dev/fixture-packages` · `/api/dev/fixture-packages/active` ·
-`/api/dev/fixture-recommendations` · `/api/dev/fixture-events` ·
-`/api/dev/fixture-broker-health`
+1. `/api/dev/fixture-world`
+2. `/api/dev/fixture-fleet`
+3. `/api/dev/fixture-trades`
+4. `/api/dev/fixture-packages`
+5. `/api/dev/fixture-packages/active`
+6. `/api/dev/fixture-recommendations`
+7. `/api/dev/fixture-events`
+8. `/api/dev/fixture-broker-health`
 
 ### Deleted — fixture-backed, operational URL, zero consumers
 
@@ -155,13 +161,20 @@ They keep their operational URLs because that is what they always were. M-PKG-1
 had already established there is no package registry, so the authored default
 was the wrong answer before it was a naming problem.
 
-**18 fixture-backed routes → 7, all explicitly named.**
+**18 fixture-backed routes → 8, all explicitly named.**
+
+Both counts use the same method: `fixture_surfaces.gated_paths()`, the derived
+set of routes whose handler transitively reads the fixture. A route-count
+reconciliation found this document claiming "seven" while listing eight, and the
+discrepancy was not prose — `/api/dev/fixture-packages/active` was mounted but
+answering `404`, because the `_active_package_view()` severing had broken it.
+Fixed, and now guarded so the three inventories cannot drift apart again.
 
 ## What a future asset-deletion milestone would remove
 
 The remaining question is the **asset**, not the routes.
 
-**Backend:** seven `/api/dev/fixture-*` routes.
+**Backend:** eight `/api/dev/fixture-*` routes (listed above).
 **Frontend:** `views/dev/FixtureFleetPreview.tsx`, `views/dev/FixtureTradesPreview.tsx`.
 
 **Fixture collections still consumed:** `accounts`, `brokers`, `deployments`,

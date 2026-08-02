@@ -2284,12 +2284,28 @@ async def packages():
 
 @api_router.get("/dev/fixture-packages/active")
 async def active_package():
-    """The runtime-active package (runtime selection ⊕ fixture default). Deploy
-    and Rollback change which version this returns without mutating any package."""
-    pkg = _active_package_view()
+    """The fixture's promoted package. A DEV PREVIEW, not runtime state.
+
+    RECONCILIATION FIX. M-PREVIEW-DELETE-1 severed `_active_package_view()` to
+    return None — correct for the five OPERATIONAL endpoints that reached it,
+    since no package registry exists (M-PKG-1). But this handler still called
+    it, so a preview route whose entire job is to serve the fixture's active
+    package began answering `404 No active package`, and
+    `views/dev/FixtureFleetPreview.tsx` lost its active-package chip.
+
+    The `_active_package_view` docstring already stated the intended split —
+    "the DEV PREVIEW routes still serve authored packages; they call
+    `_fixture_active_package()` directly" — but this call site was never
+    repointed. Stating an intention is not implementing it.
+
+    Two consequences, both wanted: the preview works again, and this route is
+    once more classified fixture-backed by the derived boundary, so it is
+    refused without the asset and in production like every other preview.
+    """
+    pkg = _fixture_active_package()
     if pkg is not None:
         return pkg
-    raise HTTPException(status_code=404, detail="No active package")
+    raise HTTPException(status_code=404, detail="No active package in the fixture")
 
 
 @api_router.get("/runtime/active-package")

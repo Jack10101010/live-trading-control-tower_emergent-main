@@ -599,7 +599,9 @@ def test_the_gated_set_is_derived_from_the_source():
     # dead operational-looking routes deleted, four real previews renamed onto
     # `/api/dev/*`, and five genuinely operational endpoints severed from the
     # fixture entirely. The assertion is now the property that matters.
-    assert len(gated) >= 5, gated
+    # No hardcoded count. The SET is the assertion; a number would have to
+    # be edited by whoever breaks it — the person least likely to notice.
+    assert gated, 'the analysis found no fixture routes at all'
     assert all("/dev/" in path for path in gated), (
         "a fixture-backed route escaped the /api/dev/ namespace: "
         + str(sorted(p for p in gated if "/dev/" not in p)))

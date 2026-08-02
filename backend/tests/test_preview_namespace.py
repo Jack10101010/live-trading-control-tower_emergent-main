@@ -23,7 +23,7 @@ WHAT THE AUDIT ACTUALLY FOUND
     Six more had no consumer at all and were deleted outright. Four were genuine
     previews and were renamed onto `/api/dev/*`.
 
-    18 gated → 7, all under `/api/dev/`.
+    18 gated → 8, all under `/api/dev/`.
 """
 from __future__ import annotations
 
@@ -97,6 +97,55 @@ def test_1_no_fixture_backed_route_lacks_the_dev_namespace():
     offenders = sorted(p for p in gated if "/api/dev/" not in p)
     assert offenders == [], offenders
     assert gated, "the analysis found no fixture routes at all — check it still works"
+
+
+def test_1b_mounted_derived_and_openapi_inventories_agree():
+    """THE RECONCILIATION GUARD.
+
+    A route-count check found `RUNTIME-SOURCE-BOUNDARY.md` claiming "seven
+    remain" while listing eight paths. That was not a typo: the eighth,
+    `/api/dev/fixture-packages/active`, was MOUNTED but answering 404, because
+    severing `_active_package_view()` for the five operational endpoints also
+    broke the one preview route that legitimately needed the fixture's active
+    package. The derived set said seven because a route that reaches no fixture
+    is not fixture-backed — it was right, and the mounted table was the thing
+    that had drifted.
+
+    Three inventories therefore have to agree, and no count is hardcoded
+    anywhere: the SET is the assertion, and any number in prose is derived from
+    it. A hardcoded `== 8` would have to be edited by whoever breaks it, which
+    is precisely the person least likely to notice.
+    """
+    mounted = {p for p in _mounted_paths() if "/api/dev/" in p}
+    derived = fixture_surfaces.gated_paths(
+        fixture_surfaces.analyse(BACKEND_DIR / "server.py"))
+    schema_paths = {p for p in server.app.openapi().get("paths", {})
+                    if "/dev/" in p}
+
+    assert mounted == derived, {
+        "mounted_not_derived": sorted(mounted - derived),
+        "derived_not_mounted": sorted(derived - mounted)}
+    assert mounted == schema_paths, {
+        "mounted_not_in_openapi": sorted(mounted - schema_paths),
+        "openapi_not_mounted": sorted(schema_paths - mounted)}
+
+
+def test_1c_every_mounted_preview_route_actually_serves_the_fixture():
+    """A mounted preview that 404s is worse than a deleted one: it advertises a
+    capability in the route table and OpenAPI that does not exist.
+
+    `/api/dev/fixture-packages/active` was exactly that for one commit.
+    """
+    fps.reset()
+    try:
+        broken = {}
+        for path in sorted(p for p in _mounted_paths() if "/api/dev/" in p):
+            response = client.get(path)
+            if response.status_code != 200:
+                broken[path] = response.status_code
+        assert broken == {}, broken
+    finally:
+        fps.reset()
 
 
 def test_2_every_fixture_route_names_itself_as_a_fixture():

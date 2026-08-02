@@ -291,7 +291,7 @@ fabrication.
 
 ## M-PREVIEW-DELETE-1 ☑
 
-Eighteen fixture-backed routes → **seven**, every one under `/api/dev/` and
+Eighteen fixture-backed routes → **eight**, every one under `/api/dev/` and
 named `fixture`. Six deleted (no consumer), five renamed, five severed from the
 fixture and kept as the operational endpoints they always were. No alias, no
 redirect, no hidden query-parameter switch; negative contract tests assert the
