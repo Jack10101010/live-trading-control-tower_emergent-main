@@ -69,11 +69,16 @@ reasoning about the current host, not about the code.
   locality.
 - Two genuine sources that disagree are both kept and the disagreement is raised.
 - Storage location grants no authority. Endpoint name grants no authority.
-- Identity or server mismatch prevents admission.
+- Identity or server mismatch prevents admission; so does an identity that
+  cannot be checked while a pin is set.
+- **The unrecognised fails closed everywhere, including in the shape of a
+  value.** `admitted` is honoured only as `true`, `null` or absent; every other
+  form — `"false"`, `0`, `{}` — is a refusal, not an admission.
+- Structural impossibility is a refusal; economic alarm is a warning.
 
 ## Contradiction matrix
 
-Twenty-one conditions, each with a test. `backend/tests/test_activation_policy.py`
+Twenty-four conditions, each with a test. `backend/tests/test_activation_policy.py`
 holds the policy-level cases; `test_activation_e2e.py` holds the ones that need
 the full receive path.
 
@@ -97,10 +102,48 @@ the full receive path.
 | 15 | two nodes, different accounts | both | two cards — a legitimate deployment, no warning | continues | unaffected |
 | 16 | snapshot timestamp in the future | per identity | freshness judged on arrival, so unaffected | continues | unaffected |
 | 17 | skew beyond 120 s | per identity | admitted, but checker **FAILs** `node.clock_skew` | continues | unaffected |
-| 18 | NaN / Infinity / impossible negative | **none** | ingest returns 400 naming the field path | continues | unaffected |
+| 18 | NaN / Infinity / a numeric string / a bool | **none** | ingest returns 400 naming the field path | continues | unaffected |
 | 19 | equity absent, balance present | the account | balance shown, equity `—`. **Not a refusal** | continues | unaffected |
 | 20 | payload claims `node_mt5` without evidence | **none** | the claim is ignored; provenance is derived | continues | unaffected |
 | 21 | pinned, account observed with **no identity** | **none** | refused, `account_identity_unverifiable` | continues | unaffected |
+| 22 | **negative balance or equity** | **the account** | shown, with a `account_figure_negative` warning | continues | unaffected |
+| 23 | envelope claims fresh over an old arrival | per identity | **stale** — the verdict takes the more pessimistic witness | continues | unaffected |
+| 24 | `admitted` is a non-boolean (`"false"`, `0`, `{}`) | **none** | refused: the unrecognised fails closed | continues | unaffected |
+
+### Structurally impossible versus economically alarming (row 22)
+
+A negative balance or equity is **admitted and shown**, with a warning. The
+distinction is deliberate and was corrected during certification:
+
+* **Refused** — values that cannot be measurements: `NaN`, `Infinity`, a numeric
+  string, a bool, a list. These are contract violations.
+* **Warned** — values that are real but notable: negative balance or equity,
+  free margin exceeding equity. These are facts about a bad day.
+
+The gate originally refused negatives too, which blanked the entire account. An
+account goes below zero when a gap runs through a stop-out, and that is the
+moment an operator most needs the number. It was also the only thing the rule
+could still catch: `live_telemetry._finite` already rejects `NaN`/`Infinity` at
+ingest, so on any payload that arrived over the wire, the non-negative clause's
+sole reachable effect was refusing a genuine loss.
+
+This module defines **no** financial validation beyond structural possibility.
+Deciding that an equity is "too negative" is not something a projection may do.
+
+### One freshness authority, two witnesses (row 23)
+
+`verdict()` read `entry["stale"]` and believed it while the projection recomputed
+the age from the tower's arrival clock. In production the two agree, because
+`_live_status_entry` sets the flag from the same observation — but "they agree
+today" is not a property, and a divergence would have shown a fresh checker
+verdict beside a stale account card with nothing to explain it.
+
+`recomputed_stale()` now takes the **more pessimistic** of the reported flag and
+a recomputation, so it can only ever be stricter than either witness alone. An
+arrival the tower cannot date — missing, unparseable, or timezone-naive — reads
+stale. The checker adds a genuinely independent witness (`node.freshness_independent`)
+which recomputes the age against **its own** clock and FAILs when the two
+authorities disagree.
 
 ### Why money is compared only between near-simultaneous samples
 
@@ -143,7 +186,7 @@ existed.
 | age, stale limit, basis | entry `liveness_age_seconds`, `stale_after_seconds`, `freshness_basis` |
 | phase | reflected in the stale budget: 120 s idle, 900 s recompute |
 | clock skew | derived by the checker from `published_at` vs `received_at` |
-| **identity match result** | account `admitted` + `admissionReasons` — **new**, on node-relayed AND locally-read records |
+| **identity match result** | account `admitted` + `admissionReasons` — on node-relayed AND locally-read ACCOUNT records. **Positions, orders and the live-runtime broker panel are not pinned** — see the known boundary below. |
 | selected source | account `nodeId` (`null` = locally read) |
 | rejected-source reasons | `admissionReasons`, rendered as operator copy |
 | contradiction warnings | `/api/operations/summary` → `warnings`, shown in the Warnings card |
@@ -163,6 +206,34 @@ it knows which account it is on and has no figures yet. That produces a genuine
 dashes. It is honest, and it deliberately flips the account status from
 `unavailable` to `available`: the account source IS up, it has simply not
 reported figures. Anything deriving performance from it sees `null`, never zero.
+
+## Known boundaries — surfaces the pin does NOT reach
+
+Named rather than left to be discovered, because each is a place a future
+milestone must look.
+
+**`/api/live-runtime` and `LiveRuntimePanel`.** `BrokerRuntimeView` carries
+`balance` and `equity` and has no `admitted` field, so the identity pin does not
+apply to it. It is fed **only** by this process's own supervisor snapshot — never
+by node telemetry — so activation cannot put node-relayed money there, and on
+this Mac the adapter is the mock, which the panel's provenance already marks. It
+becomes reachable the day a Control Tower runs on a host with a real terminal.
+
+**Positions and orders.** `PositionOperationalView` and `OrderOperationalView`
+carry provenance but no admission, so a pinned deployment gates the ACCOUNT and
+not the positions attributed to it. Neither carries a balance.
+
+**The contradiction warning's audience.** `account_contradictions` reaches
+`/api/operations/summary` and renders in the Operational Dashboard's Warnings
+card. Accounts & Protection and Fleet Overview — the two pages that show the
+disagreeing balances side by side — read `useOperationalFleet`, which does not
+fetch the summary. Both records are shown; the fact that they disagree is one
+page away.
+
+**The node's own budget.** `stale_budget_for` derives the freshness budget from
+a cycle status the node supplies (120 s idle, 900 s otherwise). `recomputed_stale`
+now clamps that to the projection's 120 s, so a node cannot buy itself a larger
+window — but the phase mechanism itself remains node-influenced by design.
 
 ## Where the code is
 

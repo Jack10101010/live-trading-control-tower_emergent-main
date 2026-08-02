@@ -98,10 +98,25 @@ export interface ProvenancedRecord {
   admissionReasons?: string[];
 }
 
+/**
+ * Whether an `admitted` value permits rendering.
+ *
+ * FAILS CLOSED ON ANYTHING THAT IS NOT A BOOLEAN. The first version read
+ * `record.admitted === false`, which meant `"false"`, `0`, `{}` and every other
+ * non-boolean sailed through — a JSON contract violation admitted precisely
+ * because it was malformed. Absent and null still mean admitted, because an
+ * unpinned deployment (or a payload from before this field existed) has nothing
+ * to say and "not checked" is not "failed".
+ */
+function admissionPermits(admitted: unknown): boolean {
+  if (admitted === undefined || admitted === null) return true;
+  return admitted === true;
+}
+
 /** True only for a record this application is willing to call operational. */
 export function isAuthoritative(record: ProvenancedRecord | null | undefined): boolean {
   if (!record || typeof record.provenance !== 'string') return false;   // fail closed
-  if (record.admitted === false) return false;   // right source, wrong account
+  if (!admissionPermits(record.admitted)) return false;   // right source, wrong account
   return AUTHORITATIVE_PROVENANCE.has(record.provenance);
 }
 
@@ -110,6 +125,9 @@ export const R_ACCOUNT_IDENTITY_MISMATCH = 'account_identity_mismatch';
 export const R_ACCOUNT_SERVER_MISMATCH = 'account_server_mismatch';
 export const R_NUMERIC_INVALID = 'numeric_invalid';
 export const R_CONTRADICTORY_SOURCES = 'contradictory_account_sources';
+export const R_ACCOUNT_IDENTITY_UNVERIFIABLE = 'account_identity_unverifiable';
+export const R_ACCOUNT_NOT_OBSERVED = 'account_not_observed';
+export const R_UNUSABLE_PAYLOAD = 'unusable_payload';
 
 const REJECTION_COPY: Record<string, string> = {
   [R_ACCOUNT_IDENTITY_MISMATCH]:
@@ -122,9 +140,21 @@ const REJECTION_COPY: Record<string, string> = {
     'the one this deployment expects. The reading is real; the destination is not ' +
     'the expected one.',
   [R_NUMERIC_INVALID]:
-    'An account observation contained a value that is not a measurement (NaN, ' +
-    'infinity, or a negative where none is possible). The record is refused ' +
-    'rather than partially believed.',
+    'An account observation contained a value that is not a measurement — NaN, ' +
+    'infinity, a number sent as text. The record is refused rather than ' +
+    'partially believed. (A NEGATIVE balance is not this: negatives are real ' +
+    'and are shown, with a warning.)',
+  [R_ACCOUNT_IDENTITY_UNVERIFIABLE]:
+    'An execution node is reporting account figures with NO identity attached, ' +
+    'and this deployment is pinned to a specific account. There is nothing to ' +
+    'check the figures against, so they are refused. Cannot-be-checked is not ' +
+    'passed-the-check.',
+  [R_ACCOUNT_NOT_OBSERVED]:
+    'The node published a heartbeat without sampling its account this cycle. ' +
+    'This is the ordinary state of a healthy node, not a fault.',
+  [R_UNUSABLE_PAYLOAD]:
+    'The stored observation is not a payload this Control Tower understands — ' +
+    'an unknown schema version, or a malformed body.',
 };
 
 /**
@@ -141,10 +171,22 @@ export function admissionRejectionCopy(
   if (!Array.isArray(records)) return [];
   const seen = new Set<string>();
   for (const record of records) {
-    if (record?.admitted !== false) continue;
+    if (admissionPermits(record?.admitted)) continue;
+    // ONLY GENUINE SOURCES SPEAK HERE.
+    //
+    // The mock adapter's record is also refused once a pin is set — its
+    // fingerprint is not the pinned one — and without this filter the ordinary
+    // development screen announced "an execution node is reporting a genuine
+    // MT5 account that is NOT the account this deployment is pinned to" when
+    // no node was reporting anything at all. A false alarm on the resting
+    // state is how an operator learns to dismiss the real one.
+    if (!AUTHORITATIVE_PROVENANCE.has(record?.provenance ?? '')) continue;
     for (const reason of record.admissionReasons ?? []) {
-      const copy = REJECTION_COPY[reason];
-      if (copy) seen.add(copy);
+      // An UNMAPPED code must not vanish. A refused record that produces no
+      // copy leaves the generic "no authoritative account source" on screen,
+      // which tells the operator to wait when it should tell them to stop.
+      seen.add(REJECTION_COPY[reason]
+        ?? `An account observation was refused: ${reason}.`);
     }
   }
   return [...seen].sort();

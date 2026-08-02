@@ -54,6 +54,17 @@ def _code_only(source: str) -> str:
     return " ".join(out)
 
 
+def _ts_code_only(source: str) -> str:
+    """TypeScript with `//` and `/* */` comments removed.
+
+    Crude, and sufficient: it exists so a guard cannot be satisfied by a
+    sentence describing the code it is meant to be checking.
+    """
+    import re
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+    return "\n".join(line.split("//")[0] for line in source.splitlines())
+
+
 def _sources(entries, **over):
     base = dict(adapter_kind=lambda: "mock", connection_state=lambda: "Disconnected",
                 node_entries=lambda: list(entries))
@@ -274,10 +285,18 @@ def test_guard_11_no_mutating_http_method_is_constructed_anywhere_in_the_checker
                if isinstance(n, ast.Constant) and isinstance(n.value, str)
                and n.value.upper() in {"POST", "PUT", "PATCH", "DELETE", "GET"}}
     assert methods == {"GET"}, methods
-    # And exactly one function performs network I/O at all.
-    urlopens = [n for n in ast.walk(tree)
-                if isinstance(n, ast.Call) and getattr(n.func, "attr", None) == "urlopen"]
-    assert len(urlopens) == 1, "network access must stay in one auditable place"
+    # And exactly one call site performs network I/O at all. Counted by NAME
+    # rather than by `urlopen` specifically: the module now goes through a
+    # redirect-refusing opener, and a guard that only knew the old spelling
+    # would have gone quiet at the moment the code changed.
+    network = [n for n in ast.walk(tree)
+               if isinstance(n, ast.Call)
+               and getattr(n.func, "attr", None) in ("urlopen", "open")]
+    assert len(network) == 1, "network access must stay in one auditable place"
+    # The opener must refuse redirects: a followed redirect re-sends the
+    # Authorization header to whatever host answered.
+    source = (BACKEND_DIR / "activation_check.py").read_text()
+    assert "build_opener" in source and "HTTPRedirectHandler" in source
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -288,9 +307,18 @@ def test_guard_12_ui_gates_remain_provenance_based():
     """The frontend gate must decide on the record's OWN provenance, never on
     which endpoint answered."""
     gate = (FRONTEND_SRC / "lib" / "operationalProvenance.ts").read_text()
-    assert "AUTHORITATIVE_PROVENANCE.has(record.provenance)" in gate
-    assert "record.admitted === false" in gate, (
+    # COMMENTS STRIPPED FIRST. The previous version asserted
+    # `"record.admitted === false" in gate`, and after the gate was rewritten
+    # to call `admissionPermits` that string survived only in the paragraph
+    # EXPLAINING the old code. The guard passed on prose: deleting the real
+    # check would have kept it green. This is the exact mistake the module
+    # docstring says was "fixed by tokenising, never by weakening the guard" —
+    # and this guard was the one that had not been.
+    code = _ts_code_only(gate)
+    assert "AUTHORITATIVE_PROVENANCE.has(record.provenance)" in code
+    assert "admissionPermits(record.admitted)" in code, (
         "admission must gate alongside provenance, not instead of it")
+    assert "function admissionPermits" in code
     # THE SET ITSELF, ASSERTED THREE WAYS AND NOT ONCE CONDITIONALLY.
     #
     # This line was previously guarded by `if hasattr(bp, "AUTHORITATIVE_PROVENANCE")`
@@ -357,6 +385,85 @@ def test_guard_14_node_and_broker_authority_functions_remain_disjoint():
         assert not bp.is_broker_truth(value), value
     for value in (bp.PROV_LIVE_MT5, bp.PROV_NODE_MT5, bp.PROV_MOCK_FIXTURE):
         assert value not in np_.AUTHORITATIVE_NODE_PROVENANCE, value
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 16–19  M-ACTIVATE-READINESS-2 — properties the certification audit added
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_guard_16_no_admission_decision_is_made_outside_the_canonical_seam():
+    """One gate. A second inline comparison is a second gate, and two gates drift.
+
+    Frontend views may compare provenance to choose COPY (a "relayed by" badge,
+    an absent-node placeholder). They may not decide admission. The distinction
+    is drawn on the surrounding expression: a comparison that feeds a `filter`
+    or an early `return` is a gate.
+    """
+    seam = FRONTEND_SRC / "lib" / "operationalProvenance.ts"
+    node_seam = FRONTEND_SRC / "lib" / "nodeProvenance.ts"
+    offenders = []
+    for path in sorted(FRONTEND_SRC.rglob("*.ts*")):
+        if path in (seam, node_seam) or "__tests__" in path.parts:
+            continue
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            if "admitted" not in line:
+                continue
+            # Reading the field for display is fine; comparing it is a gate.
+            if any(op in line for op in ("admitted ===", "admitted !==", "admitted ==",
+                                         "admitted !=", "!admitted", "admitted &&",
+                                         "admitted ?")):
+                offenders.append(f"{path.relative_to(FRONTEND_SRC)}:{number}")
+    assert offenders == [], offenders
+
+
+def test_guard_17_the_admission_gate_fails_closed_on_non_booleans():
+    """Asserted on THREE implementations, because there are three.
+
+    Python policy, Python checker and TypeScript gate each decide what an
+    `admitted` value means. Every one of them once read "not false" and admitted
+    `"false"`, `0` and `{}` — a contract violation waved through because it was
+    malformed.
+    """
+    for value in ("false", "true", 0, 1, {}, [], "FALSE"):
+        assert activation_check._admission_permits(value) is False, value
+    for value in (True, None):
+        assert activation_check._admission_permits(value) is True, value
+
+    gate = (FRONTEND_SRC / "lib" / "operationalProvenance.ts").read_text()
+    assert "return admitted === true" in gate
+    assert "admitted === undefined || admitted === null" in gate
+
+
+def test_guard_18_structural_impossibility_refuses_and_economic_alarm_warns():
+    """The line the certification audit had to redraw. Negative money is REAL."""
+    for impossible in (float("nan"), float("inf"), float("-inf"), "4211.5", True, [], {}):
+        assert ap._is_measurement(impossible) is False, impossible
+    for real in (0, 0.0, 4211.5, -1.0, -1e6, 1e308):
+        assert ap._is_measurement(real) is True, real
+
+    payload = pay.account_payload(balance=-500.0)
+    admissible, reasons = ap.account_admissible(pay.envelope(payload))
+    assert admissible is True, reasons
+    assert any(ap.R_NEGATIVE_FIGURE in w for w in ap.verdict(pay.envelope(payload)).warnings)
+
+
+def test_guard_19_staleness_has_one_authority_with_two_witnesses():
+    """`verdict()` must not be able to be TOLD it is fresh."""
+    source = (BACKEND_DIR / "activation_policy.py").read_text()
+    tree = ast.parse(source)
+    verdict = next(n for n in tree.body
+                   if isinstance(n, ast.FunctionDef) and n.name == "verdict")
+    reads_the_flag = [
+        n for n in ast.walk(verdict)
+        if isinstance(n, ast.Call) and getattr(n.func, "attr", None) == "get"
+        and n.args and isinstance(n.args[0], ast.Constant) and n.args[0].value == "stale"]
+    assert reads_the_flag == [], (
+        "verdict() reads the reported flag directly instead of deriving through "
+        "recomputed_stale(), which is how two freshness authorities appear")
+
+    fresh_flag_old_arrival = pay.envelope(pay.account_payload(), stale=False,
+                                          received_ago=9000)
+    assert ap.verdict(fresh_flag_old_arrival).stale is True
 
 
 # ══════════════════════════════════════════════════════════════════════════════

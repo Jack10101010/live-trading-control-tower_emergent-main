@@ -89,6 +89,10 @@ R_CONTRADICTORY_SOURCES = "contradictory_account_sources"
 #: to compare against the pin. Refused, because "cannot be checked" is not
 #: "passed the check" — see `account_admissible`.
 R_ACCOUNT_IDENTITY_UNVERIFIABLE = "account_identity_unverifiable"
+#: Economically notable but REAL. Warnings, never refusals — see
+#: `account_anomalies`. A negative equity is a bad day, not a malformed packet.
+R_NEGATIVE_FIGURE = "account_figure_negative"
+R_FREE_MARGIN_EXCEEDS_EQUITY = "free_margin_exceeds_equity"
 R_STALE = "observation_stale"
 R_NODE_DEGRADED = "node_degraded"
 R_MT5_CONTRADICTION = "mt5_observation_contradicts_account"
@@ -194,17 +198,57 @@ def _account_of(entry) -> dict:
     return account if isinstance(account, dict) else {}
 
 
-def _finite_non_negative(value) -> bool:
-    """A money figure must be a real, finite, non-negative number.
+def _is_measurement(value) -> bool:
+    """Is this value structurally capable of being a money figure?
 
-    A bool is not a number. NaN/Infinity are not measurements. A negative
-    balance is possible on some accounts but a negative EQUITY with a positive
-    balance is not coherent, so the caller checks the pair, not just the value.
+    STRUCTURAL ONLY. A bool is not a number, a numeric string is not a number,
+    and NaN/Infinity are not measurements. Everything else that is a real finite
+    number qualifies — INCLUDING NEGATIVES.
+
+    THIS USED TO REJECT NEGATIVES, AND THAT WAS THE DEFECT.
+
+    A negative balance or equity is a real MT5 state: a gap through a stop-out
+    leaves an account below zero, and that is precisely the moment an operator
+    most needs to see the number. The previous rule refused the whole
+    observation, blanking the account — inventing "nothing is known" out of
+    "something alarming is known".
+
+    It was also unreachable in its intended purpose. `live_telemetry._finite`
+    already rejects NaN/Infinity at ingest, so by the time this runs on a
+    payload that arrived over the wire, the only value the non-negative clause
+    could still reject was a genuine negative. The check did nothing except the
+    one thing it must not do.
+
+    Economic oddities (negative equity, free margin exceeding equity) are
+    WARNINGS, not parser failures — see `account_anomalies`. The contract does
+    not define them and this module must not invent financial rules.
     """
     import math
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return False
-    return math.isfinite(value) and value >= 0
+    return math.isfinite(value)
+
+
+def account_anomalies(health) -> tuple:
+    """Economically notable figures that are nevertheless REAL.
+
+    Reported as warnings beside the account, never as refusals. An account in
+    negative equity is not a malformed payload; it is a bad day, and refusing to
+    display it would be the more dangerous answer.
+    """
+    if not isinstance(health, dict):
+        return ()
+    out = []
+    for label in ("balance", "equity"):
+        value = health.get(label)
+        if _is_measurement(value) and value < 0:
+            out.append(f"{R_NEGATIVE_FIGURE}: {label} is negative ({value})")
+    free_margin, equity = health.get("free_margin"), health.get("equity")
+    if (_is_measurement(free_margin) and _is_measurement(equity)
+            and free_margin > equity):
+        out.append(f"{R_FREE_MARGIN_EXCEEDS_EQUITY}: free margin {free_margin} "
+                   f"exceeds equity {equity}")
+    return tuple(out)
 
 
 def account_admissible(entry, *, expected_account=None, expected_server=None
@@ -250,16 +294,71 @@ def account_admissible(entry, *, expected_account=None, expected_server=None
             reasons.append(R_ACCOUNT_SERVER_MISMATCH)
 
     if health.get("available") is True:
-        balance, equity = health.get("balance"), health.get("equity")
         # Equity absent while balance exists is NOT a refusal — the projection
         # reports equity as null and renders "—". It IS a refusal when a value
-        # is present but is not a real measurement.
-        for value in (balance, equity, health.get("free_margin")):
-            if value is not None and not _finite_non_negative(value):
+        # is present but is not structurally a measurement.
+        for value in (health.get("balance"), health.get("equity"),
+                      health.get("free_margin")):
+            if value is not None and not _is_measurement(value):
                 reasons.append(R_NUMERIC_INVALID)
                 break
 
-    return (not reasons), tuple(reasons)
+    # `dict.fromkeys` preserves order while removing duplicates: two pins both
+    # unverifiable produced the same code twice, which reached operator copy.
+    return (not reasons), tuple(dict.fromkeys(reasons))
+
+
+def recomputed_stale(entry, *, now=None,
+                     projection_budget_s: float = 120.0) -> bool:
+    """Staleness, taken as the MORE PESSIMISTIC of two derivations.
+
+    ONE AUTHORITY, TWO WITNESSES. `verdict()` used to read `entry["stale"]` and
+    trust it, while `operational_projection` recomputed the age from
+    `received_at` — the tower's own arrival clock. In production the two agree
+    because `_live_status_entry` sets the flag from the same observation, but
+    "they agree today" is not a property, and a divergence would have shown a
+    fresh checker verdict beside a stale account card with nothing to explain it.
+
+    So this ORs the reported flag with a recomputation, which means it can only
+    ever be more pessimistic than either witness alone. A flag that says fresh
+    over an arrival an hour old reads stale; a flag that says stale is believed
+    without argument.
+
+    A missing or unparseable `received_at` reads STALE. An arrival the tower
+    cannot date is not one it may call current.
+    """
+    from datetime import datetime, timezone
+    if bool(entry.get("stale", True)) if isinstance(entry, dict) else True:
+        return True
+    # THE TIGHTER OF THE TWO BUDGETS, and this is not a detail.
+    #
+    # The envelope carries the node's PHASE-AWARE budget, which is 900 s for
+    # every cycle status except `no_new_bar`. The account projection judges the
+    # same arrival against 120 s. Taking the envelope's number alone made this
+    # recomputation an order of magnitude LESS pessimistic than the projection
+    # for any arrival aged 120–900 s — the exact window where the docstring's
+    # promise ("can only ever be more pessimistic") was false.
+    #
+    # It also removes the node's influence over the answer: the budget derives
+    # from a cycle status the node supplies, so a node that never reports
+    # `no_new_bar` would otherwise buy itself the larger window.
+    budget = entry.get("stale_after_seconds")
+    if not isinstance(budget, (int, float)) or isinstance(budget, bool):
+        budget = live_telemetry.RECOMPUTE_STALE_AFTER_S
+    budget = min(float(budget), float(projection_budget_s))
+    raw = entry.get("received_at")
+    if not isinstance(raw, str) or not raw.strip():
+        return True
+    try:
+        received = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if received.tzinfo is None:
+        return True                  # an undated arrival is not a current one
+    reference = now or datetime.now(timezone.utc)
+    # `abs`, so an arrival stamped in the FUTURE is old rather than infinitely
+    # fresh — the same rule the projection's `freshness()` applies.
+    return abs((reference - received).total_seconds()) > float(budget)
 
 
 def expected_identity() -> tuple:
@@ -303,7 +402,7 @@ def verdict(entry, *, expected_account=None, expected_server=None) -> Activation
                                  reasons=(R_UNUSABLE_PAYLOAD,))
 
     snapshot = entry.get("snapshot") or {}
-    stale = bool(entry.get("stale", True))
+    stale = recomputed_stale(entry)
     degraded_reasons = nodeprov.degraded_reasons(snapshot)
     lifecycle = nodeprov.classify_lifecycle(snapshot, stale=stale)
 
@@ -321,6 +420,8 @@ def verdict(entry, *, expected_account=None, expected_server=None) -> Activation
         warnings.append(R_MT5_CONTRADICTION)
 
     reasons = list(account_reasons)
+    warnings.extend(account_anomalies(
+        (_account_of(entry).get("health") or {}) if admissible else {}))
     if stale:
         reasons.append(R_STALE)
     if degraded_reasons:

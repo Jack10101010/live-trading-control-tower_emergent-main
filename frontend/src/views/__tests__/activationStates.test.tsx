@@ -38,6 +38,8 @@ import {
   classify,
 } from '@/lib/operationalProvenance';
 import { PROV_NODE_TELEMETRY } from '@/lib/nodeProvenance';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const state = vi.hoisted(() => ({ fleet: {} as Record<string, unknown> }));
 
@@ -135,6 +137,41 @@ describe('admission and provenance are two different questions', () => {
     const { admitted, ...withoutTheField } = account();
     expect(admitted).toBe(true);
     expect(isAuthoritative(withoutTheField)).toBe(true);
+  });
+
+  it('FAILS CLOSED on any `admitted` that is not a boolean', () => {
+    // The gate read `admitted === false`, so `"false"`, `0` and `{}` were all
+    // admitted — a contract violation waved through precisely BECAUSE it was
+    // malformed. Absent and null still admit: an unpinned deployment has
+    // nothing to say, and "not checked" is not "failed".
+    const permitted = [true, undefined, null];
+    const refused = ['false', 'true', 'FALSE', 0, 1, {}, [], NaN];
+    for (const admitted of permitted)
+      expect(isAuthoritative({ provenance: PROV_NODE_MT5, admitted } as never),
+             String(admitted)).toBe(true);
+    for (const admitted of refused)
+      expect(isAuthoritative({ provenance: PROV_NODE_MT5, admitted } as never),
+             JSON.stringify(admitted)).toBe(false);
+  });
+
+  it('a non-boolean `admitted` also produces a REFUSAL banner, not silence', () => {
+    // Dropping the record without saying why would leave an operator staring at
+    // "no authoritative account source" while a node reports perfectly.
+    const copy = admissionRejectionCopy([
+      account({ admitted: 'false' as never,
+                admissionReasons: [R_ACCOUNT_IDENTITY_MISMATCH] }),
+    ] as never);
+    expect(copy).toHaveLength(1);
+  });
+
+  it('a refused record contributes to no count and no metric', () => {
+    const raw = [account({ admitted: false, admissionReasons: [R_ACCOUNT_IDENTITY_MISMATCH] }),
+                 account({ nodeId: 'vps-node-2' })];
+    const kept = authoritativeOnly(raw as never) as Array<Record<string, unknown>>;
+    expect(kept).toHaveLength(1);
+    expect(kept[0].nodeId).toBe('vps-node-2');
+    // And the surviving record is the admitted one, not merely the last one.
+    expect(kept.every((a) => a.admitted !== false)).toBe(true);
   });
 
   it('still fails closed on unknown provenance regardless of admitted', () => {
@@ -322,10 +359,44 @@ describe('Fleet Overview during activation', () => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 describe('contradictions are surfaced as warnings, not resolved', () => {
-  it('the warning code is the same string the backend emits', () => {
-    // Both sides name the condition identically, so a search for the code in a
-    // screenshot finds the policy that produced it.
-    expect(R_CONTRADICTORY_SOURCES).toBe('contradictory_account_sources');
+  it('the warning code is the same string the BACKEND emits', () => {
+    // Read from the Python seam, not compared to its own literal. The previous
+    // version asserted `R_CONTRADICTORY_SOURCES === 'contradictory_account_sources'`
+    // under a title claiming it verified cross-language agreement — a constant
+    // compared to itself, which nothing on the backend could have broken.
+    const policy = readFileSync(
+      resolve(__dirname, '../../../../backend/activation_policy.py'), 'utf8');
+    const match = policy.match(/R_CONTRADICTORY_SOURCES = "([^"]+)"/);
+    expect(match?.[1]).toBe(R_CONTRADICTORY_SOURCES);
+  });
+
+  it('every refusal code the backend can emit has operator copy', () => {
+    // An unmapped code produced an EMPTY banner, so the generic "no
+    // authoritative account source" spoke instead — telling the operator to
+    // wait when it should have told them to stop.
+    const policy = readFileSync(
+      resolve(__dirname, '../../../../backend/activation_policy.py'), 'utf8');
+    const codes = [...policy.matchAll(/^R_[A-Z_]+ = "([^"]+)"/gm)].map((m) => m[1]);
+    const refusalCodes = codes.filter((c) => c.startsWith('account_')
+      || c === 'numeric_invalid' || c === 'unusable_payload');
+    for (const code of refusalCodes) {
+      const copy = admissionRejectionCopy([
+        { provenance: PROV_NODE_MT5, admitted: false, admissionReasons: [code] },
+      ] as never);
+      expect(copy, code).toHaveLength(1);
+      expect(copy[0].length, code).toBeGreaterThan(20);
+    }
+  });
+
+  it('a refused MOCK record raises no alarm — it is the resting state', () => {
+    // Once a pin is set, the mock adapter's own record is refused too. Without
+    // a provenance filter the ordinary development screen announced that "an
+    // execution node is reporting a genuine MT5 account that is NOT the account
+    // this deployment is pinned to" while no node was reporting anything.
+    expect(admissionRejectionCopy([
+      mockAccount({ admitted: false,
+                    admissionReasons: [R_ACCOUNT_IDENTITY_MISMATCH] }),
+    ] as never)).toEqual([]);
   });
 
   it('a disagreement never collapses into a single admitted record', () => {

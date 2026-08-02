@@ -92,10 +92,35 @@ class Report:
         return WARN if self.warned else PASS
 
 
+def _clip(value, limit: int = 80) -> str:
+    """Node-supplied strings reach an operator's terminal through this report.
+
+    `cycle.status` and `runtime.mode` are not length-bounded by
+    `validate_snapshot`, and control characters in them would be interpreted by
+    the terminal. Neither is a plausible attack from this deployment's own node,
+    but a verification tool should not be the thing that renders whatever it was
+    handed.
+    """
+    text = "".join(c for c in str(value) if c.isprintable())
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
 def _mask(value) -> str:
     """Mask an identifier for terminal output that may end up in a screenshot."""
     text = str(value or "")
     return f"{text[:8]}…{text[-4:]}" if len(text) > 14 else ("…" if text else "")
+
+
+def _admission_permits(admitted) -> bool:
+    """Mirror of the frontend gate, and it FAILS CLOSED on non-booleans.
+
+    `admitted is not False` would wave through `"false"`, `0` and `{}` — a
+    contract violation admitted because it was malformed. Absent and null still
+    mean admitted: an unpinned deployment has nothing to say.
+    """
+    if admitted is None:
+        return True
+    return admitted is True
 
 
 def _safe_base(base: str) -> str:
@@ -111,6 +136,24 @@ def _safe_base(base: str) -> str:
     return text.rstrip("/")
 
 
+class _NoRedirects(urllib.request.HTTPRedirectHandler):
+    """Refuse every redirect.
+
+    `urlopen` follows them by default and re-sends the `Authorization` header to
+    the new location, including a cross-origin one — so validating the scheme of
+    the URL the operator typed protects nothing on its own. A verification tool
+    talks to exactly the host it was pointed at.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(
+            newurl, code, "redirect refused: the checker talks to one host only",
+            headers, fp)
+
+
+_OPENER = urllib.request.build_opener(_NoRedirects)
+
+
 def _get(base: str, path: str, token: str | None) -> tuple[int, object]:
     """One authenticated GET. The ONLY network operation in this module."""
     request = urllib.request.Request(_safe_base(base) + path, method="GET")
@@ -118,7 +161,7 @@ def _get(base: str, path: str, token: str | None) -> tuple[int, object]:
     if token:
         request.add_header("Authorization", f"Bearer {token}")
     try:
-        with urllib.request.urlopen(request, timeout=10) as response:
+        with _OPENER.open(request, timeout=10) as response:
             return response.status, json.loads(response.read() or b"null")
     except urllib.error.HTTPError as exc:
         try:
@@ -234,6 +277,38 @@ def check_node(report: Report, base: str, token, expected_instance) -> dict:
                         f"basis={entry.get('freshness_basis')}",
                expected=f"<= {entry.get('stale_after_seconds')}s")
 
+    # AN INDEPENDENT WITNESS, not a second read of the same field.
+    #
+    # Every other freshness number in this report is the tower's own; comparing
+    # two of them proves only that the tower is self-consistent. This recomputes
+    # the age from `received_at` against the CHECKER's clock and requires the
+    # answer to agree with the flag the tower published. A disagreement means
+    # one of the two authorities is wrong and no freshness verdict on this
+    # report can be trusted.
+    received = _parse(entry.get("received_at"))
+    budget = entry.get("stale_after_seconds")
+    if received is None or not isinstance(budget, (int, float)) or isinstance(budget, bool):
+        report.add("node.freshness_independent", WARN, "arrival_undatable",
+                   observed=entry.get("received_at"), expected="ISO-8601 with offset")
+    else:
+        age = abs((datetime.now(timezone.utc) - received).total_seconds())
+        recomputed = age > float(budget)
+        # COMPARED AGAINST `liveness_stale`, NOT `stale`.
+        #
+        # `stale` is `liveness_stale OR data_stale`: a packet that ARRIVED a
+        # second ago can still carry twenty-minute-old observations and be
+        # correctly flagged stale. Recomputing arrival age and comparing it to
+        # that composite reported `freshness_authorities_disagree` on a
+        # perfectly healthy node — a red check on a good activation, which is
+        # the fastest way to teach an operator to stop reading this report.
+        reported = entry.get("liveness_stale")
+        reported = stale if not isinstance(reported, bool) else reported
+        agree = recomputed == reported
+        report.add("node.freshness_independent", PASS if agree else FAIL,
+                   "" if agree else "freshness_authorities_disagree",
+                   observed=f"recomputed arrival age={age:.1f}s -> stale={recomputed}",
+                   expected=f"reported liveness_stale={reported}")
+
     published, received = _parse(entry.get("published_at")), _parse(entry.get("received_at"))
     if published and received:
         skew = abs((received - published).total_seconds())
@@ -245,8 +320,8 @@ def check_node(report: Report, base: str, token, expected_instance) -> dict:
 
     cycle = snapshot.get("cycle") or {}
     runtime = snapshot.get("runtime") or {}
-    report.add("node.cycle_status", PASS, observed=cycle.get("status"))
-    report.add("node.mode", PASS, observed=runtime.get("mode"))
+    report.add("node.cycle_status", PASS, observed=_clip(cycle.get("status")))
+    report.add("node.mode", PASS, observed=_clip(runtime.get("mode")))
     return entry
 
 
@@ -289,7 +364,7 @@ def check_account(report: Report, base: str, token, node_entry,
     # the wrong account has impeccable provenance and is NOT operational truth.
     genuine = [a for a in accounts
                if a.get("provenance") in AUTHORITATIVE_PROVENANCE
-               and a.get("admitted") is not False]
+               and _admission_permits(a.get("admitted"))]
     inadmissible = [a for a in accounts if a not in genuine]
 
     # THE CHECK THAT USED TO BE A TAUTOLOGY, AND WHY IT IS NOW ABOUT FIGURES.
@@ -323,7 +398,21 @@ def check_account(report: Report, base: str, token, node_entry,
     # loudest thing the checker can find: a real terminal read of an account
     # this deployment is not pinned to. It is a FAIL, not a WARN — an operator
     # who continues past it will be looking at someone else's money.
-    refused = [a for a in accounts if a.get("admitted") is False]
+    # ONLY GENUINE SOURCES CAN BE "REFUSED".
+    #
+    # Once a pin is set, the mock adapter's own record is refused too — its
+    # fingerprint is not the pinned one. Without this filter the checker
+    # reported `account.refused FAIL` on the ORDINARY resting state, before any
+    # node had published an account at all, and the runbook's step 6 ("verify
+    # the node-only state") would have told an operator to roll back a perfectly
+    # correct activation. Found by rehearsal; no unit test had the mock adapter
+    # in it.
+    #
+    # A refused mock record is the gate working. A refused GENUINE record is the
+    # thing worth stopping for.
+    refused = [a for a in accounts
+               if a.get("provenance") in AUTHORITATIVE_PROVENANCE
+               and not _admission_permits(a.get("admitted"))]
     for account in refused:
         report.add("account.refused", FAIL,
                    ",".join(account.get("admissionReasons") or ["unnamed"]),
@@ -331,6 +420,39 @@ def check_account(report: Report, base: str, token, node_entry,
                             f"@ {account.get('server') or 'server unreported'} "
                             f"via {account.get('nodeId') or 'local'}",
                    expected=expected_account and _mask(expected_account) or "unpinned")
+
+    # THE PIN IS ON A DIFFERENT PROCESS FROM THIS ONE.
+    #
+    # Found by the offline rehearsal, and by nothing else: `CONTROL_TOWER_
+    # EXPECTED_ACCOUNT` exported in the OPERATOR'S shell pins the checker, while
+    # the gate that matters runs inside the backend, which read its environment
+    # when it started. Export the variables only before running this tool and
+    # the tower stays unpinned — it admits the wrong account, this tool reports
+    # `account.admissible: WARN`, and the exit code is 0.
+    #
+    # So the pin is verified against BEHAVIOUR rather than against configuration
+    # neither process can see: any record the RUNTIME admitted whose identity is
+    # not the one the operator named means the runtime is not enforcing the pin.
+    # That is an independent comparison — operator intent against observed
+    # behaviour — and it is a FAIL, because the operator believes they are
+    # pinned and they are not.
+    unenforced = []
+    for account in genuine:
+        fingerprint, server = account.get("accountFingerprint"), account.get("server")
+        if expected_account and fingerprint and fingerprint != expected_account:
+            unenforced.append(f"account {_mask(fingerprint)}")
+        if expected_server and server and server != expected_server:
+            unenforced.append(f"server {server}")
+    if unenforced:
+        report.add("account.pin_enforced_by_runtime", FAIL,
+                   "runtime_admitted_an_unpinned_identity",
+                   observed=", ".join(sorted(set(unenforced))),
+                   expected=f"{_mask(expected_account) or 'any'} @ "
+                            f"{expected_server or 'any'} — is the BACKEND process "
+                            f"started with the same variables?")
+    elif expected_account or expected_server:
+        report.add("account.pin_enforced_by_runtime", PASS,
+                   observed=f"{len(genuine)} admitted record(s) match the pin")
 
     for account in genuine:
         report.add("account.identity", PASS,
@@ -378,26 +500,32 @@ def check_ui_contract(report: Report, base: str, token) -> None:
 
     # The fixture check that means something: not "is an asset on disk" but
     # "did an authored record reach an operational surface wearing authority".
-    # Computed over the UNFILTERED records for the same reason as
-    # `account.no_mock_admitted`: pre-filtering to the admitted provenances and
-    # then searching those for a fixture value can only ever find nothing.
+    # THE TAUTOLOGY, REMOVED RATHER THAN RE-COMMENTED.
     #
-    # What is asserted instead is the SENTINEL: the fixture world's invented
-    # 100000 / 100412 are the exact figures the whole honesty programme was
-    # about, and their appearance on a record that PASSES the UI gate is the
-    # contamination that matters, whatever provenance it is wearing.
+    # This previously filtered to the admitted provenances and then searched
+    # THAT list for a fixture provenance. The two sets are disjoint by
+    # definition, so the search could only ever come back empty — and a comment
+    # directly above it claimed the opposite had been done. Being wrong twice
+    # about the same line is the reason this check is now two checks, each
+    # asserting something that can actually be false.
+    #
+    # 1. The SENTINEL: the fixture world's invented 100 000 / 100 412 on a
+    #    record that PASSED the gate, whatever provenance it acquired.
+    # 2. The NODE LIST: `fixture-node` records are produced by the preview
+    #    world and CAN appear on `/api/operations/nodes` if the fixture ever
+    #    leaks into the node projection. That list is searched unfiltered,
+    #    which is what makes the check answerable.
     _, accounts_body = _get(base, "/api/operations/accounts", token)
     ui_admitted = [a for a in (accounts_body or {}).get("accounts") or []
                    if a.get("provenance") in AUTHORITATIVE_PROVENANCE
-                   and a.get("admitted") is not False]
-    ui_admitted += [n for n in (nodes_body or {}).get("nodes") or []
-                    if n.get("provenance") in AUTHORITATIVE_NODE_PROVENANCE]
-    contaminated = [str(r.get("provenance")) for r in ui_admitted
-                    if r.get("provenance") in NON_OPERATIONAL_PROVENANCE]
-    sentinels = [f"{r.get('provenance')}:{r.get('balance')}" for r in ui_admitted
+                   and _admission_permits(a.get("admitted"))]
+    sentinels = [f"{r.get('provenance')}:{r.get('balance')}/{r.get('equity')}"
+                 for r in ui_admitted
                  if r.get("balance") in FIXTURE_SENTINEL_FIGURES
                  or r.get("equity") in FIXTURE_SENTINEL_FIGURES]
-    findings = contaminated + sentinels
+    leaked_nodes = [str(n.get("nodeId")) for n in (nodes_body or {}).get("nodes") or []
+                    if n.get("provenance") == "fixture-node"]
+    findings = sentinels + [f"fixture-node:{n}" for n in leaked_nodes]
     report.add("ui.no_fixture_provenance_admitted",
                PASS if not findings else FAIL,
                "" if not findings else "fixture_record_admitted",
@@ -427,6 +555,14 @@ def main(argv=None) -> int:
                         help="Control Tower base URL (default: %(default)s)")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     args = parser.parse_args(argv)
+
+    # Validated here so a mistyped host is one clear line rather than a
+    # traceback an operator has to read at 11pm.
+    try:
+        _safe_base(args.base)
+    except ValueError as exc:
+        print(f"  FAIL  base URL rejected: {exc}")
+        return 1
 
     report = run(args.base)
     if args.json:

@@ -62,12 +62,17 @@ that drifts.
 ```
 
 - `available` — same rule as M1.
-- `balance`, `equity`, `free_margin` **MUST** be finite, non-negative real
-  numbers, or **`null`**. `NaN` and `Infinity` are refused at ingest and the
-  whole snapshot is rejected with `numeric_invalid (account.health.balance)`.
-  Note that Python's own `json.dumps` emits a bare `Infinity` token by default
-  and `json.loads` accepts it, so **no library will stop you** — the node must
-  check.
+- `balance`, `equity`, `free_margin` **MUST** be finite real numbers, or
+  **`null`**. `NaN` and `Infinity` are refused at ingest and the whole snapshot
+  is rejected with `numeric_invalid (account.health.balance)`. Note that
+  Python's own `json.dumps` emits a bare `Infinity` token by default and
+  `json.loads` accepts it, so **no library will stop you** — the node must check.
+- **Negative values MUST be sent as they are.** A negative balance or equity is
+  a real account state after a gap through a stop-out, and the Mac admits it and
+  shows it with an `account_figure_negative` warning. Do not clamp to zero and
+  do not suppress the sample: a suppressed loss is the most dangerous kind of
+  missing number. (The Mac briefly refused negatives itself; that was a defect
+  and is fixed.)
 - **`null` MUST mean "not reported", never zero.** The Mac renders `null` as
   `—` and a `0` as a measurement, all the way to the pixel.
 - `trade_allowed` / `trade_expert` are **tri-state**: `null` means "not
@@ -92,11 +97,14 @@ day is indistinguishable from a broken one.
 ### M4 · Timestamps
 
 - `published_at` **MUST** be ISO-8601 with an explicit UTC offset.
-- The Mac judges liveness on its **own arrival clock** (`received_at`), never on
-  `published_at`. A node cannot make itself look fresh by stamping a recent
-  time. `published_at` is used **only** to detect clock skew, and a difference
-  above **120 s** is a checker FAIL because every freshness verdict becomes
-  unreliable.
+- The Mac judges **liveness** on its own arrival clock (`received_at`), never on
+  `published_at`. A node cannot make itself look live by stamping a recent time.
+- `published_at` does two other things, and an earlier version of this document
+  wrongly said it did only one. It feeds **data staleness** (`observation()`
+  derives `data_stale` from it, and the envelope's `stale` is
+  `liveness_stale OR data_stale`), and it is compared with `received_at` to
+  detect **clock skew** — a difference above **120 s** is a checker FAIL,
+  because past that point no freshness verdict is reliable.
 - A future-dated `published_at` **MUST NOT** be used to extend freshness; it
   cannot, but do not rely on that as a feature.
 
@@ -167,8 +175,15 @@ authority would reintroduce that defect over the network.
 
 ### N3 · Never send `available: true` with an all-null sample
 
-`_carries()` already prevents this on the node side. It is the exact "confident
-emptiness" this programme removes: a claim of observation with nothing observed.
+`live/telemetry._carries()` prevents this on the node side today, and the rule
+belongs here because **the Mac does not re-check it**: `_node_accounts` will
+project a `node_mt5`, admitted record with `balance`, `equity` and `free_margin`
+all null from `health.available: true` alone. Every figure renders `—`, so
+nothing false is displayed — but the account status flips from *unavailable* to
+*available* on the strength of a claim with no content.
+
+This is the exact "confident emptiness" the programme removes, and it is one of
+the few rules where the Mac is trusting the node rather than verifying it.
 
 ### N4 · Never change `schema_version` without a Mac-side milestone
 

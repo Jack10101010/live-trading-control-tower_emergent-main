@@ -91,6 +91,13 @@ python3 -m uvicorn server:app --host 127.0.0.1 --port 8000
   falls back to it when unset, so pinning either one pins both — but setting
   both to *different* values pins the deployment to two accounts, and the
   checker FAILs on it. Set one, or set both to the same value.
+- **Export the variables in the shell that STARTS THE BACKEND, not only in the
+  shell that runs the checker.** The gate runs inside the backend process and
+  reads its environment at startup; the checker is a different process. Pinning
+  only the checker leaves the tower admitting whatever arrives while the tool
+  reports a mild WARN. This was found by rehearsal, not by reasoning, and the
+  checker now FAILs on it (`account.pin_enforced_by_runtime`) — but the failure
+  is a safety net, not the procedure.
 - When a pin is set, an observation carrying **no identity at all** is refused,
   not admitted. "Cannot be checked" is not "passed the check" — a node
   publishing balances with `identity.available: false` would otherwise deliver
@@ -202,13 +209,15 @@ Representative output from the offline suite:
   PASS  node.expected_instance               observed=vps-node-1  expected=vps-node-1
   PASS  node.schema_version                  observed=ct.node-telemetry.v1
   PASS  node.contract                        observed=canonical
-  PASS  node.freshness                       observed=age=0.014s basis=received_at  expected=<= 900.0s
+  PASS  node.freshness                       observed=age=0.015s basis=received_at  expected=<= 900.0s
+  PASS  node.freshness_independent           observed=recomputed arrival age=0.0s -> stale=False  expected=reported liveness_stale=False
   PASS  node.clock_skew                      observed=5.0s  expected=<= 120.0s
   PASS  node.cycle_status                    observed=ok
   PASS  node.mode                            observed=dry_run
   PASS  account.capability                   observed=observed  expected=observed
   PASS  account.admissible                   observed=True  expected=True
   PASS  account.no_mock_admitted             observed=1 genuine / 0 rejected  expected=no fixture figure on an admitted record
+  PASS  account.pin_enforced_by_runtime      observed=1 admitted record(s) match the pin
   PASS  account.identity                     observed=acctfp_0…cdef @ FTMO-Demo
   PASS  account.balance_valid                observed=4211.5
   PASS  account.equity_valid                 observed=4180.25
@@ -219,6 +228,14 @@ Representative output from the offline suite:
 
   ACTIVATION VERDICT: WARN
 ```
+
+Twenty-three lines, regenerated from an actual run. An earlier version of this
+block was copied before two checks existed and then described as "complete",
+which would have had an operator diffing their run against it and finding two
+unexplained extras on a correct activation. The one WARN is the development
+asset being readable on disk, which is true in every checkout. An unpinned run
+replaces `account.pin_enforced_by_runtime` with two further WARNs
+(`node.expected_instance`, `account.identity_pinned`) and is still exit 0.
 
 That is the **complete** line set for a fully pinned, fully successful run —
 copied from an actual execution against the offline suite, not abridged. The one
@@ -231,6 +248,8 @@ checkout. An unpinned run adds two more WARNs (`node.expected_instance`,
 | check | meaning | action |
 |---|---|---|
 | `account.refused` | **A genuine terminal read of an account you are not pinned to**, or one that carries no identity to compare against the pin. | STOP. Roll back. Do not continue. |
+| `account.pin_enforced_by_runtime` | The runtime ADMITTED an identity you did not pin — the backend process is not running with your `CONTROL_TOWER_EXPECTED_*` variables. | STOP. Restart the backend with the variables set. |
+| `node.freshness_independent` | The checker's own clock disagrees with the staleness the tower published. | STOP. No freshness verdict on this report can be trusted. |
 | `account.identity_pinned` FAIL | `CONTROL_TOWER_EXPECTED_ACCOUNT` and `NODE_EXPECTED_ACCOUNT_FINGERPRINT` name **different** accounts. | STOP. The deployment is pinned twice, to two things. |
 | `environment.resolved` | the process is not in development | STOP. Restart with the correct environment. |
 | `node.clock_skew` | node and tower clocks disagree beyond 120 s | STOP. Any freshness verdict is unreliable. |

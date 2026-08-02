@@ -24,8 +24,10 @@ record of what happened, and the next attempt starts from the same ignorance.
 | 9 | backend/frontend contract mismatch | refused accounts rendering as normal cards; missing fields; console errors |
 | 10 | repeated server errors | 5xx from any `/api/operations/*` endpoint |
 | 11 | the two expected-account variables disagree | `account.identity_pinned` FAIL (`expected_account_pins_disagree`) |
+| 12 | the runtime admitted an identity you did not pin | `account.pin_enforced_by_runtime` FAIL — the BACKEND is unpinned even though your shell is |
+| 13 | the checker's clock disagrees with the tower's staleness | `node.freshness_independent` FAIL |
 
-Triggers 2, 3, 4, 8 and 11 are **immediate** — they mean the screen is asserting
+Triggers 2, 3, 4, 8, 11 and 12 are **immediate** — they mean the screen is asserting
 something false about money. The rest permit a minute of diagnosis first.
 
 ---

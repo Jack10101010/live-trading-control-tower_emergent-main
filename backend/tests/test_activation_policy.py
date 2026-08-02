@@ -37,7 +37,18 @@ import node_provenance as np_                                        # noqa: E40
 import operational_projection as op                                  # noqa: E402
 import activation_payloads as pay                                  # noqa: E402
 
-NOW = "2026-08-02T12:00:00Z"
+#: The projection instant, taken from the REAL clock.
+#:
+#: This was a frozen `"2026-08-02T12:00:00Z"` while `activation_payloads` stamps
+#: `received_at` from the real clock, so the projection judged every arrival
+#: against a `now` hours in the past. It went unnoticed only because
+#: `build_nodes` used to pass the envelope's `stale` flag through instead of
+#: recomputing; the moment one authority started deriving the answer, every
+#: fixture in this file read stale. A test whose clock disagrees with its
+#: fixtures' clock is measuring the disagreement.
+def NOW() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _sources(entries, **over):
@@ -62,11 +73,11 @@ def test_1_node_current_account_absent():
     assert v.execution_authority is False
     assert ap.R_ACCOUNT_NOT_OBSERVED in v.reasons
     # The node is still fully visible.
-    node = op.build_nodes(_sources([entry]), now=NOW)[0]
+    node = op.build_nodes(_sources([entry]), now=NOW())[0]
     assert node.lifecycle_state == np_.NODE_CURRENT
     assert node.provenance == np_.PROV_NODE_TELEMETRY
     # And no account is invented.
-    assert op.build_accounts(_sources([entry]), now=NOW)[0].provenance == bp.PROV_ABSENT
+    assert op.build_accounts(_sources([entry]), now=NOW())[0].provenance == bp.PROV_ABSENT
 
 
 def test_2_node_current_account_explicitly_unavailable():
@@ -89,10 +100,10 @@ def test_3_node_current_account_valid():
     assert v.execution_authority is False, "account data never grants execution"
     assert v.capability == ap.CAPABILITY_OBSERVED
 
-    account = op.build_accounts(_sources([entry]), now=NOW)[0]
+    account = op.build_accounts(_sources([entry]), now=NOW())[0]
     assert account.provenance == bp.PROV_NODE_MT5
     assert account.balance == 4211.5
-    node = op.build_nodes(_sources([entry]), now=NOW)[0]
+    node = op.build_nodes(_sources([entry]), now=NOW())[0]
     assert node.provenance == np_.PROV_NODE_TELEMETRY, (
         "the node must NOT borrow broker provenance from its own account payload")
 
@@ -110,7 +121,7 @@ def test_4_node_stale_account_timestamp_current():
     assert ap.R_STALE in v.reasons
     # Stale genuine data stays ADMITTED and visibly stale — it is real, just old.
     assert v.node_account_admissible is True
-    account = op.build_accounts(_sources([entry]), now=NOW)[0]
+    account = op.build_accounts(_sources([entry]), now=NOW())[0]
     assert account.provenance == bp.PROV_NODE_MT5
     assert account.freshness.stale is True
 
@@ -125,7 +136,7 @@ def test_5_node_degraded_with_account_values():
     assert v.node_account_admissible is True, "the reading is still a reading"
     assert v.analytics_input_admissible is False
     assert ap.R_NODE_DEGRADED in v.reasons
-    node = op.build_nodes(_sources([entry]), now=NOW)[0]
+    node = op.build_nodes(_sources([entry]), now=NOW())[0]
     assert node.lifecycle_state == np_.NODE_DEGRADED
 
 
@@ -243,7 +254,7 @@ def test_14_two_nodes_reporting_the_same_account_are_two_observations():
     one live account."""
     entries = [pay.envelope(pay.account_payload(instance_id="vps-a")),
                pay.envelope(pay.account_payload(instance_id="vps-b"))]
-    accounts = op.build_accounts(_sources(entries), now=NOW)
+    accounts = op.build_accounts(_sources(entries), now=NOW())
     assert len(accounts) == 2
     assert {a.node_id for a in accounts} == {"vps-a", "vps-b"}
 
@@ -252,7 +263,7 @@ def test_15_two_nodes_reporting_different_accounts_stay_distinct():
     entries = [pay.envelope(pay.account_payload(instance_id="vps-a")),
                pay.envelope(pay.account_payload(instance_id="vps-b",
                                                 fingerprint="acctfp_other"))]
-    accounts = op.build_accounts(_sources(entries), now=NOW)
+    accounts = op.build_accounts(_sources(entries), now=NOW())
     assert {(a.node_id, a.account_fingerprint) for a in accounts} == {
         ("vps-a", pay.EXPECTED_ACCOUNT), ("vps-b", "acctfp_other")}
 
@@ -263,16 +274,16 @@ def test_15_two_nodes_reporting_different_accounts_stay_distinct():
 
 def test_16_future_dated_snapshot_cannot_read_fresher_than_arrival():
     entry = pay.envelope(pay.future_dated_payload(), stale=True, received_ago=9000)
-    account = op.build_accounts(_sources([entry]), now=NOW)[0]
+    account = op.build_accounts(_sources([entry]), now=NOW())[0]
     assert account.freshness.stale is True
 
 
 def test_17_arrival_clock_governs_not_the_node_clock():
     entry = pay.envelope(pay.account_payload(published_ago=1), stale=True,
                          received_ago=9000)
-    account = op.build_accounts(_sources([entry]), now=NOW)[0]
+    account = op.build_accounts(_sources([entry]), now=NOW())[0]
     assert account.freshness.stale is True
-    node = op.build_nodes(_sources([entry]), now=NOW)[0]
+    node = op.build_nodes(_sources([entry]), now=NOW())[0]
     assert node.freshness_basis == "received_at"
 
 
@@ -282,7 +293,7 @@ def test_18_nonfinite_numbers_fail_closed():
     assert admissible is False
     assert ap.R_NUMERIC_INVALID in reasons
     # And the projection never renders it as a figure.
-    account = op.build_accounts(_sources([entry]), now=NOW)[0]
+    account = op.build_accounts(_sources([entry]), now=NOW())[0]
     assert account.balance is None
 
 
@@ -292,7 +303,7 @@ def test_19_equity_absent_with_balance_present_is_unknown_not_invalid():
     entry = pay.envelope(pay.equity_absent_payload())
     admissible, reasons = ap.account_admissible(entry)
     assert admissible is True, reasons
-    account = op.build_accounts(_sources([entry]), now=NOW)[0]
+    account = op.build_accounts(_sources([entry]), now=NOW())[0]
     assert account.balance == 4211.5
     assert account.equity is None
 
@@ -308,7 +319,7 @@ def test_20_claimed_provenance_without_evidence_is_worthless():
     admissible, reasons = ap.account_admissible(entry)
     assert admissible is False
     assert ap.R_ACCOUNT_NOT_OBSERVED in reasons
-    account = op.build_accounts(_sources([entry]), now=NOW)[0]
+    account = op.build_accounts(_sources([entry]), now=NOW())[0]
     assert account.provenance == bp.PROV_ABSENT
 
 

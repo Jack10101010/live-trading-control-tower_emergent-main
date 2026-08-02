@@ -1298,6 +1298,11 @@ def _local_accounts(sources: ProjectionSources, *, now: str,
                 currency=first.get("baseCurrency") or first.get("currency"),
                 unrealized_pnl=None, realized_pnl_today=None, open_risk=None,
                 connection_state=conn,
+                # No account sample exists on this branch — these figures came
+                # from the broker snapshot's own account list — so there is no
+                # observation time to state. `snap_at` is when the SNAPSHOT was
+                # assembled, which is a different fact, and borrowing it here
+                # made two identical requests differ.
                 provenance=_provenance_for(kind, observed=True),
                 admitted=admitted, admission_reasons=reasons,
                 freshness=freshness(now=now, source_at=snap_at, available=True,
@@ -1330,6 +1335,21 @@ def _local_accounts(sources: ProjectionSources, *, now: str,
         # Not derivable from current evidence — reported as absent, not zero.
         realized_pnl_today=None, open_risk=None,
         connection_state=conn, provenance=_provenance_for(kind, observed=True),
+        # WITHOUT THIS THE CONTRADICTION RULE CANNOT SEE THIS RECORD.
+        #
+        # `account_contradictions` compares money only between samples whose
+        # observation times are both stated and close together, so a local
+        # record with no `observed_at` silently opted out of every
+        # local-versus-node comparison — making matrix row 11 unreachable in
+        # production while its unit test passed on a hand-built view that did
+        # supply one.
+        #
+        # ONLY the account sample's own `at`, never the broker snapshot's.
+        # `MT5Broker.account_snapshot` sets it from the BROKER's server time,
+        # which is precisely "when the observer looked"; the snapshot's `at` is
+        # when the snapshot was assembled, and the mock regenerates it per call
+        # — borrowing it made two identical requests differ.
+        observed_at=acct.get("at"),
         admitted=admitted, admission_reasons=reasons,
         freshness=freshness(now=now, source_at=acct.get("at") or snap_at,
                             available=True, stale_after_s=stale_after_s)),)
@@ -1631,11 +1651,22 @@ def build_nodes(sources: ProjectionSources, *, now: str,
         account = snapshot.get("account") if isinstance(snapshot.get("account"), dict) else {}
         identity = account.get("identity") if isinstance(account.get("identity"), dict) else {}
 
-        # FRESHNESS IS NOT RECOMPUTED. `entry` is the canonical M-TEL-1
-        # envelope, already judged on the tower's ARRIVAL clock with the
-        # phase-aware budget. This projection passes the verdict through and
-        # adds no opinion of its own.
-        stale = bool(entry.get("stale", True))
+        # ONE AUTHORITY, TWO WITNESSES — the same rule `verdict()` applies.
+        #
+        # This used to read the envelope flag and pass it through, on the
+        # reasoning that `entry` is the canonical M-TEL-1 envelope and already
+        # carries the phase-aware verdict. That is true and it is not enough: a
+        # node card would print `lifecycleState: current` beside a `freshness`
+        # block this same function had computed as stale, from one entry, with
+        # nothing to explain the difference. `recomputed_stale` ORs the flag
+        # with a recomputation against the arrival clock, so it can only ever be
+        # MORE pessimistic than the envelope, never less.
+        # `now` and the budget are the PROJECTION'S, not the wall clock's. A
+        # projection asked to describe an instant must judge freshness at that
+        # instant, or a test pinning `now` gets a verdict from the real clock —
+        # and every fixed-timestamp fixture reads stale.
+        stale = activation_policy.recomputed_stale(
+            entry, now=_parse(now), projection_budget_s=stale_after_s)
         fresh = freshness(now=now, source_at=entry.get("received_at") or entry.get("published_at"),
                           available=True, stale_after_s=stale_after_s,
                           detail=f"node telemetry received from {node_id}")
