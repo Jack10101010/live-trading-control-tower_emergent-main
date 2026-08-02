@@ -156,15 +156,42 @@ def test_unset_retap_sentinel_keeps_its_meaning_after_a_round_trip():
 
 
 # ── failing closed ──────────────────────────────────────────────────────────
-def test_state_referring_to_a_dropped_candle_fails_closed():
-    """A window that has rolled past the carried candle must NOT clamp to 0.
+def test_pre_window_ordinal_maps_to_a_negative_local_index():
+    """CORRECTED after running against the real engine.
 
-    Clamping would fabricate an already-expired delay and could fill a trade the
-    oracle never filled, so this raises instead.
+    This originally asserted that a pre-window ordinal RAISES. That was wrong,
+    and the real engine proved it: a two-year window carrying 34 pending plans
+    hit an ordinal from ~2018. Rejecting it would force a full-oracle rebuild
+    almost every cycle and defeat Model B for the wrong reason.
+
+    Negative is correct because `candle_records` is never indexed by a carried
+    value -- every reader is a comparison or a difference, and all are exact
+    under a negative operand. Clamping remains forbidden; only that would
+    fabricate an expired delay.
     """
     frame = FrameOrigin(origin_ordinal=1_000_000, length=500)
-    with pytest.raises(IndexRebaseError, match="precedes the frame origin"):
-        frame.to_local(999_990)
+    assert frame.to_local(999_990) == -10
+    assert frame.to_local(1_000_000) == 0
+
+
+def test_bars_to_fill_is_exact_for_a_plan_older_than_the_window():
+    """The arithmetic that makes negative locals safe, on real magnitudes."""
+    created_abs, fill_abs = 1_168_182, 4_314_000       # ~2018 plan, 2026 fill
+    oracle_frame = FrameOrigin(origin_ordinal=0, length=4_314_284)
+    window_frame = FrameOrigin(origin_ordinal=3_569_511, length=744_773)
+
+    item_o = {"created_candle_index": oracle_frame.to_local(created_abs)}
+    item_w = {"created_candle_index": window_frame.to_local(created_abs)}
+    assert item_w["created_candle_index"] < 0                  # genuinely negative
+    assert (bars_to_fill(oracle_frame.to_local(fill_abs), item_o)
+            == bars_to_fill(window_frame.to_local(fill_abs), item_w) == 3_145_818)
+
+
+def test_ordinal_beyond_the_frame_end_still_fails_closed():
+    """A FUTURE candle is impossible, not merely historical."""
+    frame = FrameOrigin(origin_ordinal=1_000_000, length=500)
+    with pytest.raises(IndexRebaseError, match="beyond the frame end"):
+        frame.to_local(1_000_500)
 
 
 def test_state_beyond_the_frame_end_fails_closed():

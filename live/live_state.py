@@ -153,12 +153,37 @@ class FrameOrigin:
     last_time: str = ""
 
     def to_local(self, absolute: int) -> int:
+        """Frame-local index. MAY be negative — deliberately.
+
+        This originally rejected anything before the frame origin, on the
+        assumption that a carried index must resolve to a candle still present
+        in the window. Running it against the real engine disproved that
+        assumption immediately: a two-year window carrying 34 pending plans hit
+        an ordinal from ~2018, eight years behind the window.
+
+        The assumption was wrong because `candle_records` is NEVER indexed by a
+        carried value — it is only ever `enumerate`d. Every reader of a carried
+        index is a comparison or a difference:
+
+            bars_to_fill = candle_index - created_candle_index
+            candle_index >= trigger_candle_index + trigger_delay_candles
+            candle_index >= _be_stop_active_from
+            candle_index >  tapped_candle_index + 1
+
+        All four are exact under a negative operand, and the differences are
+        invariant. Worked through for a real case: the oracle computes
+        4,314,000 - 1,168,182 = 3,145,818; the window computes
+        744,489 - (-2,401,329) = 3,145,818. Identical, which is precisely what
+        equivalence requires.
+
+        Rejecting negatives would have forced a full-oracle rebuild on any node
+        carrying an old pending plan — i.e. almost always — which would have
+        defeated Model B entirely for the wrong reason. CLAMPING remains
+        forbidden: clamping to 0 would fabricate an expired delay. Ordinals past
+        the frame END are still rejected, because those are genuinely impossible
+        rather than merely historical.
+        """
         local = int(absolute) - self.origin_ordinal
-        if local < 0:
-            raise IndexRebaseError(
-                f"absolute ordinal {absolute} precedes the frame origin "
-                f"{self.origin_ordinal} — the window no longer contains that candle; "
-                "the carried state must be rebuilt from the oracle, not clamped")
         if local >= self.length:
             raise IndexRebaseError(
                 f"absolute ordinal {absolute} is beyond the frame end "
