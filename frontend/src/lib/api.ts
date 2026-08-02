@@ -861,6 +861,42 @@ export interface NodeOperationalView {
   lastActivity: string | null;
   telemetryAgeSeconds: number | null;
   warnings: string[];
+  /** M-NODE-READ-1 — node-published operational truth. All additive.
+   *  `adapter`, `broker`, `connectionState`, `executionMode`,
+   *  `authorizationSummary`, `reconciliationState` and `activeScenarioCount`
+   *  above are now always null on a node view: they were the Control Tower's
+   *  own state, rendered under the node's name. */
+  lifecycleState: 'absent' | 'current' | 'stale' | 'degraded';
+  degradedReasons: string[];
+  deploymentProfile: string | null;
+  strategyFamily: string | null;
+  engineVersion: string | null;
+  engineVersionExpected: string | null;
+  configFingerprint: string | null;
+  inputRevision: string | null;
+  symbol: string | null;
+  timeframe: string | null;
+  dataSeam: string | null;
+  cycleStatus: string | null;
+  cycleSequence: number | null;
+  lastBoundary: string | null;
+  lastBarTime: string | null;
+  cycleNote: string | null;
+  nodeMode: string | null;
+  submissionDisabled: boolean | null;
+  killSwitchActive: boolean | null;
+  /** `observed` | `unreachable` | null. Null means the node said nothing —
+   *  never inferred from an unsampled cycle. */
+  mt5Observation: string | null;
+  /** M-TEL-1 decomposition. Rendered, never recomputed. */
+  publishedAt: string | null;
+  receivedAt: string | null;
+  livenessAgeSeconds: number | null;
+  livenessStale: boolean | null;
+  dataStale: boolean | null;
+  freshnessBasis: string | null;
+  staleAfterSeconds: number | null;
+  legacySource: boolean;
   provenance: string;
   freshness: ProjectionFreshness | null;
 }

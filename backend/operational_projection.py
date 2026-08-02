@@ -36,6 +36,7 @@ from __future__ import annotations
 import math
 
 import broker_provenance as brokerprov
+import node_provenance as nodeprov
 import trade_ledger_domain as _tld
 
 from dataclasses import asdict, dataclass, field
@@ -152,6 +153,28 @@ def freshness(*, now: str, source_at: Any, available: bool = True,
 
 @dataclass(frozen=True)
 class NodeOperationalView:
+    """One execution node, as IT reported itself.
+
+    M-NODE-READ-1 — WHOSE FACTS THESE ARE.
+
+    Seven of the nine original fields were the Control Tower describing ITSELF
+    under the node's name: `adapter` was the Mac's `broker_layer.active_kind()`,
+    `connection_state` the Mac adapter's connection, `reconciliation_state` the
+    Mac execution store's posture, `execution_mode` the Mac's governed mode,
+    `authorization_summary` the Mac's grant, `active_scenario_count` the Mac's
+    scenario store, and `broker` the Mac broker snapshot's provenance. All of it
+    was stamped `node-telemetry` and displayed on a card titled with the VPS
+    node's instance id.
+
+    Restoring these cards without fixing that would have put the Mac's own state
+    on screen as the node's — a fabrication with a real node's name on it, which
+    is worse than the invisibility it replaced.
+
+    The Mac-sourced fields are kept in the shape (consumers read them) but are
+    now `None` on a node view, and the node's OWN facts are carried in the
+    additive fields below. Every one of those traces to a field the node
+    published in `ct.node-telemetry.v1`.
+    """
     node_id: str
     instance_id: str | None = None
     deployment: str | None = None
@@ -170,6 +193,50 @@ class NodeOperationalView:
     last_activity: str | None = None
     telemetry_age_seconds: float | None = None
     warnings: tuple = field(default_factory=tuple)
+
+    # ── M-NODE-READ-1: node-published operational truth (all additive) ────────
+    #: `absent` | `current` | `stale` | `degraded`. See `node_provenance`.
+    lifecycle_state: str = nodeprov.NODE_ABSENT
+    #: The node's own reasons for reporting itself degraded. Empty is not
+    #: "healthy" — it means the node reported no failure condition.
+    degraded_reasons: tuple = field(default_factory=tuple)
+    #: `engine.deployment_profile` — what the node believes it is running as.
+    deployment_profile: str | None = None
+    strategy_family: str | None = None
+    engine_version: str | None = None
+    engine_version_expected: str | None = None
+    config_fingerprint: str | None = None
+    input_revision: str | None = None
+    symbol: str | None = None
+    timeframe: str | None = None
+    data_seam: str | None = None
+    #: `cycle.*` — where the node is in its own loop.
+    cycle_status: str | None = None
+    cycle_sequence: int | None = None
+    last_boundary: str | None = None
+    last_bar_time: str | None = None
+    cycle_note: str | None = None
+    #: `runtime.*` — the node's own operating mode and safety switches. These
+    #: describe the NODE, and are never read as this tower's execution posture.
+    node_mode: str | None = None
+    submission_disabled: bool | None = None
+    kill_switch_active: bool | None = None
+    #: What the node said about its own MT5 terminal, only when it said
+    #: something: `observed` | `unreachable` | None. Never derived from silence.
+    mt5_observation: str | None = None
+    #: M-TEL-1 freshness decomposition, passed through verbatim. The frontend
+    #: must render these and never recompute a verdict from timestamps.
+    published_at: str | None = None
+    received_at: str | None = None
+    liveness_age_seconds: float | None = None
+    liveness_stale: bool | None = None
+    data_stale: bool | None = None
+    freshness_basis: str | None = None
+    stale_after_seconds: float | None = None
+    #: True when this instance predates the versioned contract and its snapshot
+    #: was adapted. Genuine data, with a stated and visible limitation.
+    legacy_source: bool = False
+
     provenance: str = PROV_ABSENT
     freshness: Freshness | None = None
 
@@ -193,6 +260,34 @@ class NodeOperationalView:
             "lastActivity": self.last_activity,
             "telemetryAgeSeconds": self.telemetry_age_seconds,
             "warnings": list(self.warnings),
+            "lifecycleState": self.lifecycle_state,
+            "degradedReasons": list(self.degraded_reasons),
+            "deploymentProfile": self.deployment_profile,
+            "strategyFamily": self.strategy_family,
+            "engineVersion": self.engine_version,
+            "engineVersionExpected": self.engine_version_expected,
+            "configFingerprint": self.config_fingerprint,
+            "inputRevision": self.input_revision,
+            "symbol": self.symbol,
+            "timeframe": self.timeframe,
+            "dataSeam": self.data_seam,
+            "cycleStatus": self.cycle_status,
+            "cycleSequence": self.cycle_sequence,
+            "lastBoundary": self.last_boundary,
+            "lastBarTime": self.last_bar_time,
+            "cycleNote": self.cycle_note,
+            "nodeMode": self.node_mode,
+            "submissionDisabled": self.submission_disabled,
+            "killSwitchActive": self.kill_switch_active,
+            "mt5Observation": self.mt5_observation,
+            "publishedAt": self.published_at,
+            "receivedAt": self.received_at,
+            "livenessAgeSeconds": self.liveness_age_seconds,
+            "livenessStale": self.liveness_stale,
+            "dataStale": self.data_stale,
+            "freshnessBasis": self.freshness_basis,
+            "staleAfterSeconds": self.stale_after_seconds,
+            "legacySource": self.legacy_source,
             "provenance": self.provenance,
             "freshness": self.freshness.as_dict() if self.freshness else None,
         })
@@ -1119,6 +1214,30 @@ def build_accounts(sources: ProjectionSources, *, now: str,
     acct = sources.account_snapshot()
     snap = sources.broker_snapshot()
     snap_at = (snap or {}).get("at")
+
+    # M-NODE-READ-1 — PRECEDENCE FIX: FIXTURE DATA MUST NOT SHADOW REAL DATA.
+    #
+    # M-MT5-READ-1 consulted the execution nodes only when the local adapter
+    # observed NOTHING. Under the development-default mock adapter the local
+    # adapter observes plenty — the fixture world's $100,000 account — so it won
+    # the precedence and the node was never asked.
+    #
+    # The consequence, found by this milestone's own test: a node relaying
+    # GENUINE MT5 account truth would be shadowed by a fixture account. The
+    # frontend gate then rejects the fixture record and the operator sees
+    # "unavailable" — real data suppressed by invented data, which is the
+    # inverse of the whole programme.
+    #
+    # The rule is now precedence by AUTHORITY, not by locality: a local read
+    # wins only if it is genuine BROKER TRUTH. `mock-fixture` is not, so the
+    # node is consulted first whenever the local adapter is not a real terminal.
+    local_is_broker_truth = brokerprov.is_broker_truth(
+        _provenance_for(kind, observed=isinstance(acct, dict) or isinstance(snap, dict)))
+    if not local_is_broker_truth:
+        relayed = _node_accounts(sources, now=now, stale_after_s=stale_after_s)
+        if relayed:
+            return relayed
+
     if not isinstance(acct, dict):
         # No dedicated account snapshot. Fall back to the accounts the broker
         # snapshot itself reports (real evidence, e.g. the fixture world's
@@ -1350,106 +1469,146 @@ def _node_position_count(snapshot: Any) -> int | None:
 
 def build_nodes(sources: ProjectionSources, *, now: str,
                 stale_after_s: float = DEFAULT_STALE_AFTER_S) -> tuple:
-    """One view per node that has published telemetry. When no node has
-    published, a single explicitly-UNAVAILABLE view is returned rather than an
-    empty list that could read as 'all healthy'."""
-    kind = sources.adapter_kind()
-    snap = sources.broker_snapshot()
-    prov_broker = _provenance_for(kind, observed=isinstance(snap, dict))
-    posture = sources.reconciliation_posture() or {}
-    recon_state = ("unavailable" if not posture else
-                   "critical" if posture.get("criticalUnresolved") else
-                   "stale" if posture.get("stale") else "clean")
-    mode = sources.execution_mode()
-    auth = sources.authorization()
-    orders = build_orders(sources, now=now)
-    positions = build_positions(sources, now=now)
-    scenarios = build_scenarios(sources, now=now)
-    entries = sources.node_entries() or []
+    """One view per node that has published telemetry, built ONLY from what that
+    node published.
 
-    def _warnings(fresh: Freshness, health: str | None) -> tuple:
-        w = []
-        if not fresh.available:
-            w.append("node telemetry unavailable")
-        elif fresh.stale:
-            w.append("node telemetry stale")
-        if recon_state == "critical":
-            w.append("unresolved critical reconciliation")
-        elif recon_state == "stale":
-            w.append("reconciliation stale")
-        if health and health not in ("healthy",):
-            w.append(f"node health: {health}")
-        if not isinstance(snap, dict):
-            w.append("broker snapshot unavailable")
-        return tuple(w)
+    M-NODE-READ-1 — WHAT WAS REMOVED AND WHY.
+
+    This function used to read the local adapter kind, the local adapter's
+    connection state, the local execution store's reconciliation posture, the
+    local governed execution mode, the local authorization grant, the local
+    scenario store and the local broker snapshot — and attach all of it to a
+    view stamped `node-telemetry`, titled with the VPS node's instance id.
+
+    None of that is node truth. It is the Control Tower describing itself in the
+    node's voice, which is the same class of defect as a fixture balance: a
+    confident statement whose stated source did not make it.
+
+    Every local read is gone from the per-node branch. What remains is the
+    node's own `cycle`, `runtime`, `engine`, `positions` and freshness
+    decomposition, plus the node's own reported failure conditions.
+
+    NOTE ON THE ABSENT BRANCH: when no node has published, ONE explicitly
+    unavailable view is still returned rather than an empty tuple, because an
+    empty list reads as "the fleet is fine and empty". That view now carries no
+    borrowed local state either — it asserts nothing about any node.
+    """
+    entries = sources.node_entries() or []
 
     if not entries:
         fresh = freshness(now=now, source_at=None, available=False,
                           stale_after_s=stale_after_s,
                           detail="no node has published telemetry")
         return (NodeOperationalView(
-            node_id="unknown", adapter=kind, broker=(snap or {}).get("provenance"),
-            connection_state=sources.connection_state(),
-            health=None, execution_mode=mode,
-            authorization_summary=auth, reconciliation_state=recon_state,
-            # M-MT5-READ-1: no node has published, so this tower knows NOTHING
-            # about any node's open exposure. These were `len(positions)` /
-            # `len(orders)` — counts of the LOCAL adapter's records, presented on
-            # a view whose entire subject is a node that has never reported. A
-            # count is a measurement; `0` here asserted "that node holds nothing
-            # open", which is exactly the claim the absence of telemetry makes
-            # impossible. Unknown, not zero.
+            node_id="unknown",
+            # Every field describing a node stays None: nothing has been
+            # observed, and the tower's own adapter, connection, execution mode,
+            # authorization and reconciliation posture are facts about the
+            # TOWER. Presenting them here answered a question about a node that
+            # has never reported, using evidence from somewhere else entirely.
+            lifecycle_state=nodeprov.NODE_ABSENT,
             open_position_count=None, open_order_count=None,
-            active_scenario_count=len(scenarios),
-            account_fingerprint_masked=_mask_fingerprint((snap or {}).get("accountIdentity")),
-            warnings=_warnings(fresh, None),
-            provenance=PROV_ABSENT, freshness=fresh),)
+            active_scenario_count=None,
+            warnings=("node telemetry unavailable",),
+            provenance=nodeprov.PROV_ABSENT, freshness=fresh),)
 
     out = []
     for entry in entries:
-        snapshot = entry.get("snapshot") or {}
+        if not isinstance(entry, dict):
+            continue
+        snapshot = entry.get("snapshot")
+        if not isinstance(snapshot, dict):
+            # A stored record whose snapshot cannot be read is not a node
+            # observation. Skipping it is right: `_node_observation_entries`
+            # only yields records that already passed validation, so this is
+            # defence in depth, and inventing a view here would be worse than
+            # the node appearing absent.
+            continue
         node_id = entry.get("instance_id") or "unknown"
-        published = entry.get("published_at")
-        fresh = freshness(now=now, source_at=published, available=True,
-                          stale_after_s=stale_after_s)
-        health = "healthy" if not entry.get("stale", True) else "stale"
-        account = (snapshot.get("account") or {})
-        identity = (account.get("identity") or {})
-        engine = (snapshot.get("engine") or {})
-        runtime = (snapshot.get("runtime") or {})
+        engine = snapshot.get("engine") if isinstance(snapshot.get("engine"), dict) else {}
+        runtime = snapshot.get("runtime") if isinstance(snapshot.get("runtime"), dict) else {}
+        cycle = snapshot.get("cycle") if isinstance(snapshot.get("cycle"), dict) else {}
+        account = snapshot.get("account") if isinstance(snapshot.get("account"), dict) else {}
+        identity = account.get("identity") if isinstance(account.get("identity"), dict) else {}
+
+        # FRESHNESS IS NOT RECOMPUTED. `entry` is the canonical M-TEL-1
+        # envelope, already judged on the tower's ARRIVAL clock with the
+        # phase-aware budget. This projection passes the verdict through and
+        # adds no opinion of its own.
+        stale = bool(entry.get("stale", True))
+        fresh = freshness(now=now, source_at=entry.get("received_at") or entry.get("published_at"),
+                          available=True, stale_after_s=stale_after_s,
+                          detail=f"node telemetry received from {node_id}")
+        if stale and fresh.available and not fresh.stale:
+            fresh = Freshness(projection_at=fresh.projection_at, source_at=fresh.source_at,
+                              age_seconds=fresh.age_seconds, stale=True, available=True,
+                              stale_after_seconds=fresh.stale_after_seconds,
+                              detail=fresh.detail)
+
+        reasons = nodeprov.degraded_reasons(snapshot)
+        lifecycle = nodeprov.classify_lifecycle(snapshot, stale=stale)
+        warnings = list(reasons)
+        if stale:
+            warnings.append("node telemetry stale — last reported, not current")
+        if entry.get("legacy_source"):
+            warnings.append("legacy payload — this node predates the versioned contract")
+
         out.append(NodeOperationalView(
             node_id=node_id, instance_id=entry.get("instance_id"),
-            deployment=engine.get("symbol"),
-            adapter=kind, broker=(snap or {}).get("provenance") or prov_broker,
-            account_fingerprint_masked=_mask_fingerprint(
-                identity.get("fingerprint") or (snap or {}).get("accountIdentity")),
-            connection_state=sources.connection_state(),
-            heartbeat_age_seconds=entry.get("age_seconds"),
-            health=health, execution_mode=mode, authorization_summary=auth,
-            reconciliation_state=recon_state,
-            # M-MT5-READ-1 — THE NODE COUNTS ITS OWN POSITIONS.
-            #
-            # These were `len(positions)` and `len(orders)`: the LOCAL broker
-            # adapter's records, attached to a view stamped `node-telemetry` and
-            # displayed on Fleet Overview under that node's name. Under the mock
-            # adapter a node that had never opened anything showed the fixture's
-            # open position as its own. It is a duplicated authority in the most
-            # direct sense — the tower answering a question only the node can
-            # answer, in the node's voice.
-            #
-            # `positions` comes from the node's own mirror (its authoritative
-            # ownership map). `orders` has no counterpart at all: v1 carries no
-            # orders section, so pending-order exposure is UNKNOWN — null, never
-            # the 0 that would read as "nothing resting at the broker".
+            deployment=nodeprov.clip_detail(engine.get("symbol")),
+            # The tower's adapter kind, broker snapshot, connection state,
+            # execution mode, authorization grant, reconciliation posture and
+            # scenario count are ALL facts about the tower. None of them
+            # belongs on a node's card, so none of them is set.
+            adapter=None, broker=None, connection_state=None,
+            execution_mode=None, authorization_summary=None,
+            reconciliation_state=None, active_scenario_count=None,
+            # Account identity ONLY from the node's own snapshot. This
+            # previously fell back to `(snap or {}).get("accountIdentity")` —
+            # the Mac broker snapshot's account — so under the mock adapter the
+            # fixture's account appeared, masked, on the node's card.
+            account_fingerprint_masked=_mask_fingerprint(identity.get("fingerprint")),
+            heartbeat_age_seconds=entry.get("liveness_age_seconds"),
+            health=lifecycle,
             open_position_count=_node_position_count(snapshot),
-            open_order_count=None,
-            active_scenario_count=len(scenarios),
-            last_activity=published,
+            open_order_count=None,          # v1 carries no orders section
+            last_activity=entry.get("published_at"),
             telemetry_age_seconds=entry.get("age_seconds"),
-            warnings=_warnings(fresh, None if health == "healthy" else health)
-                     + (("node reports mode " + str(runtime.get("mode")),)
-                        if runtime.get("mode") else ()),
-            provenance=PROV_NODE_TELEMETRY, freshness=fresh))
+            warnings=tuple(warnings),
+
+            lifecycle_state=lifecycle,
+            degraded_reasons=reasons,
+            deployment_profile=nodeprov.clip_detail(engine.get("deployment_profile")),
+            strategy_family=nodeprov.clip_detail(engine.get("strategy_family")),
+            engine_version=nodeprov.clip_detail(engine.get("engine_version_actual")),
+            engine_version_expected=nodeprov.clip_detail(engine.get("engine_version_expected")),
+            config_fingerprint=nodeprov.clip_detail(engine.get("config_fingerprint")),
+            input_revision=nodeprov.clip_detail(engine.get("input_revision")),
+            symbol=nodeprov.clip_detail(engine.get("symbol")),
+            timeframe=nodeprov.clip_detail(engine.get("timeframe")),
+            data_seam=nodeprov.clip_detail(engine.get("data_seam")),
+            cycle_status=nodeprov.clip_detail(cycle.get("status")),
+            cycle_sequence=cycle.get("sequence") if isinstance(cycle.get("sequence"), int)
+                           and not isinstance(cycle.get("sequence"), bool) else None,
+            last_boundary=nodeprov.clip_detail(cycle.get("last_boundary")),
+            last_bar_time=nodeprov.clip_detail(cycle.get("last_bar_time")),
+            cycle_note=nodeprov.clip_detail(cycle.get("note")),
+            node_mode=nodeprov.clip_detail(runtime.get("mode")),
+            submission_disabled=_bool_or_none(runtime.get("submission_disabled")),
+            kill_switch_active=_bool_or_none(runtime.get("kill_switch_active")),
+            mt5_observation=nodeprov.mt5_connection_observation(snapshot),
+            published_at=entry.get("published_at"),
+            received_at=entry.get("received_at"),
+            liveness_age_seconds=entry.get("liveness_age_seconds"),
+            liveness_stale=_bool_or_none(entry.get("liveness_stale")),
+            data_stale=_bool_or_none(entry.get("data_stale")),
+            freshness_basis=entry.get("freshness_basis"),
+            stale_after_seconds=entry.get("stale_after_seconds"),
+            legacy_source=bool(entry.get("legacy_source")),
+            provenance=nodeprov.for_node_observation(validated=True),
+            freshness=fresh))
+    # Stable, total ordering by instance id: a render key never depends on
+    # arrival order, and one node can never occupy another's position.
     out.sort(key=lambda n: n.node_id)
     return tuple(out)
 
@@ -1477,7 +1636,28 @@ def build_summary(sources: ProjectionSources, *, now: str,
     fresh = freshness(now=now, source_at=(snap or {}).get("at"),
                       available=isinstance(snap, dict), stale_after_s=stale_after_s,
                       detail=None if isinstance(snap, dict) else "broker snapshot unavailable")
-    warnings = tuple(sorted({w for n in nodes for w in n.warnings}))
+    # M-NODE-READ-1 — TOWER WARNINGS ARE RAISED WHERE THEY BELONG.
+    #
+    # `warnings` was the union of NODE warnings, and `build_nodes` manufactured
+    # the tower's own facts into node warnings so they would arrive here: the
+    # local reconciliation posture and the local broker snapshot's absence were
+    # both attributed to whichever node happened to be reporting.
+    #
+    # The facts are real and an operator needs them. They are simply not facts
+    # about a node, so they are raised here, at the whole-system level, from the
+    # tower's own sources — and the node warnings that remain are the node's own
+    # words about itself.
+    posture = sources.reconciliation_posture() or {}
+    tower_warnings = []
+    if not isinstance(snap, dict):
+        tower_warnings.append("broker snapshot unavailable")
+    if posture.get("criticalUnresolved"):
+        tower_warnings.append("unresolved critical reconciliation")
+    elif posture.get("stale"):
+        tower_warnings.append("reconciliation stale")
+    elif not posture:
+        tower_warnings.append("reconciliation posture unavailable")
+    warnings = tuple(sorted({w for n in nodes for w in n.warnings} | set(tower_warnings)))
     return OperationalSummary(
         projection_timestamp=str(now), nodes=nodes, accounts=accounts,
         active_orders=orders, open_positions=positions, active_scenarios=scenarios,

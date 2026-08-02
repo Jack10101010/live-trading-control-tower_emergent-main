@@ -31,13 +31,31 @@ function fresh(over: Partial<ProjectionFreshness> = {}): ProjectionFreshness {
 
 function node(over: Partial<NodeOperationalView> = {}): NodeOperationalView {
   return {
-    nodeId: 'node-1', instanceId: 'node-1', deployment: 'EURUSD', adapter: 'mock',
-    broker: 'mock-fixture', accountFingerprintMasked: 'acct…D6F',
-    connectionState: 'Connected', heartbeatAgeSeconds: 3, health: 'healthy',
-    executionMode: 'observe', authorizationSummary: null,
-    reconciliationState: 'clean', openPositionCount: 1, openOrderCount: 0,
-    activeScenarioCount: 0, lastActivity: '2026-07-27T12:00:00Z',
-    telemetryAgeSeconds: 3, warnings: [], provenance: 'live_mt5',
+    nodeId: 'node-1', instanceId: 'node-1', deployment: 'EURUSD',
+    // M-NODE-READ-1: the projection now leaves these null on a node view —
+    // they were the Control Tower's own state under the node's name. The
+    // fixture matches the projection so the test describes what ships.
+    adapter: null, broker: null, accountFingerprintMasked: null,
+    connectionState: null, heartbeatAgeSeconds: 3, health: 'current',
+    executionMode: null, authorizationSummary: null,
+    reconciliationState: null, openPositionCount: 1, openOrderCount: null,
+    activeScenarioCount: null, lastActivity: '2026-07-27T12:00:00Z',
+    telemetryAgeSeconds: 3, warnings: [],
+    lifecycleState: 'current', degradedReasons: [],
+    deploymentProfile: 'vps-dry-run', strategyFamily: null,
+    engineVersion: 'lux@1.4.2', engineVersionExpected: null,
+    configFingerprint: null, inputRevision: null,
+    symbol: 'EURUSD', timeframe: 'M15', dataSeam: null,
+    cycleStatus: 'ok', cycleSequence: 412,
+    lastBoundary: '2026-07-27T11:45:00Z', lastBarTime: null, cycleNote: null,
+    nodeMode: 'dry_run', submissionDisabled: true, killSwitchActive: false,
+    mt5Observation: null,
+    publishedAt: '2026-07-27T12:00:00Z', receivedAt: '2026-07-27T12:00:03Z',
+    livenessAgeSeconds: 3, livenessStale: false, dataStale: false,
+    freshnessBasis: 'received_at', staleAfterSeconds: 900, legacySource: false,
+    // A node view carries NODE provenance. `live_mt5` here described a record
+    // the projection has never produced.
+    provenance: 'node-telemetry',
     freshness: fresh(), ...over,
   };
 }
@@ -125,8 +143,16 @@ describe('OperationalDashboard', () => {
     await waitFor(() => screen.getByTestId('operational-dashboard'));
     const nodeCard = screen.getByTestId('node-card').textContent ?? '';
     expect(nodeCard).toContain('node-1');
-    expect(nodeCard).toContain('acct…D6F');      // masked fingerprint, verbatim
-    expect(nodeCard).toContain('observe');
+    // M-NODE-READ-1: the node card carries the NODE's own facts. The masked
+    // account fingerprint and the execution mode are gone — the fingerprint
+    // fell back to the Mac broker snapshot's account (under the mock adapter,
+    // the FIXTURE account, masked), and `observe` was the Control Tower's own
+    // governed execution mode, not the node's.
+    expect(nodeCard).toContain('vps-dry-run');   // node's deployment profile
+    expect(nodeCard).toContain('lux@1.4.2');     // node's engine version
+    expect(nodeCard).toContain('dry_run');       // the NODE's mode
+    expect(nodeCard).not.toContain('acct…D6F');
+    expect(nodeCard).not.toContain('observe');
     const acct = screen.getByTestId('account-card').textContent ?? '';
     expect(acct).toContain('100000.00 USD');
     expect(acct).toContain('not derivable');     // absent field labelled, not zeroed

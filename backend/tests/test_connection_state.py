@@ -127,10 +127,52 @@ def test_freshness_derives_only_from_published_at_never_received_at():
 
 
 def test_threshold_boundary_is_inclusive_of_fresh():
-    at_limit = (NOW - timedelta(seconds=cs.DEFAULT_STALE_AFTER_S)).isoformat().replace("+00:00", "Z")
-    just_past = (NOW - timedelta(seconds=cs.DEFAULT_STALE_AFTER_S + 1)).isoformat().replace("+00:00", "Z")
-    assert cs.build_connection_state({"n": record(at_limit)}, NOW)["telemetry"] == cs.TELEMETRY_FRESH
-    assert cs.build_connection_state({"n": record(just_past)}, NOW)["telemetry"] == cs.TELEMETRY_STALE
+    """M-NODE-READ-1 — the boundary is now the PHASE-AWARE budget.
+
+    This asserted the flat 120s default against a snapshot whose cycle status is
+    `ok`. That was the second-freshness-authority defect in test form: M-TEL-1
+    gives an `ok` (non-idle) cycle one bar interval, because a warm recompute
+    legitimately publishes nothing while it runs, and the flat threshold marked
+    a healthy node stale about two minutes in.
+
+    Both phases are asserted explicitly, so the budget can never silently revert
+    to one number for both.
+    """
+    def at(seconds_ago):
+        return (NOW - timedelta(seconds=seconds_ago)).isoformat().replace("+00:00", "Z")
+
+    # RECOMPUTE phase (`cycle.status: ok`) — one bar interval.
+    budget = lt.RECOMPUTE_STALE_AFTER_S
+    assert cs.build_connection_state({"n": record(at(budget))}, NOW)["telemetry"] == cs.TELEMETRY_FRESH
+    assert cs.build_connection_state({"n": record(at(budget + 1))}, NOW)["telemetry"] == cs.TELEMETRY_STALE
+
+    # IDLE phase (`no_new_bar`) — the documented 120s, unchanged.
+    idle = cs.DEFAULT_STALE_AFTER_S
+    idle_rec = record(at(idle), cycle={"status": "no_new_bar"})
+    idle_past = record(at(idle + 1), cycle={"status": "no_new_bar"})
+    assert cs.build_connection_state({"n": idle_rec}, NOW)["telemetry"] == cs.TELEMETRY_FRESH
+    assert cs.build_connection_state({"n": idle_past}, NOW)["telemetry"] == cs.TELEMETRY_STALE
+
+
+def test_connection_state_and_live_status_never_disagree():
+    """M-NODE-READ-1 — ONE freshness verdict, proven across both surfaces.
+
+    `instance_view` used to compute `now - published_at` against a flat 120s
+    while `/api/live/status` applied the canonical rule: arrival clock, phase
+    aware. During any recompute the two genuinely disagreed about the same
+    snapshot at the same instant — one node, two answers.
+
+    This pins them together at the case that used to break: a node six minutes
+    into a legitimate recompute.
+    """
+    six_minutes = (NOW - timedelta(seconds=360)).isoformat().replace("+00:00", "Z")
+    rec = record(six_minutes)
+    rec["received_at"] = six_minutes
+    canonical = lt.observation(rec["snapshot"], now=NOW, received_at=rec["received_at"])
+    state = cs.build_connection_state({"n": rec}, NOW)
+    assert canonical["stale"] is False
+    assert state["telemetry"] == cs.TELEMETRY_FRESH
+    assert state["instances"][0]["staleAfterSeconds"] == canonical["stale_after_seconds"]
 
 
 # ── stale snapshot: stop claiming, do not start accusing ─────────────────────

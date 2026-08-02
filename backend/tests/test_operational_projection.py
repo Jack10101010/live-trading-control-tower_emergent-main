@@ -294,11 +294,23 @@ def test_unresolved_reconciliation_items_become_summary_issues():
     assert summary.reconciliation_issues[0]["class"] == "status_mismatch"
 
 
-def test_critical_reconciliation_becomes_a_node_warning():
+def test_critical_reconciliation_becomes_a_summary_warning_not_a_node_warning():
+    """M-NODE-READ-1 retargeted this from the NODE to the SUMMARY.
+
+    Reconciliation posture comes from the TOWER's execution store. Attaching it
+    to `nodes[0].warnings` attributed the tower's own state to whichever node
+    happened to be reporting — a warning about the Control Tower, displayed
+    under a VPS node's name and stamped `node-telemetry`.
+
+    The warning is real and an operator needs it. It is simply not a fact about
+    a node, so it is now raised at the whole-system level.
+    """
     summary = op.build_summary(_sources(
         reconciliation_posture=lambda: {"criticalUnresolved": True, "stale": False}),
         now=NOW)
-    assert "unresolved critical reconciliation" in summary.nodes[0].warnings
+    assert "unresolved critical reconciliation" in summary.warnings
+    for node in summary.nodes:
+        assert "unresolved critical reconciliation" not in node.warnings
 
 
 # ── scenarios: placeholder projection of existing evidence only ──────────────

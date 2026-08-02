@@ -16,6 +16,13 @@ import {
   type OperationalStatus,
   type ProvenancedRecord,
 } from '@/lib/operationalProvenance';
+import {
+  authoritativeNodesOnly,
+  classifyNodeObservation,
+  NODE_ABSENT_DETAIL,
+  type NodeObservationStatus,
+  type NodeRecord,
+} from '@/lib/nodeProvenance';
 import { isUsable } from '@/lib/capability';
 import { expandMatrix } from '@/lib/matrixExpand';
 import { queryClient } from '@/lib/queryClient';
@@ -90,8 +97,12 @@ export function useOperationalFleet(): {
   nodes: NodeOperationalView[];
   accounts: AccountOperationalView[];
   deployments: Deployment[];
+  /** BROKER admission status. Governs accounts only. */
   status: OperationalStatus;
   detail: string;
+  /** NODE admission status. Independent of `status` in both directions. */
+  nodeStatus: NodeObservationStatus;
+  nodeDetail: string;
 } {
   const [{ data: nodesRes }, { data: acctRes }] = useSuspenseQueries({
     queries: [
@@ -102,12 +113,25 @@ export function useOperationalFleet(): {
   return useMemo(() => {
     const rawNodes = nodesRes?.nodes ?? [];
     const rawAccounts = acctRes?.accounts ?? [];
-    const nodes = authoritativeOnly(rawNodes as unknown as ProvenancedRecord[]) as unknown as NodeOperationalView[];
+    // M-NODE-READ-1 — TWO GATES, DELIBERATELY NOT ONE.
+    //
+    // Nodes were passed through `authoritativeOnly`, the BROKER gate, which
+    // does not admit `node-telemetry` — correctly, since a heartbeat is not an
+    // account. The consequence was that a genuinely reporting node was dropped
+    // and every fleet surface reported "no authoritative source".
+    //
+    // Each collection now goes through the gate that matches its authority, and
+    // the two statuses are reported separately. They must stay separate: a node
+    // reporting perfectly with an unreadable terminal is a real and important
+    // state, and one combined status could not express it.
+    const nodes = authoritativeNodesOnly(rawNodes as unknown as NodeRecord[]) as unknown as NodeOperationalView[];
     const accounts = authoritativeOnly(rawAccounts as unknown as ProvenancedRecord[]) as unknown as AccountOperationalView[];
-    const rejected = (rawNodes.length - nodes.length) + (rawAccounts.length - accounts.length);
-    const status = classify([...nodes, ...accounts] as unknown as ProvenancedRecord[], {
-      sourceAnswered: Boolean(nodesRes || acctRes),
-      rejectedCount: rejected,
+    const status = classify(accounts as unknown as ProvenancedRecord[], {
+      sourceAnswered: Boolean(acctRes),
+      rejectedCount: rawAccounts.length - accounts.length,
+    });
+    const nodeStatus = classifyNodeObservation(nodes as unknown as NodeRecord[], {
+      sourceAnswered: Boolean(nodesRes),
     });
     return {
       nodes,
@@ -115,6 +139,8 @@ export function useOperationalFleet(): {
       deployments: [],          // no authoritative deployment concept exists
       status,
       detail: status === 'available' || status === 'stale' ? '' : UNAVAILABLE_DETAIL,
+      nodeStatus,
+      nodeDetail: nodeStatus === 'absent' ? NODE_ABSENT_DETAIL : '',
     };
   }, [nodesRes, acctRes]);
 }

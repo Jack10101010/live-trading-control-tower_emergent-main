@@ -43,7 +43,8 @@ export function ScopeNavigator() {
   // pair list from the CONFIGURED instrument universe. Previously both came
   // from fixture records, so the navigator offered selectable scopes for
   // brokers, accounts and deployments that did not exist.
-  const { nodes, status: fleetStatus } = useOperationalFleet();
+  // M-NODE-READ-1: nodes come from the NODE gate, not the broker gate.
+  const { nodes, nodeStatus } = useOperationalFleet();
   const { symbols: pairs } = useConfiguredInstruments();
   const flags = useFeatureFlags();
   const location = useLocation();
@@ -95,19 +96,20 @@ export function ScopeNavigator() {
             {expanded.has('fleet') ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
             <LayoutGrid size={12} className="ml-0.5" />
             <span className="ml-1 font-medium">Fleet</span>
-            {/* M-FLEET-2: was a fixture deployment count. Authoritative nodes only. */}
+            {/* M-NODE-READ-1: the count is of GENUINELY REPORTING nodes, admitted
+                through the node gate. It was passing through the broker gate, so
+                it read "—" while a node published every cycle. "0 node" is still
+                never printed: nothing observed means nothing to count. */}
             <span className="ml-auto text-2xs text-text-muted mono">
-              {fleetStatus === 'unavailable' ? '—' : `${nodes.length} node`}
+              {nodeStatus === 'absent' ? '—' : `${nodes.length} node`}
             </span>
           </button>
 
           {expanded.has('fleet') && (
             <div className="pl-3 mt-0.5 space-y-0.5">
-              {nodes.length === 0 ? (
+              {nodeStatus === 'absent' ? (
                 <div className="px-1.5 py-1 text-2xs text-text-muted" data-testid="scope-fleet-empty">
-                  {fleetStatus === 'unavailable'
-                    ? 'No authoritative source'
-                    : 'No nodes reported'}
+                  No execution node observed
                 </div>
               ) : (
                 nodes.map((node) => (
@@ -116,7 +118,15 @@ export function ScopeNavigator() {
                     className="flex items-center gap-2 h-6 px-1.5 text-2xs text-text-2"
                     data-testid={`scope-node-${node.nodeId}`}
                   >
-                    <HealthDot state={node.health === 'healthy' ? 'ok' : 'critical'} title={String(node.health)} />
+                    {/* Three lifecycle states, three dots. Collapsing stale and
+                        degraded into one "critical" hid which of them it was —
+                        an old reading and a reported freeze need different
+                        responses. */}
+                    <HealthDot
+                      state={node.lifecycleState === 'current' ? 'ok'
+                        : node.lifecycleState === 'stale' ? 'warn' : 'critical'}
+                      title={`Node ${node.nodeId}: ${node.lifecycleState}`}
+                    />
                     <span className="ml-1 truncate mono">{node.nodeId}</span>
                   </div>
                 ))

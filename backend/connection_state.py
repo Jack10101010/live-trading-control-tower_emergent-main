@@ -92,12 +92,59 @@ def _classify_problem(error: live_telemetry.TelemetryError) -> str:
 def telemetry_state(signed_age_s: float | None, stale_after_s: float) -> str:
     """Classify freshness from the SIGNED age delta (now - published).
 
+    RETAINED FOR CALLERS THAT HOLD ONLY AN AGE. `instance_view` no longer uses
+    it — see `telemetry_state_from_observation`, which is the canonical path.
+
     A value beyond the window in EITHER direction is not current: a future-dated
     snapshot (negative delta, from clock skew) must not read as fresh, exactly as a
     too-old one does not. Symmetric tolerance around zero, one threshold."""
     if signed_age_s is None:
         return TELEMETRY_NEVER
     return TELEMETRY_FRESH if abs(signed_age_s) <= stale_after_s else TELEMETRY_STALE
+
+
+def telemetry_state_from_observation(observation: dict) -> str:
+    """Map the CANONICAL M-TEL-1 freshness envelope onto this vocabulary.
+
+    M-NODE-READ-1 — THE SECOND FRESHNESS AUTHORITY, REMOVED.
+
+    `instance_view` previously computed its own verdict: `now - published_at`
+    against a flat 120s. `live_telemetry.observation()` — the module this file
+    already imports for its threshold — decides it two ways differently:
+
+      1. It judges liveness on `received_at`, THIS TOWER'S ARRIVAL CLOCK, not on
+         the node's `published_at`. That is deliberate and load-bearing: a node
+         cannot make itself look fresh by publishing a manipulated timestamp.
+         Judging on `published_at` handed the node authority over its own
+         liveness verdict.
+
+      2. Its budget is PHASE-AWARE. 120s applies only to an idle node
+         (`cycle.status == "no_new_bar"`); every other phase gets one bar
+         interval (900s), because a warm recompute legitimately publishes
+         nothing while it runs. The flat 120s here is exactly the defect
+         M-TEL-1 documented: "a healthy node was marked stale ~2 minutes into a
+         legitimate recompute".
+
+    So the two surfaces genuinely disagreed. During any recompute,
+    `/api/live/connection` reported telemetry STALE and the node UNKNOWN while
+    `/api/live/status` reported the same snapshot fresh — one node, two answers,
+    at the same instant.
+
+    WHY IT IS SAFE TO FIX HERE: `build_connection_state` has exactly one
+    consumer, `GET /api/live/connection`, which is display-only. The execution
+    safety path builds `NodeFacts` from `_live_status_entry` — the canonical
+    envelope — and never reads this module. Nothing about command
+    authorization, arming, execution or reconciliation changes.
+
+    The canonical `stale` is `liveness_stale OR data_stale`, so this can only
+    ever be equal to or stricter than the old flat rule in the cases that
+    mattered, and more permissive only where M-TEL-1 deliberately made it so.
+    """
+    if not isinstance(observation, dict):
+        return TELEMETRY_UNAVAILABLE
+    if observation.get("age_seconds") is None and observation.get("published_at") is None:
+        return TELEMETRY_NEVER
+    return TELEMETRY_STALE if observation.get("stale") else TELEMETRY_FRESH
 
 
 def node_state(telemetry: str, beacon: Any) -> tuple[str, str]:
@@ -174,25 +221,30 @@ def instance_view(instance_id: str, record: dict, now: datetime,
     except live_telemetry.TelemetryError as exc:
         problem = _classify_problem(exc)
 
+    observation: dict | None = None
     if problem is not None:
         telemetry = TELEMETRY_UNAVAILABLE
         published_at = None
         age = None
         schema_version = raw.get("schema_version") if isinstance(raw, dict) else None
+        budget = stale_after_s
     else:
-        published = live_telemetry.parse_iso(snapshot.get("published_at"))
-        published_at = snapshot.get("published_at")
-        # Signed delta drives freshness (so a future timestamp cannot read fresh);
-        # displayed age stays clamped at >= 0.
-        delta = None if published is None else (now - published).total_seconds()
-        age = None if delta is None else max(delta, 0.0)
-        if delta is None:
+        # M-NODE-READ-1: ONE freshness authority. This is the same call
+        # `_live_status_entry` makes, so `/api/live/connection` and
+        # `/api/live/status` can no longer disagree about the same snapshot —
+        # they are now literally the same verdict.
+        observation = live_telemetry.observation(
+            snapshot, now=now,
+            received_at=record.get("received_at") if isinstance(record, dict) else None)
+        published_at = observation["published_at"]
+        age = observation["age_seconds"]
+        budget = observation["stale_after_seconds"]
+        telemetry = telemetry_state_from_observation(observation)
+        if telemetry == TELEMETRY_NEVER:
             # Validation guarantees a parseable timestamp, so this is unreachable
             # in practice; treated as unusable rather than silently "fresh".
             telemetry = TELEMETRY_UNAVAILABLE
             problem = PROBLEM_MALFORMED
-        else:
-            telemetry = telemetry_state(delta, stale_after_s)
         schema_version = snapshot.get("schema_version")
 
     node, node_evidence = node_state(telemetry, beacon)
@@ -210,7 +262,16 @@ def instance_view(instance_id: str, record: dict, now: datetime,
         "publishedAt": published_at,
         "receivedAt": record.get("received_at") if isinstance(record, dict) else None,
         "ageSeconds": None if age is None else round(age, 3),
-        "staleAfterSeconds": stale_after_s,
+        # The budget ACTUALLY APPLIED to this snapshot — phase-aware, from the
+        # canonical envelope. Reporting the flat default while judging against a
+        # different number made the displayed threshold unfalsifiable.
+        "staleAfterSeconds": budget,
+        # M-TEL-1 decomposition, passed through so a reader can see WHY a node
+        # reads stale: gone quiet, or still publishing old observations.
+        "livenessAgeSeconds": (observation or {}).get("liveness_age_seconds"),
+        "livenessStale": (observation or {}).get("liveness_stale"),
+        "dataStale": (observation or {}).get("data_stale"),
+        "freshnessBasis": (observation or {}).get("freshness_basis"),
         # Node-reported operating context. Present so the UI can show WHICH node
         # this is without a second request; never used to derive a state above.
         "mode": ((snapshot or {}).get("runtime") or {}).get("mode"),

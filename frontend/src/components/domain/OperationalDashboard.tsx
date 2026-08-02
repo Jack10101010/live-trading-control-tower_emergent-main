@@ -15,6 +15,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { isAuthoritative, authoritativeOnly, accountIdentityKey } from '@/lib/operationalProvenance';
 import {
+  isAuthoritativeNodeObservation,
+  authoritativeNodesOnly,
+  PROV_NODE_ABSENT,
+} from '@/lib/nodeProvenance';
+import {
   api,
   type AccountOperationalView,
   type NodeOperationalView,
@@ -49,13 +54,18 @@ const C = {
 } as const;
 
 function ProvenanceBadge({ provenance }: { provenance: string }) {
-  // M-FLEET-2: provenance is decided in one module (see operationalProvenance).
-  const live = isAuthoritative({ provenance });
-  const absent = provenance === 'absent';
+  // M-FLEET-2: broker provenance is decided in one module.
+  // M-NODE-READ-1: node provenance is decided in a DIFFERENT one, and the two
+  // questions are asked separately. `node-telemetry` is genuine node truth and
+  // reads NODE — it is not "MOCK", and it is not broker truth either.
+  const brokerTruth = isAuthoritative({ provenance });
+  const nodeTruth = isAuthoritativeNodeObservation({ provenance });
+  const absent = provenance === PROV_NODE_ABSENT;
   return (
-    <span className={BADGE} style={absent ? C.bad : live ? C.live : C.mock}
+    <span className={BADGE}
+          style={absent ? C.bad : brokerTruth || nodeTruth ? C.live : C.mock}
           data-testid="provenance-badge">
-      {absent ? 'UNAVAILABLE' : live ? 'LIVE' : provenance === 'node-telemetry' ? 'NODE' : 'MOCK'}
+      {absent ? 'UNAVAILABLE' : brokerTruth ? 'LIVE' : nodeTruth ? 'NODE' : 'MOCK'}
     </span>
   );
 }
@@ -117,27 +127,33 @@ function NodeCard({ node }: { node: NodeOperationalView }) {
             <ProvenanceBadge provenance={node.provenance} />
             <FreshnessBadge freshness={node.freshness} />
           </>}>
+      {/* M-NODE-READ-1: Adapter, Broker, Connection, Execution mode,
+          Authorization, Reconciliation and Active scenarios are gone. Every one
+          was the Control Tower's OWN state — its local adapter kind, its
+          adapter's connection, its execution store's posture — rendered under
+          this node's name and stamped `node-telemetry`. The rows below are the
+          node's own published facts and nothing else. */}
       <div className="space-y-1">
-        <Row label="Deployment" value={txt(node.deployment)} />
-        <Row label="Adapter" value={txt(node.adapter)} />
-        <Row label="Broker" value={txt(node.broker)} />
-        <Row label="Account" value={txt(node.accountFingerprintMasked)} />
-        <Row label="Connection" value={txt(node.connectionState)} />
-        <Row label="Heartbeat" value={age(node.heartbeatAgeSeconds)} />
-        <Row label="Health" value={txt(node.health)} />
-        <Row label="Execution mode" value={txt(node.executionMode)} />
-        <Row label="Authorization"
-             value={node.authorizationSummary ? 'active' : 'none active'} />
-        <Row label="Reconciliation" value={txt(node.reconciliationState)} />
-        <Row label="Open positions / orders"
-             value={`${node.openPositionCount ?? '—'} / ${node.openOrderCount ?? '—'}`} />
-        <Row label="Active scenarios" value={String(node.activeScenarioCount ?? '—')} />
-        <Row label="Last activity" value={txt(node.lastActivity)} />
+        <Row label="Lifecycle" value={txt(node.lifecycleState)} />
+        <Row label="Deployment profile" value={txt(node.deploymentProfile)} />
+        <Row label="Node mode" value={txt(node.nodeMode)} />
+        <Row label="Cycle status" value={txt(node.cycleStatus)} />
+        <Row label="Last boundary" value={txt(node.lastBoundary)} />
+        <Row label="Engine" value={txt(node.engineVersion)} />
+        <Row label="Heartbeat" value={age(node.livenessAgeSeconds)} />
+        {/* The node's own mirror count. Orders have no counterpart in v1, so
+            pending exposure stays unknown rather than becoming a zero. */}
+        <Row label="Node open positions" value={String(node.openPositionCount ?? '—')} />
+        <Row label="Node pending orders" value={String(node.openOrderCount ?? '—')} />
+        <Row label="MT5 observation" value={txt(node.mt5Observation)} />
+        <Row label="Last activity" value={txt(node.publishedAt)} />
         {node.warnings.length > 0 && (
           <ul className="mt-1 pt-1 border-t space-y-0.5" data-testid="node-warnings"
               style={{ borderColor: 'var(--border-subtle)' }}>
             {node.warnings.map((w) => (
-              <li key={w} className="text-2xs" style={{ color: 'var(--negative)' }}>⚠ {w}</li>
+              <li key={w} className="text-2xs"
+                  style={{ color: node.lifecycleState === 'degraded'
+                    ? 'var(--negative)' : 'var(--warning)' }}>⚠ {w}</li>
             ))}
           </ul>
         )}
@@ -390,7 +406,7 @@ export function OperationalDashboard() {
           gate. It does now: only authoritative records render, and a rejected
           set reports absence rather than showing labelled fabrications. */}
       {authoritativeOnly(data.accounts as never[]).length === 0
-        && authoritativeOnly(data.nodes as never[]).length === 0 ? (
+        && authoritativeNodesOnly(data.nodes as never[]).length === 0 ? (
         <section className="rounded-md border border-[color:var(--border)] bg-[color:var(--panel)] p-3"
                  data-testid="operational-dashboard-unauthoritative">
           <span className={BADGE} style={C.bad}>NO AUTHORITATIVE SOURCE</span>
@@ -404,7 +420,10 @@ export function OperationalDashboard() {
       ) : (
       <>
       <div className="grid grid-cols-12 gap-4">
-        {authoritativeOnly(data.nodes as never[]).map((n: typeof data.nodes[number]) => (
+        {/* M-NODE-READ-1: the NODE gate, not the broker gate. Passing nodes
+            through `authoritativeOnly` dropped every one of them, so a
+            genuinely reporting node never appeared here. */}
+        {authoritativeNodesOnly(data.nodes as never[]).map((n: typeof data.nodes[number]) => (
           <div key={n.nodeId} className="col-span-12 lg:col-span-6">
             <NodeCard node={n} />
           </div>

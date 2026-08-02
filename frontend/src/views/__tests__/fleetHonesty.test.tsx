@@ -25,10 +25,26 @@ vi.mock('@/hooks/useRepository', () => ({
 import { FleetOverview } from '@/views/FleetOverview';
 import { AccountsProtectionView } from '@/views/AccountsProtectionView';
 
+/**
+ * M-NODE-READ-1 — a node record as the projection now emits it.
+ *
+ * It previously carried `provenance: 'live_mt5'`, `adapter: 'mt5'`,
+ * `broker: 'RealBroker'`, `connectionState`, `executionMode` and
+ * `reconciliationState` — a shape the node projection has never produced. Those
+ * fields were the Control Tower's own state, and the fixture encoded them as
+ * though the node had reported them.
+ */
 const LIVE_NODE = {
-  nodeId: 'node-real-1', adapter: 'mt5', broker: 'RealBroker', connectionState: 'Connected',
-  health: 'healthy', executionMode: 'observe', reconciliationState: 'clean',
-  openPositionCount: 2, openOrderCount: 0, provenance: 'live_mt5',
+  nodeId: 'node-real-1', provenance: 'node-telemetry',
+  lifecycleState: 'current' as const, degradedReasons: [] as string[],
+  deploymentProfile: 'vps-dry-run', nodeMode: 'dry_run', cycleStatus: 'ok',
+  lastBoundary: '2026-07-27T11:45:00Z', lastBarTime: null,
+  engineVersion: 'lux@1.4.2', symbol: 'EURUSD', timeframe: 'M15',
+  killSwitchActive: false, submissionDisabled: true,
+  openPositionCount: 2, openOrderCount: null,
+  livenessAgeSeconds: 12, freshnessBasis: 'received_at',
+  mt5Observation: null, legacySource: false, warnings: [] as string[],
+  freshness: { available: true, stale: false },
 };
 
 const LIVE_ACCOUNT = {
@@ -39,7 +55,15 @@ const LIVE_ACCOUNT = {
 };
 
 function setFleet(over: Record<string, unknown>) {
-  state.fleet = { nodes: [], accounts: [], deployments: [], status: 'unavailable', detail: 'no authoritative source', ...over };
+  // M-NODE-READ-1: node and broker admission are separate statuses, so the
+  // hook fixture carries both. A test that sets only one is exercising a state
+  // the hook cannot produce.
+  state.fleet = {
+    nodes: [], accounts: [], deployments: [],
+    status: 'unavailable', detail: 'no authoritative source',
+    nodeStatus: 'absent', nodeDetail: 'No execution node has published telemetry',
+    ...over,
+  };
 }
 
 const renderFleet = () => render(<MemoryRouter><FleetOverview /></MemoryRouter>);
@@ -47,11 +71,11 @@ const renderFleet = () => render(<MemoryRouter><FleetOverview /></MemoryRouter>)
 beforeEach(() => setFleet({}));
 
 describe('Fleet Overview — the fixture fleet is gone', () => {
-  it('shows an unavailable state under the mock adapter, with no counts', () => {
-    setFleet({ status: 'unavailable', detail: 'no authoritative operational source' });
+  it('shows an unobserved-node state under the mock adapter, with no counts', () => {
+    setFleet({ status: 'unavailable', nodeStatus: 'absent' });
     renderFleet();
-    expect(screen.getAllByText(/No authoritative operational source/i).length).toBeGreaterThan(0);
-    // "0 nodes" would assert an empty fleet; there is no fleet view at all.
+    expect(screen.getAllByText(/No execution node observed/i).length).toBeGreaterThan(0);
+    // "0 nodes" would assert an empty fleet; nothing has been observed to count.
     expect(screen.getByTestId('fleet-summary').textContent).not.toMatch(/\d/);
   });
 
@@ -66,25 +90,38 @@ describe('Fleet Overview — the fixture fleet is gone', () => {
     expect(html).not.toMatch(/\$\s?[\d,]/);
   });
 
-  it('distinguishes a genuine empty result from an unavailable source', () => {
-    setFleet({ status: 'empty', nodes: [], accounts: [] });
+  it('separates an unavailable ACCOUNT source from an absent NODE', () => {
+    // The decisive case for M-NODE-READ-1: a node IS reporting and the account
+    // source is not. Both facts are stated; neither erases the other.
+    setFleet({
+      status: 'unavailable', nodeStatus: 'current',
+      nodes: [LIVE_NODE], accounts: [],
+    });
     renderFleet();
-    expect(screen.getByText(/No nodes or accounts reported/i)).toBeTruthy();
-    expect(screen.getByText(/genuine empty result, not missing data/i)).toBeTruthy();
+    const summary = screen.getByTestId('fleet-summary').textContent!;
+    expect(summary).toMatch(/1 node reporting/);
+    expect(summary).toMatch(/account source unavailable/);
+    // The node card is present — the node did not vanish with the account.
+    expect(screen.getByText('node-real-1')).toBeTruthy();
   });
 
-  it('renders authoritative nodes exactly as supplied', () => {
-    setFleet({ status: 'available', nodes: [LIVE_NODE], accounts: [LIVE_ACCOUNT] });
+  it('renders genuine nodes exactly as supplied', () => {
+    setFleet({
+      status: 'available', nodeStatus: 'current',
+      nodes: [LIVE_NODE], accounts: [LIVE_ACCOUNT],
+    });
     renderFleet();
     expect(screen.getByText('node-real-1')).toBeTruthy();
-    expect(screen.getByText('RealBroker')).toBeTruthy();
-    expect(screen.getByTestId('fleet-summary').textContent).toMatch(/1 node · 1 account/);
+    expect(screen.getByText('vps-dry-run')).toBeTruthy();
+    expect(screen.getByText('lux@1.4.2')).toBeTruthy();
+    expect(screen.getByTestId('fleet-summary').textContent).toMatch(/1 node reporting/);
+    expect(screen.getByTestId('fleet-summary').textContent).toMatch(/1 account/);
   });
 
-  it('renders "—" for fields the source did not report, never a zero', () => {
+  it('renders "—" for fields the node did not report, never a zero', () => {
     setFleet({
-      status: 'available',
-      nodes: [{ ...LIVE_NODE, broker: null, health: null, openOrderCount: null }],
+      status: 'unavailable', nodeStatus: 'current',
+      nodes: [{ ...LIVE_NODE, engineVersion: null, lastBoundary: null, cycleStatus: null }],
       accounts: [],
     });
     const { container } = renderFleet();
@@ -93,10 +130,17 @@ describe('Fleet Overview — the fixture fleet is gone', () => {
     expect(container.textContent).toContain('2');
   });
 
-  it('marks stale records as last-reported rather than current', () => {
-    setFleet({ status: 'stale', nodes: [LIVE_NODE], accounts: [] });
+  it('marks a stale node as last-reported rather than current', () => {
+    setFleet({
+      status: 'unavailable', nodeStatus: 'stale',
+      nodes: [{ ...LIVE_NODE, lifecycleState: 'stale',
+                warnings: ['node telemetry stale — last reported, not current'] }],
+      accounts: [],
+    });
     renderFleet();
     expect(screen.getByTestId('fleet-summary').textContent).toMatch(/last reported, not current/);
+    // Still a LIVE card: stale is real data that is old, not fixture data.
+    expect(screen.getByTestId('node-lifecycle-node-real-1').textContent).toBe('stale');
   });
 });
 

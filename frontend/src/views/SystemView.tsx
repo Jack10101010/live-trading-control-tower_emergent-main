@@ -29,7 +29,9 @@ const SYNC_POLL_MS = 2000;
 export function SystemView() {
   // M-FLEET-2: authoritative nodes only. The Deployments & Manifests and
   // Brokers panels below listed fixture records on an ordinary route.
-  const { nodes, status: fleetStatus } = useOperationalFleet();
+  // M-NODE-READ-1: nodes come from the NODE gate; `nodeStatus` is its own
+  // admission verdict, independent of broker/account admission.
+  const { nodes, nodeStatus } = useOperationalFleet();
 
   const flags = useFeatureFlags();
   const runtime = useRuntimeHealth();
@@ -743,17 +745,19 @@ export function SystemView() {
         {/* M-FLEET-2: this listed fixture "deployments & manifests". There is no
             authoritative deployment record, so it lists authoritative execution
             NODES — or says it has none. */}
-        {nodes.length === 0 ? (
+        {nodeStatus === 'absent' ? (
           <div className="text-xs text-text-muted" data-testid="system-nodes-empty">
-            {fleetStatus === 'unavailable'
-              ? 'No authoritative operational source is reporting execution nodes.'
-              : 'No execution nodes reported.'}
+            No execution node has published telemetry to this Control Tower.
           </div>
         ) : (
           <div className="space-y-1">
+            {/* M-NODE-READ-1: `connectionState` was the MAC adapter's connection,
+                shown here as though the node had reported it. The node's own
+                lifecycle, mode and cycle status replace it. */}
             {nodes.map((n) => (
               <div key={n.nodeId} className="text-xs mono text-text-2" data-testid={`system-node-${n.nodeId}`}>
-                {n.nodeId} · {n.health ?? 'unknown'} · {n.connectionState ?? 'unknown'}
+                {n.nodeId} · {n.lifecycleState} · {n.nodeMode ?? 'mode unreported'} ·{' '}
+                {n.cycleStatus ?? 'cycle unreported'}
               </div>
             ))}
           </div>
@@ -768,27 +772,25 @@ export function SystemView() {
         </div>
       </Panel>
 
-      <Panel provenance="live" title="Brokers" dense>
-        {/* M-FLEET-2: listed the two fixture broker records with an invented
-            connected status. Broker identity is now reported only by
-            authoritative nodes. */}
-        {nodes.length === 0 ? (
-          <div className="text-xs text-text-muted" data-testid="system-brokers-empty">
-            {fleetStatus === 'unavailable'
-              ? 'No authoritative operational source is reporting a broker.'
-              : 'No broker reported.'}
-          </div>
-        ) : (
-          <ul className="space-y-1.5 text-xs">
-            {nodes.map((n) => (
-              <li key={n.nodeId} className="flex items-center gap-2">
-                <HealthDot state={n.connectionState === 'Connected' ? 'ok' : 'critical'} />
-                <span className="text-text">{n.broker ?? 'unreported'}</span>
-                <span className="mono text-text-muted">{n.adapter ?? '—'}</span>
-              </li>
-            ))}
-          </ul>
-        )}
+      <Panel provenance="placeholder" title="Brokers" dense>
+        {/* M-NODE-READ-1 — THIS PANEL HAD NO SOURCE.
+            M-FLEET-2 repointed it from the fixture brokers to "authoritative
+            nodes", reading `n.broker`, `n.adapter` and `n.connectionState`. All
+            three were the Control Tower's OWN state, so the panel showed the
+            Mac's adapter kind and connection under a broker heading — and its
+            HealthDot went red whenever the Mac adapter was not "Connected",
+            which says nothing about any broker.
+
+            `ct.node-telemetry.v1` publishes no broker company. The node reports
+            a SERVER name only when it has sampled its account identity, which
+            is broker truth and belongs on an account surface. So there is no
+            broker source here, and the panel says so rather than deriving one. */}
+        <div className="text-xs text-text-muted" data-testid="system-brokers-unavailable">
+          No broker identity source exists. Node telemetry reports node
+          operational state, not broker identity; the broker server name is part
+          of account identity and appears on Accounts &amp; Protection when an
+          execution node relays an account observation.
+        </div>
       </Panel>
     </div>
   );
