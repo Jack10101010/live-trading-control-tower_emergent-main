@@ -197,3 +197,75 @@ def test_every_audited_index_field_is_covered_by_the_rebase_contract():
     assert set(PENDING_INDEX_FIELDS) >= {
         "created_candle_index", "trigger_candle_index", "tapped_candle_index"}
     assert set(ACTIVE_TRADE_INDEX_FIELDS) >= {"fill_candle_index", "_be_stop_active_from"}
+
+
+# ── Phase 1 recursive audit: nested records and two ordinal spaces ──────────
+from live.live_state import (FIELD_SPACES, GHOST_INDEX_FIELDS,  # noqa: E402
+                            NON_POSITIONAL_COUNTS, OB_M15_INDEX_FIELDS, SPACE_M1,
+                            SPACE_M15_DETECTION, TRADE_ROW_INDEX_FIELDS,
+                            active_trade_to_absolute, ghost_state_to_absolute,
+                            ghost_state_to_local, trade_row_to_local,
+                            unregistered_positional_fields)
+
+
+def test_nested_trade_row_inside_an_active_trade_is_converted():
+    """The top-level audit missed this: active_trade["row"] holds 8 positions."""
+    frame_a, frame_b = FrameOrigin(1_000_000, 5_000), FrameOrigin(1_000_000 + SHIFT, 5_000)
+    trade = {"_be_stop_active_from": 200,
+             "row": {"fill_candle_index": 195, "exit_candle_index": 260,
+                     "be_arm_candle_index": 210, "bars_to_exit": 65},
+             "plan": {"entry_model": "triggered_edge"}}
+    absolute = active_trade_to_absolute(trade, frame_a)
+    assert absolute["row"]["fill_candle_index"] == 1_000_195
+    local_b = active_trade_to_local(absolute, frame_b)
+    assert local_b["row"]["fill_candle_index"] == 195 - SHIFT
+    assert local_b["row"]["exit_candle_index"] == 260 - SHIFT
+    assert local_b["_be_stop_active_from"] == 200 - SHIFT
+    # a DIFFERENCE is invariant and must be left alone
+    assert local_b["row"]["bars_to_exit"] == 65
+    # the caller's dict must not be mutated
+    assert trade["row"]["fill_candle_index"] == 195
+
+
+def test_ghost_state_positions_are_converted():
+    frame_a, frame_b = FrameOrigin(1_000_000, 5_000), FrameOrigin(1_000_000 + SHIFT, 5_000)
+    g = {"ob_id": "7", "fill_candle_index": 300, "trigger_candle_index": 290,
+         "_delay_remaining": 2, "te_delay": 3}
+    moved = ghost_state_to_local(ghost_state_to_absolute(g, frame_a), frame_b)
+    assert moved["fill_candle_index"] == 300 - SHIFT
+    assert moved["trigger_candle_index"] == 290 - SHIFT
+    assert moved["_delay_remaining"] == 2      # counter, not a position
+    assert moved["te_delay"] == 3
+    assert moved["ob_id"] == "7"
+
+
+def test_counts_are_never_rebased():
+    """`fill_delay_candles_val` and `te_delay` are counts despite their names."""
+    for name in NON_POSITIONAL_COUNTS:
+        assert name not in FIELD_SPACES, f"{name} is a count, not a position"
+
+
+def test_m15_detection_indices_live_in_a_different_space():
+    """origin/detection/pivot_index index the M15 frame, not the M1 frame."""
+    for f in OB_M15_INDEX_FIELDS:
+        assert FIELD_SPACES[f] == SPACE_M15_DETECTION
+    for f in TRADE_ROW_INDEX_FIELDS + GHOST_INDEX_FIELDS:
+        assert FIELD_SPACES[f] == SPACE_M1
+    # and they are NOT in the M1 conversion sets
+    assert not set(OB_M15_INDEX_FIELDS) & set(TRADE_ROW_INDEX_FIELDS)
+
+
+def test_an_unregistered_positional_field_is_rejected_not_ignored():
+    """A new engine field must not ride across a frame shift unconverted."""
+    row = {"fill_candle_index": 10, "some_new_candle_index": 42}
+    unknown = unregistered_positional_fields(row, TRADE_ROW_INDEX_FIELDS)
+    assert unknown == ["some_new_candle_index"]
+    trade = {"row": row}
+    with pytest.raises(IndexRebaseError, match="unregistered positional field"):
+        active_trade_to_absolute(trade, FrameOrigin(1_000_000, 5_000))
+
+
+def test_known_fields_do_not_trip_the_unregistered_check():
+    row = {f: 10 for f in TRADE_ROW_INDEX_FIELDS}
+    row.update({"bars_to_exit": 5, "outcome": "WIN", "net_r": 1.2})
+    assert unregistered_positional_fields(row, TRADE_ROW_INDEX_FIELDS) == []

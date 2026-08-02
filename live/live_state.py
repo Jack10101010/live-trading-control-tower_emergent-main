@@ -55,8 +55,35 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-#: Fields in carried state whose value is a position in the candle frame.
-#: Sourced from the reader audit above; every one is compared against the live
+# ── TWO ORDINAL SPACES, NOT ONE ──────────────────────────────────────────────
+# The recursive audit found positional fields living in two DIFFERENT frames:
+#
+#   M1  — `candle_index` and everything compared against it. This is the walk's
+#         frame (`ctx['candle_records']`) and the one a rolling window rebases.
+#   M15 — `origin_index`, `detection_index`, `pivot_index` on an order-block
+#         record. These are positions in the DETECTION frame produced by
+#         `resample_candles(...)`, which has ~1/15th the rows.
+#
+# Rebasing both with one origin would corrupt the order-block records silently.
+# They are therefore registered separately, and M15 fields are NOT rebased at
+# all: nothing in the bar loop compares them against `candle_index` — they are
+# provenance carried through to the trade row.
+SPACE_M1 = "m1"
+SPACE_M15_DETECTION = "m15_detection"
+
+#: NOT positional. Counts and deltas are invariant under a frame shift, so
+#: rebasing them would actively break arithmetic that is currently correct.
+#: Listed explicitly because several are named like positions
+#: (`fill_delay_candles_val`, `te_delay`) and a name-shaped heuristic would eat
+#: them. This is why conversion uses a registry and never guesses from shape.
+NON_POSITIONAL_COUNTS = (
+    "trigger_delay_candles", "be_delay_candles", "fill_delay_candles_val",
+    "te_delay", "_delay_remaining", "bars_to_fill", "bars_to_exit",
+    "ghost_fill_delay_candles", "swing_length", "pivot_index_offset",
+)
+
+#: Fields in carried state whose value is a position in the M1 candle frame.
+#: Sourced from the reader audit; every one is compared against the live
 #: `candle_index`, so every one must be rebased together or none of them.
 PENDING_INDEX_FIELDS = (
     "created_candle_index",
@@ -71,6 +98,30 @@ ACTIVE_TRADE_INDEX_FIELDS = (
     "be_arm_candle_index",
     "exit_candle_index",
 )
+#: NESTED. An active trade carries the emitted trade `row`, which holds eight
+#: positional fields of its own. The top-level audit missed these entirely --
+#: they only surface by walking into active_trade["row"].
+TRADE_ROW_INDEX_FIELDS = (
+    "fill_candle_index", "exit_candle_index", "arm_candle_index",
+    "be_arm_candle_index", "be_exit_candle_index", "ob_exit_candle_index",
+    "tapped_candle_index", "trigger_candle_index",
+)
+#: NESTED. GhostState keeps its own positions.
+GHOST_INDEX_FIELDS = ("fill_candle_index", "trigger_candle_index")
+
+#: Order-block provenance in the M15 detection frame. Registered so the seam can
+#: assert it KNOWS about them and deliberately leaves them alone, rather than
+#: silently ignoring an unrecognised `*_index`.
+OB_M15_INDEX_FIELDS = ("origin_index", "detection_index", "pivot_index")
+
+#: Every positional field name the seam recognises, with its space. Anything
+#: matching the positional-name pattern but absent here is REJECTED rather than
+#: passed through, so a new engine field cannot bypass conversion unnoticed.
+FIELD_SPACES: dict = {
+    **{f: SPACE_M1 for f in set(PENDING_INDEX_FIELDS) | set(ACTIVE_TRADE_INDEX_FIELDS)
+       | set(TRADE_ROW_INDEX_FIELDS) | set(GHOST_INDEX_FIELDS)},
+    **{f: SPACE_M15_DETECTION for f in OB_M15_INDEX_FIELDS},
+}
 
 #: Values that mean "unset" and must NEVER be shifted. -1 is the documented
 #: default for `tapped_candle_index`; 0 is the default in the
@@ -134,6 +185,54 @@ def _map_fields(record: dict, fields: tuple, fn) -> dict:
     return out
 
 
+import re
+
+#: A field that LOOKS positional. Used only to catch unregistered fields, never
+#: to decide conversion -- shape guessing is exactly what the registry prevents.
+_POSITIONAL_NAME = re.compile(r"(^|_)(candle_index|_index)$|candle_index")
+
+
+def unregistered_positional_fields(record: dict, known: tuple) -> list:
+    """Field names that look positional but are not registered anywhere.
+
+    A new positional field added to the engine would otherwise be carried
+    verbatim across a frame shift and silently mis-evaluated -- the precise bug
+    this module exists to prevent. Callers treat a non-empty result as fatal.
+    """
+    out = []
+    for name in record:
+        if name in known or name in NON_POSITIONAL_COUNTS or name in FIELD_SPACES:
+            continue
+        if _POSITIONAL_NAME.search(name):
+            out.append(name)
+    return out
+
+
+def assert_all_positional_fields_registered(record: dict, known: tuple, path: str = "") -> None:
+    unknown = unregistered_positional_fields(record, known)
+    if unknown:
+        raise IndexRebaseError(
+            f"unregistered positional field(s) at {path or '<root>'}: {sorted(unknown)} — "
+            "add them to the registry with an explicit ordinal space; they must not be "
+            "carried across a frame shift unconverted")
+
+
+def trade_row_to_absolute(row: dict, origin: FrameOrigin) -> dict:
+    return _map_fields(row, TRADE_ROW_INDEX_FIELDS, origin.to_absolute)
+
+
+def trade_row_to_local(row: dict, origin: FrameOrigin) -> dict:
+    return _map_fields(row, TRADE_ROW_INDEX_FIELDS, origin.to_local)
+
+
+def ghost_state_to_absolute(state: dict, origin: FrameOrigin) -> dict:
+    return _map_fields(state, GHOST_INDEX_FIELDS, origin.to_absolute)
+
+
+def ghost_state_to_local(state: dict, origin: FrameOrigin) -> dict:
+    return _map_fields(state, GHOST_INDEX_FIELDS, origin.to_local)
+
+
 def pending_to_absolute(item: dict, origin: FrameOrigin) -> dict:
     return _map_fields(item, PENDING_INDEX_FIELDS, origin.to_absolute)
 
@@ -142,12 +241,31 @@ def pending_to_local(item: dict, origin: FrameOrigin) -> dict:
     return _map_fields(item, PENDING_INDEX_FIELDS, origin.to_local)
 
 
+def _active_trade_map(trade: dict, origin: FrameOrigin, fn, row_fn) -> dict:
+    """Convert an active trade AND its nested emitted `row`.
+
+    The nested row is the part the top-level audit missed: an active trade holds
+    {"ob", "plan", "row", "metrics", ...} and `row` carries eight positional
+    fields that end up in the trade output.
+    """
+    out = _map_fields(trade, ACTIVE_TRADE_INDEX_FIELDS, fn)
+    row = out.get("row")
+    if isinstance(row, dict):
+        assert_all_positional_fields_registered(row, TRADE_ROW_INDEX_FIELDS, "active_trade.row")
+        out["row"] = row_fn(row, origin)
+    ob = out.get("ob")
+    if isinstance(ob, dict):
+        # M15 detection-frame provenance: registered, deliberately NOT rebased.
+        assert_all_positional_fields_registered(ob, OB_M15_INDEX_FIELDS, "active_trade.ob")
+    return out
+
+
 def active_trade_to_absolute(trade: dict, origin: FrameOrigin) -> dict:
-    return _map_fields(trade, ACTIVE_TRADE_INDEX_FIELDS, origin.to_absolute)
+    return _active_trade_map(trade, origin, origin.to_absolute, trade_row_to_absolute)
 
 
 def active_trade_to_local(trade: dict, origin: FrameOrigin) -> dict:
-    return _map_fields(trade, ACTIVE_TRADE_INDEX_FIELDS, origin.to_local)
+    return _active_trade_map(trade, origin, origin.to_local, trade_row_to_local)
 
 
 @dataclass
