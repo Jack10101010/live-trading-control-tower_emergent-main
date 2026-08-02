@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import _fake_mt5                                                    # noqa: F401,E402
 from fastapi.testclient import TestClient                           # noqa: E402
 
+import fixture_preview_service
 import server                                                       # noqa: E402
 
 client = TestClient(server.app)
@@ -90,7 +91,8 @@ def test_poisoning_the_fixture_cannot_influence_the_response(monkeypatch):
     poisoned = {"instrument": "EURUSD", "asOf": "2026-07-01T09:14:00Z",
                 "metrics": {"expectancyR": 99.9, "winRate": 0.999,
                             "edgeDrift": "+42R vs research", "policyHealth": "perfect"}}
-    monkeypatch.setattr(server, "WORLD", _OverriddenWorld(server.WORLD, poisoned))
+    fixture_preview_service.install_for_test(
+        _OverriddenWorld(fixture_preview_service.get_world(), poisoned))
     after = _get()
     assert after == before
     text = str(after)
@@ -100,8 +102,8 @@ def test_poisoning_the_fixture_cannot_influence_the_response(monkeypatch):
 
 def test_removing_the_fixture_key_entirely_changes_nothing(monkeypatch):
     before = _get()
-    monkeypatch.setattr(server, "WORLD",
-                        _OverriddenWorld(server.WORLD, _OverriddenWorld._MISSING))
+    fixture_preview_service.install_for_test(_OverriddenWorld(
+        fixture_preview_service.get_world(), _OverriddenWorld._MISSING))
     assert _get() == before
 
 

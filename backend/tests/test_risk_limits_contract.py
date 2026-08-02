@@ -20,6 +20,18 @@ from fastapi.testclient import TestClient                           # noqa: E402
 
 import server                                                       # noqa: E402
 
+
+
+def _fixture_world():
+    """M-WORLD-ISOLATE-1: authored records, asked for explicitly.
+
+    Was `server.WORLD`, a module global this test received merely by
+    importing the backend. The fixture is now loaded on request and
+    reset between tests, so nothing here can leak into another test.
+    """
+    import fixture_preview_service as _fps
+    return _fps.get_world()
+
 client = TestClient(server.app)
 
 
@@ -57,7 +69,7 @@ def test_fixture_funded_rules_cannot_influence_the_response(monkeypatch):
     # Poison every fixture account with absurd fundedRules. If ANY overlay path
     # survived, these values would surface (the old behaviour did exactly that).
     poisoned = []
-    for acct in server.WORLD.get("accounts", []):
+    for acct in _fixture_world().get("accounts", []):
         poisoned.append(dict(acct, fundedRules={
             "maxLot": 99999.0, "dailyLossLimit": 123456.0, "maxDrawdown": 999999.0,
         }))

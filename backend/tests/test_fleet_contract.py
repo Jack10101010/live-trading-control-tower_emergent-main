@@ -24,6 +24,7 @@ import pytest                                                       # noqa: E402
 from fastapi.testclient import TestClient                           # noqa: E402
 
 import fixture_world                                                # noqa: E402
+import fixture_preview_service
 import server                                                       # noqa: E402
 
 client = TestClient(server.app)
@@ -92,7 +93,7 @@ class _NoWorld:
 
 
 def test_absent_fixture_answers_501_not_an_empty_fleet(monkeypatch):
-    monkeypatch.setattr(server, "WORLD", _NoWorld())
+    fixture_preview_service.install_for_test(_NoWorld())
     r = client.get("/api/fleet")
     assert r.status_code == 501, "an empty 200 would read as 'no deployments'"
     body = r.json()

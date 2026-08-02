@@ -40,6 +40,18 @@ from fastapi.testclient import TestClient                              # noqa: E
 
 import live_telemetry as bt                                            # noqa: E402
 import server                                                          # noqa: E402
+
+
+
+def _fixture_world():
+    """M-WORLD-ISOLATE-1: authored records, asked for explicitly.
+
+    Was `server.WORLD`, a module global this test received merely by
+    importing the backend. The fixture is now loaded on request and
+    reset between tests, so nothing here can leak into another test.
+    """
+    import fixture_preview_service as _fps
+    return _fps.get_world()
 from live import telemetry as nt                                       # noqa: E402
 
 client = TestClient(server.app)
@@ -741,7 +753,7 @@ def test_snapshot_survives_loss_of_process_memory(clean_store):
 def test_status_is_not_augmented_from_the_fixture_world(clean_store):
     assert client.post("/api/live/ingest", json=build()).status_code == 200
     entry = client.get("/api/live/status?instance_id=ui2-test-node").json()
-    fixture_as_of = server.WORLD.get("meta", {}).get("asOf")
+    fixture_as_of = _fixture_world().get("meta", {}).get("asOf")
     body = json.dumps(entry)
     assert fixture_as_of not in body
     assert "packageHash" not in body

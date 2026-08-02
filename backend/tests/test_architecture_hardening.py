@@ -28,6 +28,7 @@ for p in (str(REPO_ROOT), str(BACKEND_DIR), str(BACKEND_DIR / "tests")):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+import fixture_preview_service                                  # noqa: E402
 import fixture_world                                            # noqa: E402
 import ledger_ingestion as li                                   # noqa: E402
 import operator_identity as oid                                 # noqa: E402
@@ -79,9 +80,11 @@ def test_a_present_fixture_is_read_unchanged(tmp_path):
     assert sorted(world.keys()) == ["deployments", "meta"]
 
 
-def test_the_live_world_is_the_optional_boundary_not_a_dict():
-    assert isinstance(server.WORLD, fixture_world.FixtureWorld)
-    assert hasattr(server.WORLD, "available")
+def test_the_live_world_is_the_optional_boundary_not_a_dict(fixture_preview):
+    """M-WORLD-ISOLATE-1: asked for explicitly. `server.WORLD` is gone — the
+    global that made this object reachable from anywhere was the defect."""
+    assert isinstance(fixture_preview, fixture_world.FixtureWorld)
+    assert hasattr(fixture_preview, "available")
 
 
 def test_absent_is_distinguishable_from_empty():
@@ -133,7 +136,13 @@ def test_the_backend_boots_with_the_fixtures_directory_deleted(tmp_path):
         import server
         from fastapi.testclient import TestClient
         c = TestClient(server.app)
-        assert server.WORLD.available is False, 'fixture unexpectedly found'
+        import fixture_preview_service as fps
+        assert fps.load_count() == 0, 'import must not read the fixture'
+        try:
+            fps.get_world()
+            raise AssertionError('fixture unexpectedly found')
+        except fps.FixturePreviewUnavailable:
+            pass
         assert server._operator_id() == 'UNATTRIBUTED'
         # production surfaces still serve
         for path in ('/api/health', '/api/live-runtime',
@@ -162,7 +171,7 @@ def test_the_backend_boots_with_the_fixtures_directory_deleted(tmp_path):
 
 def test_fixture_only_surfaces_refuse_explicitly_when_absent(monkeypatch):
     """Same guarantee, in-process: 501 with a code, never an empty 200."""
-    monkeypatch.setattr(server, "WORLD", fixture_world.FixtureWorld(None))
+    fixture_preview_service.install_for_test(fixture_world.FixtureWorld(None))
     for path in ("/api/world", "/api/fleet", "/api/packages", "/api/trades"):
         response = client.get(path)
         assert response.status_code == 501, path
@@ -173,9 +182,9 @@ def test_fixture_only_surfaces_refuse_explicitly_when_absent(monkeypatch):
         assert not isinstance(body, list)
 
 
-def test_fixture_backed_surfaces_still_work_when_present():
+def test_fixture_backed_surfaces_still_work_when_present(fixture_preview):
     """API compatibility, unchanged behaviour with the fixture in place."""
-    assert server.WORLD.available is True
+    assert fixture_preview.available is True
     assert client.get("/api/fleet").status_code == 200
     assert client.get("/api/packages").status_code == 200
     assert isinstance(client.get("/api/packages").json(), list)
@@ -186,7 +195,7 @@ def test_fixture_backed_surfaces_still_work_when_present():
 def test_identity_never_comes_from_the_fixture(monkeypatch):
     """It used to return `WORLD["operators"][0]["operatorId"]`."""
     monkeypatch.delenv(oid.VAR_OPERATOR_ID, raising=False)
-    monkeypatch.setattr(server, "WORLD", fixture_world.FixtureWorld(
+    fixture_preview_service.install_for_test(fixture_world.FixtureWorld(
         {"operators": [{"operatorId": "op_from_fixture"}]}))
     assert server._operator_id() != "op_from_fixture"
     assert server._operator_id() == oid.UNATTRIBUTED
@@ -616,7 +625,7 @@ def test_boundary_helpers_are_justified():
 def test_no_collection_endpoint_returns_a_misleading_empty_list(monkeypatch):
     """The regression itself: `/api/broker/positions -> []` read as "no open
     positions". Every gated surface must refuse explicitly instead."""
-    monkeypatch.setattr(server, "WORLD", fixture_world.FixtureWorld(None))
+    fixture_preview_service.install_for_test(fixture_world.FixtureWorld(None))
     for path in sorted(server.FIXTURE_ONLY_PATHS):
         if "{" in path:
             continue                       # parametrised: handler 404s honestly
@@ -629,7 +638,7 @@ def test_no_collection_endpoint_returns_a_misleading_empty_list(monkeypatch):
 
 def test_gated_surfaces_still_serve_when_the_fixture_is_present():
     """API compatibility: the gate must be invisible in normal operation."""
-    assert server.WORLD.available is True
+    assert fixture_preview_service.get_world().available is True
     for path in ("/api/deployments", "/api/packages", "/api/fleet"):
         assert client.get(path).status_code == 200, path
 

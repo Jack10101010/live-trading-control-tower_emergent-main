@@ -62,6 +62,7 @@ import trade_reconstruction as reconstruction_layer
 import live_pipeline as live_pipeline_layer
 import live_preflight as live_preflight_layer
 import fixture_surfaces
+import fixture_preview_service
 import fixture_world
 import ledger_ingestion as ledger_ingestion_layer
 import market_runtime as market_runtime_layer
@@ -163,13 +164,96 @@ FIXTURE_SEARCH_PATHS = (
 # production process can start while the remaining WORLD-backed endpoints exist:
 # they answer "no production source" rather than lying, and each is retired by
 # its own eradication milestone.
-WORLD = (fixture_world.load(FIXTURE_SEARCH_PATHS) if _ENV_POLICY.world_may_load
-         else fixture_world.unavailable_world())
+# M-WORLD-ISOLATE-1 — THE EAGER LOAD IS GONE.
+#
+# This line used to be `WORLD = fixture_world.load(FIXTURE_SEARCH_PATHS)`.
+# Importing the backend opened and parsed `world.v1.json`, allocated 22
+# collections of authored records, and bound them to a module-global that any
+# module could reach with `import server; server.WORLD`. Ordinary endpoints and
+# ordinary tests received fixture data by accident rather than by asking.
+#
+# The paths are now merely REGISTERED. Nothing is read until an explicitly-named
+# development preview calls `fixture_preview_service.get_world()`, and there is
+# no module-global world object for ordinary code to stumble into.
+fixture_preview_service.configure(FIXTURE_SEARCH_PATHS)
+
+
+def _fixture_file_present() -> bool:
+    """Is a fixture file on disk and are previews permitted here?
+
+    A `Path.exists()` check — deliberately NOT a load. The fixture-surface
+    boundary below runs on EVERY `/api` request, so if this triggered the loader
+    the first request of any kind would undo the isolation this milestone
+    exists to create.
+    """
+    if not _ENV_POLICY.world_may_load:
+        return False
+    return any(Path(p).exists() for p in FIXTURE_SEARCH_PATHS)
+
+
+def _preview_world() -> fixture_world.FixtureWorld:
+    """The fixture world, for an EXPLICIT development preview handler only.
+
+    Every caller of this function is a `/api/dev/*` preview. Ordinary
+    operational endpoints must not call it, and a source guard asserts they do
+    not. Failure raises `HTTPException(501)` carrying the same machine-readable
+    contract the boundary uses, so a preview degrades exactly as it did before
+    rather than 500-ing.
+    """
+    # LOADS on first call, and DEGRADES rather than raising.
+    #
+    # An earlier draft raised 501 here. That was wrong in one direction: a
+    # handful of surfaces read the fixture only for metadata (`/api/health`
+    # reports `meta.asOf`; `/api/market-data/candles` uses it as a seam marker)
+    # while their payload comes from a production source. Refusing those would
+    # HIDE GENUINE DATA — the over-refusal half of the FIX-2 lesson, and the
+    # mirror image of the silent-empty bug that motivated the boundary.
+    #
+    # Refusal stays where it already lived and was already proven: the
+    # `_fixture_surface_boundary` middleware for collection paths, and the
+    # `@requires_fixture` decorator for individual handlers. Both consult
+    # `_fixture_available()` below.
+    try:
+        return fixture_preview_service.get_world()
+    except fixture_preview_service.FixturePreviewUnavailable:
+        # Refusal is the boundary's job (`_fixture_surface_boundary` for
+        # collection paths, `@requires_fixture` for individual handlers), and
+        # both consult `_fixture_available()`. Returning the unavailable world
+        # here keeps this accessor total, so a handler that slips past the gate
+        # renders an explicit absence rather than a 500.
+        return fixture_world.unavailable_world()
+
+
+def _optional_fixture() -> fixture_world.FixtureWorld:
+    """The fixture for an INCIDENTAL metadata reader. NEVER triggers a load.
+
+    A few surfaces garnish a production payload with a fixture `meta` field —
+    `/api/health` reported the fixture's `asOf`, `/api/market-data/candles` uses
+    it as a seam marker. A guard caught the consequence of routing those through
+    the loading accessor: the first health check pulled all 22 collections into
+    memory and undid the isolation.
+
+    An incidental reader has no production source for that field anyway, so the
+    honest answer when nothing is loaded is that it is absent. `/api/health` now
+    reports `fixture.asOf: null` until a preview is explicitly requested — more
+    truthful than reporting an authored timestamp as system metadata.
+    """
+    return fixture_preview_service.optional_world()
 
 
 def _fixture_available() -> bool:
-    """Whether the development fixture world is present."""
-    return bool(WORLD.available)
+    """Is a usable development fixture reachable? NEVER triggers a load.
+
+    Consults the already-loaded world first — so a test that publishes an
+    unavailable world through `install_for_test` is honoured — and otherwise
+    falls back to a file-existence check. The boundary middleware runs on every
+    `/api` request, so a loading probe here would undo the isolation on the
+    first request of any kind.
+    """
+    cached = fixture_preview_service.peek()
+    if cached is not None:
+        return bool(cached.available)
+    return _fixture_file_present()
 
 
 def _fixture_unavailable(surface: str, extra: dict | None = None) -> JSONResponse:
@@ -630,7 +714,7 @@ def _deployments_view() -> list[dict]:
     overlays = _load_overlays("deployment")
     trades = _live_trades_view()
     out = []
-    for d in WORLD.get("deployments", []):
+    for d in _preview_world().get("deployments", []):
         merged = _apply_deployment_overlay(d, overlays.get(d.get("deploymentId")))
         out.append(_apply_aggregates(merged, trades))
     return out
@@ -638,18 +722,18 @@ def _deployments_view() -> list[dict]:
 
 def _live_trades_view() -> list[dict]:
     overlays = _load_overlays("trade")
-    return [_apply_trade_overlay(t, overlays.get(t.get("tradeId"))) for t in WORLD.get("liveTrades", [])]
+    return [_apply_trade_overlay(t, overlays.get(t.get("tradeId"))) for t in _preview_world().get("liveTrades", [])]
 
 
 def _deployment_current(dep_id: str) -> dict | None:
-    for d in WORLD.get("deployments", []):
+    for d in _preview_world().get("deployments", []):
         if d.get("deploymentId") == dep_id:
             return _apply_deployment_overlay(d, _get_overlay("deployment", dep_id))
     return None
 
 
 def _trade_current(trade_id: str) -> dict | None:
-    for t in WORLD.get("liveTrades", []):
+    for t in _preview_world().get("liveTrades", []):
         if t.get("tradeId") == trade_id:
             return _apply_trade_overlay(t, _get_overlay("trade", trade_id))
     return None
@@ -675,15 +759,15 @@ def _set_deployment_status(dep_id: str, status: str, now: str, remember_prev: bo
 # ---------------------------------------------------------------------------
 
 def _package_by_version(version) -> dict | None:
-    for p in WORLD.get("packages", []):
+    for p in _preview_world().get("packages", []):
         if p.get("version") == version:
             return p
     return None
 
 
 def _fixture_active_package() -> dict | None:
-    active = next((p for p in WORLD.get("packages", []) if p.get("status") == "active"), None)
-    return active or (WORLD.get("packages") or [None])[0]
+    active = next((p for p in _preview_world().get("packages", []) if p.get("status") == "active"), None)
+    return active or (_preview_world().get("packages") or [None])[0]
 
 
 def _active_package_runtime() -> dict:
@@ -719,7 +803,7 @@ def _trade_by_order_id(order_id: str) -> dict | None:
     """Resolve an order id (brokerOrderId or tradeId) to its current (overlaid)
     trade record. Orders are pending trades in this model (Track B: an order is
     a resting trade)."""
-    for t in WORLD.get("liveTrades", []):
+    for t in _preview_world().get("liveTrades", []):
         if t.get("brokerOrderId") == order_id or t.get("tradeId") == order_id:
             return _apply_trade_overlay(t, _get_overlay("trade", t["tradeId"]))
     return None
@@ -1001,8 +1085,8 @@ def _broker_context(payload: dict, now: str) -> broker_layer.BrokerContext:
         close_trade=_close_trade,
         snake_upper=_snake_upper,
         live_trades=_live_trades_view,
-        accounts=lambda: WORLD.get("accounts", []),
-        brokers=lambda: WORLD.get("brokers", []),
+        accounts=lambda: _preview_world().get("accounts", []),
+        brokers=lambda: _preview_world().get("brokers", []),
     )
 
 
@@ -1199,7 +1283,7 @@ def _apply_command_effects(name: str, payload: dict, now: str) -> tuple[dict | N
         if not pair:
             return None, None
         touched = []
-        for d in WORLD.get("deployments", []):
+        for d in _preview_world().get("deployments", []):
             if d.get("pair") == pair:
                 _set_deployment_status(d["deploymentId"], "Paused", now, remember_prev=True)
                 touched.append(d["deploymentId"])
@@ -1207,7 +1291,7 @@ def _apply_command_effects(name: str, payload: dict, now: str) -> tuple[dict | N
 
     if name == "GlobalKill":
         touched = []
-        for d in WORLD.get("deployments", []):
+        for d in _preview_world().get("deployments", []):
             _set_deployment_status(d["deploymentId"], "Locked", now, extra={"liveEnabled": False})
             touched.append(d["deploymentId"])
         return {"scope": "all"}, {"status": "Locked", "liveEnabled": False, "deployments": touched}
@@ -1642,11 +1726,11 @@ _ORCHESTRATOR = execution_layer.ExecutionOrchestrator(
 # ---------------------------------------------------------------------------
 
 def _fixture_regime(pair: str) -> dict | None:
-    return next((m for m in WORLD.get("marketStateSnapshots", []) if m.get("instrument") == pair), None)
+    return next((m for m in _preview_world().get("marketStateSnapshots", []) if m.get("instrument") == pair), None)
 
 
 def _replay_session_for(pair: str) -> dict | None:
-    return next((s for s in WORLD.get("replaySessions", [])
+    return next((s for s in _preview_world().get("replaySessions", [])
                  if s.get("scope", {}).get("pair") == pair), None)
 
 
@@ -1731,7 +1815,7 @@ def _strategy_env() -> strategy_layer.StrategyEnv:
         policy_matrix=_active_matrix,
         active_package_version=lambda: _active_package_runtime().get("current"),
         recommendations_for=lambda pair: [
-            r for r in WORLD.get("recommendations", []) if r.get("scenarioKey", "").startswith(f"{pair}:")
+            r for r in _preview_world().get("recommendations", []) if r.get("scenarioKey", "").startswith(f"{pair}:")
         ],
         now=_now_iso(),
     )
@@ -1755,7 +1839,7 @@ _STRATEGY_SEQ = 0
 # ---------------------------------------------------------------------------
 
 def _account_by_id(account_id: str | None) -> dict | None:
-    return next((a for a in WORLD.get("accounts", []) if a.get("accountId") == account_id), None)
+    return next((a for a in _preview_world().get("accounts", []) if a.get("accountId") == account_id), None)
 
 
 def _risk_env() -> risk_layer.RiskEnv:
@@ -1787,7 +1871,7 @@ _RISK_CACHE: dict | None = None
 
 def _portfolio_env() -> portfolio_layer.PortfolioEnv:
     return portfolio_layer.PortfolioEnv(
-        accounts=lambda: WORLD.get("accounts", []),
+        accounts=lambda: _preview_world().get("accounts", []),
         account=_account_by_id,
         deployment=_deployment_current,
         now=_now_iso(),
@@ -1855,8 +1939,8 @@ async def root():
     return {
         "service": "Control Tower API",
         "version": "0.1.0",
-        "fixtureVersion": WORLD.get("meta", {}).get("fixtureVersion"),
-        "contractVersion": WORLD.get("meta", {}).get("contractVersion"),
+        "fixtureVersion": _optional_fixture().get("meta", {}).get("fixtureVersion"),
+        "contractVersion": _optional_fixture().get("meta", {}).get("contractVersion"),
     }
 
 
@@ -1906,12 +1990,18 @@ async def health(request: Request):
         # DERIVED, not asserted: `backendMode` was the constant "fixture", which
         # would be a fabrication in a process where the fixture world is not
         # active at all.
-        "backendMode": "fixture" if WORLD.available else "runtime",
+        # M-WORLD-ISOLATE-1: was `_preview_world().available`, which LOADED the
+        # fixture on the first health check and undid the isolation. The fixture
+        # world is no longer a mode this process is IN — it is an on-demand
+        # development preview — so the honest answer is derived from whether a
+        # preview has actually been activated, which `_fixture_available()`
+        # answers without reading anything.
+        "backendMode": "fixture" if _fixture_available() else "runtime",
         "brokerKind": broker_kind,       # active broker impl; "mock" != MT5 connected
         "liveNodeConnected": live_node_connected,
         "tradingReady": trading_ready,   # ARCH-2: derived from named gates (False in the mock world)
         "dataSources": {
-            "world": "fixture" if WORLD.available else "unavailable",
+            "world": "fixture" if _fixture_available() else "unavailable",
             "broker": "mock" if broker_kind == "mock" else broker_kind,
             "nodeTelemetry": "available" if live_node_connected else "unavailable",
         },
@@ -1920,10 +2010,10 @@ async def health(request: Request):
             "instances": node_instances,
         },
         "fixture": {
-            "available": bool(WORLD),
-            "version": WORLD.get("meta", {}).get("fixtureVersion"),
-            "contractVersion": WORLD.get("meta", {}).get("contractVersion"),
-            "asOf": WORLD.get("meta", {}).get("asOf"),   # the FIXTURE's time, not now
+            "available": _fixture_available(),
+            "version": _optional_fixture().get("meta", {}).get("fixtureVersion"),
+            "contractVersion": _optional_fixture().get("meta", {}).get("contractVersion"),
+            "asOf": _optional_fixture().get("meta", {}).get("asOf"),   # the FIXTURE's time, not now
         },
     }
 
@@ -1933,7 +2023,7 @@ async def world():
     """Return the full frozen world fixture. Used by the fixture provider fallback."""
     if not _fixture_available():
         return _fixture_unavailable("world")
-    return WORLD.as_dict()
+    return _preview_world().as_dict()
 
 
 #: M-FLEET-1: how the fleet records this process is serving were obtained.
@@ -1976,9 +2066,9 @@ async def fleet():
         "source": FLEET_SOURCE_FIXTURE,
         "detail": FLEET_DETAIL_FIXTURE,
         "deployments": _deployments_view(),
-        "brokers": WORLD.get("brokers", []),
-        "accounts": WORLD.get("accounts", []),
-        "asOf": WORLD.get("meta", {}).get("asOf"),
+        "brokers": _preview_world().get("brokers", []),
+        "accounts": _preview_world().get("accounts", []),
+        "asOf": _optional_fixture().get("meta", {}).get("asOf"),
     }
 
 
@@ -2006,7 +2096,7 @@ async def deployment(deployment_id: str):
 async def packages():
     if not _fixture_available():
         return _fixture_unavailable("packages")
-    return WORLD.get("packages", [])
+    return _preview_world().get("packages", [])
 
 
 @api_router.get("/packages/active")
@@ -4281,7 +4371,7 @@ async def market_data_candles(symbol: str = "EURUSD", timeframe: str = market_da
     if end:
         end_iso = end
     elif provider:
-        end_iso = WORLD.get("meta", {}).get("asOf") or _now_iso()
+        end_iso = _optional_fixture().get("meta", {}).get("asOf") or _now_iso()
     else:
         end_iso = None  # engine substitutes real now → DataService live edge
     series = _MARKET_DATA_ENGINE.candles(symbol, timeframe, count, end_iso, provider, start)
@@ -4348,7 +4438,7 @@ async def dev_fixture_events():
         "detail": ("Authored demonstration events. None of these describe anything "
                    "that happened in this process. The operational audit stream is "
                    "/api/events and contains runtime events only."),
-        "events": list(WORLD.get("events", [])),
+        "events": list(_preview_world().get("events", [])),
     }
 
 
@@ -4517,7 +4607,7 @@ async def policy_matrix(instrument: str, version: int | None = None):
     """
     if not _fixture_available():
         return _fixture_unavailable("policy_matrix")
-    pkgs = WORLD.get("packages", [])
+    pkgs = _preview_world().get("packages", [])
     if version is not None:
         pkg = next((p for p in pkgs if p.get("version") == version), None)
     else:
@@ -4535,8 +4625,8 @@ async def trades(pair: str | None = None, lane: str | None = None):
     if not _fixture_available():
         return _fixture_unavailable("trades")
     lt = _live_trades_view()
-    gt = WORLD.get("ghostTrades", [])
-    bi = WORLD.get("blockedIntents", [])
+    gt = _preview_world().get("ghostTrades", [])
+    bi = _preview_world().get("blockedIntents", [])
     if pair:
         lt = [t for t in lt if t.get("scenarioKey", "").startswith(f"{pair}:")]
         gt = [t for t in gt if t.get("scenarioKey", "").startswith(f"{pair}:")]
@@ -4583,8 +4673,8 @@ async def dev_fixture_broker_health():
             "detail": ("Authored broker records with invented latency and health. "
                        "The operational surface is /api/broker-health, which "
                        "reports unavailable."),
-            "brokers": list(WORLD.get("brokers", [])),
-            "health": list(WORLD.get("brokerHealth", []))}
+            "brokers": list(_preview_world().get("brokers", [])),
+            "health": list(_preview_world().get("brokerHealth", []))}
 
 
 @api_router.get("/edge-monitor")
@@ -4631,12 +4721,12 @@ async def system_confidence():
 
 @api_router.get("/recommendations")
 async def recommendations():
-    return WORLD.get("recommendations", [])
+    return _preview_world().get("recommendations", [])
 
 
 @api_router.get("/decisions/{decision_id}")
 async def decision(decision_id: str):
-    for d in WORLD.get("decisionChains", []):
+    for d in _preview_world().get("decisionChains", []):
         if d.get("decisionId") == decision_id:
             return d
     raise HTTPException(status_code=404, detail="Decision chain not found")
@@ -5525,7 +5615,11 @@ async def _fixture_surface_boundary(request: Request, call_next):
     no fixture no such deployment exists. Collection endpoints, which are the
     ones that returned a misleading empty list, are covered.
     """
-    if not WORLD.available and request.url.path.startswith("/api"):
+    # M-WORLD-ISOLATE-1: `_fixture_available()` consults the cache and then the
+    # filesystem. It must NEVER load — this runs on every `/api` request, so a
+    # loading probe here would pull the fixture into memory on the first health
+    # check and undo the whole milestone.
+    if not _fixture_available() and request.url.path.startswith("/api"):
         if request.url.path in FIXTURE_ONLY_PATHS:
             return _fixture_unavailable(request.url.path)
     return await call_next(request)

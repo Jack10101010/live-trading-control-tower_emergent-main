@@ -34,11 +34,23 @@ from fastapi.testclient import TestClient                              # noqa: E
 
 import server                                                          # noqa: E402
 
+
+
+def _fixture_world():
+    """M-WORLD-ISOLATE-1: authored records, asked for explicitly.
+
+    Was `server.WORLD`, a module global this test received merely by
+    importing the backend. The fixture is now loaded on request and
+    reset between tests, so nothing here can leak into another test.
+    """
+    import fixture_preview_service as _fps
+    return _fps.get_world()
+
 client = TestClient(server.app, raise_server_exceptions=False)
 
 # M-EVENTS-1: the fixture seeds are NO LONGER part of the audit stream. They are
 # kept here only to assert their ABSENCE from every runtime surface.
-FIXTURE_SEQS = sorted(e["seq"] for e in server.WORLD.get("events", []))  # 3 frozen events
+FIXTURE_SEQS = sorted(e["seq"] for e in _fixture_world().get("events", []))  # 3 frozen events
 
 
 def mk(i: int) -> dict:
@@ -129,7 +141,7 @@ def test_retention_keeps_only_newest_capped_rows(iso, small_cap):
     assert len(seqs) == 5                                    # cap enforced
     assert seqs == [base + 4, base + 5, base + 6, base + 7, base + 8]  # newest, unrenumbered
     assert server._max_seq() == base + 8                     # MAX(seq) monotonic
-    assert len(server.WORLD.get("events", [])) == 3          # fixture file untouched
+    assert len(_fixture_world().get("events", [])) == 3          # fixture file untouched
 
 
 # ── 2. Atomic insert and prune ───────────────────────────────────────────────

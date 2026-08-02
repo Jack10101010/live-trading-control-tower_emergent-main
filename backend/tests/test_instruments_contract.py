@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import _fake_mt5                                                    # noqa: F401,E402
 from fastapi.testclient import TestClient                           # noqa: E402
 
+import fixture_preview_service
 import server                                                       # noqa: E402
 
 client = TestClient(server.app)
@@ -49,7 +50,7 @@ def test_is_not_derived_from_the_fixture_world(monkeypatch):
         def get(self, key, default=None):
             return default
 
-    monkeypatch.setattr(server, "WORLD", _NoWorld())
+    fixture_preview_service.install_for_test(_NoWorld())
     assert _instruments() == before
 
 

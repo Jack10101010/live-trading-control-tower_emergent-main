@@ -37,6 +37,7 @@ import execution_safety as es                                       # noqa: E402
 import execution_store as est                                       # noqa: E402
 import order_lifecycle as ol                                        # noqa: E402
 import reconciliation as rc                                         # noqa: E402
+import fixture_preview_service
 import server                                                       # noqa: E402
 from conftest import code_only                                      # noqa: E402
 from live.mt5_gateway import MT5Gateway                             # noqa: E402
@@ -508,12 +509,12 @@ def test_conflicting_payload_under_same_key_denies():
 def test_different_entities_are_independent(monkeypatch):
     # Deterministic two-position fixture: the pristine world exposes exactly ONE
     # open ("managing") live trade, so this path previously skipped. Clone that
-    # trade under a fresh tradeId in a DEEP-COPIED world and rebind server.WORLD
+    # trade under a fresh tradeId in a DEEP-COPIED world and publish it through the explicit preview service
     # for this test only — every consumer (_fresh_broker_snapshot projection,
-    # _trade_current, close overlays) reads server.WORLD at call time, and the
+    # _trade_current, close overlays) reads the preview service at call time, and the
     # runtime overlay DB is already isolated per-test by `isolated_event_store`.
     import copy
-    world = copy.deepcopy(server.WORLD)
+    world = copy.deepcopy(fixture_preview_service.get_world())
     open_trades = [t for t in world.get("liveTrades", []) if t.get("state") == "managing"]
     assert open_trades, "pristine fixture must expose one open live trade"
     clone = copy.deepcopy(open_trades[0])
@@ -521,7 +522,7 @@ def test_different_entities_are_independent(monkeypatch):
     clone["clientOrderId"] = "cli_TESTINDEPENDENT0000000A"
     clone["brokerOrderId"] = "brk_TESTINDEPENDENT0000000A"
     world["liveTrades"].append(clone)
-    monkeypatch.setattr(server, "WORLD", world)
+    fixture_preview_service.install_for_test(world)
 
     snap = server._fresh_broker_snapshot()
     positions = snap.get("positions") or []

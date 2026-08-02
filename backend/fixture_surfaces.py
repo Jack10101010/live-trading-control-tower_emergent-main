@@ -148,17 +148,34 @@ def analyse(source_path: Path) -> dict[str, set]:
                     paths.append(prefix + arg.value)
         return paths
 
+    #: M-WORLD-ISOLATE-1: the fixture is no longer a module global. Reads go
+    #: through the explicit accessor, so the derivation follows CALLS to it
+    #: rather than references to a name. Both spellings are recognised — the
+    #: old one so this analysis keeps working against any historical source it
+    #: is pointed at, the new one because it is what ships.
+    ACCESSORS = ("_preview_world", "_optional_fixture")
+
     def world_keys(node) -> set:
         """Fixture collections read directly by this function."""
         keys = set()
         for child in ast.walk(node):
             if isinstance(child, ast.Call):
                 func = child.func
-                if (getattr(getattr(func, "value", None), "id", None) == "WORLD"
+                owner = getattr(func, "value", None)
+                # `_preview_world().get("accounts")` — the accessor is itself a
+                # Call, so the collection name hangs off a nested call node.
+                if (getattr(func, "attr", None) == "get" and child.args
+                        and isinstance(child.args[0], ast.Constant)
+                        and isinstance(owner, ast.Call)
+                        and getattr(owner.func, "id", None) in ACCESSORS):
+                    keys.add(child.args[0].value)
+                elif (getattr(owner, "id", None) == "WORLD"
                         and getattr(func, "attr", None) == "get"
                         and child.args
                         and isinstance(child.args[0], ast.Constant)):
                     keys.add(child.args[0].value)
+                elif getattr(func, "id", None) in ACCESSORS:
+                    keys.add("<reference>")
             elif (isinstance(child, ast.Subscript)
                     and getattr(child.value, "id", None) == "WORLD"):
                 keys.add("<subscript>")
@@ -215,18 +232,25 @@ def requires_fixture(surface: str):
     a reader of the route sees the dependency, and verified for COMPLETENESS by
     the derived analysis above.
     """
+    # M-WORLD-ISOLATE-1: `server.WORLD` is gone. The guard asks the explicit
+    # preview service instead, and a load failure is a refusal rather than an
+    # exception — the surface still degrades exactly as it did before.
+    def _fixture_ready() -> bool:
+        import server
+        return server._fixture_available()
+
     def decorate(handler):
         @functools.wraps(handler)
         def guard(*args, **kwargs):
             import server                                     # late: cycle-free
-            if not server.WORLD.available:
+            if not _fixture_ready():
                 return server._fixture_unavailable(surface)
             return handler(*args, **kwargs)
 
         @functools.wraps(handler)
         async def async_guard(*args, **kwargs):
             import server
-            if not server.WORLD.available:
+            if not _fixture_ready():
                 return server._fixture_unavailable(surface)
             return await handler(*args, **kwargs)
 

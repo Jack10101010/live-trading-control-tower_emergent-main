@@ -21,8 +21,20 @@ from fastapi.testclient import TestClient                           # noqa: E402
 
 import server                                                       # noqa: E402
 
+
+
+def _fixture_world():
+    """M-WORLD-ISOLATE-1: authored records, asked for explicitly.
+
+    Was `server.WORLD`, a module global this test received merely by
+    importing the backend. The fixture is now loaded on request and
+    reset between tests, so nothing here can leak into another test.
+    """
+    import fixture_preview_service as _fps
+    return _fps.get_world()
+
 client = TestClient(server.app)
-FIXTURE_SEQS = {e["seq"] for e in server.WORLD.get("events", [])}
+FIXTURE_SEQS = {e["seq"] for e in _fixture_world().get("events", [])}
 BACKEND = Path(__file__).resolve().parent.parent
 
 

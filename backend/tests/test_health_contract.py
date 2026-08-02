@@ -22,6 +22,18 @@ from fastapi.testclient import TestClient                              # noqa: E
 
 import server                                                          # noqa: E402
 
+
+
+def _fixture_world():
+    """M-WORLD-ISOLATE-1: authored records, asked for explicitly.
+
+    Was `server.WORLD`, a module global this test received merely by
+    importing the backend. The fixture is now loaded on request and
+    reset between tests, so nothing here can leak into another test.
+    """
+    import fixture_preview_service as _fps
+    return _fps.get_world()
+
 client = TestClient(server.app)
 
 
@@ -39,17 +51,38 @@ def _parse(ts: str) -> datetime:
 
 def test_server_time_is_current_not_fixture_as_of():
     h = _health()
-    fixture_as_of = server.WORLD.get("meta", {}).get("asOf")
+    fixture_as_of = _fixture_world().get("meta", {}).get("asOf")
     assert h["serverTime"] != fixture_as_of
     now = datetime.now(timezone.utc)
     assert abs((_parse(h["serverTime"]) - now)) < timedelta(minutes=5)
 
 
-def test_fixture_timestamp_is_still_reported_but_clearly_scoped():
+def test_fixture_timestamp_is_absent_until_a_preview_is_activated():
+    """M-WORLD-ISOLATE-1 — INTENTIONAL CONTRACT CHANGE, documented here.
+
+    `/api/health` used to report the fixture's authored `meta.asOf`. Serving it
+    required READING the fixture, so the first health check of every process
+    pulled all 22 collections into memory — the isolation this milestone exists
+    to create, undone by a liveness probe.
+
+    Health now reads the fixture only if a development preview has already
+    loaded it, so `fixture.asOf` is `null` in an ordinary process. That is the
+    more truthful answer in any case: an authored timestamp from a development
+    file was never system metadata, and reporting it on a health endpoint
+    invited exactly the reading the nesting was meant to prevent.
+
+    The field is KEPT rather than deleted: when a preview IS active, saying so
+    is genuine provenance.
+    """
     h = _health()
-    # Kept for provenance, but nested where it cannot be read as freshness.
-    assert h["fixture"]["asOf"] == server.WORLD.get("meta", {}).get("asOf")
+    assert h["fixture"]["asOf"] is None, (
+        "an ordinary health check must not have loaded the fixture world")
     assert "asOf" not in h, "a top-level asOf reads as freshness — it must not return"
+
+
+def test_fixture_timestamp_reappears_once_a_preview_is_loaded(fixture_preview):
+    """The other half: with a preview genuinely active, health reports it."""
+    assert _health()["fixture"]["asOf"] == fixture_preview.get("meta", {}).get("asOf")
 
 
 def test_server_time_advances_between_calls():

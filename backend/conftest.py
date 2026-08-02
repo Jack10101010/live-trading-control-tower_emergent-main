@@ -61,3 +61,58 @@ def pytest_configure(config):
                            ("RECOMMENDATION_DB_PATH", "recommendation_state.db")):
         if hasattr(server, attr):
             setattr(server, attr, root / filename)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# M-WORLD-ISOLATE-1 — explicit fixture access for tests.
+#
+# `server.WORLD` no longer exists. Tests that need authored records now ASK for
+# them, which is the whole point: a test receiving fixture data because it
+# imported `server` was the accident this milestone removed.
+#
+# Two seams, both explicit:
+#   `fixture_preview()`   — the real fixture world, loaded through the service
+#   `install_fixture()`   — publish a world YOU constructed (poisoned, empty, …)
+#
+# Both reset the service cache afterwards, so no test can leave fixture state
+# behind for the next one. That coupling is what made the old suite order
+# dependent.
+# ─────────────────────────────────────────────────────────────────────────────
+
+import pytest as _pytest
+
+
+@_pytest.fixture()
+def fixture_preview():
+    """The real development fixture world, loaded explicitly for this test."""
+    import fixture_preview_service as fps
+    fps.reset()
+    try:
+        yield fps.get_world()
+    finally:
+        fps.reset()
+
+
+@_pytest.fixture()
+def install_fixture():
+    """Publish an explicitly-constructed world for the duration of one test."""
+    import fixture_preview_service as fps
+
+    def _install(world):
+        fps.install_for_test(world)
+        return world
+
+    fps.reset()
+    try:
+        yield _install
+    finally:
+        fps.reset()
+
+
+@_pytest.fixture(autouse=True)
+def _no_fixture_leak_between_tests():
+    """Guarantee no test inherits a loaded fixture from an earlier one."""
+    import fixture_preview_service as fps
+    fps.reset()
+    yield
+    fps.reset()
