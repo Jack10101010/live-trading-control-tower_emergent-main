@@ -91,7 +91,7 @@ class TestWorld:
 
 class TestFleet:
     def test_fleet_shape(self, api):
-        r = api.get(f"{BASE_URL}/api/fleet")
+        r = api.get(f"{BASE_URL}/api/dev/fixture-fleet")
         assert r.status_code == 200
         d = r.json()
         assert isinstance(d["deployments"], list)
@@ -144,7 +144,7 @@ class TestPolicy:
 
 class TestTrades:
     def test_trades_eurusd(self, api):
-        r = api.get(f"{BASE_URL}/api/trades", params={"pair": "EURUSD"})
+        r = api.get(f"{BASE_URL}/api/dev/fixture-trades", params={"pair": "EURUSD"})
         assert r.status_code == 200
         d = r.json()
         assert set(d.keys()) >= {"live", "ghost", "blocked"}
@@ -154,7 +154,7 @@ class TestTrades:
         assert len(d["blocked"]) == 5, f"expected 5 blocked, got {len(d['blocked'])}"
 
     def test_trades_no_filter(self, api):
-        r = api.get(f"{BASE_URL}/api/trades")
+        r = api.get(f"{BASE_URL}/api/dev/fixture-trades")
         assert r.status_code == 200
         d = r.json()
         assert isinstance(d["live"], list)
@@ -192,7 +192,7 @@ class TestSignals:
         assert d, "empty system-confidence payload"
 
     def test_recommendations(self, api):
-        r = api.get(f"{BASE_URL}/api/recommendations")
+        r = api.get(f"{BASE_URL}/api/dev/fixture-recommendations")
         assert r.status_code == 200
         assert isinstance(r.json(), list)
 
@@ -224,7 +224,7 @@ class TestSignals:
             assert caps[retired]["state"] == "unavailable", retired
 
     def test_active_package(self, api):
-        r = api.get(f"{BASE_URL}/api/packages/active")
+        r = api.get(f"{BASE_URL}/api/dev/fixture-packages/active")
         assert r.status_code == 200
         d = r.json()
         assert d.get("status") == "active"
@@ -352,7 +352,7 @@ class TestExecutionOrchestrator:
         assert d["dryRun"] is True
         assert d["events"][0]["after"]["state"] == "closed"  # simulated
         # ...but the runtime overlay is unchanged (still open)
-        live = api.get(f"{BASE_URL}/api/trades").json()["live"]
+        live = api.get(f"{BASE_URL}/api/dev/fixture-trades").json()["live"]
         t = next(x for x in live if x["tradeId"] == TRADE)
         assert t["state"] == "managing"
 

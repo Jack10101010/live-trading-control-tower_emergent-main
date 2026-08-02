@@ -836,5 +836,5 @@ def test_accepting_never_creates_an_intent_or_touches_the_execution_store(
 
 
 def test_the_pre_existing_fixture_route_is_still_untouched():
-    body = client.get("/api/recommendations").json()
+    body = client.get("/api/dev/fixture-recommendations").json()
     assert isinstance(body, list) and body and "proposedChange" in body[0]

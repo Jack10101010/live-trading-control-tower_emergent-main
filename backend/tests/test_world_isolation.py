@@ -372,7 +372,7 @@ def test_13_dev_preview_routes_are_named_as_such_or_explicitly_gated():
 def test_14_legacy_fixture_endpoints_refuse_when_the_fixture_is_unavailable():
     fps.install_for_test(fixture_world.FixtureWorld(None))
     try:
-        for path in ("/api/dev/fixture-world", "/api/fleet", "/api/packages", "/api/trades"):
+        for path in ("/api/dev/fixture-world", "/api/dev/fixture-fleet", "/api/dev/fixture-packages", "/api/dev/fixture-trades"):
             response = client.get(path)
             assert response.status_code == 501, (path, response.status_code)
             assert response.json()["code"] == fixture_world.CODE_FIXTURE_ABSENT

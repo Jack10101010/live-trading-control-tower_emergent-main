@@ -285,3 +285,17 @@ Health reports `environment` (authenticated body only, per ARCH-3), and `backend
 / `dataSources.world` became DERIVED rather than the constant `"fixture"` — asserting
 "fixture" in a process where the fixture world is not active would itself be a
 fabrication.
+
+
+---
+
+## M-PREVIEW-DELETE-1 ☑
+
+Eighteen fixture-backed routes → **seven**, every one under `/api/dev/` and
+named `fixture`. Six deleted (no consumer), five renamed, five severed from the
+fixture and kept as the operational endpoints they always were. No alias, no
+redirect, no hidden query-parameter switch; negative contract tests assert the
+deleted paths stay 404.
+
+The remaining asset question is now isolated from runtime architecture: see
+`RUNTIME-SOURCE-BOUNDARY.md`.

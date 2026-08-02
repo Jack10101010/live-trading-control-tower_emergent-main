@@ -1670,7 +1670,7 @@ export const api = {
     // error boundary (which would read as "the Control Tower is broken" rather
     // than "this surface has no production source"). Any OTHER non-2xx still
     // throws — a genuine fault must not be dressed up as an empty fleet.
-    const res = await fetch(apiUrl('/fleet'), { headers: { Accept: 'application/json', ...authHeader() } });
+    const res = await fetch(apiUrl('/dev/fixture-fleet'), { headers: { Accept: 'application/json', ...authHeader() } });
     if (res.status === 501) {
       const body = (await res.json().catch(() => null)) as { code?: string; detail?: string } | null;
       if (body?.code === 'fixture_world_unavailable') {
@@ -1685,7 +1685,7 @@ export const api = {
         };
       }
     }
-    if (res.status === 401) throw new ApiAuthError(401, '/fleet');
+    if (res.status === 401) throw new ApiAuthError(401, '/dev/fixture-fleet');
     if (!res.ok) throw new Error(`API ${res.status} /fleet: ${(await res.text().catch(() => '')).slice(0, 200)}`);
     const body = (await res.json()) as FleetPayload;
     return {
@@ -1701,7 +1701,7 @@ export const api = {
   health: () => apiFetch<BackendHealth>('/health'),
   edgeMonitor: () => apiFetch<EdgeMonitor>('/edge-monitor'),
   systemConfidence: () => apiFetch<SystemConfidence>('/system-confidence'),
-  recommendations: () => apiFetch<Recommendation[]>('/recommendations'),
+  recommendations: () => apiFetch<Recommendation[]>('/dev/fixture-recommendations'),
   featureFlags: () => apiFetch<CapabilityResponse>('/feature-flags'),
   brokerHealth: () => apiFetch<{
     schemaVersion: number; available: boolean; code?: string; detail: string;
@@ -1718,12 +1718,6 @@ export const api = {
     }),
   strategyDecisions: () => apiFetch<StrategyEvaluation>('/strategy/decisions'),
   /** Run one read-only strategy evaluation (Decisions + candidates; executes nothing). */
-  strategyEvaluate: () =>
-    apiFetch<StrategyEvaluation>('/strategy/evaluate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: '{}',
-    }),
   schedulerStatus: () => apiFetch<SchedulerStatus>('/scheduler/status'),
   /** Current immutable market snapshot (Phase 11, read-only). */
   marketDataSnapshot: (symbol = 'EURUSD', timeframe = 'M15') =>
@@ -1766,12 +1760,8 @@ export const api = {
       `/events/live?since=${since}`,
       { signal }
     ),
-  decision: (id: string) => apiFetch<DecisionChain>(`/decisions/${encodeURIComponent(id)}`),
-  deployment: (id: string) => apiFetch<Deployment>(`/deployments/${encodeURIComponent(id)}`),
-  activePackage: () => apiFetch<Package>('/packages/active'),
-  packages: () => apiFetch<Package[]>('/packages'),
-  policyMatrix: (instrument: string, version?: number) =>
-    apiFetch<PolicyMatrixData>(`/policy/${encodeURIComponent(instrument)}/matrix${version ? `?version=${version}` : ''}`),
+  activePackage: () => apiFetch<Package>('/dev/fixture-packages/active'),
+  packages: () => apiFetch<Package[]>('/dev/fixture-packages'),
   operatorPreferences: () => apiFetch<OperatorPreferences>('/operator/preferences'),
   putOperatorPreferences: (patch: OperatorPreferences) =>
     apiFetch<OperatorPreferences>('/operator/preferences', {
@@ -1801,7 +1791,7 @@ export const api = {
     if (lane) q.set('lane', lane);
     const qs = q.toString();
     return apiFetch<{ live: LiveTrade[]; ghost: GhostTrade[]; blocked: BlockedIntent[] }>(
-      `/trades${qs ? `?${qs}` : ''}`
+      `/dev/fixture-trades${qs ? `?${qs}` : ''}`
     );
   },
 };
@@ -1846,7 +1836,5 @@ export const QK = {
   riskLimits: ['risk-limits'] as const,
   operatorIdentity: ['operator-identity'] as const,
   decision: (id: string) => ['decision', id] as const,
-  policyMatrix: (instrument: string, version?: number) =>
-    ['policy-matrix', instrument, version ?? 'active'] as const,
   operatorPreferences: ['operator-preferences'] as const,
 };

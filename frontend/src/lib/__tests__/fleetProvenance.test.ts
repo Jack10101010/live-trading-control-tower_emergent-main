@@ -277,7 +277,8 @@ describe('structural isolation of fixture fleet data', () => {
 
   it('M-TRADES-1: the fixture trades preview route is not linked from navigation', () => {
     const offenders = allSources(SRC)
-      .filter((f) => rel(f) !== 'App.tsx' && rel(f) !== 'views/dev/FixtureTradesPreview.tsx')
+      .filter((f) => !['App.tsx', 'views/dev/FixtureTradesPreview.tsx',
+                       'lib/api.ts'].includes(rel(f)))
       .filter((f) => stripComments(readFileSync(f, 'utf8')).includes('/dev/fixture-trades'))
       .map(rel);
     expect(offenders, offenders.join('\n')).toEqual([]);
@@ -294,7 +295,12 @@ describe('structural isolation of fixture fleet data', () => {
 
   it('the fixture preview route is not linked from any navigation', () => {
     const offenders = allSources(SRC)
-      .filter((f) => rel(f) !== 'App.tsx' && rel(f) !== 'views/dev/FixtureFleetPreview.tsx')
+      // M-PREVIEW-DELETE-1: `lib/api.ts` now contains this string as an API
+      // PATH (`/api/dev/fixture-fleet`), not a navigation target. It defines
+      // the fetchers and is already allowlisted by the sibling guards above;
+      // the property here is that nothing NAVIGATES to the preview route.
+      .filter((f) => !['App.tsx', 'views/dev/FixtureFleetPreview.tsx',
+                       'lib/api.ts'].includes(rel(f)))
       .filter((f) => stripComments(readFileSync(f, 'utf8')).includes('/dev/fixture-fleet'))
       .map(rel);
     expect(offenders, offenders.join('\n')).toEqual([]);

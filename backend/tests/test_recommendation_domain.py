@@ -945,7 +945,7 @@ def test_the_write_surface_stays_minimal(monkeypatch, tmp_path):
 def test_the_pre_existing_fixture_route_is_untouched():
     """The canonical domain is namespaced under /api/trade-recommendations so it
     cannot shadow the fixture world's POLICY-CHANGE route."""
-    r = client.get("/api/recommendations")
+    r = client.get("/api/dev/fixture-recommendations")
     assert r.status_code == 200
     body = r.json()
     assert isinstance(body, list)                       # the fixture array shape

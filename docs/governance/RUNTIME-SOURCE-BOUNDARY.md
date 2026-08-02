@@ -111,25 +111,76 @@ tests perform zero — all asserted in `test_world_isolation.py` and
 | first ordinary request | — | 10.8 ms, +1.56 MiB, 0 loads |
 | first *preview* load | — | 4.3 ms, +0.38 MiB |
 
-## What a future M-PREVIEW-DELETE-1 would remove
+## The preview namespace (M-PREVIEW-DELETE-1)
 
-Eighteen gated preview routes, of which **twelve still carry
-operational-looking legacy paths**:
+Every fixture-backed route now lives under `/api/dev/` **and** names itself a
+fixture. Seven remain:
 
-`/api/fleet` · `/api/trades` · `/api/packages` · `/api/packages/active` ·
-`/api/recommendations` · `/api/decisions/{id}` · `/api/deployments` ·
-`/api/deployments/{id}` · `/api/policy/{instrument}/matrix` ·
-`/api/portfolio/status` · `/api/risk/assessment` ·
-`/api/runtime/active-package` · `/api/commands/{name}` ·
-`/api/strategy/decisions` · `/api/strategy/evaluate`
+`/api/dev/fixture-world` · `/api/dev/fixture-fleet` · `/api/dev/fixture-trades` ·
+`/api/dev/fixture-packages` · `/api/dev/fixture-packages/active` ·
+`/api/dev/fixture-recommendations` · `/api/dev/fixture-events` ·
+`/api/dev/fixture-broker-health`
 
-plus three explicitly named: `/api/dev/fixture-world` ·
-`/api/dev/fixture-events` · `/api/dev/fixture-broker-health`
+### Deleted — fixture-backed, operational URL, zero consumers
 
-and two frontend views: `views/dev/FixtureFleetPreview.tsx` ·
-`views/dev/FixtureTradesPreview.tsx`.
+`/api/deployments` · `/api/deployments/{id}` · `/api/decisions/{id}` ·
+`/api/policy/{instrument}/matrix` · `/api/portfolio/status` ·
+`/api/risk/assessment`
 
-Those twelve legacy paths are the strongest remaining argument for that
-milestone: an operational-looking URL is a standing invitation to wire something
-to it. They are gated, refused without the asset, and have zero ordinary
-consumers — so this is a naming and surface-area concern, not an honesty one.
+No alias, no redirect, no query-parameter switch. They return 404 and a guard
+asserts they stay unmounted.
+
+### Renamed — genuine previews, honest names
+
+| was | is |
+|---|---|
+| `/api/fleet` | `/api/dev/fixture-fleet` |
+| `/api/trades` | `/api/dev/fixture-trades` |
+| `/api/packages` | `/api/dev/fixture-packages` |
+| `/api/packages/active` | `/api/dev/fixture-packages/active` |
+| `/api/recommendations` | `/api/dev/fixture-recommendations` |
+
+### Severed — never previews at all
+
+Five endpoints were classified fixture-backed by **one leftover**:
+`_active_package_runtime` defaulted to the fixture's promoted package when no
+runtime selection existed, and `_portfolio_env` handed the portfolio engine the
+fixture's accounts.
+
+`/api/commands/{name}` (operator command dispatch — it appends immutable
+BotEvents) · `/api/strategy/decisions` · `/api/strategy/evaluate` ·
+`/api/runtime/active-package` · `/api/policy/{instrument}/matrix`
+
+They keep their operational URLs because that is what they always were. M-PKG-1
+had already established there is no package registry, so the authored default
+was the wrong answer before it was a naming problem.
+
+**18 fixture-backed routes → 7, all explicitly named.**
+
+## What a future asset-deletion milestone would remove
+
+The remaining question is the **asset**, not the routes.
+
+**Backend:** seven `/api/dev/fixture-*` routes.
+**Frontend:** `views/dev/FixtureFleetPreview.tsx`, `views/dev/FixtureTradesPreview.tsx`.
+
+**Fixture collections still consumed:** `accounts`, `brokers`, `deployments`,
+`liveTrades`, `ghostTrades`, `blockedIntents`, `packages`, `recommendations`,
+`events`, `brokerHealth`, `marketStateSnapshots`, `packageComparisons`,
+`replaySessions`, `vocabulary`, `meta` — plus whatever `/api/dev/fixture-world`
+serves wholesale, which is all 22.
+
+**Now dead:** `operators` (M-WORLD-ORDINARY-1 replaced it with configuration),
+`decisionChains` (its route was deleted), `drafts`, `signals`, `edgeMonitor`,
+`nativeValidations`, `systemConfidence` — all had their consumers removed by
+earlier milestones.
+
+**Recommendation: keep the asset.** The previews are the only place a developer
+can see these components render with data, and rebuilding equivalent per-view
+authored assets would recreate the same records in more places — the opposite of
+the consolidation this programme has been doing. The asset is 30 KiB, outside
+every runtime package, impossible to load in production, and reached only
+through routes that say what they are.
+
+If it is ever removed, the honest replacement is component-level story fixtures
+owned by the views themselves, not a second shared world.

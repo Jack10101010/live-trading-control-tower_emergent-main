@@ -766,9 +766,17 @@ def _set_deployment_status(dep_id: str, status: str, now: str, remember_prev: bo
 # ---------------------------------------------------------------------------
 
 def _package_by_version(version) -> dict | None:
-    for p in _preview_world().get("packages", []):
-        if p.get("version") == version:
-            return p
+    """M-PREVIEW-DELETE-1: no package registry exists, so no version resolves.
+
+    This searched the fixture's authored `packages`, which meant the
+    `DeployPackage` / `RollbackPackage` command branches stamped an AUTHORED
+    package hash onto a deployment overlay — a specific strategy build recorded
+    as deployed, from a registry that does not exist. Both branches already
+    guard on `if ... and pkg`, so returning None makes them record the
+    activation without inventing a hash.
+
+    The dev preview reads authored packages directly; see `_fixture_packages`.
+    """
     return None
 
 
@@ -779,11 +787,31 @@ def _fixture_active_package() -> dict | None:
 
 def _active_package_runtime() -> dict:
     """Runtime active-package record: current/previous version + activation meta.
-    Defaults from the fixture (the promoted active package) when unset."""
+
+    M-PREVIEW-DELETE-1 — THE FIXTURE FALLBACK IS GONE.
+
+    This defaulted to `_fixture_active_package()` when no runtime selection
+    existed, and that single fallback was why FIVE genuinely operational
+    endpoints were classified fixture-backed by the derived boundary:
+    `/api/commands/{name}` (the operator command dispatch, which appends
+    immutable BotEvents), `/api/strategy/decisions`, `/api/strategy/evaluate`,
+    `/api/runtime/active-package` and `/api/policy/{instrument}/matrix`. Each
+    reached it through `_active_package_view`.
+
+    M-PKG-1 established that no package registry exists and that a version or
+    hash asserts a specific strategy build is deployed and governing decisions —
+    a claim nothing here can support. An authored default was therefore already
+    the wrong answer; it merely happened to be invisible behind endpoints whose
+    consumers had been removed.
+
+    With no runtime selection the answer is now NOTHING, which lets those five
+    endpoints be what they always were: operational surfaces with honest
+    unavailable contracts.
+    """
     ov = _get_overlay("meta", "active_package")
     if ov.get("current") is not None:
         return ov
-    active = _fixture_active_package() or {}
+    active: dict = {}
     return {
         "current": active.get("version"),
         "previous": active.get("parentVersion"),
@@ -793,9 +821,22 @@ def _active_package_runtime() -> dict:
 
 
 def _active_package_view() -> dict | None:
-    """The package currently active at runtime (runtime selection ⊕ fixture default)."""
-    rt = _active_package_runtime()
-    return _package_by_version(rt.get("current")) or _fixture_active_package()
+    """The package currently active at runtime.
+
+    M-PREVIEW-DELETE-1 — was `runtime selection ⊕ FIXTURE DEFAULT`. Both halves
+    resolved through authored records (`_package_by_version` and
+    `_fixture_active_package` each read the fixture's `packages`), so every
+    operational caller of this function was fixture-backed.
+
+    M-PKG-1 established that no package registry exists. Until one does, the
+    honest answer is None, and callers already handle it: `/api/policy/{i}/matrix`
+    yields no matrix, the strategy engine reports `available: false`, and the
+    command surface records no package hash rather than an invented one.
+
+    The DEV PREVIEW routes still serve authored packages — they call
+    `_fixture_active_package()` directly, which is what a preview should do.
+    """
+    return None
 
 
 def _set_active_package(version, now: str, source: str) -> tuple[dict, dict]:
@@ -1998,10 +2039,22 @@ _RISK_CACHE: dict | None = None
 # ---------------------------------------------------------------------------
 
 def _portfolio_env() -> portfolio_layer.PortfolioEnv:
+    """M-PREVIEW-DELETE-1 — severed from the fixture.
+
+    `accounts`, `account` and `deployment` all resolved to authored records, so
+    the portfolio engine allocated risk across a fabricated account set — and
+    because `/api/strategy/*` runs it, those two operational URLs stayed
+    classified fixture-backed even after their own inputs were severed.
+
+    There is no authoritative account or deployment source (M-FLEET-2), so the
+    engine is handed nothing. It already reports `available: false` upstream
+    when the strategy has no admissible input; this makes the portfolio half
+    honest for the same reason.
+    """
     return portfolio_layer.PortfolioEnv(
-        accounts=lambda: _preview_world().get("accounts", []),
-        account=_account_by_id,
-        deployment=_deployment_current,
+        accounts=list,
+        account=lambda _id: None,
+        deployment=lambda _id: None,
         now=_now_iso(),
     )
 
@@ -2018,7 +2071,9 @@ def _run_strategy_evaluation() -> dict:
     risk-assessed opportunity (allocate/defer/reject). Every engine executes nothing."""
     global _STRATEGY_CACHE, _STRATEGY_SEQ, _RISK_CACHE, _PORTFOLIO_CACHE
     _STRATEGY_SEQ += 1
-    for pair in {d.get("pair") for d in _deployments_view() if d.get("pair")}:
+    # M-PREVIEW-DELETE-1: authoritative deployments only — of which there are
+    # none — so the engine iterates nothing rather than the fixture's pairs.
+    for pair in {d.get("pair") for d in _authoritative_deployments() if d.get("pair")}:
         _MARKET_DATA_ENGINE.snapshot(pair, market_data_layer.DEFAULT_TIMEFRAME)
     result = _STRATEGY_ENGINE.evaluate(_strategy_env(), _STRATEGY_SEQ)
     # Risk assessment sits between Decision and Portfolio — assess every Decision.
@@ -2181,7 +2236,7 @@ FLEET_DETAIL_FIXTURE = (
 )
 
 
-@api_router.get("/fleet")
+@api_router.get("/dev/fixture-fleet")
 async def fleet():
     """M-FLEET-1: the fleet composition, with its provenance stated in-band.
 
@@ -2209,17 +2264,8 @@ async def fleet():
     }
 
 
-@api_router.get("/deployments")
-async def deployments():
-    return _deployments_view()
 
 
-@api_router.get("/deployments/{deployment_id}")
-async def deployment(deployment_id: str):
-    dep = _deployment_current(deployment_id)
-    if dep is not None:
-        return _apply_aggregates(dep, _live_trades_view())
-    raise HTTPException(status_code=404, detail="Deployment not found")
 
 
 # M-PKG-1: `/api/packages`, `/api/packages/active` and `/api/policy/{i}/matrix`
@@ -2229,14 +2275,14 @@ async def deployment(deployment_id: str):
 # endpoints for the preview route and tests; no ordinary operator surface calls
 # them (enforced by a frontend source guard), and M-ENV-1 refuses them in
 # production because the fixture world is never loaded there.
-@api_router.get("/packages")
+@api_router.get("/dev/fixture-packages")
 async def packages():
     if not _fixture_available():
         return _fixture_unavailable("packages")
     return _preview_world().get("packages", [])
 
 
-@api_router.get("/packages/active")
+@api_router.get("/dev/fixture-packages/active")
 async def active_package():
     """The runtime-active package (runtime selection ⊕ fixture default). Deploy
     and Rollback change which version this returns without mutating any package."""
@@ -4659,17 +4705,6 @@ async def market_data_quote(symbol: str = "EURUSD", timeframe: str = market_data
 # actions (allow/warn/deny); it executes nothing and blocks nothing automatically.
 # ---------------------------------------------------------------------------
 
-@api_router.get("/risk/assessment")
-async def risk_assessment(deployment: str | None = None):
-    """Assess a deployment's proposed action (or every deployment if unscoped).
-    Read-only — produces RiskAssessment(s); nothing is executed or blocked."""
-    env = _risk_env()
-    if deployment:
-        return risk_layer.asdict(_RISK_ENGINE.assess(env, deployment))
-    deps = _deployments_view()
-    return {"assessments": [risk_layer.asdict(_RISK_ENGINE.assess(env, d.get("deploymentId", "")))
-                            for d in deps],
-            "health": _RISK_METRICS.health()}
 
 
 @api_router.get("/risk/health")
@@ -4720,10 +4755,6 @@ async def risk_limits(account: str | None = None):
 # across approved opportunities (allocate/defer/reject); it executes nothing.
 # ---------------------------------------------------------------------------
 
-@api_router.get("/portfolio/status")
-async def portfolio_status():
-    """Portfolio config + total capital + last allocation decisions + metrics."""
-    return _PORTFOLIO_ENGINE.status(_portfolio_env())
 
 
 @api_router.get("/portfolio/allocations")
@@ -4811,27 +4842,9 @@ async def put_operator_preferences(request: Request) -> dict[str, Any]:
     return merged
 
 
-@api_router.get("/policy/{instrument}/matrix")
-async def policy_matrix(instrument: str, version: int | None = None):
-    """Return the (representative) policy matrix stored in the fixture.
-    The frontend fixture provider expands it to full 24×6=144 cells.
-    """
-    if not _fixture_available():
-        return _fixture_unavailable("policy_matrix")
-    pkgs = _preview_world().get("packages", [])
-    if version is not None:
-        pkg = next((p for p in pkgs if p.get("version") == version), None)
-    else:
-        pkg = next((p for p in pkgs if p.get("status") == "active"), None)
-    if not pkg:
-        raise HTTPException(status_code=404, detail="Package not found")
-    matrices = pkg.get("policy", {}).get("matrices", {})
-    if instrument not in matrices:
-        raise HTTPException(status_code=404, detail=f"No matrix for {instrument}")
-    return matrices[instrument]
 
 
-@api_router.get("/trades")
+@api_router.get("/dev/fixture-trades")
 async def trades(pair: str | None = None, lane: str | None = None):
     if not _fixture_available():
         return _fixture_unavailable("trades")
@@ -4930,17 +4943,11 @@ async def system_confidence():
     }
 
 
-@api_router.get("/recommendations")
+@api_router.get("/dev/fixture-recommendations")
 async def recommendations():
     return _preview_world().get("recommendations", [])
 
 
-@api_router.get("/decisions/{decision_id}")
-async def decision(decision_id: str):
-    for d in _preview_world().get("decisionChains", []):
-        if d.get("decisionId") == decision_id:
-            return d
-    raise HTTPException(status_code=404, detail="Decision chain not found")
 
 
 @api_router.get("/events")

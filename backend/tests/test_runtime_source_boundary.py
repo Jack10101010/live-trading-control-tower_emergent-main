@@ -193,25 +193,29 @@ def test_the_whole_ordinary_surface_works_with_the_asset_absent(tmp_path):
         import server, fixture_preview_service as fps, broker_adapter
         from fastapi.testclient import TestClient
         c = TestClient(server.app)
-        # ORDINARY routes only. `/api/strategy/decisions` is deliberately
-        # excluded: the derived fixture boundary still classifies it as
-        # fixture-backed, so with no asset it answers an honest 501 rather than
-        # a failure — asserted separately below.
+        # ORDINARY routes. M-PREVIEW-DELETE-1 moved `/api/strategy/decisions`
+        # INTO this list: severing the portfolio env and the active-package
+        # fixture fallback made it a genuine operational route with an honest
+        # unavailable contract. The gated example is now a dev preview.
         ordinary = ['/api/health','/api/live-runtime','/api/live/status',
                     '/api/live/connection','/api/operations/nodes',
                     '/api/operations/accounts','/api/operations/positions',
                     '/api/operations/orders','/api/operations/summary',
                     '/api/feature-flags','/api/instruments','/api/broker-health',
-                    '/api/operator/identity','/api/integration/diagnostics']
+                    '/api/operator/identity','/api/integration/diagnostics',
+                    '/api/strategy/decisions']
         bad = [(p, c.get(p).status_code) for p in ordinary
                if c.get(p).status_code >= 500]
-        gated = c.get('/api/strategy/decisions')
+        gated = c.get('/api/dev/fixture-world')
         broker_adapter.get_adapter('mock')
         print('BAD=%s GATED=%d GATEDCODE=%s LOADCOUNT=%d'
               % (bad, gated.status_code, gated.json().get('code'), fps.load_count()))
     """, tmp_path, env_extra={"FIXTURE_PREVIEW_ASSET": "/nonexistent/world.v1.json"})
     assert "BAD=[]" in result.stdout, result.stdout + result.stderr
-    # The gated preview-backed route refuses honestly rather than failing.
+    # M-PREVIEW-DELETE-1: `/api/strategy/decisions` is no longer fixture-backed
+    # at all — it is an operational route with an honest unavailable contract,
+    # so it belongs in the ordinary list above. The gated example is now an
+    # explicit dev preview, which refuses when the asset is absent.
     assert "GATED=501" in result.stdout, result.stdout
     assert "GATEDCODE=fixture_world_unavailable" in result.stdout, result.stdout
     assert "LOADCOUNT=0" in result.stdout, result.stdout

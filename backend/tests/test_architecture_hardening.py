@@ -152,7 +152,7 @@ def test_the_backend_boots_with_the_fixtures_directory_deleted(tmp_path):
                      '/api/integration/diagnostics'):
             assert c.get(path).status_code == 200, path
         # fixture-only surfaces refuse explicitly rather than returning empty
-        for path in ('/api/dev/fixture-world', '/api/fleet', '/api/packages', '/api/trades'):
+        for path in ('/api/dev/fixture-world', '/api/dev/fixture-fleet', '/api/dev/fixture-packages', '/api/dev/fixture-trades'):
             r = c.get(path)
             assert r.status_code == 501, (path, r.status_code)
             assert r.json()['code'] == 'fixture_world_unavailable', path
@@ -175,7 +175,7 @@ def test_the_backend_boots_with_the_fixtures_directory_deleted(tmp_path):
 def test_fixture_only_surfaces_refuse_explicitly_when_absent(monkeypatch):
     """Same guarantee, in-process: 501 with a code, never an empty 200."""
     fixture_preview_service.install_for_test(fixture_world.FixtureWorld(None))
-    for path in ("/api/dev/fixture-world", "/api/fleet", "/api/packages", "/api/trades"):
+    for path in ("/api/dev/fixture-world", "/api/dev/fixture-fleet", "/api/dev/fixture-packages", "/api/dev/fixture-trades"):
         response = client.get(path)
         assert response.status_code == 501, path
         body = response.json()
@@ -188,9 +188,9 @@ def test_fixture_only_surfaces_refuse_explicitly_when_absent(monkeypatch):
 def test_fixture_backed_surfaces_still_work_when_present(fixture_preview):
     """API compatibility, unchanged behaviour with the fixture in place."""
     assert fixture_preview.available is True
-    assert client.get("/api/fleet").status_code == 200
-    assert client.get("/api/packages").status_code == 200
-    assert isinstance(client.get("/api/packages").json(), list)
+    assert client.get("/api/dev/fixture-fleet").status_code == 200
+    assert client.get("/api/dev/fixture-packages").status_code == 200
+    assert isinstance(client.get("/api/dev/fixture-packages").json(), list)
 
 
 # ── 2. operator identity ─────────────────────────────────────────────────────
@@ -595,9 +595,21 @@ def test_the_gated_set_is_derived_from_the_source():
     assert surfaces, "analysis found no fixture-reading routes at all"
     gated = fsurf.gated_paths(surfaces)
     # The regression was under-refusal: five gated, sixteen missed.
-    assert len(gated) > 10
-    assert "/api/deployments" in gated
-    assert "/api/recommendations" in gated
+    # M-PREVIEW-DELETE-1: the gated set SHRANK from 18 to 7 by design — six
+    # dead operational-looking routes deleted, four real previews renamed onto
+    # `/api/dev/*`, and five genuinely operational endpoints severed from the
+    # fixture entirely. The assertion is now the property that matters.
+    assert len(gated) >= 5, gated
+    assert all("/dev/" in path for path in gated), (
+        "a fixture-backed route escaped the /api/dev/ namespace: "
+        + str(sorted(p for p in gated if "/dev/" not in p)))
+    # `/api/deployments` was DELETED — it served authored deployments under an
+    # operational URL with zero consumers. The preview it stood for lives at
+    # `/api/dev/fixture-fleet`, which carries the same records under a name that
+    # says what they are.
+    assert "/api/deployments" not in gated
+    assert "/api/dev/fixture-fleet" in gated
+    assert "/api/dev/fixture-recommendations" in gated
     assert "/api/dev/fixture-world" in gated
 
 
@@ -648,7 +660,10 @@ def test_no_collection_endpoint_returns_a_misleading_empty_list(monkeypatch):
 def test_gated_surfaces_still_serve_when_the_fixture_is_present():
     """API compatibility: the gate must be invisible in normal operation."""
     assert fixture_preview_service.get_world().available is True
-    for path in ("/api/deployments", "/api/packages", "/api/fleet"):
+    # `/api/deployments` was DELETED by M-PREVIEW-DELETE-1 — it served authored
+    # deployments under an operational URL and had no consumer.
+    for path in ("/api/dev/fixture-packages", "/api/dev/fixture-fleet",
+                 "/api/dev/fixture-world"):
         assert client.get(path).status_code == 200, path
 
 

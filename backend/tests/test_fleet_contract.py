@@ -1,6 +1,6 @@
 """M-FLEET-1 — the fleet contract states its own provenance.
 
-`/api/fleet` served deployment, broker and account records with no statement of
+`/api/dev/fixture-fleet` served deployment, broker and account records with no statement of
 origin, so a client could not distinguish authored demonstration data from
 operational truth: a fixture deployment tagged `executionMode: "live"` carrying a
 $412 daily P/L was indistinguishable from a real one.
@@ -32,7 +32,7 @@ BACKEND = Path(__file__).resolve().parent.parent
 
 
 def _fleet() -> dict:
-    r = client.get("/api/fleet")
+    r = client.get("/api/dev/fixture-fleet")
     assert r.status_code == 200
     return r.json()
 
@@ -94,13 +94,13 @@ class _NoWorld:
 
 def test_absent_fixture_answers_501_not_an_empty_fleet(monkeypatch):
     fixture_preview_service.install_for_test(_NoWorld())
-    r = client.get("/api/fleet")
+    r = client.get("/api/dev/fixture-fleet")
     assert r.status_code == 501, "an empty 200 would read as 'no deployments'"
     body = r.json()
     assert body["code"] == fixture_world.CODE_FIXTURE_ABSENT
     # The FIX-2 middleware refuses the path before the route runs, so `surface`
     # is the request path; either identifies the same refused surface.
-    assert body["surface"] in ("fleet", "/api/fleet")
+    assert body["surface"] in ("fleet", "/api/dev/fixture-fleet")
     # No fabricated skeleton may accompany the refusal.
     for key in ("deployments", "brokers", "accounts"):
         assert key not in body
