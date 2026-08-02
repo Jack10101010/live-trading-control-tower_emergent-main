@@ -336,6 +336,33 @@ def test_identity_pin_matrix(label, kwargs, full_ok, noid_ok):
     assert ap.account_admissible(no_identity, **kwargs)[0] is noid_ok, label
 
 
+def test_identity_the_node_says_it_did_not_observe_is_not_identity(monkeypatch):
+    """A node reporting `identity.available: false` while leaving values in the
+    block had those values compared against the pin.
+
+    The dangerous shape is a STALE fingerprint from a previous account that
+    happens to match: it was admitted on the strength of a block the node had
+    just said it did not read. `safe_identity` nulls those fields, so this was
+    unreachable through the shipped node — an argument about the current
+    publisher, not about the contract. The Mac does not rely on the node being
+    self-consistent anywhere else, and now does not here either.
+    """
+    for stale_value in (pay.EXPECTED_ACCOUNT, "acctfp_SOMETHING_ELSE"):
+        payload = pay.account_payload()
+        payload["account"]["identity"]["available"] = False
+        payload["account"]["identity"]["fingerprint"] = stale_value
+        admissible, reasons = ap.account_admissible(
+            pay.envelope(payload), expected_account=pay.EXPECTED_ACCOUNT)
+        assert admissible is False, stale_value
+        assert reasons == (ap.R_ACCOUNT_IDENTITY_UNVERIFIABLE,), reasons
+
+    # The same for the server, and the health block still admits on its own
+    # when nothing is pinned — the rule is about the PIN, not about hiding data.
+    payload = pay.account_payload()
+    payload["account"]["identity"]["available"] = False
+    assert ap.account_admissible(pay.envelope(payload))[0] is True
+
+
 def test_an_unpinned_deployment_is_a_documented_state_not_an_accident(monkeypatch):
     """DECIDED EXPLICITLY: unpinned admission IS permitted.
 

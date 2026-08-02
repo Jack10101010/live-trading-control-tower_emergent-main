@@ -280,13 +280,27 @@ def account_admissible(entry, *, expected_account=None, expected_server=None
     # deployment with `admitted: True` and no reasons at all — the exact
     # condition the pin exists to catch, defeated by omitting a block. When a
     # pin is set, an unverifiable identity fails closed.
-    fingerprint = identity.get("fingerprint")
+    # IDENTITY IS ONLY IDENTITY WHEN THE NODE SAYS IT OBSERVED IT.
+    #
+    # These fields used to be read straight out of the block regardless of
+    # `identity.available`, so a node reporting `available: false` while leaving
+    # values behind had those values compared against the pin — and a stale
+    # fingerprint from a PREVIOUS account that happened to match was admitted on
+    # the strength of a block the node had just said it did not read.
+    #
+    # `live/telemetry.safe_identity` nulls every field when unavailable, so this
+    # was unreachable through the shipped node. That is an argument about the
+    # current publisher, not about the contract: the whole point of `is True`
+    # everywhere else is that the Mac does not rely on the node being
+    # self-consistent.
+    identity_observed = identity.get("available") is True
+    fingerprint = identity.get("fingerprint") if identity_observed else None
     if expected_account:
         if not fingerprint:
             reasons.append(R_ACCOUNT_IDENTITY_UNVERIFIABLE)
         elif fingerprint != expected_account:
             reasons.append(R_ACCOUNT_IDENTITY_MISMATCH)
-    server = identity.get("server")
+    server = identity.get("server") if identity_observed else None
     if expected_server:
         if not server:
             reasons.append(R_ACCOUNT_IDENTITY_UNVERIFIABLE)
