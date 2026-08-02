@@ -27,7 +27,7 @@ The architecture is **frozen**. It was designed across a long series of authorit
 Two of the frozen source documents are embedded in this repo for you:
 - **`_fixtures/brief.md`** — the Master Generation Brief (V2.1): north star, design tokens, page template, component strategy, workspace specs, staged generation.
 - **`_fixtures/contracts.md`** — Track B Canonical Contracts: every entity, identifier, command vocabulary, and the number-format canon.
-- **`_fixtures/world.v1.json`** / **`frontend/src/data/world.v1.json`** / **`backend/fixtures/world.v1.json`** — the coherent Fixture World (must stay byte-identical across all three copies).
+- **`_fixtures/world.v1.json`** — the coherent Fixture World. **M-WORLD-0: there is now exactly ONE copy.** The `backend/fixtures/` and `frontend/src/data/` copies are gone; the backend resolves this path through `fixture_preview_service.fixture_asset_path()` and loads it lazily, for explicit `/api/dev/*` previews only.
 - **`AUDIT-AND-ROADMAP.md`** (repo root) — the first-pass audit and the phased roadmap this work follows.
 - **`memory/PRD.md`** — product requirements memory.
 
@@ -202,7 +202,7 @@ Phases 0–3 are **done**. Remaining, in priority order:
 - **Performance concerns:** tables map arrays directly (fine at fixture scale; virtualize before large row counts). The main JS bundle is ~600 kB (heavy workspaces are already code-split into separate chunks — this is acceptable, not urgent).
 - **Lazy-loading risks:** heavy views are `React.lazy` + a local `Lazy` Suspense wrapper in `App.tsx`. Validated: single stores, single QueryClient, deduped queries, clean chart/interval unmount, inspector state survives navigation. **Any new lazy view must preserve these invariants** (see §11).
 - **Known compromises:** Replay cursor is per-visit local state (resets on tab change); Move Stop/Target/Reduce/Partial commands dispatch without a numeric-price input UI (ConfirmDialog collects a reason, not a price) — a price-input variant is a future enhancement, not a contract change.
-- **Fixture sync:** `frontend/src/data/world.v1.json`, `backend/fixtures/world.v1.json`, and `_fixtures/world.v1.json` must stay identical. Changing one requires changing all three.
+- **Fixture sync:** no longer applicable. M-WORLD-0 left one copy at `_fixtures/world.v1.json`; there is nothing to keep in sync, and a guard fails if a second copy appears.
 - **Environment note:** in this sandbox the `dist/` folder is filesystem-locked; verification builds went to a temp dir. On a normal machine `npm run build` overwrites `dist/` cleanly.
 
 ---
@@ -235,7 +235,7 @@ This section exists to prevent repeating mistakes. It is the most important part
 - **Token-only styling:** consume CSS variables / Tailwind token classes. No literal hex/rgb/px. Lucide icons only. Green/red reserved for P/L & success/danger; triple-encode state.
 - **One source of truth:** formatting → `lib/format.ts`; colour/label maps → `lib/utils.ts`; chart adapters → `lib/chartData.ts`; analytics math → `lib/analytics.ts`. Do not inline these.
 - **No duplicate components / no duplicated business logic:** one Badge, one DataTable, one Inspector, one ConfirmDialog, one ActionBar, one ChartPanel, one DecisionChainView.
-- **Always verify:** `npx tsc --noEmit` must be **0 errors** and `npm run build` must succeed before you consider a task done. Keep the three `world.v1.json` copies in sync.
+- **Always verify:** `npx tsc --noEmit` must be **0 errors** and `npm run build` must succeed before you consider a task done. Do not add a second `world.v1.json`.
 
 ---
 
@@ -299,7 +299,7 @@ Do exactly this, and nothing beyond it:
 11. **Preserve the command layer, Deployment Manifest, and Strategy Package semantics.** Manifest wraps Package; Package is immutable; every trade pins `packageHash`.
 12. **Preserve explainability.** Every decision-bearing object keeps its one-click "Why?" and Decision Chain.
 13. **Preserve the data seam.** Reads through `useRepository` selectors and shared query keys; keep the fixture↔API swap seamless.
-14. **Keep the three `world.v1.json` copies in sync.**
+14. **Do not create a second `world.v1.json`.** One copy lives at `_fixtures/`; a guard fails the suite if another appears.
 15. **Validate lazy-loading invariants** whenever you touch routing, stores, charts, or timers.
 
 Welcome aboard. Start with §10.

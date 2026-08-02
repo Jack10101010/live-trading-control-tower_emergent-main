@@ -150,11 +150,18 @@ api_router = APIRouter(prefix="/api")
 #: empty collection that reads as "nothing is happening".
 #:
 #: When the fixture IS present every reader sees exactly what it saw before.
-FIXTURE_SEARCH_PATHS = (
-    ROOT_DIR / 'fixtures' / 'world.v1.json',
-    Path('/app/frontend/src/data/world.v1.json'),
-    Path('/app/_fixtures/world.v1.json'),
-)
+#: M-WORLD-0 — the backend no longer knows where the fixture lives.
+#:
+#: This was a three-entry search list: the backend package copy plus two
+#: hardcoded `/app/...` container paths that exist on no machine in this
+#: repository. The authored fixture has moved OUT of the runtime package to
+#: `_fixtures/world.v1.json`, a dev asset directory, and
+#: `fixture_preview_service` owns the single resolution rule.
+#:
+#: Retained as a name because tests and diagnostics refer to it, but it now
+#: DELEGATES rather than deciding — there is exactly one place to change if the
+#: asset ever moves again.
+FIXTURE_SEARCH_PATHS = (fixture_preview_service.fixture_asset_path(),)
 
 # M-ENV-1: in production the fixture world is never ACTIVATED. It is not loaded
 # and then ignored — the load call is not made at all, so no fixture bytes enter
@@ -203,28 +210,25 @@ def _preview_world() -> fixture_world.FixtureWorld:
     contract the boundary uses, so a preview degrades exactly as it did before
     rather than 500-ing.
     """
-    # LOADS on first call, and DEGRADES rather than raising.
+    # M-WORLD-0 — A CORRUPT ASSET MUST NOT READ AS AN EMPTY ONE.
     #
-    # An earlier draft raised 501 here. That was wrong in one direction: a
-    # handful of surfaces read the fixture only for metadata (`/api/health`
-    # reports `meta.asOf`; `/api/market-data/candles` uses it as a seam marker)
-    # while their payload comes from a production source. Refusing those would
-    # HIDE GENUINE DATA — the over-refusal half of the FIX-2 lesson, and the
-    # mirror image of the silent-empty bug that motivated the boundary.
+    # This degraded to `unavailable_world()`, so a preview route served
+    # `200 {}` when the file was unreadable. An empty world is indistinguishable
+    # from a present-but-empty fixture, which is exactly the confusion
+    # `FixtureWorld.available` exists to prevent — and the boundary middleware
+    # could not catch it either, because its probe is `Path.exists()` and a
+    # corrupt file exists.
     #
-    # Refusal stays where it already lived and was already proven: the
-    # `_fixture_surface_boundary` middleware for collection paths, and the
-    # `@requires_fixture` decorator for individual handlers. Both consult
-    # `_fixture_available()` below.
+    # Degrading was correct while INCIDENTAL readers shared this accessor. They
+    # no longer do: `_optional_fixture()` serves them and never loads. Every
+    # caller here is an explicit preview that asked for authored records by
+    # name, and must be told when it cannot have them.
     try:
         return fixture_preview_service.get_world()
-    except fixture_preview_service.FixturePreviewUnavailable:
-        # Refusal is the boundary's job (`_fixture_surface_boundary` for
-        # collection paths, `@requires_fixture` for individual handlers), and
-        # both consult `_fixture_available()`. Returning the unavailable world
-        # here keeps this accessor total, so a handler that slips past the gate
-        # renders an explicit absence rather than a 500.
-        return fixture_world.unavailable_world()
+    except fixture_preview_service.FixturePreviewUnavailable as exc:
+        raise HTTPException(status_code=501, detail={
+            "error": "unavailable", "code": exc.code,
+            "surface": "fixture-preview", "detail": exc.detail}) from exc
 
 
 def _optional_fixture() -> fixture_world.FixtureWorld:

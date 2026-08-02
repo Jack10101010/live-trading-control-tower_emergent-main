@@ -135,7 +135,9 @@ M-ENV-1 (environment boundary)    ─┬─► M-EVENTS-1 (split)        [no ext
 | **M-TRADES-1** | Trades/orders from ledger | `WORLD.liveTrades/ghostTrades/blockedIntents` | `/ledger/*` + `/operations/*` | `server.py`, `useTrades`, Pair tabs | broker history | High |
 | **M-TRADES-2** | Analytics from real closes | `computeMetrics` over fixture trades | ledger-derived or unavailable | `AnalyticsView`, `lib/analytics.ts` | M-TRADES-1 | Med |
 | **M-REC-1** | Recommendations from durable store | `WORLD.recommendations/drafts/decisionChains` | existing durable store | `server.py`, inspectors, EdgeMonitor pipeline panel | M-ENV-1 | Med |
-| **M-WORLD-0** | Delete the fixture from production | `WORLD` itself | fixture moves to `tests/` + dev-only loader | delete `fixtures/world.v1.json` from prod path, `fixture_world.py` → dev/test only, `/world` route removed | all above | Low once drained |
+| **M-WORLD-0** ☑ | Delete the fixture from production | `WORLD` itself | moved to `_fixtures/` + dev-only lazy loader | ☑ `backend/fixtures/world.v1.json` deleted · ☑ `/api/world` → `/api/dev/fixture-world` · ☑ `WORLD` global gone · ◐ `fixture_world.py` still imported for the `unavailable()` response contract (see note) | all above | **done** |
+
+> **M-WORLD-0 note.** Three of the four stated conditions are met outright. The fourth — *`fixture_world.py` → dev/test only* — is met in EFFECT but not literally: the module owns both the dev-only loader AND `unavailable()`, the canonical honest-refusal body that ordinary routes return when a fixture-backed surface is asked for. That contract is genuine runtime behaviour, so the module legitimately remains imported. Splitting it would move one function for the sake of a sentence. The loader itself is unreachable from any ordinary path, which is what the condition was protecting.
 
 Each milestone: one coherent domain, one reviewable diff, tests + honest-contract guards, one clean commit. Commit-message template follows the M-EDGE-1 form (producer severed · consumers updated · replacement or unavailable · tests · scoreboard ☑).
 

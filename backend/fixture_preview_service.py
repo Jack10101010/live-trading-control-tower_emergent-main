@@ -45,6 +45,7 @@ DEFENSIVE COPIES
 from __future__ import annotations
 
 import copy
+import os
 import logging
 import threading
 from pathlib import Path
@@ -85,14 +86,48 @@ _SEARCH_PATHS: tuple = ()
 _LOAD_COUNT = 0
 
 
-def configure(search_paths) -> None:
-    """Tell the service where the fixture may live. Performs NO I/O.
+# ── M-WORLD-0: the ONE place that knows where the authored fixture lives ──────
+#
+# `server.FIXTURE_SEARCH_PATHS` held three candidates — the backend package copy
+# plus two hardcoded `/app/...` container paths that exist on no machine in this
+# repository. A search list is how a "temporary" old-path fallback becomes
+# permanent: nobody can tell which entry actually answered, so no entry can
+# safely be removed.
+#
+# There is now ONE default and ONE override. No search, no fallback, and
+# deliberately no path inside `backend/` — the runtime package must not be able
+# to satisfy a fixture read even by accident.
 
-    Called once at import by `server.py`. Recording paths is not loading them —
-    that distinction is the milestone.
+#: Override for tests and local preview tooling. One variable, not a family.
+VAR_FIXTURE_ASSET = "FIXTURE_PREVIEW_ASSET"
+
+#: The repository-relative default: a DEV ASSET directory, outside every runtime
+#: package, alongside the design documents the fixture was authored with
+#: (`brief.md`, `contracts.md`). Derived from this module's own location so it
+#: does not depend on the working directory a process happened to start in.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_FIXTURE_ASSET = _REPO_ROOT / "_fixtures" / "world.v1.json"
+
+
+def fixture_asset_path() -> Path:
+    """Where the authored fixture world lives. Performs NO I/O.
+
+    Resolving a path is not reading a file, and this function is safe to call
+    from the request boundary that runs on every `/api` call.
+    """
+    override = (os.environ.get(VAR_FIXTURE_ASSET) or "").strip()
+    return Path(override) if override else DEFAULT_FIXTURE_ASSET
+
+
+def configure(search_paths=None) -> None:
+    """Record where the fixture may live. Performs NO I/O.
+
+    Retained so `server.py` and the existing preview tests can pin a path
+    explicitly. With no argument it resolves the canonical dev asset.
     """
     global _SEARCH_PATHS
-    _SEARCH_PATHS = tuple(search_paths)
+    _SEARCH_PATHS = (tuple(search_paths) if search_paths is not None
+                     else (fixture_asset_path(),))
 
 
 def search_paths() -> tuple:
@@ -103,7 +138,7 @@ def search_paths() -> tuple:
     disagreeing about where the fixture lives — the probe would report present
     while the loader searched somewhere else.
     """
-    return _SEARCH_PATHS
+    return _SEARCH_PATHS or (fixture_asset_path(),)
 
 
 def reset() -> None:
@@ -213,14 +248,22 @@ def get_world() -> fixture_world.FixtureWorld:
                 "fixture previews are not available in this environment: "
                 f"{type(exc).__name__}") from exc
 
-        world = fixture_world.load(_SEARCH_PATHS)
+        # `search_paths()`, not the raw tuple: a process that never called
+        # `configure()` must still resolve the canonical dev asset rather
+        # than searching an empty list and reporting 'Searched: (none)'.
+        paths = search_paths()
+        world = fixture_world.load(paths)
         _LOAD_COUNT += 1
         if not world.available:
             # A missing or corrupt fixture is LOCAL to the preview: it must not
             # be cached, so fixing the file and retrying works without a
             # restart, and a later test asserting the loaded case is not poisoned
             # by an earlier one asserting absence.
-            searched = ", ".join(Path(p).name for p in _SEARCH_PATHS) or "(none)"
+            # File NAMES only. An absolute path discloses host layout, and
+            # this repository already holds that line (`status()` reports
+            # `path.name`). Widening it for debugging convenience would
+            # trade a redaction property for a stack trace.
+            searched = ", ".join(Path(p).name for p in paths) or "(none)"
             raise FixturePreviewUnavailable(
                 CODE_UNAVAILABLE,
                 "the development fixture world could not be read. Searched: "

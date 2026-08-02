@@ -62,7 +62,7 @@ def test_provenance_is_never_silently_live():
 # ── (b) the records themselves are unchanged ────────────────────────────────
 def test_records_are_served_exactly_as_the_fixture_holds_them():
     d = _fleet()
-    world = json.loads((BACKEND / "fixtures" / "world.v1.json").read_text())
+    world = json.loads(fixture_preview_service.fixture_asset_path().read_text())   # M-WORLD-0
     assert [b["brokerId"] for b in d["brokers"]] == [b["brokerId"] for b in world["brokers"]]
     assert [a["accountId"] for a in d["accounts"]] == [a["accountId"] for a in world["accounts"]]
     assert ([x["deploymentId"] for x in d["deployments"]]
@@ -76,7 +76,7 @@ def test_counts_are_whatever_the_source_holds_not_a_hard_coded_total():
     for key in ("deployments", "brokers", "accounts"):
         assert isinstance(d[key], list)
     assert "deploymentCount" not in d and "brokerCount" not in d and "accountCount" not in d
-    world = json.loads((BACKEND / "fixtures" / "world.v1.json").read_text())
+    world = json.loads(fixture_preview_service.fixture_asset_path().read_text())   # M-WORLD-0
     assert len(d["deployments"]) == len(world["deployments"])
     assert len(d["brokers"]) == len(world["brokers"])
     assert len(d["accounts"]) == len(world["accounts"])

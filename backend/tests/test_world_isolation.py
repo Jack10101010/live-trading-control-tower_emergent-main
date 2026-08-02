@@ -196,7 +196,7 @@ def test_5_production_cannot_invoke_the_loader(tmp_path):
     result = _child("""
         import sys; sys.path.insert(0, '.')
         import fixture_preview_service as fps
-        fps.configure(['fixtures/world.v1.json'])
+        fps.configure([str(fps.fixture_asset_path())])
         try:
             fps.get_world()
             print('LOADED_IN_PRODUCTION')

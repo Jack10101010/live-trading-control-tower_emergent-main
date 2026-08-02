@@ -108,7 +108,10 @@ def test_the_unavailable_body_is_explicit_and_machine_readable():
 
 
 def test_fixture_status_discloses_no_host_layout():
-    world = fixture_world.load([BACKEND_DIR / "fixtures" / "world.v1.json"])
+    # M-WORLD-0: the authored fixture moved OUT of the backend package. Tests
+    # ask the canonical resolver rather than hard-coding a path, so a future
+    # relocation is one edit and cannot leave a stale copy behind.
+    world = fixture_world.load([fixture_preview_service.fixture_asset_path()])
     status = world.status()
     assert status["available"] is True
     assert status["source"] == "world.v1.json"          # NAME only

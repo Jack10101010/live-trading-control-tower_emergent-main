@@ -28,6 +28,7 @@ import pytest                                                       # noqa: E402
 
 import broker_adapter                                               # noqa: E402
 import environment                                                  # noqa: E402
+import fixture_preview_service
 import fixture_world                                                # noqa: E402
 import market_data                                                  # noqa: E402
 
@@ -83,7 +84,7 @@ def test_6_world_loading_remains_available_in_development(monkeypatch):
     monkeypatch.delenv(environment.VAR_ENVIRONMENT, raising=False)
     assert environment.policy().world_may_load is True
     # The real loader runs and finds the real fixture — no exception, world present.
-    world = fixture_world.load((BACKEND / "fixtures" / "world.v1.json",))
+    world = fixture_world.load((fixture_preview_service.fixture_asset_path(),))   # M-WORLD-0: canonical resolver
     assert world.available is True
 
 
@@ -163,7 +164,7 @@ def test_19_fixture_world_activation_is_rejected_in_production(monkeypatch):
     assert exc.value.reason == environment.REASON_FIXTURE_FORBIDDEN
     # The loader itself refuses — a real, existing fixture path is used, so this
     # proves the guard fires BEFORE any file is opened, not that the file is gone.
-    real_fixture = BACKEND / "fixtures" / "world.v1.json"
+    real_fixture = fixture_preview_service.fixture_asset_path()   # M-WORLD-0
     assert real_fixture.exists(), "test needs the real fixture present to be meaningful"
     with pytest.raises(environment.EnvironmentViolation):
         fixture_world.load((real_fixture,))
