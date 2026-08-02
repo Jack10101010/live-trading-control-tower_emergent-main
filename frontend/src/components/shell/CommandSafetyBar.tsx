@@ -1,5 +1,6 @@
 import { useSystemConfidence, useOperator, useBackendHealth } from '@/hooks/useRepository';
 import { HealthDot } from '@/components/primitives';
+import { OperatorIdentityChip } from '@/components/shell/OperatorIdentityChip';
 import { IconButton } from '@/components/primitives/Button';
 import { useShellStore } from '@/store/shellStore';
 import { Command, ShieldAlert, Radio, Sun, Moon, Monitor } from 'lucide-react';
@@ -246,19 +247,8 @@ export function CommandSafetyBar() {
         </IconButton>
       </div>
 
-      {/* Operator */}
-      <div className="flex items-center gap-2 px-3 h-full">
-        <div className="w-6 h-6 rounded-full flex items-center justify-center text-2xs font-semibold" style={{ background: 'var(--panel-3)', color: 'var(--text)' }}>
-          {String(operator.displayName).charAt(0)}
-        </div>
-        <div className="flex flex-col leading-tight">
-          <span className="text-xs text-text">{String(operator.displayName)}</span>
-          {/* M-FLEET-2: this rendered the fixture world's frozen `asOf` as a
-              live clock beside the operator's name. It was the fixture's
-              timestamp, not the current time and not a data freshness signal. */}
-          <span className="text-2xs text-text-muted mono">operator</span>
-        </div>
-      </div>
+      <OperatorIdentityChip operator={operator} />
+
     </div>
   );
 }

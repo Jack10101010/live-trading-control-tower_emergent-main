@@ -149,7 +149,7 @@ def test_the_backend_boots_with_the_fixtures_directory_deleted(tmp_path):
                      '/api/integration/diagnostics'):
             assert c.get(path).status_code == 200, path
         # fixture-only surfaces refuse explicitly rather than returning empty
-        for path in ('/api/world', '/api/fleet', '/api/packages', '/api/trades'):
+        for path in ('/api/dev/fixture-world', '/api/fleet', '/api/packages', '/api/trades'):
             r = c.get(path)
             assert r.status_code == 501, (path, r.status_code)
             assert r.json()['code'] == 'fixture_world_unavailable', path
@@ -172,7 +172,7 @@ def test_the_backend_boots_with_the_fixtures_directory_deleted(tmp_path):
 def test_fixture_only_surfaces_refuse_explicitly_when_absent(monkeypatch):
     """Same guarantee, in-process: 501 with a code, never an empty 200."""
     fixture_preview_service.install_for_test(fixture_world.FixtureWorld(None))
-    for path in ("/api/world", "/api/fleet", "/api/packages", "/api/trades"):
+    for path in ("/api/dev/fixture-world", "/api/fleet", "/api/packages", "/api/trades"):
         response = client.get(path)
         assert response.status_code == 501, path
         body = response.json()
@@ -595,7 +595,7 @@ def test_the_gated_set_is_derived_from_the_source():
     assert len(gated) > 10
     assert "/api/deployments" in gated
     assert "/api/recommendations" in gated
-    assert "/api/world" in gated
+    assert "/api/dev/fixture-world" in gated
 
 
 def test_the_runtime_gate_matches_the_derived_analysis():

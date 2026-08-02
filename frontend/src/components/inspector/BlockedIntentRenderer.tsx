@@ -1,4 +1,3 @@
-import { useRepository } from '@/hooks/useRepository';
 import type { BlockedIntent } from '@/types/domain';
 import { Badge, KeyValueGrid, LaneChip, TimestampUTC } from '@/components/primitives';
 import { parseScenarioKey } from '@/lib/utils';

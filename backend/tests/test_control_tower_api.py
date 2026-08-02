@@ -75,7 +75,7 @@ class TestMeta:
 
 class TestWorld:
     def test_world_contract(self, api):
-        r = api.get(f"{BASE_URL}/api/world")
+        r = api.get(f"{BASE_URL}/api/dev/fixture-world")
         assert r.status_code == 200
         d = r.json()
         assert d["meta"]["fixtureVersion"] == "world.v1"
@@ -769,7 +769,7 @@ class TestPortfolio:
         d = api.get(f"{BASE_URL}/api/portfolio/status").json()
         assert d["portfolioHealthy"] is True
         # Total capital reuses account equity (sum) — not recomputed from trades.
-        accts = api.get(f"{BASE_URL}/api/world").json()["accounts"]
+        accts = api.get(f"{BASE_URL}/api/dev/fixture-world").json()["accounts"]
         expected = round(sum((a.get("equity") or a.get("balance") or 0) for a in accts), 2)
         assert d["totalCapital"] == expected
         assert d["limits"]["maxAllocationsPerPair"] >= 1

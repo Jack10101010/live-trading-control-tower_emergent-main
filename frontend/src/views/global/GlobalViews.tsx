@@ -266,14 +266,34 @@ export function SettingsView() {
           icon={<User size={13} />}
           title="Operator Profile"
         >
+          {/* M-WORLD-ORDINARY-1 — every row here came from the FIXTURE's
+              authored operator, and `Role` and `Timezone` layered invented
+              `?? 'Lead'` / `?? 'UTC'` fallbacks on top of it. There is no
+              display name, role or timezone source in this deployment: the API
+              boundary is a single shared token with no users or sessions. */}
           <KeyValueGrid
             items={[
-              { label: 'Display name', value: String(operator.displayName) },
-              { label: 'Operator ID', value: String(operator.operatorId), mono: true },
-              { label: 'Role', value: <Badge variant="status">{String(operator.role ?? 'Lead')}</Badge> },
-              { label: 'Timezone', value: String(operator.timezone ?? 'UTC') },
+              { label: 'Operator ID', value: operator.operatorId, mono: true },
+              { label: 'Identity source', value: operator.source },
+              { label: 'Assurance', value: <Badge variant="status">{operator.assurance}</Badge> },
+              {
+                label: 'Configured via',
+                value: <span className="mono">{operator.configVar}</span>,
+              },
             ]}
           />
+          <p className="text-2xs text-text-muted mt-2" data-testid="operator-identity-note">
+            {operator.attributed
+              ? 'This id is configuration, not a login. This Control Tower has no ' +
+                'per-user authentication — the API boundary authenticates a single ' +
+                'shared token — so actions are attributed to the configured operator ' +
+                'and recorded with that assurance level.'
+              : 'No operator is configured, so actions are recorded as ' +
+                `${operator.operatorId}. That is a real and reportable state, not a ` +
+                'failure: an action taken with no established operator should say so ' +
+                'rather than name a plausible person. No display name, role or ' +
+                'timezone is shown because no source for them exists.'}
+          </p>
         </SettingsSection>
 
         <SettingsSection

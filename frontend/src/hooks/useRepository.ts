@@ -5,7 +5,7 @@ import { deriveFairValueGaps, type FairValueGap } from '@/lib/fairValueGaps';
 import { deriveLiquidityPools, type LiquidityPool } from '@/lib/liquidity';
 import { deriveMarketStructure, type MarketStructure } from '@/lib/marketStructure';
 import { type Candle } from '@/lib/chartData';
-import { api, QK, type BackendHealth, type BrokerReconciliation, type OperatorPreferences, type RuntimeHealth, type StrategyEvaluation, type SchedulerStatus, type MarketSnapshot, type RiskLimits, type MarketCandles, type FleetProvenance, type NodeOperationalView, type AccountOperationalView, type PositionOperationalView, type OrderOperationalView, type RecommendationOperationalView, type Capability, type LedgerAnalytics } from '@/lib/api';
+import { api, QK, type BackendHealth, type BrokerReconciliation, type OperatorPreferences, type RuntimeHealth, type StrategyEvaluation, type SchedulerStatus, type MarketSnapshot, type RiskLimits, type MarketCandles, type FleetProvenance, type NodeOperationalView, type AccountOperationalView, type PositionOperationalView, type OrderOperationalView, type RecommendationOperationalView, type Capability, type LedgerAnalytics, type OperatorIdentity } from '@/lib/api';
 import {
   authoritativeOnly,
   classify,
@@ -53,26 +53,51 @@ import type {
 } from '@/types/domain';
 
 /**
- * The single source of truth: fetch `/api/world` once via TanStack Query.
- * All other hooks are pure selectors over the cached response. The component
- * tree cannot tell whether data comes from the fixture or a live backend.
+/**
+ * M-WORLD-ORDINARY-1 — RENAMED, and restricted to `/dev/*` routes.
  *
- * When individual endpoints are wired later, replace this hook's implementation
- * with per-hook `useSuspenseQuery` calls — no consumer needs to change.
+ * This was `useWorld()`, and the application SHELL called it on every ordinary
+ * page: `useOperator()` read `world.operators[0]` to render a name in the
+ * chrome, so every route fetched all 22 fixture collections in order to display
+ * an authored person. The name gave no hint that it served authored records.
+ *
+ * The name now says what it is, the endpoint is `/api/dev/fixture-world`, and a
+ * source guard rejects any import of it outside `views/dev/`.
  */
-function useWorld(): WorldFixture {
+/**
+ * The UI's own domain taxonomy. Not system state, and not an observation —
+ * these are the labels this application uses to talk about FX structure, so it
+ * owns them. Served from `world.vocabulary` before M-WORLD-ORDINARY-1, which
+ * meant Settings could not render without the authored fixture file.
+ */
+export const DOMAIN_VOCABULARY = {
+  domain: 'FX',
+  sessions: ['London', 'Lull', 'NewYork', 'NY_PM', 'Asia', 'Outside'],
+  structures: ['BOS', 'CHoCH'],
+  directions: ['Long', 'Short'],
+  marketStates: ['BullExpand', 'BullCompress', 'BullChop',
+                 'BearExpand', 'BearCompress', 'BearChop'],
+  rrLadder: [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5,
+             2.75, 3.0, 3.25, 3.5, 3.75, 4.0, 4.25, 4.5, 4.75, 5.0],
+} as const;
+
+function useFixtureWorldPreview(): WorldFixture {
   const { data } = useSuspenseQuery({
     queryKey: QK.world,
-    queryFn: api.world,
+    queryFn: api.fixtureWorldPreview,
     staleTime: Infinity,
   });
   return data;
 }
 
-/** Back-compat alias — several renderers still call `useRepository()` */
-export function useRepository(): { world: WorldFixture } {
-  return { world: useWorld() };
-}
+/**
+ * M-WORLD-ORDINARY-1 — `useRepository()` is GONE.
+ *
+ * It returned the whole fixture world to any caller. Its last consumer,
+ * `TradeRenderer`, destructured `world` and never read a field from it —
+ * M-TRADES-1 had already emptied every collection it used — so an ordinary
+ * inspector was fetching 22 authored collections to use none of them.
+ */
 
 /**
  * M-FLEET-2 — the AUTHORITATIVE operational fleet.
@@ -257,7 +282,10 @@ export function useDeploymentManifest(_deploymentId: string): DeploymentManifest
 }
 
 export function usePairWorkspace(pairId: string) {
-  const world = useWorld();
+  // M-WORLD-ORDINARY-1: the `useWorld()` call here was DEAD — every collection
+  // it once read had already been emptied by M-TRADES-1, M-FLEET-2, M-NODE-TEL-1
+  // and M-EVENTS-1, so an ordinary pair route fetched the whole fixture world
+  // and discarded all of it.
   return useMemo(() => {
     // M-TRADES-1: fixture trades, ghosts and blocked intents no longer reach a
     // pair workspace on an ordinary route.
@@ -273,7 +301,7 @@ export function usePairWorkspace(pairId: string) {
     // M-EVENTS-1: the pair workspace no longer surfaces fixture events.
     const events: EventEntry[] = [];
     return { pair: pairId, trades, ghosts, blocked, deployments, marketState, decisions, events };
-  }, [world, pairId]);
+  }, [pairId]);
 }
 
 // Module-level cache of expanded matrices, keyed by instrument@version. Replaces
@@ -417,13 +445,30 @@ export function useBrokerReconciliation(): BrokerReconciliation {
 }
 
 /** Last strategy evaluation via `/api/strategy/decisions` (Phase 9, read-only). */
-export function useStrategyEvaluation(): StrategyEvaluation {
+/**
+ * M-WORLD-ORDINARY-1 — the strategy engine's inputs were all authored.
+ *
+ * `_strategy_env` injected fixture DEPLOYMENTS, a policy matrix derived from
+ * fixture PACKAGES, and fixture RECOMMENDATIONS. The engine is real code, but
+ * every input was invented, so SystemView rendered a synthetic evaluation of a
+ * fabricated world as the live engine's operational record: a decision count,
+ * a fired/held/rejected split, an evaluation latency and a `strategyHealthy`
+ * dot.
+ *
+ * The backend now reports `available: false` with a reason rather than
+ * evaluating nothing and returning zeros — `0 fired · 0 held` with a latency
+ * asserts that an evaluation ran, which is a claim about the strategy's
+ * behaviour that nothing supports.
+ */
+export function useStrategyEvaluation(): StrategyEvaluation & {
+  available: boolean; detail: string | null;
+} {
   const { data } = useSuspenseQuery({
     queryKey: QK.strategyDecisions,
     queryFn: api.strategyDecisions,
     staleTime: Infinity,
   });
-  return data;
+  return data as StrategyEvaluation & { available: boolean; detail: string | null };
 }
 
 /** Scheduler status via `/api/scheduler/status` (Phase 10, read-only). */
@@ -688,11 +733,11 @@ export function useFixturePackagesPreview(): Package[] {
 }
 
 export function useReplaySessions(): ReplaySession[] {
-  return useWorld().replaySessions;
+  return useFixtureWorldPreview().replaySessions;
 }
 
 export function useReplaySessionForPair(pair: string): ReplaySession | undefined {
-  const world = useWorld();
+  const world = useFixtureWorldPreview();
   return world.replaySessions.find((r) => r.scope.pair === pair) ?? world.replaySessions[0];
 }
 
@@ -706,7 +751,7 @@ export function usePackageComparisons(): { comparisons: PackageComparison[]; sta
 
 /** M-PKG-1 — DEVELOPMENT FIXTURE PREVIEW ONLY. */
 export function useFixturePackageComparisonsPreview(): PackageComparison[] {
-  return useWorld().packageComparisons;
+  return useFixtureWorldPreview().packageComparisons;
 }
 
 export function useDeploymentsForPackage(packageHash: string): Deployment[] {
@@ -773,7 +818,7 @@ export function useMarketState(_instrument: string): MarketStateSnapshot | undef
 
 /** M-NODE-TEL-1 — DEVELOPMENT FIXTURE PREVIEW ONLY. Authored regime data. */
 export function useFixtureMarketStatePreview(): Array<Record<string, unknown>> {
-  return useWorld().marketStateSnapshots as unknown as Array<Record<string, unknown>>;
+  return useFixtureWorldPreview().marketStateSnapshots as unknown as Array<Record<string, unknown>>;
 }
 
 /**
@@ -933,10 +978,38 @@ export function useRealtimeSync(): void {
   }, [setRealtime]);
 }
 
-export function useVocabulary() {
-  return useWorld().vocabulary;
+/**
+ * M-WORLD-ORDINARY-1 — the display taxonomy is FRONTEND-OWNED.
+ *
+ * This fetched `world.vocabulary` from the backend: sessions, structures,
+ * directions, market states and an RR ladder. None of it is system state — it
+ * is the UI's own domain vocabulary — but serving it from the fixture meant
+ * Settings could not render without the authored file.
+ */
+export function useVocabulary(): typeof DOMAIN_VOCABULARY {
+  return DOMAIN_VOCABULARY;
 }
 
-export function useOperator() {
-  return useWorld().operators[0];
+/**
+ * M-WORLD-ORDINARY-1 — the acting operator, from CONFIGURATION.
+ *
+ * This returned `world.operators[0]`: the fixture's authored operator, rendered
+ * as a display name in the shell of every page and as an id, role and timezone
+ * on Settings — the last two with invented `?? 'Lead'` / `?? 'UTC'` fallbacks
+ * layered on top. An asserted human identity in an operator console is not
+ * decoration.
+ *
+ * `/api/operator/identity` reports `operator_identity.resolve()` — the same
+ * source every audit record and safety `operator_ref` already uses. It is
+ * configuration or the explicit `UNATTRIBUTED`, with an assurance level, and
+ * it carries NO display name, role, timezone, email or avatar, because this
+ * deployment has no per-user authentication and none of those has a source.
+ */
+export function useOperator(): OperatorIdentity {
+  const { data } = useSuspenseQuery({
+    queryKey: QK.operatorIdentity,
+    queryFn: api.operatorIdentity,
+    staleTime: Infinity,
+  });
+  return data;
 }

@@ -299,7 +299,7 @@ def test_all_mutation_and_command_routes_are_protected():
 def test_sensitive_read_routes_are_protected():
     for path in ("/api/", "/api/security/config", "/api/live/status",
                  "/api/live/connection", "/api/events",
-                 "/api/events/live", "/api/ops/status", "/api/world",
+                 "/api/events/live", "/api/ops/status", "/api/dev/fixture-world",
                  "/api/commands/{name}", "/api/runtime/reset",
                  "/api/operator/preferences"):
         assert ap.is_protected(path), path
@@ -522,7 +522,7 @@ def test_the_deployed_app_has_authentication_disabled():
 
 def test_all_existing_routes_still_respond_while_disabled():
     for path in ("/api/health", "/api/live/status", "/api/live/connection",
-                 "/api/ops/status", "/api/security/config", "/api/world",
+                 "/api/ops/status", "/api/security/config", "/api/dev/fixture-world",
                  "/openapi.json"):
         assert live.get(path).status_code == 200, path
 

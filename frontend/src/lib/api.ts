@@ -842,6 +842,30 @@ export interface ProjectionFreshness {
   detail: string | null;
 }
 
+/**
+ * M-WORLD-ORDINARY-1 — the acting operator.
+ *
+ * Every descriptive field is `null` and stays null: this deployment has no
+ * per-user authentication (`auth_policy` is one shared token with no users or
+ * sessions), so a name, role, timezone, email or avatar would be invented. The
+ * keys are present rather than omitted so a consumer cannot quietly supply its
+ * own default — which is how `?? 'Lead'` reached the Settings page.
+ */
+export interface OperatorIdentity {
+  operatorId: string;
+  attributed: boolean;
+  assurance: string;
+  /** `configuration` | `unconfigured` — WHERE the id came from. */
+  source: string;
+  configVar: string;
+  displayName: null;
+  role: null;
+  timezone: null;
+  email: null;
+  avatarUrl: null;
+  permissions: null;
+}
+
 export interface NodeOperationalView {
   nodeId: string;
   instanceId: string | null;
@@ -1383,7 +1407,12 @@ export class MarketOrderError extends Error {
 }
 
 export const api = {
-  world: () => apiFetch<WorldFixture>('/world'),
+  /** M-WORLD-ORDINARY-1 — DEV PREVIEW ONLY. Renamed from `world` and moved off
+   *  `/api/world`, which read as an operational resource and was fetched by the
+   *  application shell on every page. */
+  fixtureWorldPreview: () => apiFetch<WorldFixture>('/dev/fixture-world'),
+  /** The acting operator, from configuration. No name, role or avatar exists. */
+  operatorIdentity: () => apiFetch<OperatorIdentity>('/operator/identity'),
   executionState: () => apiFetch<ExecutionStateView>('/execution/state'),
   /* LIVE-2 — submit the ONE executable broker operation. A FRESH idempotency key
    * per intentional operator action: a network retry of the SAME action returns
@@ -1815,6 +1844,7 @@ export const QK = {
   marketCandles: (symbol: string, provider: string | undefined, count: number, end: string | undefined, timeframe = 'M15') =>
     ['market-candles', symbol, provider ?? 'active', count, end ?? 'default', timeframe] as const,
   riskLimits: ['risk-limits'] as const,
+  operatorIdentity: ['operator-identity'] as const,
   decision: (id: string) => ['decision', id] as const,
   policyMatrix: (instrument: string, version?: number) =>
     ['policy-matrix', instrument, version ?? 'active'] as const,

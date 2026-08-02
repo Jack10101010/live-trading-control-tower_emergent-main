@@ -1808,15 +1808,68 @@ def _active_matrix(pair: str) -> dict | None:
     return pkg.get("policy", {}).get("matrices", {}).get(pair)
 
 
+#: M-WORLD-ORDINARY-1 — why the strategy engine has nothing to evaluate.
+#:
+#: `_strategy_env` injected THREE authored inputs: `deployments` from
+#: `WORLD["deployments"]`, `policy_matrix` from the fixture's authored packages,
+#: and `recommendations_for` from `WORLD["recommendations"]`. The engine itself
+#: is real code, but every input was invented, so its output — "3 fired · 2 hold
+#: · 1 rej", a decision count, an evaluation latency and a `strategyHealthy`
+#: dot — was a synthetic evaluation of a fabricated world, rendered on SystemView
+#: as the live strategy engine's operational record.
+#:
+#: The inputs are severed rather than the engine deleted: it will work the moment
+#: genuine deployments and a genuine package registry exist. Until then it has no
+#: admissible input, which is a fact about the system and is reported as one.
+STRATEGY_UNAVAILABLE_CODE = "strategy_inputs_unavailable"
+STRATEGY_UNAVAILABLE_DETAIL = (
+    "The strategy engine has no authoritative inputs. It evaluates deployments "
+    "against a policy matrix and open recommendations; M-FLEET-2 established "
+    "that no authoritative deployment record exists and M-PKG-1 that no package "
+    "registry exists, so there is nothing to evaluate. This is a missing "
+    "capability, not a failed evaluation — no decision, latency or health "
+    "figure is reported, because none was produced."
+)
+
+
+def _strategy_inputs_available() -> bool:
+    """Whether the engine has anything authoritative to evaluate.
+
+    Deliberately conservative and deliberately NOT a fixture check: it asks
+    whether an authoritative deployment set exists, which is the engine's
+    primary input. Today the answer is always False, and it will become True
+    without touching this function when deployments become real.
+    """
+    return bool(_authoritative_deployments())
+
+
+def _authoritative_deployments() -> list:
+    """Deployments the tower can vouch for. There is no such source yet.
+
+    M-FLEET-2: `/api/operations/nodes` projects execution NODES, not
+    deployments, and manufacturing deployments from nodes would recreate the
+    fabrication that milestone removed.
+    """
+    return []
+
+
 def _strategy_env() -> strategy_layer.StrategyEnv:
+    """The engine's inputs, with every authored source removed.
+
+    Callers must check `_strategy_inputs_available()` first; this env exists so
+    the engine remains constructible and testable, not so it can be evaluated
+    against nothing and have the empty result reported as an observation.
+    """
     return strategy_layer.StrategyEnv(
-        deployments=_deployments_view,
+        deployments=_authoritative_deployments,
         market_state=_market_state,
         policy_matrix=_active_matrix,
         active_package_version=lambda: _active_package_runtime().get("current"),
-        recommendations_for=lambda pair: [
-            r for r in _preview_world().get("recommendations", []) if r.get("scenarioKey", "").startswith(f"{pair}:")
-        ],
+        # No authoritative recommendation stream feeds the strategy engine. The
+        # durable recommendation store (M-REC-1) holds OPERATOR proposals, which
+        # is a different domain object from a strategy input; treating one as
+        # the other would invent a relationship the domain does not define.
+        recommendations_for=lambda pair: [],
         now=_now_iso(),
     )
 
@@ -2018,11 +2071,20 @@ async def health(request: Request):
     }
 
 
-@api_router.get("/world")
-async def world():
-    """Return the full frozen world fixture. Used by the fixture provider fallback."""
+@api_router.get("/dev/fixture-world")
+async def dev_fixture_world():
+    """M-WORLD-ORDINARY-1 — the authored fixture world, EXPLICITLY named.
+
+    Moved from `/api/world`. That path read as a first-class operational
+    resource, and the ordinary application shell called it on every page load
+    to obtain an operator identity — so the whole 22-collection fixture was
+    fetched by every route in order to render a name in the chrome.
+
+    The path now states what it serves. Nothing operational may call it, and a
+    source guard asserts that no ordinary frontend module does.
+    """
     if not _fixture_available():
-        return _fixture_unavailable("world")
+        return _fixture_unavailable("dev/fixture-world")
     return _preview_world().as_dict()
 
 
@@ -4279,16 +4341,39 @@ async def strategy_registry():
     return _STRATEGY_REGISTRY.enumerate()
 
 
+def _strategy_unavailable() -> dict:
+    """The honest contract when the engine has no admissible input.
+
+    Explicitly NOT a zero-valued evaluation. `0 fired · 0 held · 0 rejected`
+    with a latency and a health dot asserts that an evaluation RAN and found
+    nothing — a claim about the strategy's behaviour that nothing supports.
+    """
+    return {
+        "available": False,
+        "code": STRATEGY_UNAVAILABLE_CODE,
+        "detail": STRATEGY_UNAVAILABLE_DETAIL,
+        "evaluatedAt": None,
+        "strategyName": None,
+        "report": None,
+        "metrics": None,
+        "decisions": None,
+    }
+
+
 @api_router.post("/strategy/evaluate")
 async def strategy_evaluate():
     """Run one signal evaluation → Decisions + candidate commands + report.
     Read-only: no overlay writes, no commands, no events, no execution."""
+    if not _strategy_inputs_available():
+        return _strategy_unavailable()
     return _run_strategy_evaluation()
 
 
 @api_router.get("/strategy/decisions")
 async def strategy_decisions():
     """Last evaluation result (read-only). Runs one lazily if none yet."""
+    if not _strategy_inputs_available():
+        return _strategy_unavailable()
     if _STRATEGY_CACHE is None:
         return _run_strategy_evaluation()
     return _STRATEGY_CACHE
@@ -4575,6 +4660,57 @@ async def portfolio_allocations():
 @api_router.get("/portfolio/metrics")
 async def portfolio_metrics():
     return _PORTFOLIO_METRICS.health()
+
+
+@api_router.get("/operator/identity")
+def operator_identity_view() -> dict:
+    """M-WORLD-ORDINARY-1 — who this process is configured to act as.
+
+    THE DEFECT THIS REPLACES
+        The application shell rendered `world.operators[0]` — the FIXTURE's
+        authored operator — on every ordinary page: a display name in the
+        chrome, its first letter as an avatar, and on Settings an operator id,
+        a `Role` badge and a `Timezone`, the last two with invented `?? 'Lead'`
+        and `?? 'UTC'` fallbacks layered on top of the fixture. An asserted
+        human identity in an operator console is not decoration.
+
+    WHAT THIS REPORTS, AND WHAT IT REFUSES TO
+        `operator_identity.resolve()` — the same source every audit record,
+        broker context and safety `operator_ref` already uses. It is
+        CONFIGURATION (`CONTROL_TOWER_OPERATOR_ID`) or the explicit
+        `UNATTRIBUTED`, and `assurance` states which.
+
+        There is deliberately no display name, role, timezone, email, avatar,
+        organisation or permission list. This deployment has no per-user
+        authentication at all — `auth_policy` is a single shared token with no
+        users or sessions, and it says so — so none of those fields has any
+        source. Adding them would be inventing a person, which is exactly what
+        this milestone removes.
+    """
+    operator_id = _operator_id()
+    attributed = operator_identity.is_attributed(operator_id)
+    return {
+        "operatorId": operator_id,
+        "attributed": attributed,
+        # `asserted` | `boundary_authenticated`. The API boundary authenticates
+        # a shared token, not a person, so a configured id is still only
+        # asserted — and the UI says so rather than implying a login.
+        "assurance": operator_identity.assurance(operator_id),
+        # WHERE the answer came from, so the UI can label it honestly instead
+        # of presenting configuration as an identity.
+        "source": ("configuration" if operator_identity.configured_operator()
+                   else "unconfigured"),
+        "configVar": operator_identity.VAR_OPERATOR_ID,
+        # No source exists for any of these. Explicitly null, never omitted:
+        # a missing key invites a consumer to supply its own default, which is
+        # how `?? 'Lead'` appeared in the first place.
+        "displayName": None,
+        "role": None,
+        "timezone": None,
+        "email": None,
+        "avatarUrl": None,
+        "permissions": None,
+    }
 
 
 @api_router.get("/operator/preferences")

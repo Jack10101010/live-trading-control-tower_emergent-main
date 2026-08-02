@@ -1,4 +1,3 @@
-import { useRepository } from '@/hooks/useRepository';
 import type { GhostTrade } from '@/types/domain';
 import {
   Badge,

@@ -61,9 +61,9 @@ SNAPSHOT = {"schema_version": "ct.node-telemetry.v1", "instance_id": "t-1",
 # ── principals: live-app matrix ───────────────────────────────────────────────
 
 def test_operator_routes_accept_only_the_operator_credential(principals):
-    assert client.get("/api/world").status_code == 401
-    assert client.get("/api/world", headers=bearer(IN_TOKEN)).status_code == 401
-    assert client.get("/api/world", headers=bearer(OP_TOKEN)).status_code == 200
+    assert client.get("/api/dev/fixture-world").status_code == 401
+    assert client.get("/api/dev/fixture-world", headers=bearer(IN_TOKEN)).status_code == 401
+    assert client.get("/api/dev/fixture-world", headers=bearer(OP_TOKEN)).status_code == 200
 
 
 def test_ingest_route_accepts_only_the_ingest_credential(principals):
@@ -116,7 +116,7 @@ def test_ingest_disabled_leaves_the_route_open_even_with_operator_auth_on(monkey
 
 
 def test_no_credential_appears_in_any_auth_response(principals):
-    for r in (client.get("/api/world"),
+    for r in (client.get("/api/dev/fixture-world"),
               client.post("/api/live/ingest", json=SNAPSHOT)):
         assert OP_TOKEN not in r.text and IN_TOKEN not in r.text
 
@@ -443,7 +443,7 @@ def test_public_health_body_is_minimal_when_enforcing(principals):
 
 
 def test_no_store_is_applied_uniformly_to_api_routes():
-    for path in ("/api/health", "/api/world", "/api/live/status",
+    for path in ("/api/health", "/api/dev/fixture-world", "/api/live/status",
                  "/api/execution/state", "/api/security/config"):
         r = client.get(path)
         assert r.headers.get("cache-control") == "no-store", path

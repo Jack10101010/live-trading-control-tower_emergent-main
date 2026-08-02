@@ -4,7 +4,6 @@ import type { Package } from '@/types/domain';
 import type { EventEntry } from '@/types/domain';
 import type { LiveTrade } from '@/types/domain';
 import {
-  useRepository,
   useDecisionChain,
   useMarketState,
   useDeploymentManifest,
@@ -40,7 +39,9 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
 }
 
 export function TradeRenderer({ tradeId }: { tradeId: string }) {
-  const { world } = useRepository();
+  // M-WORLD-ORDINARY-1: `useRepository()` fetched the whole fixture world here
+  // and no field was ever read from it — M-TRADES-1 had already emptied every
+  // collection this inspector used.
   // M-TRADES-1: resolved against fixture live trades.
   const live: LiveTrade[] = [];
   const navigate = useNavigate();

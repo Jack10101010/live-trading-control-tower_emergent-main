@@ -1,4 +1,3 @@
-import { useRepository } from '@/hooks/useRepository';
 import {
   Badge,
   ConfidenceMeter,

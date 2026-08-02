@@ -457,59 +457,41 @@ export function SystemView() {
           </div>
         )}
 
-        {/* Strategy Engine (Phase 9) — evaluation only; never executes. */}
+        {/* Strategy Engine — M-WORLD-ORDINARY-1.
+
+            This block rendered a `strategyHealthy` dot, a fired/held/rejected
+            split, an evaluation latency, a decision count and up to four
+            decision rows with confidence percentages. Every one of those came
+            from evaluating the engine against FIXTURE deployments, a policy
+            matrix derived from FIXTURE packages, and FIXTURE recommendations:
+            a synthetic evaluation of a fabricated world, presented as the live
+            engine's operational record.
+
+            The engine is real code and is kept. It simply has no admissible
+            input, and the backend now says so rather than evaluating nothing
+            and reporting zeros — which would assert that an evaluation ran. */}
         <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
           <div className="flex items-center gap-2 text-xs mb-2">
-            <HealthDot state={strategy.metrics.strategyHealthy ? 'ok' : 'critical'} />
             <span className="text-text">Strategy Engine</span>
-            <span className="mono text-2xs text-text-muted">{strategy.strategyName}</span>
-            <span className="ml-auto mono text-2xs text-text-muted">
-              {strategy.report.fired} fired · {strategy.report.held} hold · {strategy.report.rejected} rej
-            </span>
           </div>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-2xs">
-            <div className="flex justify-between">
-              <span className="text-text-muted">Evaluation latency</span>
-              <span className="mono text-text-2">{strategy.report.durationMs}ms</span>
+          {strategy.available ? (
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-2xs"
+                 data-testid="strategy-engine-available">
+              <div className="flex justify-between">
+                <span className="text-text-muted">Evaluations</span>
+                <span className="mono text-text-2">{strategy.metrics?.evaluations ?? '—'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-muted">Decisions</span>
+                <span className="mono text-text-2">{strategy.report?.evaluated ?? '—'}</span>
+              </div>
             </div>
-            <div className="flex justify-between">
-              <span className="text-text-muted">Evaluations</span>
-              <span className="mono text-text-2">{strategy.metrics.evaluations}</span>
+          ) : (
+            <div className="text-2xs text-text-muted" data-testid="strategy-engine-unavailable">
+              {strategy.detail ??
+                'The strategy engine has no authoritative inputs, so no evaluation ' +
+                'is reported. This is a missing capability, not a failed evaluation.'}
             </div>
-            <div className="flex justify-between">
-              <span className="text-text-muted">Decisions</span>
-              <span className="mono text-text-2">{strategy.report.evaluated}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-text-muted">Candidates · executed</span>
-              <span className="mono text-text-2">
-                {strategy.report.candidateCommands} · {strategy.report.executed}
-              </span>
-            </div>
-            <div className="flex justify-between col-span-2">
-              <span className="text-text-muted">Last strategy</span>
-              <span className="mono text-text-2">{strategy.metrics.lastStrategy ?? '—'}</span>
-            </div>
-          </div>
-          {strategy.decisions.length > 0 && (
-            <ul className="mt-2 space-y-1">
-              {strategy.decisions.slice(0, 4).map((d) => (
-                <li key={d.decisionId} className="flex items-center gap-2 text-2xs">
-                  <span
-                    className="w-1.5 h-1.5 rounded-full shrink-0"
-                    style={{
-                      background:
-                        d.signal === 'fired' ? 'var(--positive)' : d.signal === 'rejected' ? 'var(--negative)' : 'var(--warning)',
-                    }}
-                  />
-                  <span className="mono text-text-2">{d.signal}</span>
-                  <span className="text-text-muted truncate">
-                    {d.pair} · {d.policyCell ?? '—'} · {Math.round(d.confidence * 100)}%
-                    {d.candidateCommands.length ? ` → ${d.candidateCommands.map((c) => c.name).join(', ')}` : ''}
-                  </span>
-                </li>
-              ))}
-            </ul>
           )}
         </div>
 
