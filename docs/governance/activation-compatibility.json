@@ -1,0 +1,139 @@
+{
+  "$schema": "./activation-compatibility.schema.json",
+  "manifestVersion": 1,
+  "generatedBy": "backend/tools/generate_activation_manifest.py",
+  "controlTower": {
+    "branch": "live-implementation-prep",
+    "commit": "d64536d31adcdc656e967091dd7e14052f54a22a",
+    "admissionPolicyModule": "backend/activation_policy.py",
+    "activationCheckerModule": "backend/activation_check.py",
+    "checkerChecks": 26
+  },
+  "nodeTelemetry": {
+    "acceptedSchemaVersions": [
+      "ct.node-telemetry.v1"
+    ],
+    "unknownVersionBehaviour": "refused_at_ingest_http_400",
+    "legacyPayloadBehaviour": "adapted_with_legacy_source_true_and_null_unknowns",
+    "malformedCanMasqueradeAsLegacy": false,
+    "refusalOverwritesLastGoodSnapshot": false
+  },
+  "capabilityMarker": {
+    "required": false,
+    "presentInContract": false,
+    "macBehaviourWhenAbsent": "unknown",
+    "checkerStatusWhenAbsent": "WARN",
+    "requestedFieldName": "capabilities",
+    "requestedValue": "account_observation",
+    "note": "additive; the Mac ignores it until a Mac-side milestone consumes it"
+  },
+  "accountObservation": {
+    "requiredFields": [
+      "account.identity.available",
+      "account.identity.fingerprint",
+      "account.identity.server",
+      "account.health.available"
+    ],
+    "optionalFields": [
+      "account.identity.currency",
+      "account.identity.trade_mode",
+      "account.health.balance",
+      "account.health.equity",
+      "account.health.free_margin",
+      "account.health.currency",
+      "account.health.trade_allowed",
+      "account.health.trade_expert",
+      "account.health.observed_at",
+      "account.health.reasons",
+      "account.health.healthy"
+    ],
+    "availabilityComparison": "is True",
+    "nullMeaning": "not_reported",
+    "zeroMeaning": "a_measurement",
+    "negativeValuesAdmitted": true,
+    "negativeValueWarning": "account_figure_negative",
+    "nonFiniteBehaviour": "whole_snapshot_refused_numeric_invalid",
+    "identityRequiredWhenPinned": true,
+    "identityAbsentWhenPinnedReason": "account_identity_unverifiable"
+  },
+  "provenance": {
+    "brokerTruth": [
+      "live_mt5",
+      "node_mt5"
+    ],
+    "nodeTruth": [
+      "node-telemetry"
+    ],
+    "nonOperational": [
+      "mock-fixture",
+      "fixture-node",
+      "absent"
+    ],
+    "suppliedByVps": false,
+    "derivedFrom": "validated_observation_evidence",
+    "setsAreDisjoint": true
+  },
+  "freshness": {
+    "basis": "received_at",
+    "idleBudgetSeconds": 120.0,
+    "recomputeBudgetSeconds": 900.0,
+    "budgetClampedToProjection": true,
+    "maxClockSkewSeconds": 120.0,
+    "maxComparableObservationGapSeconds": 60.0,
+    "authority": "activation_policy.recomputed_stale",
+    "futureTimestampBehaviour": "treated_as_old",
+    "undatableArrivalBehaviour": "stale"
+  },
+  "environmentVariables": {
+    "expectedNode": "CONTROL_TOWER_EXPECTED_NODE",
+    "expectedAccount": "CONTROL_TOWER_EXPECTED_ACCOUNT",
+    "expectedServer": "CONTROL_TOWER_EXPECTED_SERVER",
+    "expectedAccountExecutionFallback": "NODE_EXPECTED_ACCOUNT_FINGERPRINT",
+    "apiToken": "CONTROL_TOWER_API_TOKEN",
+    "stateDir": "CONTROL_TOWER_STATE_DIR",
+    "environment": "CONTROL_TOWER_ENVIRONMENT",
+    "note": "NAMES ONLY. No value in this file is a real identifier.",
+    "exampleAccountValue": "acctfp_0123456789abcdef",
+    "exampleServerValue": "Example-Demo",
+    "mustBeSetOnTheBackendProcess": true
+  },
+  "environmentExpectations": {
+    "environment": "development",
+    "productionPermitted": false,
+    "brokerAdapterOnMac": "mock",
+    "macMayClaimLocalMt5": false
+  },
+  "refusalReasonCodes": [
+    "account_figure_negative",
+    "account_identity_mismatch",
+    "account_identity_unverifiable",
+    "account_not_observed",
+    "account_server_mismatch",
+    "contradictory_account_sources",
+    "free_margin_exceeds_equity",
+    "mt5_observation_contradicts_account",
+    "no_observation",
+    "node_degraded",
+    "numeric_invalid",
+    "observation_stale",
+    "unusable_payload"
+  ],
+  "incompatibleLegacyBehaviours": [
+    "pre-UI-2 flat payload: node visible, account observation impossible",
+    "ct.node-telemetry.v2 or any unknown version: refused 400, no downgrade",
+    "a provenance field supplied by the node: ignored, never honoured"
+  ],
+  "unresolvedPlaceholders": [
+    {
+      "id": "vps.commit",
+      "description": "the VPS commit implementing M-NODE-ACCT-1",
+      "value": null
+    },
+    {
+      "id": "capability.marker",
+      "description": "no positive capability signal exists in the contract",
+      "value": null
+    }
+  ],
+  "minimumFutureVpsCommit": null
+}

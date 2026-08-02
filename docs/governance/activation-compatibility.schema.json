@@ -1,0 +1,171 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "activation-compatibility.schema.json",
+  "title": "Control Tower activation compatibility manifest",
+  "description": "Validates docs/governance/activation-compatibility.json. The manifest is GENERATED from backend/activation_policy.py and backend/activation_check.py by backend/tools/generate_activation_manifest.py; test_release_checkpoint.py asserts the committed file still matches the code. Constraints below encode the properties that must never regress — notably that provenance is never supplied by the VPS, that the two authority sets stay disjoint, and that no real account identifier is ever committed.",
+  "type": "object",
+  "required": [
+    "manifestVersion", "generatedBy", "controlTower", "nodeTelemetry",
+    "capabilityMarker", "accountObservation", "provenance", "freshness",
+    "environmentVariables", "environmentExpectations", "refusalReasonCodes",
+    "incompatibleLegacyBehaviours", "unresolvedPlaceholders"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "manifestVersion": { "const": 1 },
+    "generatedBy": { "type": "string", "pattern": "generate_activation_manifest\\.py$" },
+
+    "controlTower": {
+      "type": "object",
+      "required": ["branch", "commit", "admissionPolicyModule", "activationCheckerModule", "checkerChecks"],
+      "properties": {
+        "branch": { "type": "string", "minLength": 1 },
+        "commit": { "type": "string", "pattern": "^([0-9a-f]{40}|unknown)$" },
+        "admissionPolicyModule": { "const": "backend/activation_policy.py" },
+        "activationCheckerModule": { "const": "backend/activation_check.py" },
+        "checkerChecks": { "type": "integer", "minimum": 1 }
+      }
+    },
+
+    "nodeTelemetry": {
+      "type": "object",
+      "required": ["acceptedSchemaVersions", "unknownVersionBehaviour",
+                   "malformedCanMasqueradeAsLegacy", "refusalOverwritesLastGoodSnapshot"],
+      "properties": {
+        "acceptedSchemaVersions": {
+          "type": "array", "minItems": 1,
+          "items": { "type": "string", "pattern": "^ct\\.node-telemetry\\.v[0-9]+$" }
+        },
+        "unknownVersionBehaviour": { "const": "refused_at_ingest_http_400" },
+        "malformedCanMasqueradeAsLegacy": { "const": false },
+        "refusalOverwritesLastGoodSnapshot": { "const": false }
+      }
+    },
+
+    "capabilityMarker": {
+      "type": "object",
+      "required": ["required", "presentInContract", "macBehaviourWhenAbsent", "checkerStatusWhenAbsent"],
+      "properties": {
+        "required": { "const": false },
+        "presentInContract": { "const": false },
+        "macBehaviourWhenAbsent": { "const": "unknown" },
+        "checkerStatusWhenAbsent": { "enum": ["WARN"] }
+      }
+    },
+
+    "accountObservation": {
+      "type": "object",
+      "required": ["requiredFields", "optionalFields", "availabilityComparison",
+                   "nullMeaning", "zeroMeaning", "negativeValuesAdmitted",
+                   "nonFiniteBehaviour", "identityRequiredWhenPinned"],
+      "properties": {
+        "requiredFields": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "optionalFields": { "type": "array", "items": { "type": "string" } },
+        "availabilityComparison": {
+          "const": "is True",
+          "description": "Never truthiness. A missing key reads None and must not pass."
+        },
+        "nullMeaning": { "const": "not_reported" },
+        "zeroMeaning": { "const": "a_measurement" },
+        "negativeValuesAdmitted": {
+          "const": true,
+          "description": "A negative balance is a real MT5 state after a stop-out gap. Refusing it blanks the account at the moment the operator most needs the figure."
+        },
+        "nonFiniteBehaviour": { "const": "whole_snapshot_refused_numeric_invalid" },
+        "identityRequiredWhenPinned": {
+          "const": true,
+          "description": "Cannot-be-checked is not passed-the-check."
+        }
+      }
+    },
+
+    "provenance": {
+      "type": "object",
+      "required": ["brokerTruth", "nodeTruth", "suppliedByVps", "derivedFrom", "setsAreDisjoint"],
+      "properties": {
+        "brokerTruth": {
+          "type": "array", "items": { "enum": ["live_mt5", "node_mt5"] },
+          "minItems": 2, "maxItems": 2, "uniqueItems": true
+        },
+        "nodeTruth": {
+          "type": "array", "items": { "const": "node-telemetry" },
+          "minItems": 1, "maxItems": 1
+        },
+        "suppliedByVps": {
+          "const": false,
+          "description": "THE most important constraint here. A node that could declare its own authority would reintroduce, over the network, the defect the whole honesty programme removed."
+        },
+        "derivedFrom": { "const": "validated_observation_evidence" },
+        "setsAreDisjoint": { "const": true }
+      }
+    },
+
+    "freshness": {
+      "type": "object",
+      "required": ["basis", "idleBudgetSeconds", "recomputeBudgetSeconds",
+                   "maxClockSkewSeconds", "authority", "futureTimestampBehaviour",
+                   "undatableArrivalBehaviour"],
+      "properties": {
+        "basis": { "const": "received_at", "description": "The tower's arrival clock, never the node's published_at." },
+        "idleBudgetSeconds": { "type": "number", "exclusiveMinimum": 0 },
+        "recomputeBudgetSeconds": { "type": "number", "exclusiveMinimum": 0 },
+        "budgetClampedToProjection": { "const": true },
+        "maxClockSkewSeconds": { "type": "number", "exclusiveMinimum": 0 },
+        "maxComparableObservationGapSeconds": { "type": "number", "exclusiveMinimum": 0 },
+        "authority": { "const": "activation_policy.recomputed_stale" },
+        "futureTimestampBehaviour": { "const": "treated_as_old" },
+        "undatableArrivalBehaviour": { "const": "stale" }
+      }
+    },
+
+    "environmentVariables": {
+      "type": "object",
+      "required": ["expectedNode", "expectedAccount", "expectedServer", "mustBeSetOnTheBackendProcess"],
+      "description": "NAMES ONLY. Example values must be recognisably fake.",
+      "properties": {
+        "expectedAccount": { "type": "string", "pattern": "^[A-Z_]+$" },
+        "expectedServer": { "type": "string", "pattern": "^[A-Z_]+$" },
+        "expectedNode": { "type": "string", "pattern": "^[A-Z_]+$" },
+        "exampleAccountValue": { "const": "acctfp_0123456789abcdef" },
+        "exampleServerValue": { "const": "Example-Demo" },
+        "mustBeSetOnTheBackendProcess": {
+          "const": true,
+          "description": "The gate runs inside the backend and reads its environment at startup. A pin in the checker's shell constrains nothing."
+        }
+      }
+    },
+
+    "environmentExpectations": {
+      "type": "object",
+      "required": ["environment", "productionPermitted", "macMayClaimLocalMt5"],
+      "properties": {
+        "environment": { "const": "development" },
+        "productionPermitted": { "const": false },
+        "macMayClaimLocalMt5": { "const": false }
+      }
+    },
+
+    "refusalReasonCodes": {
+      "type": "array", "minItems": 5, "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z0-9_]+$" }
+    },
+
+    "incompatibleLegacyBehaviours": { "type": "array", "items": { "type": "string" } },
+
+    "unresolvedPlaceholders": {
+      "type": "array",
+      "description": "Explicit nulls. A placeholder that is not listed is a placeholder somebody forgot.",
+      "items": {
+        "type": "object",
+        "required": ["id", "description", "value"],
+        "properties": {
+          "id": { "type": "string" },
+          "description": { "type": "string" },
+          "value": { "type": ["string", "null"] }
+        }
+      }
+    },
+
+    "minimumFutureVpsCommit": { "type": ["string", "null"] }
+  }
+}

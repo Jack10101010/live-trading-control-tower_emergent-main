@@ -132,6 +132,40 @@ financial action to reverse.
 
 ---
 
+## Rehearsed mechanically (M-RELEASE-CHECKPOINT-1)
+
+Both directions were exercised in temporary exports, with no running service
+touched:
+
+| | result |
+|---|---|
+| the pre-activation tree (`e7cae12`) still starts | **yes** — `environment: development`, `brokerKind: mock`, `tradingReady: false` |
+| its `/api/operations/accounts` | one `mock-fixture` record and **no `admitted` field at all** — the pre-activation contract |
+| the NEW backend on state written by the OLD one | starts and serves normally |
+| the OLD backend on state written by the NEW one | starts and serves normally |
+
+**Code rollback and data rollback are therefore independent.** The state
+directory holds `execution_state.db`, `scenario_state.db` and `trade_ledger.db`
+in a format both versions read, so restoring the commit does not require
+restoring the state and vice versa. Decide them separately and say which you
+did.
+
+### The one combination that fails quietly
+
+`operationalProvenance.ts` at `e7cae12` contains no `admitted` handling — the
+word appears once, in a comment about something else. So:
+
+* **NEW backend + OLD bundle** — the old gate does not know the field. A
+  REFUSED account renders as a normal live card. This is rollback trigger 9,
+  and it is the reason the runbook insists the two move together.
+* **OLD backend + NEW bundle** — the field is absent, `admissionPermits(undefined)`
+  returns `true`, and records render. Safe, because the old backend refuses
+  nothing and has nothing to hide; the new bundle degrades to old behaviour
+  rather than to a blank screen.
+
+Only the first is dangerous. Both are avoided by moving code and bundle in one
+step.
+
 ## Mechanically tested
 
 The restore path is exercised on throwaway state by
