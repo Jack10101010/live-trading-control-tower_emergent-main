@@ -291,6 +291,55 @@ class MT5Gateway:
             "orders": [_ord(o) for o in orders],
         }
 
+    def read_account_state(self) -> tuple[bool, dict | str]:
+        """READ-ONLY terminal + account facts, as ONE coherent sample.
+
+        Added for M-NODE-ACCT-1: `snapshot()` exposes only login/balance/equity/
+        currency, but the canonical telemetry contract also needs `server`,
+        `trade_mode`, `free_margin` and the broker permission flags. Rather than
+        widen `snapshot()` (which the executor's reconciliation path depends on)
+        this is a separate accessor with no caller in the trading path.
+
+        Terminal and account are read in one call so identity and health cannot
+        be stitched together from two different sessions or two different
+        instants -- the contract requires one coherent observation.
+
+        NEVER connects. If the governed session is not already up this returns
+        `(False, "not connected")`; opening a second MT5 session would compete
+        with the node's own and is exactly what the milestone forbids. Raw SDK
+        objects never cross this boundary: only plain values are returned.
+
+        `terminal.trade_allowed` is the AutoTrading toggle and is deliberately
+        kept distinct from `account.trade_allowed`/`trade_expert`, which are
+        broker-side permissions. Conflating them would let a locked-down terminal
+        report as trade-enabled.
+        """
+        if not self._connected:
+            return False, "not connected"
+        term = self.sdk.terminal_info()
+        acct = self.sdk.account_info()
+        if acct is None:
+            return False, "account_info unavailable"
+        return True, {
+            "terminal": None if term is None else {
+                "connected": bool(getattr(term, "connected", False)),
+                # AutoTrading button — NOT a broker permission.
+                "trade_allowed": bool(getattr(term, "trade_allowed", False)),
+            },
+            "account": {
+                "login": getattr(acct, "login", None),
+                "server": getattr(acct, "server", None),
+                "currency": getattr(acct, "currency", None),
+                "trade_mode": getattr(acct, "trade_mode", None),
+                "balance": getattr(acct, "balance", None),
+                "equity": getattr(acct, "equity", None),
+                "free_margin": getattr(acct, "margin_free", None),
+                # Broker-side permissions.
+                "trade_allowed": bool(getattr(acct, "trade_allowed", False)),
+                "trade_expert": bool(getattr(acct, "trade_expert", False)),
+            },
+        }
+
     # ── order operations (market mirror model: engine is the state machine) ──
     def open_position(self, side: str, lots: float, sl: float, tp: float,
                       intent_id: str) -> tuple[bool, dict | str]:
