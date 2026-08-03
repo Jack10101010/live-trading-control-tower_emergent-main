@@ -143,6 +143,98 @@ def _delivery_rows(cycles: list[dict]) -> None:
         + f" (window = last {len(cycles)} cycles)")
 
 
+def _mask(value: object, keep: int = 4) -> str:
+    """Show enough to recognise, never enough to reuse."""
+    s = str(value or "")
+    if not s:
+        return "n/a"
+    return s if len(s) <= keep else f"…{s[-keep:]}"
+
+
+def _age_row(label: str, stamp: object) -> None:
+    age = _age_s(stamp) if stamp else None
+    row(label, NA if age is None else OK,
+        "not observed" if age is None else f"{stamp} ({age:.0f}s ago)")
+
+
+def _account_rows(cfg: LiveConfig) -> None:
+    """Surface the account observation the node last PUBLISHED.
+
+    Deliberately reads the fallback snapshot rather than re-sampling the
+    terminal: `live.status` is a read-only diagnostic and must not add a second
+    MT5 conversation. Unavailable renders as unavailable — never as zero, which
+    would be indistinguishable from a real measurement of an empty account.
+    """
+    snap = _read_json(cfg.state_dir / "publish_last.json")
+    if not isinstance(snap, dict):
+        row("account observation?", NA, "no published snapshot yet")
+        return
+
+    schema = snap.get("schema_version")
+    caps = snap.get("capabilities") or []
+    if schema is None:
+        # A legacy snapshot predates the canonical envelope entirely; say so
+        # rather than reporting a capable node with everything unavailable.
+        row("telemetry contract?", WARN,
+            "legacy flat payload (pre ct.node-telemetry.v1) — node not yet "
+            "publishing account observation")
+        return
+    row("telemetry contract?", OK if schema == "ct.node-telemetry.v1" else FAIL,
+        f"{schema}; capabilities={caps or 'none'}")
+
+    acct = snap.get("account") or {}
+    ident, health = acct.get("identity") or {}, acct.get("health") or {}
+    id_ok = ident.get("available") is True
+    hl_ok = health.get("available") is True
+
+    row("account identity observed?", OK if id_ok else WARN,
+        (f"fingerprint {_mask(ident.get('fingerprint'), 6)} "
+         f"server {_mask(ident.get('server'), 6)} "
+         f"currency {ident.get('currency') or 'n/a'} "
+         f"mode {ident.get('trade_mode') or 'n/a'}")
+        if id_ok else "UNAVAILABLE — the Mac cannot pin an account without this")
+    row("account health observed?", OK if hl_ok else WARN,
+        (f"balance {health.get('balance')} equity {health.get('equity')} "
+         f"free_margin {health.get('free_margin')}")
+        if hl_ok else "UNAVAILABLE (not zero — no successful read)")
+
+    _age_row("account observed_at", health.get("observed_at"))
+
+    # Broker permissions are NOT the terminal AutoTrading toggle. Keeping them on
+    # separate rows is deliberate: conflating them would let a locked-down
+    # terminal read as trade-enabled.
+    if hl_ok:
+        row("broker permissions", NA,
+            f"account.trade_allowed={health.get('trade_allowed')} "
+            f"trade_expert={health.get('trade_expert')} "
+            "(broker-side; NOT terminal AutoTrading)")
+
+    # Configured vs observed: a mismatch is diagnostic only — configuration must
+    # never rewrite an observation, so this reports rather than corrects.
+    if id_ok and cfg.mt5_server and ident.get("server") != cfg.mt5_server:
+        row("config vs observed", WARN,
+            f"configured server {cfg.mt5_server!r} != observed "
+            f"{ident.get('server')!r} — the expected-account pin must be built "
+            "from the OBSERVED values")
+
+    from live.account_observation import HEALTH_TTL_S, IDENTITY_TTL_S
+    row("observation cadence", NA,
+        f"identity {IDENTITY_TTL_S:.0f}s / health {HEALTH_TTL_S:.0f}s "
+        "(bounded; cached samples keep their original observed_at)")
+
+    # Honest statement of what this view CANNOT tell you. The observation carries
+    # fresh-vs-cached, sample latency and a bounded error string, but the
+    # canonical account block is fixed at {identity, health} by the Mac contract,
+    # and the error text is deliberately kept off the wire because it is the one
+    # field that could carry a terminal path or account detail. So they are
+    # node-local by design and simply are not derivable from publish_last.json.
+    # Age is the honest proxy: a stale observed_at means cached or failing.
+    row("observation diagnostics", NA,
+        "fresh/cached, latency and bounded error are node-local and NOT "
+        "published (kept off the wire on purpose) — infer staleness from the "
+        "observed_at age above")
+
+
 def collect(cfg: LiveConfig, probe_mt5: bool = True) -> None:
     ops = cfg.state_dir / "ops"
     hb = _read_json(ops / "heartbeat.json")
@@ -290,6 +382,13 @@ def collect(cfg: LiveConfig, probe_mt5: bool = True) -> None:
     # ── kill switch / mode ───────────────────────────────────────────────────
     row("mode + kill switch", FAIL if cfg.mode == "live" else OK,
         f"LIVE_MODE={cfg.mode}, KILL {'PRESENT (opens blocked)' if cfg.kill_file.exists() else 'absent'}")
+
+    # ── account observation (M-NODE-ACCT-1) ──────────────────────────────────
+    # Read from the LAST PUBLISHED snapshot, not by sampling MT5 again: status is
+    # read-only and must never open a broker conversation of its own. This shows
+    # what the node actually told the Control Tower, which is the thing an
+    # operator needs to reason about when the Mac disagrees.
+    _account_rows(cfg)
 
     # ── supervision maintenance marker ───────────────────────────────────────
     # Supervision is a repeating scheduled trigger, so a node that is simply
