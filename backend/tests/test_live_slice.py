@@ -304,11 +304,22 @@ def test_publisher_payload_and_fallback(tmp_path):
     payload = pub.build_payload({"status": "ok", "boundary": "B", "intents": [_intent()],
                                  "trades_rows": 3}, {"frozen": False, "reconcile": {"findings": []}},
                                 engine_version="5bb6372c", mode="dry_run")
-    assert payload["instance_id"] and payload["deployment_profile"] == "GOLDEN_COMPATIBLE"
-    assert payload["intents"][0]["action"] == OPEN_POSITION
+    # MIGRATED for M-NODE-ACCT-1A-iii: the payload is now canonical
+    # `ct.node-telemetry.v1`, not the flat pre-UI-2 shape. The old assertions
+    # checked top-level `deployment_profile`, `intents` and `symbol`; those flat
+    # keys are gone by design, because a versionless payload is what the Control
+    # Tower's legacy adapter accepts and mixing canonical sections into it makes
+    # it ambiguous and rejected. Lineage now lives under `engine` and intents
+    # under `execution`. The transport/fallback behaviour this test really guards
+    # is unchanged.
+    assert payload["schema_version"] == "ct.node-telemetry.v1"
+    assert payload["instance_id"]
+    assert payload["capabilities"] == ["account_observation"]
+    assert isinstance(payload["account"], dict) and isinstance(payload["positions"], list)
     result = pub.publish(payload, timeout=0.5)
     assert result["delivered"] is False                            # network down ≠ crash
-    assert json.loads(Path(result["fallback"]).read_text())["symbol"] == "EURUSD"
+    assert json.loads(Path(result["fallback"]).read_text())["schema_version"] == \
+        "ct.node-telemetry.v1"
 
 
 # ── P1 shadow: ops log + shadow report ──────────────────────────────────────────

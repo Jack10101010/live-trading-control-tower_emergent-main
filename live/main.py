@@ -26,6 +26,7 @@ from live.lifecycle import (CONNECTING, DEGRADED, READY, RECONCILING, RUNNING,
 from live.mt5_bridge import MT5BarBridge
 from live.mt5_gateway import MT5Gateway
 from live.ops_log import OpsLog
+from live.account_observation import AccountObserver
 from live.publisher import CTPublisher
 from live.runner import LiveRunner, LuxSession
 
@@ -43,11 +44,34 @@ def build(lifecycle=None) -> tuple:
     runner = LiveRunner(config, session=session)
     executor = Executor(config, runner.state, gateway, lifecycle=lifecycle)
     publisher = CTPublisher(config)
+    # ONE observer for the process, sharing the governed gateway. It owns its own
+    # bounded cadence, so calling it every cycle does not mean a terminal read
+    # every cycle.
+    observer = AccountObserver(gateway)
     ops = OpsLog(config.state_dir)
-    return config, gateway, bridge, runner, executor, publisher, ops
+    return config, gateway, bridge, runner, executor, publisher, ops, observer
 
 
-def cycle(config, gateway, bridge, runner, executor, publisher, ops) -> dict:
+def _observe(observer) -> dict | None:
+    """Account observation for the snapshot, or None.
+
+    `AccountObserver.observe()` already contains its own failures, but the
+    observer itself is optional (tests and alternate entrypoints construct
+    `cycle()` without one). A missing or misbehaving observer must degrade to an
+    unavailable account section -- never raise into the trading try-block, where
+    it would be recorded as a cycle error.
+    """
+    if observer is None:
+        return None
+    try:
+        return observer.observe().as_observed_mapping()
+    except Exception as exc:   # noqa: BLE001 - telemetry must never break a cycle
+        print(f"account observation failed (continuing): {type(exc).__name__}: {exc}")
+        return None
+
+
+def cycle(config, gateway, bridge, runner, executor, publisher, ops,
+          observer=None) -> dict:
     record = ops.cycle_start()
     error = ""
     bridge_result: dict = {}
@@ -88,8 +112,14 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops) -> dict:
                      "note": "recompute started; telemetry resumes at cycle end"},
                     None,
                     engine_version=runner.session.engine_version if runner.session else "n/a",
-                    mode=config.mode)
-                early["bridge"] = bridge_result
+                    mode=config.mode,
+                    state=getattr(runner, "state", None),
+                    arm_runtime=getattr(executor, "arm_runtime", None),
+                    # Observed HERE too, not only at cycle end: the recompute is
+                    # the long pole, so a node that only sampled afterwards would
+                    # publish a stale account for the whole of it.
+                    observed=_observe(observer),
+                    bridge=bridge_result)
                 publisher.publish(early)
             except Exception as exc:
                 print(f"transition publish failed (continuing): {exc}")
@@ -103,11 +133,19 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops) -> dict:
         # durable. A crash before here replays the cycle; the ledger suppresses
         # anything already applied, so nothing is duplicated or lost.
         runner.commit_cycle()
+        # Account observation is deliberately OUTSIDE the intent path. The
+        # historical implementation sampled inside Executor.apply(intents, ...),
+        # so a node that never traded never reported an account at all. This runs
+        # every cycle — including no_new_bar and market-closed — and its own
+        # bounded cadence decides whether a terminal read actually happens.
         payload = publisher.build_payload(
             runner_result, executor_result,
             engine_version=runner.session.engine_version if runner.session else "n/a",
-            mode=config.mode)
-        payload["bridge"] = bridge_result
+            mode=config.mode,
+            state=getattr(runner, "state", None),
+            arm_runtime=getattr(executor, "arm_runtime", None),
+            observed=_observe(observer),
+            bridge=bridge_result)
         delivery = publisher.publish(payload)
     except Exception as exc:  # logged, loop continues; supervisor handles repeats
         error = f"{type(exc).__name__}: {exc}"
@@ -194,7 +232,7 @@ def main() -> None:  # pragma: no cover - VPS loop
     try:
         # ── VALIDATING ───────────────────────────────────────────────────────
         lifecycle.transition(VALIDATING)
-        config, gateway, bridge, runner, executor, publisher, ops = build(lifecycle)
+        config, gateway, bridge, runner, executor, publisher, ops, observer = build(lifecycle)
 
         # ── CONNECTING ───────────────────────────────────────────────────────
         lifecycle.transition(CONNECTING)
@@ -244,7 +282,8 @@ def main() -> None:  # pragma: no cover - VPS loop
         lifecycle.transition(RUNNING)
         consecutive_errors = 0
         while not stop["requested"]:
-            record = cycle(config, gateway, bridge, runner, executor, publisher, ops)
+            record = cycle(config, gateway, bridge, runner, executor, publisher, ops,
+                           observer)
             if record.get("error"):
                 consecutive_errors += 1
                 print(f"[{record['cycle_end']}] ERROR ({consecutive_errors}/"
