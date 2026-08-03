@@ -210,8 +210,19 @@ def _admitted_is_a_string(world):
 
 
 def _fixture_figures(world):
-    world["/api/operations/accounts"]["accounts"][0].update(balance=100000.0,
-                                                            equity=100412.0)
+    """Genuine laundering: fixture FIGURES on a record that is NOT the pinned
+    account, wearing authoritative provenance.
+
+    This used to put the sentinel figures on the PINNED account and expect FAIL.
+    That premise was wrong: 100 000 is FTMO's standard demo size, so the pinned
+    account legitimately reports it, and the old mutation asserted that a correct
+    activation must look like contamination. The check still has to be able to
+    fail — it just has to fail on the right thing, which is a sentinel figure on
+    a record whose identity does not match the pins.
+    """
+    world["/api/operations/accounts"]["accounts"][0].update(
+        balance=100000.0, equity=100412.0,
+        accountFingerprint="acctfp_SOMEONE_ELSE")
     return world
 
 

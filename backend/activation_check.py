@@ -111,6 +111,38 @@ def _mask(value) -> str:
     return f"{text[:8]}…{text[-4:]}" if len(text) > 14 else ("…" if text else "")
 
 
+def _is_pinned_account(record, expected_account, expected_server) -> bool:
+    """Whether THIS record is the account the deployment is pinned to.
+
+    The only exemption from the fixture-sentinel rule, and deliberately the
+    narrowest one that can exist: a record must be authoritative, admitted, AND
+    carry the fingerprint and server the runtime is pinned to.
+
+    WHY THE EXEMPTION IS NEEDED
+        The sentinel figures include 100 000, which is FTMO's standard demo and
+        challenge account size. A genuine, correctly-pinned FTMO 100k account
+        therefore tripped `fixture_figures_admitted` permanently — the checker
+        was red on a correct activation, which is the fastest way to teach an
+        operator to ignore it.
+
+    WHY IT CANNOT LAUNDER A FIXTURE
+        The fixture world carries no `accountFingerprint`, so it can never match
+        a pin. A forged `node_mt5` label without the pinned identity does not
+        match either. And when the deployment is UNPINNED both pins are None and
+        this returns False for every record — an unpinned deployment gains no
+        exemption at all, so the check is exactly as strict as before wherever
+        it was previously meaningful.
+    """
+    if not expected_account or not expected_server:
+        return False
+    if record.get("provenance") not in AUTHORITATIVE_PROVENANCE:
+        return False
+    if not _admission_permits(record.get("admitted")):
+        return False
+    return (str(record.get("accountFingerprint") or "") == str(expected_account)
+            and str(record.get("server") or "") == str(expected_server))
+
+
 def _admission_permits(admitted) -> bool:
     """Mirror of the frontend gate, and it FAILS CLOSED on non-booleans.
 
@@ -384,9 +416,13 @@ def check_account(report: Report, base: str, token, node_entry,
     # 100 000 / 100 412 are what an operator would read and believe, and their
     # appearance on a record that PASSED the gate is contamination whatever
     # provenance that record acquired on the way.
+    # A sentinel figure ALONE does not prove contamination: see
+    # `_is_pinned_account`. Only a sentinel on a record that is NOT the pinned
+    # account is laundering.
     laundered = [a for a in genuine
-                 if a.get("balance") in FIXTURE_SENTINEL_FIGURES
-                 or a.get("equity") in FIXTURE_SENTINEL_FIGURES]
+                 if (a.get("balance") in FIXTURE_SENTINEL_FIGURES
+                     or a.get("equity") in FIXTURE_SENTINEL_FIGURES)
+                 and not _is_pinned_account(a, expected_account, expected_server)]
     report.add("account.no_mock_admitted",
                PASS if not laundered else FAIL,
                "" if not laundered else "fixture_figures_admitted",
@@ -472,7 +508,8 @@ def check_account(report: Report, base: str, token, node_entry,
         report.add("account.reaches_ui", PASS, observed=len(genuine))
 
 
-def check_ui_contract(report: Report, base: str, token) -> None:
+def check_ui_contract(report: Report, base: str, token,
+                      expected_account=None, expected_server=None) -> None:
     """Every surface must agree. Disagreement between two endpoints about the
     same node is exactly the class of defect this programme kept finding."""
     codes = {}
@@ -521,8 +558,9 @@ def check_ui_contract(report: Report, base: str, token) -> None:
                    and _admission_permits(a.get("admitted"))]
     sentinels = [f"{r.get('provenance')}:{r.get('balance')}/{r.get('equity')}"
                  for r in ui_admitted
-                 if r.get("balance") in FIXTURE_SENTINEL_FIGURES
-                 or r.get("equity") in FIXTURE_SENTINEL_FIGURES]
+                 if (r.get("balance") in FIXTURE_SENTINEL_FIGURES
+                     or r.get("equity") in FIXTURE_SENTINEL_FIGURES)
+                 and not _is_pinned_account(r, expected_account, expected_server)]
     leaked_nodes = [str(n.get("nodeId")) for n in (nodes_body or {}).get("nodes") or []
                     if n.get("provenance") == "fixture-node"]
     findings = sentinels + [f"fixture-node:{n}" for n in leaked_nodes]
@@ -544,7 +582,7 @@ def run(base: str = DEFAULT_BASE) -> Report:
         return report
     node_entry = check_node(report, base, token, expected_instance)
     check_account(report, base, token, node_entry, expected_account, expected_server)
-    check_ui_contract(report, base, token)
+    check_ui_contract(report, base, token, expected_account, expected_server)
     return report
 
 
