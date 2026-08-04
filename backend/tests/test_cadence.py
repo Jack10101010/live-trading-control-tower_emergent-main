@@ -174,7 +174,7 @@ def _candles_bytes(n=40):
 
 
 def _trade_frame():
-    cols = ["trade_id", "direction", "fill_time", "outcome", "entry", "stop", "tp"]
+    cols = ["trade_id", "direction", "detection_time", "fill_time", "outcome", "entry", "stop", "tp"]
     return pd.DataFrame([{c: "" for c in cols} | {"trade_id": "L_1",
                         "outcome": "UNFILLED"}])[cols].astype(str)
 

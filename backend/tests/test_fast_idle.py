@@ -49,7 +49,7 @@ def _write_frozen(cfg, payload: bytes) -> None:
 
 
 def _frame(rows):
-    cols = ["trade_id", "direction", "fill_time", "outcome", "entry", "stop", "tp"]
+    cols = ["trade_id", "direction", "detection_time", "fill_time", "outcome", "entry", "stop", "tp"]
     return pd.DataFrame([{c: r.get(c, "") for c in cols} for r in rows]).astype(str)
 
 
@@ -350,6 +350,14 @@ def test_no_durable_state_schema_change(tmp_path):
     milestone added `accounting_telemetry`, which is DIAGNOSTICS ONLY: it is
     never an input to a decision, so losing it cannot affect correctness. All
     approved, all pinned here with the original exact-set strictness.
+
+    M-CAP-GUARD-1 added `prev_frame_identity_key`: the `ob_id` numbering the
+    stored frame was produced under. Unlike `accounting_telemetry` this one IS a
+    decision input — it is what lets the next cycle prove the identity space did
+    not rebase before diffing. It is written in the SAME atomic commit as the
+    frame it describes, so a frame can never become durable without it. Losing
+    it is safe in the fail-closed direction: a stored frame with no key is
+    treated as unproven and continuity is refused, never assumed.
     """
     cfg, r, _ = _primed(tmp_path)
     r.run_once()                                          # fast skip
@@ -357,7 +365,8 @@ def test_no_durable_state_schema_change(tmp_path):
     assert set(raw.keys()) == {"last_boundary", "last_recomputed_input_revision",
                                "prev_frame_hash", "prev_frame_file", "ledger",
                                "mirror", "realized_r_by_date", "accounted_deal_ids",
-                               "accounting_telemetry", "updated_at"}
+                               "accounting_telemetry", "prev_frame_identity_key",
+                               "updated_at"}
     assert "daily" not in raw          # the legacy bucket is gone, not shadowed
 
 

@@ -42,7 +42,7 @@ def _candles_bytes(n=40, start="2026-07-17 09:00:00+00:00", close="1.0") -> byte
 
 
 def _frame(rows):
-    cols = ["trade_id", "direction", "fill_time", "outcome", "entry", "stop", "tp"]
+    cols = ["trade_id", "direction", "detection_time", "fill_time", "outcome", "entry", "stop", "tp"]
     return pd.DataFrame([{c: r.get(c, "") for c in cols} for r in rows]).astype(str)
 
 

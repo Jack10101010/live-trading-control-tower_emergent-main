@@ -603,7 +603,7 @@ def test_integration_lite_model_from_real_cycle_outputs(tmp_path):
                           freq="1min").strftime("%Y-%m-%d %H:%M:%S+00:00")
     (cfg.lux_root / "data" / "candles" / "EURUSD_1m_extended_2015_2026.csv").write_bytes(
         HEADER + b"".join(f"{t},1.0,1.0,1.0,1.0,0\n".encode() for t in times))
-    cols = ["trade_id", "direction", "fill_time", "outcome", "entry", "stop", "tp"]
+    cols = ["trade_id", "direction", "detection_time", "fill_time", "outcome", "entry", "stop", "tp"]
     frame = pd.DataFrame([{c: "" for c in cols} | {"trade_id": "L_1",
                           "outcome": "UNFILLED"}])[cols].astype(str)
     ops = OpsLog(cfg.state_dir)

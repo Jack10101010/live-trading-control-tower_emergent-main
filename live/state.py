@@ -258,20 +258,31 @@ class RunnerState:
             raise
 
     # ── frames ───────────────────────────────────────────────────────────────
-    def store_frame(self, frame, boundary: str, input_revision: str) -> None:
+    def store_frame(self, frame, boundary: str, input_revision: str,
+                    identity_space_key: str | None = None) -> None:
         """Record the evaluated frame, its boundary AND the exact input revision
         that produced it — all in memory; the caller's single atomic ``save()``
         commits them together with any reserved PENDING intents.
 
         ``input_revision`` is REQUIRED (C3): a boundary can never advance without
         the revision it was computed from, so durable state can never hold a new
-        boundary paired with a stale revision."""
+        boundary paired with a stale revision.
+
+        ``identity_space_key`` (M-CAP-GUARD-1) records the ``ob_id`` numbering
+        this frame was produced under, so the NEXT cycle can prove the numbering
+        is unchanged before diffing against it. It is optional here only so that
+        pre-guard state files load unchanged; a stored frame without a key is
+        treated by the guard as unproven and refuses continuity — the safe
+        direction. It is deliberately part of the SAME atomic commit as the
+        frame: a frame must never become durable without the key describing it.
+        """
         f = self.frames_dir / "prev_trades.csv"
         frame.to_csv(f, index=False)
         self.data["prev_frame_file"] = str(f)
         self.data["prev_frame_hash"] = frame_hash(frame)
         self.data["last_boundary"] = boundary
         self.data["last_recomputed_input_revision"] = input_revision
+        self.data["prev_frame_identity_key"] = identity_space_key
 
     def load_prev_frame(self):
         import pandas as pd

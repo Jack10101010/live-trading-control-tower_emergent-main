@@ -23,6 +23,7 @@ from pathlib import Path
 import pandas as pd
 
 from live.config import ENGINE_VERSION_EXPECTED, PORTFOLIO_INCLUDE_DISABLED_COHORTS
+from live.identity_guard import evaluate_continuity, identity_space_key
 from live.intents import diff_frontier
 from live.state import RunnerState
 
@@ -291,6 +292,17 @@ def latest_closed_boundary(last_m1_time: pd.Timestamp) -> pd.Timestamp:
     return next_open.floor("15min") - FIFTEEN_MIN
 
 
+class _InjectedIdentityConfig:
+    """Stand-in config for injected-pipeline runs (tests / rehearsal).
+
+    Carries none of the identity fields, so `identity_space_key` renders each as
+    the explicit `absent` sentinel. That keeps the key stable across cycles of an
+    injected run — preserving pre-guard continuity behaviour — while remaining
+    distinguishable from any real Golden config, which supplies real values."""
+
+    __slots__ = ()
+
+
 class LiveRunner:
     def __init__(self, config, session: LuxSession | None = None, pipeline=None,
                  input_provider=None):
@@ -308,6 +320,26 @@ class LiveRunner:
 
     def _engine_version(self) -> str:
         return self.session.engine_version if self.session else "injected"
+
+    def _identity_key(self, candles: pd.DataFrame, frontier_date: str) -> str:
+        """M-CAP-GUARD-1 identity-space key for this evaluation.
+
+        `window_start` is the FIRST bar of the frame actually walked — not
+        `config.start_date` — because detection walks the frame, and a moved
+        frame start rebases every `ob_id` (ORDER-BLOCK-IDENTITY.md Experiment B).
+
+        With an injected pipeline there is no `LuxSession` and therefore no
+        Golden config; `_InjectedIdentityConfig` supplies a stable, explicitly
+        marked stand-in so injected runs keep a consistent key across cycles
+        (continuity behaves exactly as before this guard existed) without ever
+        being mistaken for a real configuration.
+        """
+        config = (self.session.golden_config(self.config.golden_config_path,
+                                             end_date=frontier_date)
+                  if self.session is not None else _InjectedIdentityConfig())
+        return identity_space_key(
+            engine_version=self._engine_version(), config=config,
+            window_start=str(pd.to_datetime(candles["time"]).min()))
 
     # ── pipeline (mirrors the Golden driver stage-for-stage) ─────────────────
     def golden_pipeline(self, candles_raw: pd.DataFrame, frontier_date: str,
@@ -431,6 +463,34 @@ class LiveRunner:
         prev = self.state.load_prev_frame()
         # frontier fill_time format matches the engine's candle time strings
         frontier_bar = _engine_time_string(boundary)
+
+        # ── M-CAP-GUARD-1: prove the ob_id numbering did not rebase ──────────
+        # Runs BEFORE diff_frontier, so a rebased identity space can never reach
+        # intent generation, the ledger, or the broker.
+        identity_key = self._identity_key(candles, frontier_date)
+        verdict = evaluate_continuity(
+            prev_frame=prev, cur_frame=trades_str,
+            prior_key=self.state.data.get("prev_frame_identity_key"),
+            current_key=identity_key)
+        if not verdict.ok:
+            # Refuse continuity. Emit NO intents and do NOT advance durable
+            # state — the stored boundary/revision/frame stay exactly as they
+            # were, so the condition is recoverable and re-observable. The C4
+            # memo is deliberately left unprimed. `status` is not "ok", so
+            # main.cycle() never calls executor.apply(): no order, ledger or
+            # broker path is reachable from here.
+            return {
+                "status": "identity_drift_frozen",
+                "boundary": boundary_str,
+                "intents": [],
+                "identity_guard": verdict.to_dict(),
+                "engine_version": self._engine_version(),
+                "phase_timings": phase_timings,
+                "pipeline_s": pipeline_s,
+                "note": f"order-block identity space drift refused: "
+                        f"{verdict.reason} — {verdict.detail}",
+            }
+
         intents = diff_frontier(prev, trades_str, frontier_bar) if prev is not None else []
 
         first_run = prev is None
@@ -439,7 +499,8 @@ class LiveRunner:
         # intents. No separate save may split them.
         for intent in intents:
             self.state.reserve_pending(intent)
-        self.state.store_frame(trades_str, boundary_str, input_revision)
+        self.state.store_frame(trades_str, boundary_str, input_revision,
+                               identity_space_key=identity_key)
         self.state.save()   # ONE atomic commit: boundary + revision + prev_frame + PENDING intents
         # C4: prime the memo ONLY after the save succeeded — the memo never
         # claims a (revision, boundary) pair that is not durably committed.

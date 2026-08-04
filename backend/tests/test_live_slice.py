@@ -40,7 +40,7 @@ def _cfg(tmp_path, **kw) -> LiveConfig:
 
 
 def _frame(rows):
-    cols = ["trade_id", "direction", "fill_time", "outcome", "entry", "stop", "tp"]
+    cols = ["trade_id", "direction", "detection_time", "fill_time", "outcome", "entry", "stop", "tp"]
     return pd.DataFrame([{c: r.get(c, "") for c in cols} for r in rows]).astype(str)
 
 
