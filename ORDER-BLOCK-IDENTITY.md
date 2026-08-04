@@ -194,6 +194,17 @@ not detect that identity was rebased. Recorded here as a finding; fixing it is
 out of scope for this milestone and is proposed as a guard in
 `OPTIMISATION-ROADMAP.md`.
 
+> **CLOSED 2026-08-04 by M-CAP-GUARD-1** (`live/identity_guard.py`). Continuity
+> is now bound to an identity-space key over engine version, window start,
+> symbol/timeframe and every detector parameter that can change whether an id
+> increments — plus a direct frame cross-check that shared `trade_id`s still
+> describe the same order block and that no prior `trade_id` vanished. On
+> refusal the runner returns `identity_drift_frozen`, emits no intents, advances
+> no durable state, and cannot reach `executor.apply()`. `end_date` is
+> deliberately excluded from the key: it advances every cycle, and Experiment A
+> proves append-only extension preserves prior ids. See `OPEN-RISKS.md` R-1 for
+> the residual.
+
 ### 6.2 The ghost-id fallback can be non-deterministic
 
 `strategy_core/ghost_tracker.py:176` and `:482`:

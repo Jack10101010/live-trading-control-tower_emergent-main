@@ -76,6 +76,25 @@ then the guard, then structural caching.
 **Target:** `execute_scenario_job` inner rescan
 **Evidence:** [M] 133,069,753 pending checks for 4,271,746 candles (31.15×)
 
+> **UPDATE 2026-08-04 — this milestone was attempted and BLOCKED at Phase 3.**
+> The audit (`PENDING-HOT-PATH-AUDIT.md`) found that the fill/trigger predicates
+> *are* cleanly indexable — each reduces to a constant, immutable per-item price
+> threshold — but that **candidates cannot be omitted from the scan**:
+> `_update_pending_metrics` is a running-max accumulator that runs on every
+> candle, feeds three exported trade columns, and reads the *opposite* candle
+> field from the fill predicates. Skipping a candidate whose predicate cannot
+> fire would still change its exported metric.
+>
+> Revised options: **A** — gate only the predicates, keep the per-candle metric
+> visit, ≈15 % [PROJECTION]; **B** — additionally reformulate the metric as a
+> prefix-max (mathematically exact, since `max(0, high−entry)` is monotone in
+> `high`), approaching the original range but requiring an exact account of the
+> measured 1,207-pair gap between pending checks and metric updates.
+>
+> The 25–43 % figure below was written before this audit and is **not**
+> achievable by indexing alone. No index was implemented. See
+> `OPEN-RISKS.md` R-2/R-3/R-4.
+
 Today every candle re-examines the entire pending list, checking fill and
 invalidation for each entry. The measured amplification is 31×.
 
