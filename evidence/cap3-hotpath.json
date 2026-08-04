@@ -1,0 +1,261 @@
+{
+  "dataset_rows": 4314720,
+  "frontier_date": "2026-06-19",
+  "order_blocks_after_filters": 2080,
+  "m1_bars_simulated": 4271746,
+  "pass1_execute_scenario_job_s": 217.963,
+  "hot_path_profile": {
+    "candle_iterations": 4271746,
+    "active_checks": 65099,
+    "pending_checks": 133069753,
+    "base_row_creations": 2060,
+    "news_blackout_lookups": 4267429,
+    "news_flatten_lookups": 65000,
+    "fill_checks": 133069753,
+    "invalidation_checks": 132654597
+  },
+  "trades_rows": 2060,
+  "pass2_cprofile_wallclock_s": 583.472,
+  "cprofile_top30_by_tottime": [
+    {
+      "file": "/Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/execution.py",
+      "line": 2121,
+      "func": "simulate_trades",
+      "ncalls": 1,
+      "tottime_s": 207.783,
+      "cumtime_s": 581.4701
+    },
+    {
+      "file": "~",
+      "line": 0,
+      "func": "<method 'get' of 'dict' objects>",
+      "ncalls": 1907495402,
+      "tottime_s": 129.5928,
+      "cumtime_s": 129.5928
+    },
+    {
+      "file": "/Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/execution.py",
+      "line": 1255,
+      "func": "_update_pending_metrics",
+      "ncalls": 133068546,
+      "tottime_s": 55.0102,
+      "cumtime_s": 87.8712
+    },
+    {
+      "file": "/Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/execution.py",
+      "line": 998,
+      "func": "_triggered_edge_touched",
+      "ncalls": 129374023,
+      "tottime_s": 47.7863,
+      "cumtime_s": 111.1776
+    },
+    {
+      "file": "~",
+      "line": 0,
+      "func": "<built-in method builtins.max>",
+      "ncalls": 395721513,
+      "tottime_s": 34.242,
+      "cumtime_s": 34.242
+    },
+    {
+      "file": "/Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/execution.py",
+      "line": 992,
+      "func": "_penetration_price",
+      "ncalls": 129505521,
+      "tottime_s": 27.271,
+      "cumtime_s": 37.9932
+    },
+    {
+      "file": "/Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/execution.py",
+      "line": 971,
+      "func": "_ob_depth",
+      "ncalls": 129379463,
+      "tottime_s": 18.1844,
+      "cumtime_s": 18.1844
+    },
+    {
+      "file": "/Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/execution.py",
+      "line": 1661,
+      "func": "_is_filled",
+      "ncalls": 129371998,
+      "tottime_s": 10.8544,
+      "cumtime_s": 10.8544
+    },
+    {
+      "file": "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pandas/core/methods/to_dict.py",
+      "line": 97,
+      "func": "to_dict",
+      "ncalls": 2,
+      "tottime_s": 9.7016,
+      "cumtime_s": 16.1517
+    },
+    {
+      "file": "~",
+      "line": 0,
+      "func": "<method 'append' of 'list' objects>",
+      "ncalls": 133152415,
+      "tottime_s": 9.5808,
+      "cumtime_s": 9.5808
+    },
+    {
+      "file": "~",
+      "line": 0,
+      "func": "<method 'setdefault' of 'dict' objects>",
+      "ncalls": 133133645,
+      "tottime_s": 9.3554,
+      "cumtime_s": 9.3554
+    },
+    {
+      "file": "/Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/news.py",
+      "line": 13,
+      "func": "_utc_naive_timestamp",
+      "ncalls": 4332483,
+      "tottime_s": 8.4983,
+      "cumtime_s": 8.4983
+    },
+    {
+      "file": "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pandas/core/dtypes/cast.py",
+      "line": 186,
+      "func": "maybe_box_native",
+      "ncalls": 8585092,
+      "tottime_s": 2.4008,
+      "cumtime_s": 3.1447
+    },
+    {
+      "file": "/Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/news.py",
+      "line": 24,
+      "func": "_news_blackout_match",
+      "ncalls": 4267429,
+      "tottime_s": 2.323,
+      "cumtime_s": 13.4804
+    },
+    {
+      "file": "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pandas/core/arrays/datetimes.py",
+      "line": 670,
+      "func": "__iter__",
+      "ncalls": 4288247,
+      "tottime_s": 1.6525,
+      "cumtime_s": 1.6532
+    },
+    {
+      "file": "~",
+      "line": 0,
+      "func": "<built-in method builtins.isinstance>",
+      "ncalls": 13625821,
+      "tottime_s": 1.099,
+      "cumtime_s": 1.1102
+    },
+    {
+      "file": "/Users/jack/Documents/Dev Projects/Lux-OB-Backtester/scripts/run_backtest.py",
+      "line": 2529,
+      "func": "execute_scenario_job",
+      "ncalls": 1,
+      "tottime_s": 1.017,
+      "cumtime_s": 583.4616
+    },
+    {
+      "file": "~",
+      "line": 0,
+      "func": "<method 'nonzero' of 'numpy.ndarray' objects>",
+      "ncalls": 853,
+      "tottime_s": 1.0113,
+      "cumtime_s": 1.0113
+    },
+    {
+      "file": "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pandas/core/arrays/_mixins.py",
+      "line": 287,
+      "func": "__getitem__",
+      "ncalls": 4303363,
+      "tottime_s": 1.007,
+      "cumtime_s": 1.1594
+    },
+    {
+      "file": "/Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/news.py",
+      "line": 20,
+      "func": "_time_cache_key",
+      "ncalls": 4332429,
+      "tottime_s": 0.9423,
+      "cumtime_s": 9.4405
+    },
+    {
+      "file": "/Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/ghost_tracker.py",
+      "line": 487,
+      "func": "tick_all",
+      "ncalls": 4271746,
+      "tottime_s": 0.7842,
+      "cumtime_s": 1.2178
+    },
+    {
+      "file": "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pandas/core/arrays/base.py",
+      "line": 559,
+      "func": "__iter__",
+      "ncalls": 4303266,
+      "tottime_s": 0.5008,
+      "cumtime_s": 1.6596
+    },
+    {
+      "file": "/Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/execution.py",
+      "line": 1810,
+      "func": "enrich_trades_with_stop_anchored_excursions",
+      "ncalls": 1,
+      "tottime_s": 0.4852,
+      "cumtime_s": 1.5118
+    },
+    {
+      "file": "/Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/execution.py",
+      "line": 1123,
+      "func": "_delay_window_update",
+      "ncalls": 3283806,
+      "tottime_s": 0.4437,
+      "cumtime_s": 0.6841
+    },
+    {
+      "file": "~",
+      "line": 0,
+      "func": "<method 'values' of 'dict' objects>",
+      "ncalls": 4271776,
+      "tottime_s": 0.4336,
+      "cumtime_s": 0.4336
+    },
+    {
+      "file": "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pandas/core/arrays/_mixins.py",
+      "line": 107,
+      "func": "_box_func",
+      "ncalls": 4303338,
+      "tottime_s": 0.1521,
+      "cumtime_s": 0.1521
+    },
+    {
+      "file": "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pandas/core/groupby/ops.py",
+      "line": 358,
+      "func": "_call_cython_op",
+      "ncalls": 8,
+      "tottime_s": 0.1098,
+      "cumtime_s": 0.11
+    },
+    {
+      "file": "~",
+      "line": 0,
+      "func": "<method 'copy' of 'numpy.ndarray' objects>",
+      "ncalls": 7203,
+      "tottime_s": 0.065,
+      "cumtime_s": 0.065
+    },
+    {
+      "file": "/Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/execution.py",
+      "line": 762,
+      "func": "_base_trade_row",
+      "ncalls": 2060,
+      "tottime_s": 0.053,
+      "cumtime_s": 0.0674
+    },
+    {
+      "file": "/Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/execution.py",
+      "line": 1329,
+      "func": "_update_active_metrics",
+      "ncalls": 65099,
+      "tottime_s": 0.0494,
+      "cumtime_s": 0.158
+    }
+  ]
+}

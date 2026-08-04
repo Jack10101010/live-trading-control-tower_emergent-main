@@ -1,0 +1,48 @@
+         3286824620 function calls (3286791354 primitive calls) in 583.457 seconds
+
+   Ordered by: internal time
+   List reduced from 952 to 40 due to restriction <40>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1  207.783  207.783  581.470  581.470 /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/execution.py:2121(simulate_trades)
+1907495402  129.593    0.000  129.593    0.000 {method 'get' of 'dict' objects}
+133068546   55.010    0.000   87.871    0.000 /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/execution.py:1255(_update_pending_metrics)
+129374023   47.786    0.000  111.178    0.000 /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/execution.py:998(_triggered_edge_touched)
+395721513   34.242    0.000   34.242    0.000 {built-in method builtins.max}
+129505521   27.271    0.000   37.993    0.000 /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/execution.py:992(_penetration_price)
+129379463   18.184    0.000   18.184    0.000 /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/execution.py:971(_ob_depth)
+129371998   10.854    0.000   10.854    0.000 /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/execution.py:1661(_is_filled)
+        2    9.702    4.851   16.152    8.076 /Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pandas/core/methods/to_dict.py:97(to_dict)
+133152415    9.581    0.000    9.581    0.000 {method 'append' of 'list' objects}
+133133645    9.355    0.000    9.355    0.000 {method 'setdefault' of 'dict' objects}
+  4332483    8.498    0.000    8.498    0.000 /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/news.py:13(_utc_naive_timestamp)
+  8585092    2.401    0.000    3.145    0.000 /Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pandas/core/dtypes/cast.py:186(maybe_box_native)
+  4267429    2.323    0.000   13.480    0.000 /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/news.py:24(_news_blackout_match)
+  4288247    1.652    0.000    1.653    0.000 /Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pandas/core/arrays/datetimes.py:670(__iter__)
+13625821/13625616    1.099    0.000    1.110    0.000 {built-in method builtins.isinstance}
+        1    1.017    1.017  583.462  583.462 /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/scripts/run_backtest.py:2529(execute_scenario_job)
+      853    1.011    0.001    1.011    0.001 {method 'nonzero' of 'numpy.ndarray' objects}
+  4303363    1.007    0.000    1.159    0.000 /Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pandas/core/arrays/_mixins.py:287(__getitem__)
+  4332429    0.942    0.000    9.440    0.000 /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/news.py:20(_time_cache_key)
+  4271746    0.784    0.000    1.218    0.000 /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/ghost_tracker.py:487(tick_all)
+  4303266    0.501    0.000    1.660    0.000 /Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pandas/core/arrays/base.py:559(__iter__)
+        1    0.485    0.485    1.512    1.512 /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/execution.py:1810(enrich_trades_with_stop_anchored_excursions)
+  3283806    0.444    0.000    0.684    0.000 /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/execution.py:1123(_delay_window_update)
+  4271776    0.434    0.000    0.434    0.000 {method 'values' of 'dict' objects}
+  4303338    0.152    0.000    0.152    0.000 /Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pandas/core/arrays/_mixins.py:107(_box_func)
+        8    0.110    0.014    0.110    0.014 /Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pandas/core/groupby/ops.py:358(_call_cython_op)
+     7203    0.065    0.000    0.065    0.000 {method 'copy' of 'numpy.ndarray' objects}
+     2060    0.053    0.000    0.067    0.000 /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/execution.py:762(_base_trade_row)
+    65099    0.049    0.000    0.158    0.000 /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/execution.py:1329(_update_active_metrics)
+     9486    0.044    0.000    0.047    0.000 /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/regime.py:65(utc_date_key)
+        2    0.039    0.020    0.949    0.474 /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/scripts/run_backtest.py:2413(_portfolio_panel_index)
+    65000    0.036    0.000    0.204    0.000 /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/news.py:36(_news_flatten_match)
+    28731    0.028    0.000    0.060    0.000 /Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pandas/core/dtypes/common.py:1659(_is_dtype_type)
+        4    0.027    0.007    0.027    0.007 /Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pandas/core/arrays/datetimelike.py:2533(copy)
+     7219    0.025    0.000    0.188    0.000 /Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pandas/core/series.py:369(__init__)
+   128124    0.024    0.000    0.024    0.000 /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/execution.py:1031(_is_fully_breached)
+    35921    0.024    0.000    0.330    0.000 /Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pandas/core/generic.py:6191(__getattr__)
+       10    0.023    0.002    0.023    0.002 /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/regime.py:122(ewm_adjust_false)
+    65749    0.023    0.000    0.065    0.000 /Users/jack/Documents/Dev Projects/Lux-OB-Backtester/strategy_core/execution.py:1321(_init_active_metrics)
+
+

@@ -1,0 +1,27 @@
+{
+  "full_ob_count": 2080,
+  "A_append": {
+    "truncated_ob_count": 2077,
+    "shared_ids": 2077,
+    "mismatched_ids": 0,
+    "first_mismatches": [],
+    "prefix_stable": true
+  },
+  "B_window_start": {
+    "truncated_ob_count": 2042,
+    "shared_ids": 2042,
+    "mismatched_ids": 2042,
+    "common_origin_times": 2042,
+    "same_ob_different_id": 2042,
+    "window_relative": true
+  },
+  "C_parameter": {
+    "base_min_ob_size_pips": 0.0,
+    "perturbed_to": 1.0,
+    "perturbed_ob_count": 2079,
+    "shared_ids": 2079,
+    "mismatched_ids": 296,
+    "same_ob_different_id": 296,
+    "parameter_relative": true
+  }
+}

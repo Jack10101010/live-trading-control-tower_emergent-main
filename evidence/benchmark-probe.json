@@ -1,0 +1,189 @@
+{
+  "environment": {
+    "benchmark_timestamp": "2026-08-04T10:06:16.061595+00:00",
+    "ct_commit": "d6e776f0ac8fc39e9d9c799c7ba0a162a6a43358",
+    "lux_commit": "d978074a2ee938fb4803e50d419788c584d6ef57",
+    "engine_version": "5bb6372c092cc65ae0d30c4a40bed26ed5e074aef2459de9e199b902849305be",
+    "expected_engine_version": "5bb6372c092cc65ae0d30c4a40bed26ed5e074aef2459de9e199b902849305be",
+    "dataset_path": "/Users/jack/Documents/Dev Projects/Lux-OB-Backtester/data/candles/EURUSD_1m_extended_2015_2026.csv",
+    "dataset_sha256": "ba32de0d836fbe4d375c4533180f6074796c73bf5d0df16018040b799777235f",
+    "dataset_rows": 4314720,
+    "iterations": 1,
+    "warmup": 0,
+    "platform": "macOS-26.3.1-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "python_version": "3.12.6",
+    "measurement_boundary": "Measured interval = exactly ONE golden_pipeline(candles, frontier_date, profiler) call over an already-loaded candle frame. EXCLUDED from every measured timing: candle loading, the per-iteration fresh-copy of the candle frame, dataset hashing, row counting, environment collection, determinism trade-frame hashing, input-integrity checks, and JSON/Markdown/CSV writing.",
+    "percentile_method": "linear interpolation between closest ranks: rank = p/100 * (n-1), interpolate neighbours (numpy 'linear')",
+    "label": "CAP1-probe"
+  },
+  "measurement_boundary": "Measured interval = exactly ONE golden_pipeline(candles, frontier_date, profiler) call over an already-loaded candle frame. EXCLUDED from every measured timing: candle loading, the per-iteration fresh-copy of the candle frame, dataset hashing, row counting, environment collection, determinism trade-frame hashing, input-integrity checks, and JSON/Markdown/CSV writing.",
+  "percentile_method": "linear interpolation between closest ranks: rank = p/100 * (n-1), interpolate neighbours (numpy 'linear')",
+  "warnings": [
+    "p95 is descriptive only with fewer than 20 measured iterations."
+  ],
+  "phase_names": [
+    "detect_order_blocks",
+    "execute_scenario_job",
+    "filter_date_range",
+    "filter_obs",
+    "load_news_calendar",
+    "load_news_events",
+    "prepare_candles",
+    "prepare_news_cache",
+    "prepare_obs",
+    "resample",
+    "tag_obs_news"
+  ],
+  "raw": {
+    "totals_s": [
+      257.9272681250004
+    ],
+    "phases_s": [
+      {
+        "filter_date_range": 2.712758,
+        "prepare_candles": 3.281029,
+        "load_news_calendar": 0.060703,
+        "load_news_events": 0.055286,
+        "prepare_news_cache": 10.340754,
+        "resample": 0.281722,
+        "detect_order_blocks": 26.643913,
+        "tag_obs_news": 25.291173,
+        "filter_obs": 0.002894,
+        "prepare_obs": 0.014106,
+        "execute_scenario_job": 189.201081
+      }
+    ]
+  },
+  "aggregate": {
+    "total_s": {
+      "n": 1,
+      "min": 257.9272681250004,
+      "p50": 257.9272681250004,
+      "p95": 257.9272681250004,
+      "max": 257.9272681250004,
+      "mean": 257.9272681250004,
+      "stddev": null,
+      "stddev_kind": null
+    },
+    "per_phase_s": {
+      "detect_order_blocks": {
+        "n": 1,
+        "min": 26.643913,
+        "p50": 26.643913,
+        "p95": 26.643913,
+        "max": 26.643913,
+        "mean": 26.643913,
+        "stddev": null,
+        "stddev_kind": null
+      },
+      "execute_scenario_job": {
+        "n": 1,
+        "min": 189.201081,
+        "p50": 189.201081,
+        "p95": 189.201081,
+        "max": 189.201081,
+        "mean": 189.201081,
+        "stddev": null,
+        "stddev_kind": null
+      },
+      "filter_date_range": {
+        "n": 1,
+        "min": 2.712758,
+        "p50": 2.712758,
+        "p95": 2.712758,
+        "max": 2.712758,
+        "mean": 2.712758,
+        "stddev": null,
+        "stddev_kind": null
+      },
+      "filter_obs": {
+        "n": 1,
+        "min": 0.002894,
+        "p50": 0.002894,
+        "p95": 0.002894,
+        "max": 0.002894,
+        "mean": 0.002894,
+        "stddev": null,
+        "stddev_kind": null
+      },
+      "load_news_calendar": {
+        "n": 1,
+        "min": 0.060703,
+        "p50": 0.060703,
+        "p95": 0.060703,
+        "max": 0.060703,
+        "mean": 0.060703,
+        "stddev": null,
+        "stddev_kind": null
+      },
+      "load_news_events": {
+        "n": 1,
+        "min": 0.055286,
+        "p50": 0.055286,
+        "p95": 0.055286,
+        "max": 0.055286,
+        "mean": 0.055286,
+        "stddev": null,
+        "stddev_kind": null
+      },
+      "prepare_candles": {
+        "n": 1,
+        "min": 3.281029,
+        "p50": 3.281029,
+        "p95": 3.281029,
+        "max": 3.281029,
+        "mean": 3.281029,
+        "stddev": null,
+        "stddev_kind": null
+      },
+      "prepare_news_cache": {
+        "n": 1,
+        "min": 10.340754,
+        "p50": 10.340754,
+        "p95": 10.340754,
+        "max": 10.340754,
+        "mean": 10.340754,
+        "stddev": null,
+        "stddev_kind": null
+      },
+      "prepare_obs": {
+        "n": 1,
+        "min": 0.014106,
+        "p50": 0.014106,
+        "p95": 0.014106,
+        "max": 0.014106,
+        "mean": 0.014106,
+        "stddev": null,
+        "stddev_kind": null
+      },
+      "resample": {
+        "n": 1,
+        "min": 0.281722,
+        "p50": 0.281722,
+        "p95": 0.281722,
+        "max": 0.281722,
+        "mean": 0.281722,
+        "stddev": null,
+        "stddev_kind": null
+      },
+      "tag_obs_news": {
+        "n": 1,
+        "min": 25.291173,
+        "p50": 25.291173,
+        "p95": 25.291173,
+        "max": 25.291173,
+        "mean": 25.291173,
+        "stddev": null,
+        "stddev_kind": null
+      }
+    }
+  },
+  "determinism": {
+    "enabled": true,
+    "verdict": "PASS",
+    "trade_hash": "b43e32489453ff8f7d664014a471e67b11413e185d8bc203f345014acdac2f6e"
+  },
+  "verdict": "PASS"
+}
