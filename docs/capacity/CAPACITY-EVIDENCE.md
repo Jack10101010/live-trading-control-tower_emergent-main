@@ -254,6 +254,198 @@ and the 36 % skipped-boundary figure would improve only marginally. This is a
 projection from a Mac measurement and **must not be reported as a VPS result**;
 only a VPS-side `ops/cycles.jsonl` re-measurement can confirm it.
 
+## 4e. Option B (M-CAP-OPT-3) — the exact pending-metric reformulation
+
+### The contract (Phase B1)
+
+`_update_pending_metrics` maintains ONE running maximum, exported as three
+columns (`…_price`, `…_pips`, `…_r`; the latter two are pure functions of the
+first plus immutable `pip_size` / `risk`):
+
+```
+metric = max over the CONTRIBUTING candle set of
+    bullish:  max(0.0, float(candle["high"]) - float(plan["entry"]))
+    bearish:  max(0.0, float(plan["entry"])  - float(candle["low"]))
+```
+
+| Aspect | Established behaviour |
+|---|---|
+| Contributing set | **contiguous** — an item sits in `pending` for an unbroken run of candles |
+| Creation bar | **included** — items are appended by the ob-cursor loop at the TOP of that candle's body |
+| Fill bar | **excluded** — the fill branch is the only resolution path with no preceding update |
+| Invalidation / retrace / FFT / news-touch | **included** — each calls the update before building its row |
+| Post-loop UNFILLED | window ends at the final candle (the item survived it) |
+| Direction | bullish reads `high`; anything **not** `"bullish"` reads `low`, mirroring `_penetration_price` |
+| NaN / ±inf | propagated exactly as `max()` would; not "cleaned" |
+| Rounding | none — raw doubles are exported |
+
+No holes: confirmed by the R-3 arithmetic (`pending_checks − metric_updates =
+1,207 =` exactly the fill-branch rows: 650 filled + 457 STATE_BLOCKED + 100
+REGIME_BLOCKED).
+
+**Prefix-maximum equivalence — proved bitwise, not asserted.** For fixed `E`,
+IEEE-754 subtraction is monotone non-decreasing in its first operand, so
+`max_k(h_k − E) == (max_k h_k) − E`; and `max(0.0, ·)` is monotone, so the clamp
+commutes with the maximum. Verified over 50,000 random cases by `.hex()`
+comparison (`test_monotonicity_premise_holds_bitwise`), plus 4,000 random
+windows against a literal replay of the original accumulation.
+
+### The implementation (Phases B2/B3)
+
+* `_RangeExtremum` — iterative segment tree over `array('d')` (stdlib only; no
+  NumPy, which is out of scope). Built once per run (~4.3M ops) in place of
+  133,068,546 running updates; each item queries once at resolution.
+* `_optb_metric(item, mx_end, highs, lows)` — performs the identical final
+  subtraction and clamp on the identical operands.
+* `_update_pending_metrics` records only `item["_mx_end"] = candle_index`.
+* `_apply_pending_metrics` materialises from `[created_candle_index, _mx_end]`.
+
+**Two design decisions worth recording.** First, the gate is keyed off the ITEM
+(`item["_rx"]`), not the module flag — so the three helper functions that also
+reach `_apply_pending_metrics` (`_apply_fill_metrics`,
+`_portfolio_policy_block_row`, `_regime_filter_block_row`) and the
+`simulate_trades_be_multiarm*` variants work unchanged, with no parameter
+threading. Second, **the fill-branch exception needs no special-casing**: that
+branch never updates on the fill candle, so `_mx_end` already holds the previous
+index and the window ends one bar earlier — exactly the original semantics,
+obtained for free.
+
+An earlier design that threaded a window-end parameter through those helpers was
+abandoned once the call graph was fully mapped; it would have touched far more
+surface for the same result.
+
+### Equivalence (Phases B4/B5) — PASS
+
+**Full canonical dataset, four modes, one process** (`evidence/optb-equivalence-final.json`):
+
+| Mode | trades SHA-256 | rows |
+|---|---|---:|
+| reference (both off) — the oracle | `b43e32489453ff8f…` | 2,060 |
+| Option A only | `b43e32489453ff8f…` | 2,060 |
+| Option B only | `b43e32489453ff8f…` | 2,060 |
+| Option A + B | `b43e32489453ff8f…` | 2,060 |
+
+`all_byte_identical: true` · `counters_identical: true` · zero mismatches across
+22 checked fields in every mode.
+
+**Per-outcome metric equality — every R-3 class, zero mismatches:**
+
+| outcome | rows | mismatches |
+|---|---:|---:|
+| WIN | 441 | 0 |
+| LOSS | 194 | 0 |
+| NEWS_FLATTEN | 15 | 0 |
+| **STATE_BLOCKED** | 457 | 0 |
+| **REGIME_BLOCKED** | 100 | 0 |
+| INVALID | 809 | 0 |
+| NEWS_TOUCH_CANCEL | 9 | 0 |
+| UNFILLED | 35 | 0 |
+
+**Real-data slices:** 9 independent windows across the history (inception,
+2015, 2017, 2020, 2022, 2024, frontier, a 5k-candle window, an offset start) ×
+4 modes — byte-identical in every case, with per-outcome metric equality
+re-checked inside each slice. Real slices supply weekend gaps, news blackouts,
+long-lived pendings and both directions that no synthetic fixture reproduces
+faithfully.
+
+**Adversarial controls (32 tests):** exhaustive brute-force comparison for all
+ranges up to n=33 and random ranges at n=200,000; non-power-of-two padding;
+padding identity never leaking; negative indices proved to **intersect** rather
+than wrap (Python negative-slicing would have been a genuine hazard); clamping
+semantics; off-by-one made *detectable* (0.0 vs 4.0 on a one-bar shift);
+`mx_end=None` ⇒ 0.0 matching the untouched accumulator; direction inversion;
+non-`"bullish"` direction; NaN/±inf; string-typed entry; exact-equality
+thresholds via exactly-representable binaries; query non-mutation.
+
+**Ceiling probe (throwaway, retained as evidence).** Before implementing, a
+no-op stub of `_update_pending_metrics` bounded the prize at **42.80 s (25.8 %)**
+across three interleaved pairs — 165.62 s → 122.82 s. The stub was still *called*
+133M times, which is why an early-return implementation captures essentially the
+whole ceiling.
+
+### Benchmark and retention (Phase B6) [M]
+
+Interleaved round-robin, 5 rounds + discarded warm-up, quiet machine, hash
+verified every iteration. All 20 measured runs produced `b43e3248…`
+(`evidence/optb-ab4-report.json`).
+
+| mode | mean (s) | p50 | min | max | sd | CPU (s) | saving |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| reference | 192.21 | 192.74 | 186.69 | 195.87 | 3.71 | 186.89 | — |
+| Option A | 170.12 | 170.97 | 166.74 | 173.03 | 2.72 | 164.68 | 11.50 % |
+| Option B | 157.13 | 157.40 | 151.16 | 162.29 | 3.95 | 151.05 | 18.25 % |
+| **Option A + B** | **137.07** | 137.92 | 129.39 | 142.06 | 4.69 | 129.61 | **28.69 %** |
+
+Peak RSS **2,751 MiB in every mode** — the segment trees add no measurable
+footprint (they replace per-item work, and `array('d')` holds 4.3M doubles in
+~34 MiB against a ~2.7 GiB working set).
+
+**Not summed.** A + B measured together (28.69 %) is *sub-additive* against
+A (11.50 %) + B (18.25 %) = 29.75 %, because both act on the same phase.
+Option B's genuine increment **over Option A** is **33.04 s (19.42 %)**.
+
+**End-to-end conversion**, against the `dfd3e7d` baseline cycle of 256.57 s:
+
+| basis | Option A+B | Option B increment alone |
+|---|---:|---:|
+| absolute (55.14 s / 33.04 s off 256.57 s) | **21.5 %** | 12.9 % |
+| proportional (× 73.16 % phase share) | **21.0 %** | 14.2 % |
+
+The two bases agree closely, which they did not for Option A alone — a good sign
+that the saving is genuinely proportional here rather than a fixed constant.
+
+### Retention decision — RETAIN Option B, on clause (i)
+
+| Condition | Verdict |
+|---|---|
+| Parity exact | **YES** — byte-identical on the full dataset, 9 real-data slices, all 8 outcome classes, 20 timed runs |
+| (i) end-to-end ≥ 10 % | **YES — ~13–14 % for Option B's own increment; ~21 % for A+B** |
+| (ii) small + removes a dominant hot path | also yes — it removes the 133M-call rescan outright |
+
+Unlike Option A (retained only under clause (ii) at 5.9–8.2 %), **Option B
+clears the 10 % bar on its own**. Retained.
+
+### VPS projection (Phase B7) [PROJECTION — NOT measured]
+
+VPS median **1,387 s**, p95 **1,850.8 s**, 36 % skipped boundaries, CPU-bound,
+≈5.41× Mac [M, operator diagnostic]. Applying the ~21 % end-to-end A+B saving:
+
+| | today [M] | projected with A+B [P] |
+|---|---:|---:|
+| median | 1,387 s | **≈ 1,090 – 1,096 s** |
+| p95 | 1,850.8 s | ≈ 1,455 – 1,462 s |
+| median vs 900 s budget | 1.54× | **≈ 1.21×** |
+| p95 vs budget | 2.06× | ≈ 1.62× |
+
+Answering the specific questions:
+
+* **Reaches 900 s?** **No.** Still ~1.21× over.
+* **Below 15 minutes (900 s)?** **No** — 15 min *is* the budget.
+* **Below 20 minutes (1,200 s)?** **Yes**, with margin (~1,090 s median).
+* **Meaningful boundary-coverage improvement?** **Yes.** A 1.21× overrun implies
+  roughly `1 − 1/1.21 ≈ 17 %` of boundaries skipped, against **36 %** today —
+  skipped boundaries roughly halve. Real, but the engine still cannot keep up
+  with every 15-minute close.
+
+**This is a projection from Mac measurements and must not be reported as VPS
+performance.** Only a VPS-side `ops/cycles.jsonl` re-measurement confirms it.
+
+### Governance after Option B (Phase B8)
+
+| Stage | Identity |
+|---|---|
+| after Part A (repair + Option A) | `33e1a089705cf3a8c9601bd96d29d79d4172cb82432d8417294d47b3acfd27ec` |
+| **after Part B (+ Option B)** | **`559fcb66385e5e9fe757e61dfdc5e9c01d50abd358cdbb771105403d874a8c04`** |
+
+Manifest movement: exactly **one** of the 30 governed entries changed —
+`strategy_core/execution.py`. **The pre-repair policy would not have seen this
+either**, which is the repair earning its keep on the very next change.
+
+Proposed re-pin value if repair + A + B ship together: `559fcb66…`.
+Rollback values: `33e1a089…` (drop Option B), `66a9f164…` (drop A and B),
+`5bb6372c…` (current production, pre-everything).
+Shadow/parity requirement: the trade frame must still hash to `b43e3248…`.
+
 ## 5. Governance — `engine_version` did NOT move, and that is a finding
 
 | | |

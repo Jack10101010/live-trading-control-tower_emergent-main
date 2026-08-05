@@ -1,0 +1,176 @@
+{
+  "modes": {
+    "reference": {
+      "sha256": "b43e32489453ff8f7d664014a471e67b11413e185d8bc203f345014acdac2f6e",
+      "rows": 2060,
+      "seconds": 228.98,
+      "hot_path": {
+        "candle_iterations": 4271746,
+        "active_checks": 65099,
+        "pending_checks": 133069753,
+        "base_row_creations": 2060,
+        "news_blackout_lookups": 4267429,
+        "news_flatten_lookups": 65000,
+        "fill_checks": 133069753,
+        "invalidation_checks": 132654597
+      }
+    },
+    "optionA": {
+      "sha256": "b43e32489453ff8f7d664014a471e67b11413e185d8bc203f345014acdac2f6e",
+      "rows": 2060,
+      "seconds": 202.84,
+      "hot_path": {
+        "candle_iterations": 4271746,
+        "active_checks": 65099,
+        "pending_checks": 133069753,
+        "base_row_creations": 2060,
+        "news_blackout_lookups": 4267429,
+        "news_flatten_lookups": 65000,
+        "fill_checks": 133069753,
+        "invalidation_checks": 132654597
+      }
+    },
+    "optionB": {
+      "sha256": "b43e32489453ff8f7d664014a471e67b11413e185d8bc203f345014acdac2f6e",
+      "rows": 2060,
+      "seconds": 186.34,
+      "hot_path": {
+        "candle_iterations": 4271746,
+        "active_checks": 65099,
+        "pending_checks": 133069753,
+        "base_row_creations": 2060,
+        "news_blackout_lookups": 4267429,
+        "news_flatten_lookups": 65000,
+        "fill_checks": 133069753,
+        "invalidation_checks": 132654597
+      }
+    },
+    "optionA+B": {
+      "sha256": "b43e32489453ff8f7d664014a471e67b11413e185d8bc203f345014acdac2f6e",
+      "rows": 2060,
+      "seconds": 167.95,
+      "hot_path": {
+        "candle_iterations": 4271746,
+        "active_checks": 65099,
+        "pending_checks": 133069753,
+        "base_row_creations": 2060,
+        "news_blackout_lookups": 4267429,
+        "news_flatten_lookups": 65000,
+        "fill_checks": 133069753,
+        "invalidation_checks": 132654597
+      }
+    }
+  },
+  "all_byte_identical": true,
+  "counters_identical": true,
+  "field_mismatches_vs_reference": {
+    "optionA": {},
+    "optionB": {},
+    "optionA+B": {}
+  },
+  "any_field_mismatch": false,
+  "metric_by_outcome": {
+    "optionA": {
+      "INVALID": {
+        "rows": 809,
+        "metric_mismatches": 0
+      },
+      "LOSS": {
+        "rows": 194,
+        "metric_mismatches": 0
+      },
+      "NEWS_FLATTEN": {
+        "rows": 15,
+        "metric_mismatches": 0
+      },
+      "NEWS_TOUCH_CANCEL": {
+        "rows": 9,
+        "metric_mismatches": 0
+      },
+      "REGIME_BLOCKED": {
+        "rows": 100,
+        "metric_mismatches": 0
+      },
+      "STATE_BLOCKED": {
+        "rows": 457,
+        "metric_mismatches": 0
+      },
+      "UNFILLED": {
+        "rows": 35,
+        "metric_mismatches": 0
+      },
+      "WIN": {
+        "rows": 441,
+        "metric_mismatches": 0
+      }
+    },
+    "optionB": {
+      "INVALID": {
+        "rows": 809,
+        "metric_mismatches": 0
+      },
+      "LOSS": {
+        "rows": 194,
+        "metric_mismatches": 0
+      },
+      "NEWS_FLATTEN": {
+        "rows": 15,
+        "metric_mismatches": 0
+      },
+      "NEWS_TOUCH_CANCEL": {
+        "rows": 9,
+        "metric_mismatches": 0
+      },
+      "REGIME_BLOCKED": {
+        "rows": 100,
+        "metric_mismatches": 0
+      },
+      "STATE_BLOCKED": {
+        "rows": 457,
+        "metric_mismatches": 0
+      },
+      "UNFILLED": {
+        "rows": 35,
+        "metric_mismatches": 0
+      },
+      "WIN": {
+        "rows": 441,
+        "metric_mismatches": 0
+      }
+    },
+    "optionA+B": {
+      "INVALID": {
+        "rows": 809,
+        "metric_mismatches": 0
+      },
+      "LOSS": {
+        "rows": 194,
+        "metric_mismatches": 0
+      },
+      "NEWS_FLATTEN": {
+        "rows": 15,
+        "metric_mismatches": 0
+      },
+      "NEWS_TOUCH_CANCEL": {
+        "rows": 9,
+        "metric_mismatches": 0
+      },
+      "REGIME_BLOCKED": {
+        "rows": 100,
+        "metric_mismatches": 0
+      },
+      "STATE_BLOCKED": {
+        "rows": 457,
+        "metric_mismatches": 0
+      },
+      "UNFILLED": {
+        "rows": 35,
+        "metric_mismatches": 0
+      },
+      "WIN": {
+        "rows": 441,
+        "metric_mismatches": 0
+      }
+    }
+  }
+}

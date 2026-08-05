@@ -207,6 +207,33 @@ Cache these per-candle transforms and extend by the tail.
   milestones and a reasonable place to prove the cache machinery if OPT-4 looks
   too risky to go first.
 
+> **UPDATE 2026-08-05 — the ranking below is SUPERSEDED for OPT-1/2.**
+> Measured (interleaved 4-mode A/B, 5 rounds, quiet machine):
+> reference 192.21 s → Option A 170.12 s (−11.50 %) → Option B 157.13 s
+> (−18.25 %) → **A+B 137.07 s (−28.69 %)**, ≈ **21 % end-to-end**, all four
+> modes byte-identical.
+>
+> **Option B (M-CAP-OPT-3) delivered more than Option A**, and more than this
+> roadmap's own estimate for it. Both are retained; Option B clears the 10 %
+> gate on its own, Option A only under the small-implementation clause.
+>
+> **Revised bottleneck ranking after A+B:**
+> 1. the 133 M unindexed **pending rescan** (OPT-1 proper) — still untouched;
+>    Option A only made each check cheaper, Option B removed a different 133 M
+>    call chain. The rescan itself remains the dominant structural cost.
+> 2. remaining per-check `dict.get`/`max()` traffic in `_is_filled` and the
+>    inlined fill expression.
+> 3. `detect_order_blocks` + `tag_obs_news` (≈20 % combined) — untouched.
+>
+> **Does spatial indexing remain necessary?** Yes, if the 900 s budget matters.
+> A+B projects the VPS median to ~1,090 s — still ~1.21× over. Only removing
+> the rescan (or changing *what* is recomputed) closes that.
+>
+> **Does Model B priority change?** Not yet. A+B roughly halves skipped
+> boundaries (36 % → ~17 %) without eliminating the overrun, so incremental
+> processing remains the only route to a real margin — but it is now less
+> urgent than the governance work.
+
 ### M-CAP-OPT-6 — Simulation checkpoint / resume
 **Target:** the remainder of `execute_scenario_job`
 **Evidence:** [M] 73.16 % of the cycle

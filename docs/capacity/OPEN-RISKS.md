@@ -90,7 +90,46 @@ proof and independent commit.
 
 ---
 
-## R-9 — `engine_version` does not cover `strategy_core/` *(OPEN — HIGH severity)*
+## R-9 — `engine_version` does not cover `strategy_core/` *(CLOSED by M-CAP-GOV-1)*
+
+**Repaired** on the isolated Lux branch (`119f2d6`). A deterministic recursive
+policy now governs **30 files** (12 `strategy_core/` + 17 `src/` + 1 driver) in
+place of the curated 3-file list, pinned by 44 tests including the regression
+that reproduces the exact Option A blind spot.
+
+Identity moved from `5bb6372c…` (which the old policy still produced *with* the
+trade walk modified) to `33e1a089…`. Golden parity confirmed unchanged:
+`b43e3248…`, 2,060 rows.
+
+**Residual — deliberate, and it is now the operative risk:** nothing is
+deployed. `ENGINE_VERSION_EXPECTED` is still `5bb6372c…`, so `verify_engine()`
+will *refuse* the repaired engine until a re-pin. That is the gate working, but
+it means the repair delivers no protection in production until the re-pin
+sequence in `governance/ENGINE-IDENTITY.md` §6 is executed. Until then the live
+node continues to run under an identity that cannot see `strategy_core/`.
+
+---
+
+## R-10 — `_ENGINE_VERSION_SOURCES`-style drift can recur *(OPEN — low, structural)*
+
+The repair removes the *current* blind spot, but the class of defect — a
+governance list silently falling out of step with a code reorganisation — is
+only prevented for files under the declared roots. A future relocation of
+strategy code to a NEW top-level package (say `strategy_core2/` or `engine/`)
+would escape coverage in exactly the same way.
+
+Mitigations already in place: the roots are recursive, so anything added *inside*
+them is captured automatically; an empty root fails closed; and the policy
+literal is hashed, so changing the policy changes identity.
+
+Not mitigated: a wholly new top-level package. A cheap future guard would be a
+test asserting that every `.py` file reachable by import from
+`scripts/run_backtest.py` is present in `engine_source_manifest()` — turning the
+declared roots into a checked claim rather than an assumption.
+
+---
+
+## R-9-HIST — the original defect, retained for the record
 
 **Found incidentally during M-CAP-OPT-2 Phase 9.**
 

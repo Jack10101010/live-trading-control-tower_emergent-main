@@ -1,0 +1,12 @@
+warm-up
+  warmup: 163.46s
+  0 WITH metric rescan: 164.72s
+  0 WITHOUT (no-op stub): 122.91s
+  1 WITH metric rescan: 167.19s
+  1 WITHOUT (no-op stub): 125.63s
+  2 WITH metric rescan: 164.95s
+  2 WITHOUT (no-op stub): 119.91s
+
+mean WITH    : 165.62s
+mean WITHOUT : 122.82s
+CEILING saving: 42.80s (25.8% of phase)

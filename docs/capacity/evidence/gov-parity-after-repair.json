@@ -1,0 +1,163 @@
+{
+  "reference_rows": 2060,
+  "optimised_rows": 2060,
+  "reference_sha256": "b43e32489453ff8f7d664014a471e67b11413e185d8bc203f345014acdac2f6e",
+  "optimised_sha256": "b43e32489453ff8f7d664014a471e67b11413e185d8bc203f345014acdac2f6e",
+  "frames_byte_identical": true,
+  "column_order_identical": true,
+  "hot_path_reference": {
+    "candle_iterations": 4271746,
+    "active_checks": 65099,
+    "pending_checks": 133069753,
+    "base_row_creations": 2060,
+    "news_blackout_lookups": 4267429,
+    "news_flatten_lookups": 65000,
+    "fill_checks": 133069753,
+    "invalidation_checks": 132654597
+  },
+  "hot_path_optimised": {
+    "candle_iterations": 4271746,
+    "active_checks": 65099,
+    "pending_checks": 133069753,
+    "base_row_creations": 2060,
+    "news_blackout_lookups": 4267429,
+    "news_flatten_lookups": 65000,
+    "fill_checks": 133069753,
+    "invalidation_checks": 132654597
+  },
+  "fields": {
+    "trade_id": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    },
+    "base_trade_id": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    },
+    "ob_id": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    },
+    "detection_time": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    },
+    "direction": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    },
+    "structure_tag": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    },
+    "entry": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    },
+    "stop": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    },
+    "tp": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    },
+    "fill_time": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    },
+    "exit_time": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    },
+    "outcome": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    },
+    "pnl_r": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    },
+    "gross_r": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    },
+    "risk": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    },
+    "rr_multiple": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    },
+    "max_distance_away_before_fill_price": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    },
+    "max_distance_away_before_fill_pips": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    },
+    "max_distance_away_before_fill_r": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    },
+    "trigger_time": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    },
+    "trigger_candle_index": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    },
+    "armed_at": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    },
+    "fill_candle_index": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    },
+    "fill_delay_candles": {
+      "present": true,
+      "mismatches": 0,
+      "len_equal": true
+    }
+  },
+  "any_field_mismatch": false,
+  "metric_columns_identical": true,
+  "counters_identical": true,
+  "counter_delta": {
+    "active_checks": 0,
+    "base_row_creations": 0,
+    "candle_iterations": 0,
+    "fill_checks": 0,
+    "invalidation_checks": 0,
+    "news_blackout_lookups": 0,
+    "news_flatten_lookups": 0,
+    "pending_checks": 0
+  }
+}
