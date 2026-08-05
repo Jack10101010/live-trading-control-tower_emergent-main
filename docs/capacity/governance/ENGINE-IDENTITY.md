@@ -158,6 +158,30 @@ Files responsible for each step:
 * `66a9f164…` → `33e1a089…` — **`strategy_core/execution.py`** (Option A). This
   is the transition v1 could not see.
 
+## 5a. STATUS UPDATE — M-CAP-REPIN-1 applied to the CANDIDATE branch
+
+The plan in §6 below has now been **executed on the isolated candidate branch
+only**. Production remains on `5bb6372c…`.
+
+| Pin | Old | New |
+|---|---|---|
+| `live/config.py ENGINE_VERSION_EXPECTED` | `5bb6372c…` | **`559fcb66…`** |
+| `live/deploy_check.py EXPECTED_COMMIT` | `d978074a…` | `b96fa7ae…` |
+| `live/rehearsal.py EXPECTED_COMMIT` | `d978074a…` | `b96fa7ae…` |
+| `ARCHIVE-MANIFEST.json engine_identity` | `c5e29837…` | **annotated, not overwritten** |
+
+Candidate manifest id: `6e036e0da4cf2b2b20cd52cc254e246b7e2074f062bc280980b3e8c435e56204`.
+
+**A second pin was found by tooling, not by inspection.** `deploy_check
+preflight` failed `lux_commit_pinned` after the engine re-pin — there is a
+separate Lux *commit* pin that my grep for the engine hash missed, and it is
+**duplicated** across `deploy_check.py` and `rehearsal.py`. Both are updated and
+cross-referenced. This is the same duplicated-constant hazard that produced the
+original `engine_version` defect; it is recorded as **R-11** rather than
+refactored, to keep this milestone a re-pin and not a redesign.
+
+Full package: `PROMOTION-PACKAGE.md`.
+
 ## 6. Re-pin plan — proposed, NOT applied
 
 Strictly separated:

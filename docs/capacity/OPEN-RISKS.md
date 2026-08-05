@@ -110,6 +110,27 @@ node continues to run under an identity that cannot see `strategy_core/`.
 
 ---
 
+## R-11 — deployment pins are duplicated constants *(OPEN — low, structural)*
+
+`EXPECTED_COMMIT` is defined independently in **both** `live/deploy_check.py` and
+`live/rehearsal.py` and the two must always agree. M-CAP-REPIN-1 found this only
+because `deploy_check preflight` failed after the engine re-pin — a grep for the
+engine hash did not surface it.
+
+This is the same class of defect as R-9: a constant that must track a moving
+target, kept in more than one place, with nothing enforcing agreement.
+
+Not fixed here (a re-pin milestone should not redesign the pin plumbing). Cheap
+guards, in order of preference: a single shared constant imported by both; or a
+test asserting `deploy_check.EXPECTED_COMMIT == rehearsal.EXPECTED_COMMIT`.
+
+**Also unmitigated:** nothing asserts that `ENGINE_VERSION_EXPECTED` corresponds
+to the tree at `EXPECTED_COMMIT`. The two pins can drift apart silently — a
+re-pin of one without the other yields a configuration that passes one check and
+fails the other, which is exactly what happened mid-milestone.
+
+---
+
 ## R-10 — `_ENGINE_VERSION_SOURCES`-style drift can recur *(OPEN — low, structural)*
 
 The repair removes the *current* blind spot, but the class of defect — a
