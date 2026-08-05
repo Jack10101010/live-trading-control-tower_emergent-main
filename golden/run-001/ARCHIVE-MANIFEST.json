@@ -38,6 +38,10 @@
  "engine_identity": {
   "engine_version": "c5e29837f044d5483b42d22d5b17a9a5d40cecea3ff43d98468928e16a038bc0",
   "detection_config_hash": "36dcf74c9be8b1367a013a1aff954377f35ce28ffbaa08991f4eff6aaf75d35d",
-  "execution_config_hash": "90b1da8f6c27d57ab88aebb41d82d750e61d0bd9ac01adafa40987785cfdcacf"
+  "execution_config_hash": "90b1da8f6c27d57ab88aebb41d82d750e61d0bd9ac01adafa40987785cfdcacf",
+  "_policy": "lux.engine-version.v1 (pre-M-CAP-GOV-1: hashed only src/execution.py, scripts/run_backtest.py, src/resume_support.py)",
+  "_status": "HISTORICAL \u2014 describes the engine that produced THIS archive. Stale relative to both the current production pin and the M-CAP-REPIN-1 candidate. Not a deployment gate; nothing reads it programmatically. Do not overwrite: it is provenance.",
+  "_candidate_engine_version_m_cap_repin_1": "559fcb66385e5e9fe757e61dfdc5e9c01d50abd358cdbb771105403d874a8c04",
+  "_candidate_policy": "lux.engine-version.v2 (30 governed files)"
  }
 }

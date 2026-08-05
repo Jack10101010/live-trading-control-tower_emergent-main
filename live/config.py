@@ -13,7 +13,25 @@ PORTFOLIO_INCLUDE_DISABLED_COHORTS = True          # Golden Research Profile sem
 DATA_SEAM = "dukascopy-frozen->mt5-live (v1: accepted, monitored; no re-baseline)"
 SYMBOL = "EURUSD"                                   # hard whitelist — single symbol
 GOLDEN_CONFIG_RELPATH = "generated_configs/d6cdae589b1e4c37a67763253c466067.json"
-ENGINE_VERSION_EXPECTED = "5bb6372c092cc65ae0d30c4a40bed26ed5e074aef2459de9e199b902849305be"
+# M-CAP-REPIN-1 — candidate pin for the repaired-governance engine + Options A+B.
+#
+# The previous value (5bb6372c…) was produced by the pre-M-CAP-GOV-1 policy,
+# which hashed only src/execution.py (a 102-line shim), scripts/run_backtest.py
+# and src/resume_support.py. It could not see strategy_core/ — the 3,920-line
+# trade walk, the order-block detector, the ghost tracker — so it certified an
+# engine it had never actually inspected.
+#
+# This value was RECOMPUTED from the candidate tree
+# (Lux capacity/m-cap-opt-2-engine @ b96fa7a) by `engine_version()` under policy
+# `lux.engine-version.v2`, which governs 30 files. It is deliberately NOT
+# transcribed from any report: re-derive it from the tree you are deploying.
+#
+# Rejects, by construction (one value accepted, never a set):
+#   5bb6372c…  the old production identity (pre-repair)
+#   2604fae0…  v2 policy on d978074 (no repair, no options)
+#   66a9f164…  repair only
+#   33e1a089…  repair + Option A only
+ENGINE_VERSION_EXPECTED = "559fcb66385e5e9fe757e61dfdc5e9c01d50abd358cdbb771105403d874a8c04"
 
 
 def _env(name: str, default: str) -> str:

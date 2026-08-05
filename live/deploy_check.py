@@ -36,7 +36,11 @@ from live.config import ENGINE_VERSION_EXPECTED, LiveConfig
 from live.mt5_gateway import MT5Gateway
 from live.state import RunnerState
 
-EXPECTED_COMMIT = "d978074a2ee938fb4803e50d419788c584d6ef57"
+# M-CAP-REPIN-1: candidate Lux commit (was d978074a2ee938fb4803e50d419788c584d6ef57 — production).
+# NOTE: this constant is duplicated in live/deploy_check.py and
+# live/rehearsal.py and the two MUST agree. Duplicated pins are the same
+# drift hazard that produced the engine_version defect; keep them in step.
+EXPECTED_COMMIT = "b96fa7aee7605dd2115117116f9c2eb9b6669c23"
 CHECKS: list[dict] = []
 
 

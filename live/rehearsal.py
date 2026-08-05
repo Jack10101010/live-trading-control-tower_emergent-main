@@ -42,7 +42,11 @@ from live.runner import (LiveRunner, LuxSession, latest_closed_boundary,
                          snapshot_from_bytes)
 from live.state import RunnerState
 
-EXPECTED_COMMIT = "d978074a2ee938fb4803e50d419788c584d6ef57"
+# M-CAP-REPIN-1: candidate Lux commit (was d978074a2ee938fb4803e50d419788c584d6ef57 — production).
+# NOTE: this constant is duplicated in live/deploy_check.py and
+# live/rehearsal.py and the two MUST agree. Duplicated pins are the same
+# drift hazard that produced the engine_version defect; keep them in step.
+EXPECTED_COMMIT = "b96fa7aee7605dd2115117116f9c2eb9b6669c23"
 EXPECTED = {
     "trades_sha": "ca925d544601ad243ba0909045dc00384eaea0e9d41977ab7189b8a8c1e9a964",
     "baseline_sha": "aa77176b54cc4f96acccf3d0540fe41ee3b6c252847ddd3bc65702fe180214c1",
