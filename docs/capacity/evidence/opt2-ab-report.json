@@ -1,0 +1,77 @@
+{
+  "design": "interleaved A/B on execute_scenario_job; pre-stages built once; one warm-up pair discarded; hot-path counters OFF",
+  "pairs": 5,
+  "trades_frame_sha256": "b43e32489453ff8f7d664014a471e67b11413e185d8bc203f345014acdac2f6e",
+  "reference": {
+    "n": 5,
+    "mean": 136.2706985249999,
+    "p50": 135.82856016699225,
+    "min": 135.56188779100194,
+    "max": 138.02887500001816,
+    "stdev": 1.0182964546901767
+  },
+  "optimised": {
+    "n": 5,
+    "mean": 121.02170000019832,
+    "p50": 120.01085745898308,
+    "min": 119.7403342910111,
+    "max": 125.33581699998467,
+    "stdev": 2.415168114496506
+  },
+  "mean_saving_s": 15.248998524801564,
+  "mean_saving_pct": 11.190225550949254,
+  "p50_saving_s": 15.817702708009165,
+  "p50_saving_pct": 11.645343724885505,
+  "samples": [
+    {
+      "pair": 0,
+      "mode": "ref",
+      "seconds": 135.6719
+    },
+    {
+      "pair": 0,
+      "mode": "opt",
+      "seconds": 125.3358
+    },
+    {
+      "pair": 1,
+      "mode": "ref",
+      "seconds": 136.2623
+    },
+    {
+      "pair": 1,
+      "mode": "opt",
+      "seconds": 120.0109
+    },
+    {
+      "pair": 2,
+      "mode": "ref",
+      "seconds": 138.0289
+    },
+    {
+      "pair": 2,
+      "mode": "opt",
+      "seconds": 120.0907
+    },
+    {
+      "pair": 3,
+      "mode": "ref",
+      "seconds": 135.8286
+    },
+    {
+      "pair": 3,
+      "mode": "opt",
+      "seconds": 119.7403
+    },
+    {
+      "pair": 4,
+      "mode": "ref",
+      "seconds": 135.5619
+    },
+    {
+      "pair": 4,
+      "mode": "opt",
+      "seconds": 119.9308
+    }
+  ]
+}

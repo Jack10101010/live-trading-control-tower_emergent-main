@@ -122,6 +122,24 @@ rather than the whole list.
 **Target:** the ~14 `dict.get` + ~3 `max()` per pending check
 **Evidence:** [M] 1.91 B `dict.get`, 396 M `max()` in one cycle
 
+> **UPDATE 2026-08-04 — PARTIALLY DELIVERED and measured.** The triggered-edge
+> slice of this milestone shipped as the Option A gate (Lux
+> `capacity/m-cap-opt-2-engine` @ `748f86b`): immutable per-item constants for
+> `_triggered_edge_touched`, eliminating ≈388 M function calls and ≈129 M dict
+> lookups per cycle.
+>
+> **Measured** (interleaved A/B, 5 pairs, quiet machine): 136.27 s → 121.02 s on
+> `execute_scenario_job`, a **15.25 s saving (11.19 % of that phase)**.
+> **End-to-end 5.9–8.2 %** — below this roadmap's 10–14 % estimate for the whole
+> representation milestone, and below the 10 % retention bar. Retained under the
+> "exceptionally small + valuable call reduction" clause, not the ≥10 % clause.
+> Full detail and the rejected first measurement in `CAPACITY-EVIDENCE.md`.
+>
+> **Still unclaimed here:** the remaining `dict.get`/`max()` traffic in the
+> other hot predicates (`_is_filled`, the inlined fill expression,
+> `_update_pending_metrics`) and in candle/OB row access generally. That is the
+> residue of this milestone and remains available.
+
 Candle and OB rows are plain dicts (`to_dict("records")`), so each predicate
 re-reads its inputs by string key on every one of 133 M checks. Hoist the fields
 each predicate needs into locals/tuples/slots once per candle (or once per

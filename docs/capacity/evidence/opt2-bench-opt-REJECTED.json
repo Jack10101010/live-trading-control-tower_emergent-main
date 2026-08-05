@@ -1,0 +1,245 @@
+{
+  "environment": {
+    "benchmark_timestamp": "2026-08-04T17:44:49.345882+00:00",
+    "ct_commit": "8af25d77b713239d35d00d3810af1dc468b0b8d0",
+    "lux_commit": "d978074a2ee938fb4803e50d419788c584d6ef57",
+    "engine_version": "5bb6372c092cc65ae0d30c4a40bed26ed5e074aef2459de9e199b902849305be",
+    "expected_engine_version": "5bb6372c092cc65ae0d30c4a40bed26ed5e074aef2459de9e199b902849305be",
+    "dataset_path": "/Users/jack/Documents/Dev Projects/lux-cap-opt-2/data/candles/EURUSD_1m_extended_2015_2026.csv",
+    "dataset_sha256": "ba32de0d836fbe4d375c4533180f6074796c73bf5d0df16018040b799777235f",
+    "dataset_rows": 4314720,
+    "iterations": 5,
+    "warmup": 1,
+    "platform": "macOS-26.3.1-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "python_version": "3.12.6",
+    "measurement_boundary": "Measured interval = exactly ONE golden_pipeline(candles, frontier_date, profiler) call over an already-loaded candle frame. EXCLUDED from every measured timing: candle loading, the per-iteration fresh-copy of the candle frame, dataset hashing, row counting, environment collection, determinism trade-frame hashing, input-integrity checks, and JSON/Markdown/CSV writing.",
+    "percentile_method": "linear interpolation between closest ranks: rank = p/100 * (n-1), interpolate neighbours (numpy 'linear')",
+    "label": "CAP-OPT2-opt"
+  },
+  "measurement_boundary": "Measured interval = exactly ONE golden_pipeline(candles, frontier_date, profiler) call over an already-loaded candle frame. EXCLUDED from every measured timing: candle loading, the per-iteration fresh-copy of the candle frame, dataset hashing, row counting, environment collection, determinism trade-frame hashing, input-integrity checks, and JSON/Markdown/CSV writing.",
+  "percentile_method": "linear interpolation between closest ranks: rank = p/100 * (n-1), interpolate neighbours (numpy 'linear')",
+  "warnings": [
+    "p95 is descriptive only with fewer than 20 measured iterations."
+  ],
+  "phase_names": [
+    "detect_order_blocks",
+    "execute_scenario_job",
+    "filter_date_range",
+    "filter_obs",
+    "load_news_calendar",
+    "load_news_events",
+    "prepare_candles",
+    "prepare_news_cache",
+    "prepare_obs",
+    "resample",
+    "tag_obs_news"
+  ],
+  "raw": {
+    "totals_s": [
+      191.24793808299,
+      171.78100929100765,
+      171.82837658299832,
+      172.46486012500827,
+      172.76867791701807
+    ],
+    "phases_s": [
+      {
+        "filter_date_range": 2.394789,
+        "prepare_candles": 3.228223,
+        "load_news_calendar": 0.05574,
+        "load_news_events": 0.054485,
+        "prepare_news_cache": 9.803556,
+        "resample": 0.225033,
+        "detect_order_blocks": 26.710083,
+        "tag_obs_news": 20.779706,
+        "filter_obs": 0.002963,
+        "prepare_obs": 0.001293,
+        "execute_scenario_job": 127.968564
+      },
+      {
+        "filter_date_range": 1.835398,
+        "prepare_candles": 2.322981,
+        "load_news_calendar": 0.041404,
+        "load_news_events": 0.039855,
+        "prepare_news_cache": 7.339776,
+        "resample": 0.22407,
+        "detect_order_blocks": 19.875011,
+        "tag_obs_news": 18.913307,
+        "filter_obs": 0.001756,
+        "prepare_obs": 0.00098,
+        "execute_scenario_job": 121.155743
+      },
+      {
+        "filter_date_range": 1.833053,
+        "prepare_candles": 2.328317,
+        "load_news_calendar": 0.042189,
+        "load_news_events": 0.040041,
+        "prepare_news_cache": 7.469335,
+        "resample": 0.190496,
+        "detect_order_blocks": 19.899375,
+        "tag_obs_news": 18.79238,
+        "filter_obs": 0.001608,
+        "prepare_obs": 0.000997,
+        "execute_scenario_job": 121.20009
+      },
+      {
+        "filter_date_range": 1.818076,
+        "prepare_candles": 2.3419,
+        "load_news_calendar": 0.0432,
+        "load_news_events": 0.040681,
+        "prepare_news_cache": 7.506105,
+        "resample": 0.240394,
+        "detect_order_blocks": 19.944369,
+        "tag_obs_news": 18.831906,
+        "filter_obs": 0.00181,
+        "prepare_obs": 0.001001,
+        "execute_scenario_job": 121.663519
+      },
+      {
+        "filter_date_range": 1.81342,
+        "prepare_candles": 2.374803,
+        "load_news_calendar": 0.042037,
+        "load_news_events": 0.040144,
+        "prepare_news_cache": 7.443449,
+        "resample": 0.239823,
+        "detect_order_blocks": 19.991499,
+        "tag_obs_news": 18.827481,
+        "filter_obs": 0.001822,
+        "prepare_obs": 0.000974,
+        "execute_scenario_job": 121.961599
+      }
+    ]
+  },
+  "aggregate": {
+    "total_s": {
+      "n": 5,
+      "min": 171.78100929100765,
+      "p50": 172.46486012500827,
+      "p95": 187.5520860497956,
+      "max": 191.24793808299,
+      "mean": 176.01817239980446,
+      "stddev": 8.524068064569983,
+      "stddev_kind": "sample"
+    },
+    "per_phase_s": {
+      "detect_order_blocks": {
+        "n": 5,
+        "min": 19.875011,
+        "p50": 19.944369,
+        "p95": 25.3663662,
+        "max": 26.710083,
+        "mean": 21.2840674,
+        "stddev": 3.0335615678638868,
+        "stddev_kind": "sample"
+      },
+      "execute_scenario_job": {
+        "n": 5,
+        "min": 121.155743,
+        "p50": 121.663519,
+        "p95": 126.767171,
+        "max": 127.968564,
+        "mean": 122.78990300000001,
+        "stddev": 2.9142470067481407,
+        "stddev_kind": "sample"
+      },
+      "filter_date_range": {
+        "n": 5,
+        "min": 1.81342,
+        "p50": 1.833053,
+        "p95": 2.2829108,
+        "max": 2.394789,
+        "mean": 1.9389472,
+        "stddev": 0.25499739703122454,
+        "stddev_kind": "sample"
+      },
+      "filter_obs": {
+        "n": 5,
+        "min": 0.001608,
+        "p50": 0.00181,
+        "p95": 0.0027348,
+        "max": 0.002963,
+        "mean": 0.0019917999999999997,
+        "stddev": 0.0005495490878893349,
+        "stddev_kind": "sample"
+      },
+      "load_news_calendar": {
+        "n": 5,
+        "min": 0.041404,
+        "p50": 0.042189,
+        "p95": 0.053231999999999995,
+        "max": 0.05574,
+        "mean": 0.044913999999999996,
+        "stddev": 0.00608610971803828,
+        "stddev_kind": "sample"
+      },
+      "load_news_events": {
+        "n": 5,
+        "min": 0.039855,
+        "p50": 0.040144,
+        "p95": 0.0517242,
+        "max": 0.054485,
+        "mean": 0.0430412,
+        "stddev": 0.00640464559519104,
+        "stddev_kind": "sample"
+      },
+      "prepare_candles": {
+        "n": 5,
+        "min": 2.322981,
+        "p50": 2.3419,
+        "p95": 3.057539,
+        "max": 3.228223,
+        "mean": 2.5192448,
+        "stddev": 0.3968430432024731,
+        "stddev_kind": "sample"
+      },
+      "prepare_news_cache": {
+        "n": 5,
+        "min": 7.339776,
+        "p50": 7.469335,
+        "p95": 9.3440658,
+        "max": 9.803556,
+        "mean": 7.9124442,
+        "stddev": 1.0589696069286882,
+        "stddev_kind": "sample"
+      },
+      "prepare_obs": {
+        "n": 5,
+        "min": 0.000974,
+        "p50": 0.000997,
+        "p95": 0.0012346,
+        "max": 0.001293,
+        "mean": 0.001049,
+        "stddev": 0.00013686672349406197,
+        "stddev_kind": "sample"
+      },
+      "resample": {
+        "n": 5,
+        "min": 0.190496,
+        "p50": 0.225033,
+        "p95": 0.2402798,
+        "max": 0.240394,
+        "mean": 0.22396319999999997,
+        "stddev": 0.020265202927678767,
+        "stddev_kind": "sample"
+      },
+      "tag_obs_news": {
+        "n": 5,
+        "min": 18.79238,
+        "p50": 18.831906,
+        "p95": 20.4064262,
+        "max": 20.779706,
+        "mean": 19.228956,
+        "stddev": 0.8680278416620637,
+        "stddev_kind": "sample"
+      }
+    }
+  },
+  "determinism": {
+    "enabled": true,
+    "verdict": "PASS",
+    "trade_hash": "b43e32489453ff8f7d664014a471e67b11413e185d8bc203f345014acdac2f6e"
+  },
+  "verdict": "PASS"
+}

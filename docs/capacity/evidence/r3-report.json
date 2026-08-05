@@ -1,0 +1,44 @@
+{
+  "execution_mode": "allow_multi_position",
+  "pending_checks": 133069753,
+  "metric_updates": 133068546,
+  "gap": 1207,
+  "trades_total": 2060,
+  "trades_filled": 650,
+  "trades_unfilled": 1410,
+  "gap_equals_filled": false,
+  "outcomes": {
+    "INVALID": 809,
+    "LOSS": 194,
+    "WIN": 441,
+    "STATE_BLOCKED": 457,
+    "REGIME_BLOCKED": 100,
+    "NEWS_FLATTEN": 15,
+    "NEWS_TOUCH_CANCEL": 9,
+    "UNFILLED": 35
+  },
+  "hot_path_profile": {
+    "candle_iterations": 4271746,
+    "active_checks": 65099,
+    "pending_checks": 133069753,
+    "base_row_creations": 2060,
+    "news_blackout_lookups": 4267429,
+    "news_flatten_lookups": 65000,
+    "fill_checks": 133069753,
+    "invalidation_checks": 132654597
+  },
+  "config_flags": {
+    "execution_modes": [
+      "allow_multi_position"
+    ],
+    "entry_models": [
+      "triggered_edge"
+    ],
+    "reverse_touch_cancel_enabled": false,
+    "news_pause_pending_orders": true,
+    "news_cancel_if_touched_during_blackout": true,
+    "be_enabled": false,
+    "min_ob_size_pips": 0,
+    "max_ob_size_pips": 100
+  }
+}
