@@ -1,0 +1,43 @@
+{
+  "label": "independent-fresh-process",
+  "pin": "559fcb66385e5e9fe757e61dfdc5e9c01d50abd358cdbb771105403d874a8c04",
+  "session_engine_version": "559fcb66385e5e9fe757e61dfdc5e9c01d50abd358cdbb771105403d874a8c04",
+  "verify_engine": "ACCEPTED",
+  "pin_matches_session": true,
+  "policy": "lux.engine-version.v2",
+  "governed_files": 30,
+  "engine_version_recomputed": "559fcb66385e5e9fe757e61dfdc5e9c01d50abd358cdbb771105403d874a8c04",
+  "manifest_id": "6e036e0da4cf2b2b20cd52cc254e246b7e2074f062bc280980b3e8c435e56204",
+  "input_revision_moves_with_engine": true,
+  "dataset_rows": 4314720,
+  "dataset_sha256": "ba32de0d836fbe4d375c4533180f6074796c73bf5d0df16018040b799777235f",
+  "pipeline_seconds": 203.39,
+  "setup_seconds": 2.55,
+  "rows": 2060,
+  "sha256": "b43e32489453ff8f7d664014a471e67b11413e185d8bc203f345014acdac2f6e",
+  "rows_match": true,
+  "hash_match": true,
+  "phase_timings": {
+    "filter_date_range": 2.600191,
+    "prepare_candles": 3.235904,
+    "load_news_calendar": 0.060248,
+    "load_news_events": 0.056447,
+    "prepare_news_cache": 10.378071,
+    "resample": 0.245603,
+    "detect_order_blocks": 27.375266,
+    "tag_obs_news": 25.922233,
+    "filter_obs": 0.001964,
+    "prepare_obs": 0.001244,
+    "execute_scenario_job": 133.479668
+  },
+  "outcomes": {
+    "INVALID": 809,
+    "STATE_BLOCKED": 457,
+    "WIN": 441,
+    "LOSS": 194,
+    "REGIME_BLOCKED": 100,
+    "UNFILLED": 35,
+    "NEWS_FLATTEN": 15,
+    "NEWS_TOUCH_CANCEL": 9
+  }
+}
