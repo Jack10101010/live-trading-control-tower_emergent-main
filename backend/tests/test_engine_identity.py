@@ -327,11 +327,22 @@ def test_no_test_writes_to_the_live_lux_root():
     operation on a path derived from the live Lux root. This is what allowed
     the predecessor test to exist; it must not come back."""
     tests_dir = Path(__file__).resolve().parent
+    # Judge only the files that are PART of this suite (git-tracked). Untracked
+    # strays from other sessions are refused by CANDIDATE_VALIDATION, not here —
+    # a foreign file's string literals must not be able to fail this guard.
+    import subprocess
+    ls = subprocess.run(["git", "ls-files", "--", "test_*.py"],
+                        cwd=tests_dir, capture_output=True, text=True)
+    tracked = {tests_dir / p for p in ls.stdout.split()} if ls.returncode == 0 \
+        else set(tests_dir.glob("test_*.py"))
     offenders = []
     write_markers = (".write_bytes(", ".write_text(", ".unlink(", ".rename(",
                      ".rmdir(", "shutil.rmtree(", "open(", ".touch(")
-    for test_file in sorted(tests_dir.glob("test_*.py")):
-        src_lines = test_file.read_text().splitlines()
+    for test_file in sorted(tracked):
+        # Explicit UTF-8: the suite's files are UTF-8, but Windows' default
+        # locale is cp1252, which raises UnicodeDecodeError on bytes like 0x90.
+        # This guard failed on the VPS for exactly that reason.
+        src_lines = test_file.read_text(encoding="utf-8").splitlines()
         # Find variables aliased to the live root in this file.
         root_names = {"LUX_ROOT"}
         for i, line in enumerate(src_lines, 1):

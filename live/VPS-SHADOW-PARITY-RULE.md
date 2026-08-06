@@ -106,3 +106,60 @@ the developer machine, documented in M-CAP-INTEGRATE-1, not a candidate defect.)
 The two skips are `MT5_LOGIN`-gated scope-guard tests. The prior confusion
 (431 vs 433) was exactly this plus six untracked `test_oracle_*` files inflating
 VPS collection — which `CANDIDATE_VALIDATION=1` now refuses by name.
+
+## Deployment switching and rollback — the paired-tree rule
+
+CT and Lux deploy and roll back as ONE unit. A switch is not "done" when the
+`git checkout` returns; it is done when the coherence block below passes. This
+section exists because of a real incident (2026-08-06): a rollback ran
+`git checkout` in both repos, Lux succeeded, CT **aborted** on a locally
+modified file, and the tree sat with CT on the candidate and Lux on production
+until verification caught it.
+
+### Never `git stash pop` during a deployment or rollback
+
+`git stash pop` is the mechanism that caused the incident: a pop that partially
+applies leaves modified files in the working tree, and the next branch switch
+aborts on them — after the sibling repo has already moved. During switching:
+
+1. Preserve local work as **plain file copies** into the current
+   `artifacts/<milestone>/` evidence directory (outside tracked source).
+2. `git checkout -- <file>` to clear the tree.
+3. Switch branches.
+4. Copy the preserved files back only AFTER the coherence block passes, and
+   only if they belong on the now-current branch.
+
+`git stash` may still hold a safety duplicate (`git stash push` then later
+`git stash apply` + verify + `git stash drop`), but a switch must never DEPEND
+on stash state, and `pop` — which deletes on a half-success — is banned in
+this procedure outright.
+
+### The coherence block
+
+Run after EVERY switch, deploy or rollback, before reporting it complete:
+
+```
+CT   HEAD                    == the intended CT commit
+Lux  HEAD                    == the intended Lux commit
+ENGINE_VERSION_EXPECTED       (live/config.py)      recomputed == pinned
+ENGINE_MANIFEST_ID_EXPECTED   (live/config.py)      manifest verify PASS
+EXPECTED_COMMIT               (live/deploy_check.py) == Lux HEAD
+EXPECTED_COMMIT               (live/rehearsal.py)    == Lux HEAD
+git status --porcelain        no tracked modifications in either repo
+```
+
+Any line failing = the switch DID NOT HAPPEN, regardless of what individual
+git commands printed. Fix and re-verify before anything else — the forbidden
+state is not "on the old version"; it is CT and Lux on MISMATCHED versions
+with pins that describe neither.
+
+### Rollback target
+
+Rollback restores the last known-coherent pair — currently:
+
+* CT  `hardening/m3-p1-production-fixes`
+* Lux `golden-run-001-engine`
+
+whose pins (`ENGINE_VERSION_EXPECTED`, `ENGINE_MANIFEST_ID_EXPECTED`, both
+`EXPECTED_COMMIT`s) travel WITH the CT commit — never edit pins during a
+rollback; checking out the CT commit restores them by construction.

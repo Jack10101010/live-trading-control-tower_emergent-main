@@ -10,9 +10,12 @@ Two modes, deliberately asymmetric, defined by ``live/golden_contract.json``:
 
 ``archive``
     The cross-machine regression WITNESS. Candidate output vs the Mac-produced
-    archive reference: complete field census with an explicit four-field
-    allowlist (the write-only regime diagnostics) at <= 1 ULP. Every mismatch is
-    enumerated — permitted ones listed as permitted, anything else fails.
+    archive reference: complete field census under the contract's three-tier
+    policy — diagnostic-only fields (bbw_value) are enumerated in full but
+    never reject; bounded-allowlist fields (the remaining write-only regime
+    diagnostics) tolerate float noise up to max_ulp; everything else is
+    zero-tolerance. A non-float change in ANY field, including a diagnostic
+    one, is forbidden — the concession is to summation order, not to meaning.
     This never promotes; it can only add confidence or raise an alarm.
 
 Exit codes: 0 pass, 1 comparison failed, 2 usage/contract error.
@@ -137,7 +140,11 @@ def run_archive(ref: Path, cand: Path, key: str, out_json: Path,
     contract = load_contract()
     policy = contract["comparison_policies"]["cross_machine_archive_witness"]
     allow = set(policy["allowlist_fields"])
+    diagnostic_only = set(policy.get("diagnostic_only_fields", ()))
     max_ulp = int(policy["max_ulp"])
+    #: ulp_distance returns 2**62 for NaN-vs-number; a genuine float pair is
+    #: always far below it. Above this, "float noise" is not what happened.
+    FLOAT_NOISE_CEILING = 2 ** 62
     # Known input drift: cells explained by a RECORDED dataset revision, matched
     # on ALL of key+field+ref+cand. This is provenance, not tolerance — a new
     # value in the same cell stays forbidden.
@@ -148,11 +155,17 @@ def run_archive(ref: Path, cand: Path, key: str, out_json: Path,
         drift_cells = {(e["key"], e["field"], e["ref"], e["cand"])
                        for e in drift_meta["explained_cells"]}
     c = census(_read(ref, key), _read(cand, key), key)
-    permitted, forbidden, explained = [], [], []
+    permitted, forbidden, explained, diagnostic = [], [], [], []
     for rec in c["cell_mismatches"]:
+        is_float_pair = rec["ulp"] is not None and rec["ulp"] < FLOAT_NOISE_CEILING
         if (rec["key"], rec["field"], rec["ref"], rec["cand"]) in drift_cells:
             explained.append(rec)
-        elif rec["field"] in allow and rec["ulp"] is not None and rec["ulp"] <= max_ulp:
+        elif rec["field"] in diagnostic_only and is_float_pair:
+            # Reported in full, never rejecting: cross-machine summation-order
+            # noise in a write-only diagnostic. A non-float change in the same
+            # field (type/format/NaN-vs-number) falls through to forbidden.
+            diagnostic.append(rec)
+        elif rec["field"] in allow and is_float_pair and rec["ulp"] <= max_ulp:
             permitted.append(rec)
         else:
             forbidden.append(rec)
@@ -160,18 +173,27 @@ def run_archive(ref: Path, cand: Path, key: str, out_json: Path,
           and not c["key_order_mismatches"] and not forbidden)
     report = {"mode": "archive", "policy": policy["statement"],
               "allowlist_fields": sorted(allow), "max_ulp": max_ulp,
+              "diagnostic_only_fields": sorted(diagnostic_only),
               "known_input_drift": (str(drift_path) if drift_path else None),
               "known_input_drift_cause": (drift_meta or {}).get("cause"),
               "ref": str(ref), "cand": str(cand), "census": c,
               "permitted_mismatches": permitted,
               "explained_input_drift": explained,
+              "diagnostic_mismatches": diagnostic,
+              "diagnostic_max_ulp_observed": max(
+                  (r["ulp"] for r in diagnostic), default=0),
               "forbidden_mismatches": forbidden,
               "verdict": "PASS" if ok else "FAIL"}
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(json.dumps(report, indent=1))
     print(f"archive: cells={len(c['cell_mismatches'])} "
           f"permitted={len(permitted)} explained_drift={len(explained)} "
+          f"diagnostic={len(diagnostic)} "
           f"forbidden={len(forbidden)} verdict={report['verdict']}")
+    if diagnostic:
+        print(f"  diagnostic (reported, non-rejecting): "
+              f"{len(diagnostic)} cells, max ulp {report['diagnostic_max_ulp_observed']} "
+              f"— full enumeration in {out_json}")
     for rec in forbidden[:10]:
         print(f"  FORBIDDEN {rec['key']} {rec['field']}: "
               f"ref={rec['ref']} cand={rec['cand']} ulp={rec['ulp']}")

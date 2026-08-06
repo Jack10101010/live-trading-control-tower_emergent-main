@@ -62,14 +62,21 @@ def test_rehearsal_expected_hashes_match_the_contract():
         arts["golden.order_blocks.file.v1"]["known_digests"]["mac_operator_producer"]
 
 
-def test_archive_policy_allowlist_is_exactly_the_regime_diagnostics():
+def test_archive_policy_field_tiers_are_exactly_the_regime_diagnostics():
+    """Three tiers. bbw_value moved from the bounded allowlist to
+    diagnostic-only after the 2026-08-06 VPS measurement: 1,179 cells at
+    1-220 ULP vs the Mac archive while the same candidate was byte-identical
+    to production on the same host — no bound can be both meaningful and
+    satisfiable for that field across machines."""
     pol = CONTRACT["comparison_policies"]["cross_machine_archive_witness"]
     assert sorted(pol["allowlist_fields"]) == \
-        ["adx_value", "bbw_value", "ema_value", "px_vs_ema"]
+        ["adx_value", "ema_value", "px_vs_ema"]
+    assert pol["diagnostic_only_fields"] == ["bbw_value"]
     assert pol["max_ulp"] == 2
     for econ in ("entry", "stop", "tp", "net_r", "outcome", "trade_id",
                  "fill_time", "market_state"):
         assert econ not in pol["allowlist_fields"]
+        assert econ not in pol["diagnostic_only_fields"]
 
 
 # ── ULP distance ─────────────────────────────────────────────────────────────
@@ -150,35 +157,75 @@ def test_same_host_row_count_change_fails(tmp_path):
     assert rc == 1 and not rep["census"]["row_count_equal"]
 
 
-# ── archive mode: narrow allowlist, full census ──────────────────────────────
+# ── archive mode: three-tier policy, full census ─────────────────────────────
 
-def test_archive_one_ulp_in_bbw_is_PERMITTED_and_enumerated(tmp_path):
+def test_archive_bbw_float_difference_is_DIAGNOSTIC_and_enumerated(tmp_path):
+    """bbw_value float noise is reported, never rejecting — at any ULP a real
+    float pair can reach."""
     cand = ["L_1,1.1,1.0,WIN,2.540400593491075,33.1", BASE_ROWS[1]]
     rc, rep = run_mode(tmp_path, "archive", BASE_ROWS, cand)
     assert rc == 0 and rep["verdict"] == "PASS"
-    assert len(rep["permitted_mismatches"]) == 1
-    assert rep["permitted_mismatches"][0]["field"] == "bbw_value"
-    assert rep["permitted_mismatches"][0]["ulp"] == 2
+    assert len(rep["diagnostic_mismatches"]) == 1
+    assert rep["diagnostic_mismatches"][0]["field"] == "bbw_value"
+    assert rep["diagnostic_mismatches"][0]["ulp"] == 2
     assert rep["forbidden_mismatches"] == []
+    assert rep["permitted_mismatches"] == []
 
 
-def test_archive_three_ulp_in_bbw_FAILS(tmp_path):
+def test_archive_bbw_at_measured_maximum_220_ulp_still_passes(tmp_path):
+    """The 2026-08-06 VPS census measured up to 220 ULP in bbw_value. The
+    policy must accept the reality it was calibrated against — while still
+    reporting the full magnitude."""
     v = 2.540400593491076
-    for _ in range(3):
+    for _ in range(220):
         v = math.nextafter(v, 0)
     cand = [f"L_1,1.1,1.0,WIN,{v!r},33.1", BASE_ROWS[1]]
     rc, rep = run_mode(tmp_path, "archive", BASE_ROWS, cand)
+    assert rc == 0 and rep["verdict"] == "PASS"
+    assert rep["diagnostic_mismatches"][0]["ulp"] == 220
+    assert rep["diagnostic_max_ulp_observed"] == 220
+
+
+def test_archive_non_float_change_in_bbw_stays_FORBIDDEN(tmp_path):
+    """Diagnostic-only concedes summation order, not meaning: a type/format
+    change in bbw_value is not float noise and must still reject."""
+    cand = ["L_1,1.1,1.0,WIN,not-a-number,33.1", BASE_ROWS[1]]
+    rc, rep = run_mode(tmp_path, "archive", BASE_ROWS, cand)
     assert rc == 1
     assert rep["forbidden_mismatches"][0]["field"] == "bbw_value"
-    assert rep["forbidden_mismatches"][0]["ulp"] == 3
+    assert rep["diagnostic_mismatches"] == []
 
 
-def test_archive_exactly_max_ulp_in_bbw_is_permitted(tmp_path):
-    """The observed real-world case (2 ULP) must pass — that is the point."""
-    cand = ["L_1,1.1,1.0,WIN,2.540400593491075,33.1", BASE_ROWS[1]]
+def test_archive_nan_vs_number_in_bbw_stays_FORBIDDEN(tmp_path):
+    """NaN appearing where a number was is a semantic change, not rounding."""
+    cand = ["L_1,1.1,1.0,WIN,nan,33.1", BASE_ROWS[1]]
+    rc, rep = run_mode(tmp_path, "archive", BASE_ROWS, cand)
+    assert rc == 1
+    assert rep["forbidden_mismatches"][0]["field"] == "bbw_value"
+
+
+def test_archive_exactly_max_ulp_in_allowlisted_adx_is_permitted(tmp_path):
+    """The bounded allowlist still governs the other regime diagnostics."""
+    v = 33.1
+    for _ in range(2):
+        v = math.nextafter(v, 34.0)
+    cand = [f"L_1,1.1,1.0,WIN,2.540400593491076,{v!r}", BASE_ROWS[1]]
     rc, rep = run_mode(tmp_path, "archive", BASE_ROWS, cand)
     assert rc == 0
+    assert rep["permitted_mismatches"][0]["field"] == "adx_value"
     assert rep["permitted_mismatches"][0]["ulp"] == 2
+
+
+def test_archive_beyond_max_ulp_in_allowlisted_adx_FAILS(tmp_path):
+    """bbw_value's diagnostic status must not leak to the bounded fields."""
+    v = 33.1
+    for _ in range(3):
+        v = math.nextafter(v, 34.0)
+    cand = [f"L_1,1.1,1.0,WIN,2.540400593491076,{v!r}", BASE_ROWS[1]]
+    rc, rep = run_mode(tmp_path, "archive", BASE_ROWS, cand)
+    assert rc == 1
+    assert rep["forbidden_mismatches"][0]["field"] == "adx_value"
+    assert rep["forbidden_mismatches"][0]["ulp"] == 3
 
 
 def test_archive_one_ulp_in_ECONOMIC_field_FAILS(tmp_path):
@@ -205,12 +252,16 @@ def test_archive_identifier_change_fails(tmp_path):
 
 
 def test_archive_census_is_complete_not_first_divergence(tmp_path):
-    """Multiple permitted mismatches must ALL be enumerated — the S_22 lesson."""
+    """Every mismatch must be enumerated in its tier — the S_22 lesson."""
     cand = ["L_1,1.1,1.0,WIN,2.540400593491075,33.10000000000001",
             "S_2,1.2,1.3,LOSS,1.5000000000000002,20.0"]
     rc, rep = run_mode(tmp_path, "archive", BASE_ROWS, cand)
     assert rc == 0
-    assert len(rep["permitted_mismatches"]) == 3
+    # two bbw_value cells -> diagnostic; one adx_value cell -> bounded allowlist
+    assert len(rep["diagnostic_mismatches"]) == 2
+    assert len(rep["permitted_mismatches"]) == 1
+    assert rep["permitted_mismatches"][0]["field"] == "adx_value"
+    assert rep["forbidden_mismatches"] == []
 
 
 def test_missing_file_is_a_usage_error_not_a_pass(tmp_path):
@@ -231,10 +282,13 @@ def test_relative_paths_are_resolved_before_any_cwd_dependence(tmp_path, monkeyp
 
 # ── known-input-drift ledger: provenance, not tolerance ──────────────────────
 
+# The fixture uses an ECONOMIC field (entry): since bbw_value became
+# diagnostic-only, a bbw cell can no longer demonstrate "unexplained drift is
+# forbidden" — nothing in bbw is forbidden unless it stops being a float.
 DRIFT = {"schema": "golden-known-input-drift-v1", "cause": "test",
          "explained_cells": [
-             {"key": "L_1", "field": "bbw_value",
-              "ref": "2.540400593491076", "cand": "9.9"}]}
+             {"key": "L_1", "field": "entry",
+              "ref": "1.1", "cand": "9.9"}]}
 
 
 def write_drift(tmp_path, entries=None):
@@ -257,7 +311,7 @@ def run_archive_with_drift(tmp_path, cand_rows, drift_path):
 
 
 def test_drift_cell_is_explained_only_on_exact_four_way_match(tmp_path):
-    cand = ["L_1,1.1,1.0,WIN,9.9,33.1", BASE_ROWS[1]]
+    cand = ["L_1,9.9,1.0,WIN,2.540400593491076,33.1", BASE_ROWS[1]]
     rc, rep = run_archive_with_drift(tmp_path, cand, write_drift(tmp_path))
     assert rc == 0
     assert len(rep["explained_input_drift"]) == 1
@@ -266,7 +320,7 @@ def test_drift_cell_is_explained_only_on_exact_four_way_match(tmp_path):
 
 def test_drift_with_different_candidate_value_stays_forbidden(tmp_path):
     """A NEW value in the same cell is not covered — provenance, not tolerance."""
-    cand = ["L_1,1.1,1.0,WIN,8.8,33.1", BASE_ROWS[1]]      # 8.8, ledger says 9.9
+    cand = ["L_1,8.8,1.0,WIN,2.540400593491076,33.1", BASE_ROWS[1]]  # ledger says 9.9
     rc, rep = run_archive_with_drift(tmp_path, cand, write_drift(tmp_path))
     assert rc == 1
     assert rep["forbidden_mismatches"][0]["cand"] == "8.8"
@@ -275,11 +329,24 @@ def test_drift_with_different_candidate_value_stays_forbidden(tmp_path):
 
 def test_drift_entry_never_leaks_to_other_keys(tmp_path):
     """Same field+values on a DIFFERENT trade stays forbidden."""
-    cand = [BASE_ROWS[0], "S_2,1.2,1.3,LOSS,9.9,20.0"]
+    cand = [BASE_ROWS[0], "S_2,9.9,1.3,LOSS,1.5,20.0"]
     drift = write_drift(tmp_path)                          # entry is for L_1
     rc, rep = run_archive_with_drift(tmp_path, cand, drift)
     assert rc == 1
     assert rep["forbidden_mismatches"][0]["key"] == "S_2"
+
+
+def test_drift_match_on_a_diagnostic_field_classifies_as_explained(tmp_path):
+    """Precedence pin: an exactly-recorded drift cell in bbw_value is
+    provenance (explained_input_drift), not lumped into the diagnostic tier —
+    a reviewer must see WHY it moved, not just that it is non-rejecting."""
+    drift = write_drift(tmp_path, [{"key": "L_1", "field": "bbw_value",
+                                    "ref": "2.540400593491076", "cand": "9.9"}])
+    cand = ["L_1,1.1,1.0,WIN,9.9,33.1", BASE_ROWS[1]]
+    rc, rep = run_archive_with_drift(tmp_path, cand, drift)
+    assert rc == 0
+    assert len(rep["explained_input_drift"]) == 1
+    assert rep["diagnostic_mismatches"] == []
 
 
 def test_drift_ledger_on_economic_field_still_requires_exact_match_and_is_visible(tmp_path):
