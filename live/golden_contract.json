@@ -1,0 +1,148 @@
+{
+ "schema": "golden-artefact-contract-v1",
+ "purpose": "Canonical registry of every Golden-validation artefact. Three different digests have been called 'the Golden hash'; they are three DIFFERENT artefacts with different serializers and different machine-independence. Every comparison must name the artefact it compares, by the ids below.",
+ "artefacts": {
+  "golden.entry_trades.file.v1": {
+   "description": "The primary Golden oracle: the entry-scenario trades CSV as written to disk by the driver.",
+   "kind": "file",
+   "filename": "trades_allow_multi_position__entry_triggered_edge_25p0_d3.csv",
+   "generator": "src.resume_support.save_scenario_csv(df, path, write_marker=False) after assign_execution_trade_numbers(df); underlying serializer pandas DataFrame.to_csv(index=False)",
+   "serialization": {
+    "float_format": "pandas default (shortest round-trip repr per value)",
+    "newline": "\\n",
+    "index": false,
+    "timezone_rendering": "as carried in the frame; detection/fill times are '+00:00'-suffixed strings, state_known_at is 'Z'-suffixed"
+   },
+   "expected_rows": 2060,
+   "expected_columns": 211,
+   "machine_independent": false,
+   "machine_independence_note": "PROVEN machine-dependent: the four regime diagnostic floats (ema_value, px_vs_ema, bbw_value, adx_value) are produced by vectorised rolling().mean/std(ddof=1) and ewm reductions whose summation order differs across CPU architecture and BLAS/numpy builds. Observed: S_22 bbw_value 2.540400593491076 (Mac producer) vs 2.540400593491075 (VPS) - exactly 2 ULP as parsed doubles (measured; shortest repr is bijective), classification unaffected (fixed threshold 2.342).",
+   "known_digests": {
+    "mac_operator_producer": "ca925d544601ad243ba0909045dc00384eaea0e9d41977ab7189b8a8c1e9a964",
+    "vps_windows_observed": "7febbb3464e9bb58 (prefix as reported; full value recorded VPS-side)"
+   },
+   "digest_semantics": "A digest of this artefact is only comparable BETWEEN RUNS ON THE SAME HOST AND ENVIRONMENT. Cross-machine comparison must use the field-level archive policy, never the byte hash.",
+   "consumed_by": [
+    "live/rehearsal.py byte_parity_entry_trades",
+    "golden/tools/parity_harness.py",
+    "live/golden_compare.py"
+   ]
+  },
+  "golden.baseline_trades.file.v1": {
+   "description": "Baseline (protection=baseline) trades CSV written by the same driver path.",
+   "kind": "file",
+   "filename": "trades_allow_multi_position.csv",
+   "generator": "src.resume_support.save_scenario_csv(df, path, write_marker=False)",
+   "serialization": {
+    "float_format": "pandas default",
+    "newline": "\\n",
+    "index": false
+   },
+   "expected_rows": null,
+   "machine_independent": false,
+   "known_digests": {
+    "mac_operator_producer": "aa77176b54cc4f96acccf3d0540fe41ee3b6c252847ddd3bc65702fe180214c1"
+   },
+   "digest_semantics": "same-host only",
+   "consumed_by": [
+    "live/rehearsal.py byte_parity_baseline_trades"
+   ]
+  },
+  "golden.order_blocks.file.v1": {
+   "description": "Lifecycle-enriched order blocks CSV.",
+   "kind": "file",
+   "filename": "order_blocks.csv",
+   "generator": "scripts.run_backtest.enrich_order_blocks_with_lifecycle(...).to_csv(path, index=False)",
+   "serialization": {
+    "float_format": "pandas default",
+    "newline": "\\n",
+    "index": false
+   },
+   "expected_rows": 2080,
+   "machine_independent": false,
+   "known_digests": {
+    "mac_operator_producer": "bb67b6557a4a88fcfb1e83e6bf1558c8b3530ba9431a2e3e35d4d480078b7159"
+   },
+   "digest_semantics": "same-host only",
+   "consumed_by": [
+    "live/rehearsal.py byte_parity_order_blocks"
+   ]
+  },
+  "harness.entry_trades.mem.v1": {
+   "description": "In-memory digest used by the capacity/optimisation equivalence harness: sha256 of frame.astype(str).to_csv(index=False) computed on the RAW golden_pipeline return, WITHOUT save_scenario_csv's execution-number column pass and WITHOUT touching disk. A different serializer over (nearly) the same logical frame - NOT interchangeable with golden.entry_trades.file.v1.",
+   "kind": "in-memory",
+   "filename": null,
+   "generator": "hashlib.sha256(frame.astype(str).to_csv(index=False).encode())",
+   "serialization": {
+    "float_format": "python str() per cell after astype(str)",
+    "newline": "\\n",
+    "index": false
+   },
+   "expected_rows": 2060,
+   "machine_independent": false,
+   "machine_independence_note": "astype(str) renders the same shortest-round-trip repr, so the same four diagnostic floats make this digest cross-machine-unstable too.",
+   "known_digests": {
+    "mac_operator_producer": "b43e32489453ff8f7d664014a471e67b11413e185d8bc203f345014acdac2f6e"
+   },
+   "digest_semantics": "same-host only; evidence artefact for optimisation equivalence runs, never a deployment gate",
+   "consumed_by": [
+    "docs/capacity evidence (capacity branch)",
+    "optimisation A/B harnesses"
+   ]
+  }
+ },
+ "comparison_policies": {
+  "same_host_deployment_gate": {
+   "statement": "A candidate is promotable ONLY if it is byte-identical to production run on the SAME host, same inputs, same environment - full file bytes AND full field census. No tolerances of any kind.",
+   "artefact": "golden.entry_trades.file.v1",
+   "implementation": "live/golden_compare.py --mode same-host"
+  },
+  "cross_machine_archive_witness": {
+   "statement": "The Mac-produced archive is a regression WITNESS, not the deployment-host oracle. Field-level comparison with an explicit allowlist; every mismatch is enumerated; any mismatch outside the allowlist, or beyond max_ulp inside it, fails.",
+   "artefact": "golden.entry_trades.file.v1",
+   "allowlist_fields": [
+    "ema_value",
+    "px_vs_ema",
+    "bbw_value",
+    "adx_value"
+   ],
+   "allowlist_rationale": "The exact four write-only regime diagnostics mapped at strategy_core/execution.py:361-366 ('Pure mapping - no indicator math'). Classification consumes the underlying values against a FIXED threshold (bbwThresholdMode=fixed, 2.342); any economic effect of a float flip would surface in market_state/volatility_state/outcome/net_r, all of which remain zero-tolerance.",
+   "max_ulp": 2,
+   "max_ulp_rationale": "MEASURED, not preferred: the observed S_22 pair (2.540400593491076 archive vs 2.540400593491075 VPS) parses to doubles exactly 2 ULP apart - shortest round-trip repr is bijective, so these are the true computed values. A 1-ULP bound would reject the only real-world case on record.",
+   "zero_tolerance_fields_examples": [
+    "trade_id",
+    "ob_id",
+    "direction",
+    "detection_time",
+    "fill_time",
+    "exit_time",
+    "entry",
+    "stop",
+    "tp",
+    "outcome",
+    "pnl_r",
+    "net_r",
+    "gross_r",
+    "risk",
+    "rr_multiple",
+    "market_state",
+    "volatility_state",
+    "trend_state",
+    "chop_state",
+    "state_eligibility",
+    "regime_block_reason",
+    "bars_to_fill",
+    "bars_to_exit"
+   ],
+   "implementation": "live/golden_compare.py --mode archive",
+   "known_input_drift": "Cells listed in live/golden_known_input_drift.json are reclassified as explained_input_drift ONLY on an exact match of key+field+ref+cand. They are input drift, not tolerance: widening them requires a new dataset-revision investigation, never an edit to this policy."
+  }
+ },
+ "input_pinning": {
+  "statement": "Every artefact digest is a function of (engine, inputs). The archive digests are pinned to the ARCHIVE-ERA inputs and are NOT reproducible from a clean checkout: the archive-era dataset (314a0efa\u2026) was replaced on 2026-08-02 by a rebuilt file (ba32de0d\u2026) whose historical revisions change 3 counterfactual analytics cells, and the archived candle copy is absent from the repo. The committed news file (7e37fc88\u2026) is the archive-consistent one; the Mac working tree additionally carries an UNCOMMITTED news refresh (85c25c35\u2026) that produces 698 news-field differences if used - clean checkouts are immune.",
+  "archive_era_dataset_sha256": "314a0efa450e54df256b9979 (prefix; full value in golden/run-001/ARCHIVE-MANIFEST.json)",
+  "current_dataset_sha256": "ba32de0d836fbe4d375c4533180f6074796c73bf5d0df16018040b799777235f",
+  "committed_news_sha256_prefix": "7e37fc88796b0691",
+  "known_input_drift_ledger": "live/golden_known_input_drift.json"
+ }
+}

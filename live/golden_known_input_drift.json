@@ -1,0 +1,26 @@
+{
+ "schema": "golden-known-input-drift-v1",
+ "cause": "Frozen dataset rebuilt 2026-08-02 (update_extended_candles.py); Dukascopy re-download revised a small number of historical bars. Archive-era dataset sha256 314a0efa\u2026, current ba32de0d\u2026. The archived candle copy (reference/candles.csv) is not present in the repo, so bit-exact reproduction of the archive digests is impossible from a clean checkout on ANY machine.",
+ "applies_only_when_candidate_dataset_sha256": "ba32de0d836fbe4d375c4533180f6074796c73bf5d0df16018040b799777235f",
+ "field_class": "r_if_no_target is a counterfactual analytics column (strategy_core/execution.py:187-189: 'never alters outcome / pnl_r / fill'). Zero economic fields are affected by the revision.",
+ "explained_cells": [
+  {
+   "key": "S_611",
+   "field": "r_if_no_target",
+   "ref": "66.5",
+   "cand": "66.090909"
+  },
+  {
+   "key": "S_1193",
+   "field": "r_if_no_target",
+   "ref": "107.057143",
+   "cand": "106.285714"
+  },
+  {
+   "key": "L_1869",
+   "field": "r_if_no_target",
+   "ref": "99.661017",
+   "cand": "100.118644"
+  }
+ ]
+}

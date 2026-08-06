@@ -111,7 +111,32 @@ def main() -> int:
     ap.add_argument("--golden-ref", required=True)
     ap.add_argument("--out", default="./rehearsal_out")
     args = ap.parse_args()
-    lux, ref, out = Path(args.lux_root), Path(args.golden_ref), Path(args.out)
+    # M-GOLDEN-CONTRACT-1: resolve EVERY path argument to absolute IMMEDIATELY.
+    # LuxSession os.chdir()s into the Lux root (its documented driver contract),
+    # so any relative path held past this point silently re-anchors — the
+    # observed failure mode was a relative --golden-ref that resolved fine at
+    # launch and failed ~1 hour later, after the pipeline, when the byte-parity
+    # step first opened it from the changed cwd.
+    lux = Path(args.lux_root).resolve()
+    ref = Path(args.golden_ref).resolve()
+    out = Path(args.out).resolve()
+    # Fail-fast: the reference must be a directory containing every file the
+    # byte-parity step will read, BEFORE any expensive work begins.
+    _ref_required = (
+        "trades_allow_multi_position__entry_triggered_edge_25p0_d3.csv",
+        "trades_allow_multi_position.csv",
+        "order_blocks.csv",
+    )
+    if not ref.is_dir():
+        print(f"FAIL  golden_ref_exists — not a directory: {ref}")
+        return 1
+    _missing = [n for n in _ref_required if not (ref / n).is_file()]
+    if _missing:
+        print(f"FAIL  golden_ref_complete — missing from {ref}: {_missing}")
+        return 1
+    if not lux.is_dir():
+        print(f"FAIL  lux_root_exists — not a directory: {lux}")
+        return 1
     out.mkdir(parents=True, exist_ok=True)
     report: dict = {"gate": "M3-P0-rehearsal", "at": datetime.now(timezone.utc).isoformat(),
                     "expected": EXPECTED, "checks": [], "hashes": {}, "verdict": "FAIL"}

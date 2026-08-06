@@ -273,32 +273,78 @@ def test_recorded_manifest_covers_the_production_import_closure():
     assert closure <= governed, f"ungoverned production modules: {sorted(closure - governed)}"
 
 
-@real_lux
-def test_blind_spot_is_closed_on_the_real_tree():
-    """THE regression guard. Mutate a real strategy file: engine_version must
-    stay blind (proving the defect is real) while the manifest must catch it.
+def _mirror_governed_tree(tmp_path: Path) -> Path:
+    """Copy every governed file from the live Lux tree into an isolated mirror.
 
-    Restores the exact original bytes and asserts the digest returns."""
-    from live.config import ENGINE_VERSION_EXPECTED
-    target = LUX_ROOT / "strategy_core" / "execution.py"
-    original = target.read_bytes()
-    before = hashlib.sha256(original).hexdigest()
+    M-GOLDEN-CONTRACT-1: the predecessor of this helper's caller mutated the
+    LIVE tree and restored it in a `finally`. That was a race waiting to happen —
+    if the node (or verify_engine in another process) read the file inside the
+    mutation window it saw a tampered engine, and a crash between write and
+    restore left the tree corrupted. The mirror makes restoration unnecessary
+    because the source is never touched.
+    """
+    mirror = tmp_path / "lux_mirror"
+    # Resolve both sides: governed_files() yields resolved paths, and LUX_ROOT
+    # may itself be a symlink (it is in the proof layout used to validate the
+    # VPS-equivalent sibling arrangement), in which case unresolved
+    # relative_to() raises ValueError.
+    root = LUX_ROOT.resolve()
+    for src_file in ei.governed_files(LUX_ROOT):
+        rel = src_file.resolve().relative_to(root)
+        dst = mirror / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(src_file.read_bytes())
+    return mirror
+
+
+@real_lux
+def test_blind_spot_is_closed_on_an_isolated_mirror(tmp_path):
+    """THE regression guard, now source-tree-safe. Mutate a governed strategy
+    file in a MIRROR of the live tree: the manifest must catch it. The live
+    tree is never opened for writing, so there is nothing to restore."""
     approved = ei.load_manifest(
         Path(__file__).resolve().parents[2] / "live" / "engine_manifest.json")
-    try:
-        target.write_bytes(original + b"\n# governance regression probe\n")
-        ok, detail, _ = ei.verify(LUX_ROOT, approved)
-        assert not ok, "manifest FAILED to detect a strategy_core edit"
-        assert "strategy_core/execution.py" in detail
-    finally:
-        target.write_bytes(original)
-    assert hashlib.sha256(target.read_bytes()).hexdigest() == before, "tree not restored"
-    ok, detail, _ = ei.verify(LUX_ROOT, approved)
-    assert ok, f"tree not restored: {detail}"
-    # And the legacy digest is unchanged throughout — the blind spot is real.
-    sys.path.insert(0, str(LUX_ROOT))
-    from src.run_outputs import engine_version
-    assert engine_version() == ENGINE_VERSION_EXPECTED
+    mirror = _mirror_governed_tree(tmp_path)
+    # The mirror is byte-faithful: it verifies exactly as the live tree does.
+    ok_live, _, live_actual = ei.verify(LUX_ROOT, approved)
+    ok_mirror, _, mirror_actual = ei.verify(mirror, approved)
+    assert ok_mirror == ok_live
+    assert mirror_actual["engine_manifest_id"] == live_actual["engine_manifest_id"]
+
+    target = mirror / "strategy_core" / "execution.py"
+    target.write_bytes(target.read_bytes() + b"\n# governance regression probe\n")
+    ok, detail, _ = ei.verify(mirror, approved)
+    assert not ok, "manifest FAILED to detect a strategy_core edit"
+    assert "strategy_core/execution.py" in detail
+    # The live tree was never touched — same verdict as before, no restore step.
+    ok2, _, after = ei.verify(LUX_ROOT, approved)
+    assert ok2 == ok_live
+    assert after["engine_manifest_id"] == live_actual["engine_manifest_id"]
+
+
+def test_no_test_writes_to_the_live_lux_root():
+    """Structural guard: no test in this suite may perform a write-like
+    operation on a path derived from the live Lux root. This is what allowed
+    the predecessor test to exist; it must not come back."""
+    tests_dir = Path(__file__).resolve().parent
+    offenders = []
+    write_markers = (".write_bytes(", ".write_text(", ".unlink(", ".rename(",
+                     ".rmdir(", "shutil.rmtree(", "open(", ".touch(")
+    for test_file in sorted(tests_dir.glob("test_*.py")):
+        src_lines = test_file.read_text().splitlines()
+        # Find variables aliased to the live root in this file.
+        root_names = {"LUX_ROOT"}
+        for i, line in enumerate(src_lines, 1):
+            if any(name in line for name in root_names) and \
+               any(m in line for m in write_markers):
+                # Reads via open() default mode are fine; flag explicit writes.
+                if "open(" in line and not any(
+                        q in line for q in ('"w"', "'w'", '"a"', "'a'", '"wb"', "'wb'")):
+                    continue
+                offenders.append(f"{test_file.name}:{i}: {line.strip()[:100]}")
+    assert not offenders, (
+        "write-like operations against the live Lux root in tests:\n  "
+        + "\n  ".join(offenders))
 
 
 @real_lux
