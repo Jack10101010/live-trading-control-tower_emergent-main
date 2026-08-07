@@ -49,6 +49,15 @@ def _cfg(tmp_path, **kw) -> LiveConfig:
     return c
 
 
+def _armed(cfg):
+    """LR-1/crash tests assert REPLAY semantics in live mode; the arm rail is
+    covered by test_arming_and_stale_open. Give them a valid operator arm so
+    they exercise what they are for."""
+    from live.arming import ArmRuntime
+    return ArmRuntime.create(cfg.state_dir, login=9000000001, server="FTMO-Demo",
+                             mode="live", ttl_minutes=60, max_opens=9)
+
+
 def _frame(rows):
     from conftest import with_identity_anchors
     cols = TRADE_COLS + ["ob_id", "detection_time"]
@@ -187,7 +196,7 @@ def test_close_intent_carries_realized_r():
 def test_dry_run_close_accrues_realized_r_and_arms_the_rail(tmp_path):
     cfg = _cfg(tmp_path)
     state = RunnerState(cfg.state_dir)
-    ex = Executor(cfg, state, gateway=None)
+    ex = Executor(cfg, state, gateway=None, arm_runtime=_armed(cfg), observed_account={"login": 9000000001, "server": "FTMO-Demo"})
     state.mirror_set("L_1", -1)
     prev = _frame([{"trade_id": "L_1", "direction": "bullish",
                     "fill_time": "t0", "outcome": "OPEN"}])
@@ -217,7 +226,7 @@ def test_daily_loss_rail_blocks_opens_once_breached(tmp_path):
 def test_realized_r_not_double_counted_on_replay(tmp_path):
     cfg = _cfg(tmp_path)
     state = RunnerState(cfg.state_dir)
-    ex = Executor(cfg, state, gateway=None)
+    ex = Executor(cfg, state, gateway=None, arm_runtime=_armed(cfg), observed_account={"login": 9000000001, "server": "FTMO-Demo"})
     state.mirror_set("L_1", -1)
     prev = _frame([{"trade_id": "L_1", "direction": "bullish", "fill_time": "t0", "outcome": "OPEN"}])
     cur = _frame([{"trade_id": "L_1", "direction": "bullish", "fill_time": "t0",
@@ -232,7 +241,7 @@ def test_intra_window_skip_does_not_consume_loss_budget(tmp_path):
     """SKIP_INTRA_WINDOW never reaches the broker, so it must not accrue R."""
     cfg = _cfg(tmp_path)
     state = RunnerState(cfg.state_dir)
-    ex = Executor(cfg, state, gateway=None)
+    ex = Executor(cfg, state, gateway=None, arm_runtime=_armed(cfg), observed_account={"login": 9000000001, "server": "FTMO-Demo"})
     prev = _frame([{"trade_id": "S_2", "direction": "bearish", "fill_time": "", "outcome": "UNFILLED"}])
     cur = _frame([{"trade_id": "S_2", "direction": "bearish", "fill_time": "t",
                    "outcome": "LOSS", "net_r": "-1.0"}])
@@ -323,7 +332,7 @@ def test_lr1_fixed_deferred_commit_replays_and_executes_exactly_once(tmp_path):
     replay = r3.run_once(defer_commit=True)
     assert replay["status"] == "ok"
     assert [i.intent_id for i in replay["intents"]] == first_ids   # identical ids
-    applied = Executor(cfg, r3.state, gateway=None).apply(replay["intents"], today="2026-07-28")
+    applied = Executor(cfg, r3.state, gateway=None, arm_runtime=_armed(cfg), observed_account={"login": 9000000001, "server": "FTMO-Demo"}).apply(replay["intents"], today="2026-07-28")
     assert len(applied["applied"]) == 1
     r3.commit_cycle()
     # a further cycle at the same boundary is a no-op — no duplicate execution

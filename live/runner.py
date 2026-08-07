@@ -116,11 +116,13 @@ class LiveRunner:
         if identity_guard is not None:
             self.identity_guard = identity_guard     # injectable for tests
         else:
-            from live.identity_guard import IdentityGuard, config_digest
+            from live.identity_guard import (IdentityGuard, config_digest,
+                                              policy_digest)
             self.identity_guard = IdentityGuard(
                 config.state_dir,
                 config_digest=config_digest(getattr(config, "golden_config_path", None)),
-                engine_version=(session.engine_version if session else "injected"))
+                engine_version=(session.engine_version if session else "injected"),
+                policy_digest=policy_digest(getattr(config, "lux_root", None)))
 
     # ── pipeline (mirrors the Golden driver stage-for-stage) ─────────────────
     def golden_pipeline(self, candles_raw: pd.DataFrame, frontier_date: str,

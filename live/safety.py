@@ -22,9 +22,93 @@ class RailVerdict:
 
 
 class SafetyRails:
-    def __init__(self, config, state):
+    def __init__(self, config, state, arm_runtime=None, observed_account=None):
         self.config = config
         self.state = state
+        #: Durable operator authorisation. None => unarmed. Only consulted for
+        #: OPEN in live mode; CLOSE/MODIFY are risk-reducing and never gated on
+        #: it (a node that cannot close what it opened is the worse failure).
+        self.arm_runtime = arm_runtime
+        #: {"login":…, "server":…} as OBSERVED from the terminal this cycle. The
+        #: arm binds to the observed account, never to configuration — config is
+        #: what an operator can get wrong; the terminal is ground truth.
+        self.observed_account = observed_account or {}
+
+    def _arm_verdict(self, intent) -> "RailVerdict | None":
+        """None => this rail has nothing to say about this intent."""
+        if intent.action != OPEN_POSITION or self.config.mode != "live":
+            return None
+        if self.arm_runtime is None:
+            return RailVerdict(False, "not_armed",
+                               "live mode without an operator arm token")
+        ok, reason = self.arm_runtime.authorize_open(
+            login=self.observed_account.get("login"),
+            server=self.observed_account.get("server"),
+            mode=self.config.mode,
+            engine_version=getattr(self.config, "engine_version_actual", None))
+        if not ok:
+            return RailVerdict(False, reason,
+                               f"arm refused: {reason}")
+        return None
+
+    def _stale_open_verdict(self, intent) -> "RailVerdict | None":
+        """Refuse an OPEN whose engine fill happened BEFORE this cycle's window.
+
+        The mirror model submits at market when a boundary closes, so a fill is
+        always up to one M15 window old — that latency is inherent and priced
+        into the design. What is NOT inherent is a SKIPPED boundary: the node
+        currently skips ~12% of M15 boundaries under load, and `diff_frontier`
+        then compares frames two windows apart. A fill from the skipped window
+        would be market-entered up to 30 minutes late, at a price the engine
+        never saw.
+
+        The rule, derived from the strategy's own semantics rather than a taste
+        threshold: `frontier_bar` B is the start of the just-closed window, so a
+        fill belonging to this cycle satisfies fill_time >= B. Anything earlier
+        belongs to a window we did not act on, and is refused. Normal in-window
+        staleness is unaffected; only the extra staleness that skipping creates
+        is caught. No entry price is fabricated and no old OPEN is "caught up".
+        """
+        if intent.action != OPEN_POSITION:
+            return None
+        fill_time = getattr(intent, "fill_time", None)
+        frontier = getattr(intent, "frontier_bar", None)
+        if not fill_time or not frontier:
+            return None            # nothing to compare; other rails still apply
+        import pandas as pd
+        # utc=True normalises BOTH sides: engine frames carry '+00:00' strings
+        # but fixtures and older frames can be tz-naive, and a mixed comparison
+        # raises TypeError. A rail that RAISES is worse than one that abstains —
+        # the exception would escape evaluate() and fail the whole cycle — so
+        # anything uncomparable yields "no opinion" and the other rails decide.
+        # STRICT parsing, deliberately not errors="coerce": coerce does not
+        # yield NaT for a short token like "t1" — pandas reads it as YEAR 1,
+        # which then looks maximally stale and blocks a legitimate OPEN. Garbage
+        # must raise so this rail abstains rather than refuse on a parse
+        # artefact. (Measured: to_datetime("t1", errors="coerce") ->
+        # Timestamp('0001-01-01').)
+        try:
+            ft = pd.to_datetime(fill_time, utc=True)
+            fb = pd.to_datetime(frontier, utc=True)
+        except (ValueError, TypeError, OverflowError, pd.errors.ParserError):
+            return None
+        if pd.isna(ft) or pd.isna(fb):
+            return None
+        # Plausibility bound. This rail exists to catch staleness measured in
+        # MINUTES (one skipped M15 boundary). A "fill" days before the frontier
+        # is not a late entry — it is uninterpretable input, and pandas will
+        # happily turn a short token into year 1 without raising. Refusing on
+        # that would block legitimate OPENs on a parse artefact, so anything
+        # outside a plausible window means "this rail cannot judge"; the arm,
+        # duplicate, kill and position rails all still apply.
+        if (fb - ft) > pd.Timedelta(days=1):
+            return None
+        if ft < fb:
+            return RailVerdict(False, "stale_open",
+                               f"engine fill {fill_time} precedes frontier window "
+                               f"{frontier} (skipped boundary); refusing a market "
+                               f"entry at a price the engine never saw")
+        return None
 
     def _kill_switch_on(self) -> bool:
         return self.config.kill_file.exists()
@@ -53,6 +137,12 @@ class SafetyRails:
         status = self.state.ledger_status(intent.intent_id)
         if status in LEDGER_SUPPRESSING:
             return RailVerdict(False, "duplicate_intent", f"already {status}")
+        # 3b) operator arming + entry freshness. Placed AFTER the duplicate rail
+        # so a replayed intent is still named a duplicate, and BEFORE the
+        # economic rails so an unarmed node never reaches sizing decisions.
+        for verdict in (self._arm_verdict(intent), self._stale_open_verdict(intent)):
+            if verdict is not None:
+                return verdict
         # 4) daily loss kill switch (opens only)
         if intent.action == OPEN_POSITION:
             realized = self.state.daily_realized_r(today)

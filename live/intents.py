@@ -36,6 +36,9 @@ class OrderIntent:
     stop: float | None = None
     target: float | None = None
     reason: str = ""
+    # Engine fill timestamp, carried so the stale-OPEN rail can compare it to
+    # the frontier window without re-reading the frame. OPEN intents only.
+    fill_time: str | None = None
     # Engine-realised R (cost-inclusive `net_r`), carried on CLOSE_POSITION only.
     # This is the sole production source for the daily-loss counter — the engine
     # is the state machine, so its own realised R is authoritative rather than a
@@ -103,7 +106,7 @@ def diff_frontier(prev_frame, cur_frame, frontier_bar: str) -> list[OrderIntent]
                     intent_id=_intent_id(tid, "fill", frontier_bar), action=OPEN_POSITION,
                     trade_id=tid, side=_side(row), frontier_bar=frontier_bar,
                     entry=_f(row, "entry"), stop=_f(row, "stop"), target=_f(row, "tp"),
-                    reason="engine_fill"))
+                    reason="engine_fill", fill_time=fill_time))
             continue
 
         # 2) open position exited since the previous frame

@@ -53,6 +53,15 @@ def _cfg(tmp_path, **kw) -> LiveConfig:
     return c
 
 
+def _armed(cfg):
+    """LR-1/crash tests assert REPLAY semantics in live mode; the arm rail is
+    covered by test_arming_and_stale_open. Give them a valid operator arm so
+    they exercise what they are for."""
+    from live.arming import ArmRuntime
+    return ArmRuntime.create(cfg.state_dir, login=9000000001, server="FTMO-Demo",
+                             mode="live", ttl_minutes=60, max_opens=9)
+
+
 def _frame(rows):
     from conftest import with_identity_anchors
     cols = COLS + ["ob_id", "detection_time"]
@@ -225,7 +234,7 @@ def test_unlimited_replays_never_duplicate_execution(tmp_path):
     """Pre-repair the 3rd pass re-executed: blocked overwrote simulated."""
     cfg = _cfg(tmp_path)
     st = RunnerState(cfg.state_dir)
-    ex = Executor(cfg, st, gateway=None)
+    ex = Executor(cfg, st, gateway=None, arm_runtime=_armed(cfg), observed_account={"login": 9000000001, "server": "FTMO-Demo"})
     prev = _frame([{"trade_id": "L_1", "direction": "bullish", "fill_time": "", "outcome": "UNFILLED"}])
     cur = _frame([{"trade_id": "L_1", "direction": "bullish", "fill_time": "t",
                    "outcome": "OPEN", "entry": "1.1", "stop": "1.0", "tp": "1.3"}])
@@ -263,7 +272,7 @@ def test_repeated_crash_recovery_across_restarts_executes_once(tmp_path):
         assert res["status"] == "ok"
         ids = ids or [i.intent_id for i in res["intents"]]
         assert [i.intent_id for i in res["intents"]] == ids       # replay determinism
-        total += len(Executor(cfg, r.state, gateway=None)
+        total += len(Executor(cfg, r.state, gateway=None, arm_runtime=_armed(cfg), observed_account={"login": 9000000001, "server": "FTMO-Demo"})
                      .apply(res["intents"], today="2026-07-28")["applied"])
     assert total == 1
     r = _runner(cfg, _frame(OPENED), BAR2)

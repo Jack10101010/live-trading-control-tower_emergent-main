@@ -61,10 +61,34 @@ REFUSE_ANCHOR = "anchor_changed"
 REFUSE_VANISHED = "trade_id_vanished"
 REFUSE_MALFORMED = "witness_malformed"
 REFUSE_COLUMNS = "anchor_columns_missing"
+REFUSE_POLICY = "policy_drift"
 
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+#: Executable policy consumed by strategy_core at decision time. Not a dataset:
+#: `portfolio_policy_mode=enforce` means these bytes decide, per cohort and
+#: market state, whether a trade is allowed and at what RR. It sits outside the
+#: 30-file engine manifest (which covers .py only), so without this digest a
+#: policy edit changes live trading with no identity signal at all.
+POLICY_RELPATH = "configs/policy/deployed_policy.v1.json"
+
+
+def policy_digest(lux_root) -> str | None:
+    """sha256 of the deployed policy, or None if unreadable/absent.
+
+    None is NOT 'fine': the guard treats a witnessed digest going None as
+    drift, so a deleted or unreadable policy fails closed.
+    """
+    if lux_root is None:
+        return None
+    try:
+        return hashlib.sha256(
+            (Path(lux_root) / POLICY_RELPATH).read_bytes()).hexdigest()
+    except OSError:
+        return None
 
 
 def config_digest(golden_config_path: Path | None) -> str | None:
@@ -91,10 +115,11 @@ class IdentityGuard:
     """One instance per runner; verify_and_extend() once per cycle, pre-diff."""
 
     def __init__(self, state_dir: Path, *, config_digest: str | None,
-                 engine_version: str | None):
+                 engine_version: str | None, policy_digest: str | None = None):
         self.path = Path(state_dir) / "identity_witness.json"
         self.config_digest = config_digest
         self.engine_version = engine_version
+        self.policy_digest = policy_digest
 
     # ── persistence ──────────────────────────────────────────────────────────
     def _load(self) -> dict | None:
@@ -136,6 +161,7 @@ class IdentityGuard:
             self._save({"schema": SCHEMA,
                         "engine_version": self.engine_version,
                         "config_digest": self.config_digest,
+                        "policy_digest": self.policy_digest,
                         "window_start": window_start,
                         "anchors": anchors,
                         "bootstrapped_at": _utcnow(),
@@ -151,6 +177,11 @@ class IdentityGuard:
             return False, (f"{REFUSE_CONFIG}: golden config digest changed "
                            f"({str(witness.get('config_digest'))[:12]}… -> "
                            f"{str(self.config_digest)[:12]}…)")
+        if witness.get("policy_digest") != self.policy_digest:
+            return False, (f"{REFUSE_POLICY}: deployed policy digest changed "
+                           f"({str(witness.get('policy_digest'))[:12]}… -> "
+                           f"{str(self.policy_digest)[:12]}…) — executable "
+                           "cohort/state policy is not a silent input")
         if witness.get("engine_version") != self.engine_version:
             return False, (f"{REFUSE_ENGINE}: engine_version changed under a "
                            "live witness — repin deliberately, do not drift")

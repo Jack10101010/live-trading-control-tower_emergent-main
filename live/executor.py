@@ -30,12 +30,15 @@ class ReconcileReport:
 
 
 class Executor:
-    def __init__(self, config, state, gateway, lifecycle=None):
+    def __init__(self, config, state, gateway, lifecycle=None,
+                 arm_runtime=None, observed_account=None):
         self.config = config
         self.state = state
         self.gateway = gateway
         self.lifecycle = lifecycle
-        self.rails = SafetyRails(config, state)
+        self.arm_runtime = arm_runtime
+        self.rails = SafetyRails(config, state, arm_runtime=arm_runtime,
+                                 observed_account=observed_account)
         self._reconciling = False       # single-flight guard
 
     # ── reconciliation ───────────────────────────────────────────────────────
@@ -176,6 +179,11 @@ class Executor:
 
         self.state.ledger_set(intent.intent_id, LEDGER_SENT)
         if intent.action == OPEN_POSITION:
+            # PRE-SUBMISSION consumption, persisted before the call. A broker
+            # that accepts an order whose response we lose must not leave the
+            # budget intact -- see live/arming.py for the full argument.
+            if self.arm_runtime is not None:
+                self.arm_runtime.consume_open_attempt()
             ok, res = self.gateway.open_position(intent.side, self.config.fixed_risk_lots,
                                                  intent.stop or 0.0, intent.target or 0.0,
                                                  intent.intent_id)

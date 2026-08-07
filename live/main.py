@@ -42,7 +42,22 @@ def build(lifecycle=None) -> tuple:
     session = LuxSession(config.lux_root)
     session.verify_engine()
     runner = LiveRunner(config, session=session)
-    executor = Executor(config, runner.state, gateway, lifecycle=lifecycle)
+    # Durable operator authorisation, loaded ONCE per process from state. A
+    # restart reloads the same deadline and the same remaining budget: it can
+    # only lose budget, never extend the arm. The observed account (not the
+    # configured one) is what the arm binds against -- see live/arming.py.
+    from live.arming import ArmRuntime
+    arm_runtime = ArmRuntime.load(config.state_dir)
+    observed_account = None
+    try:
+        ok, snap = gateway.read_account_state()
+        if ok and isinstance(snap, dict):
+            acct = snap.get("account") or {}
+            observed_account = {"login": acct.get("login"), "server": acct.get("server")}
+    except Exception:                      # never let arming binding break boot
+        observed_account = None
+    executor = Executor(config, runner.state, gateway, lifecycle=lifecycle,
+                        arm_runtime=arm_runtime, observed_account=observed_account)
     publisher = CTPublisher(config)
     # ONE observer for the process, sharing the governed gateway. It owns its own
     # bounded cadence, so calling it every cycle does not mean a terminal read
@@ -210,9 +225,28 @@ def _install_signal_handlers(stop: dict) -> None:  # pragma: no cover - OS wirin
 def main() -> None:  # pragma: no cover - VPS loop
     config = LiveConfig()
     if config.mode == "live":
-        raise SystemExit(
-            "REFUSED: LIVE_MODE=live is not permitted in M3 P1 shadow. "
-            "Promotion to P2 is an explicit operator decision.")
+        # The original P1 guard refused LIVE_MODE=live outright, so promotion
+        # could not happen by flipping an env var. That protection is KEPT and
+        # given a real key: the durable arm token (M-DEMO-ARM-1) IS the explicit
+        # operator decision the old message demanded. An env var alone still
+        # boots nothing; a token that is absent, malformed, disarmed or expired
+        # is refused here, and every individual OPEN is re-authorised against
+        # the OBSERVED account by the arm rail regardless of this check.
+        from live.arming import ArmRuntime
+        arm = ArmRuntime.load(config.state_dir)
+        if arm is None:
+            raise SystemExit(
+                "REFUSED: LIVE_MODE=live without an arm token. Create one "
+                "deliberately (python -m live.arm_cli create ...) — an env var "
+                "is not an operator decision.")
+        if arm.malformed or arm.disarmed:
+            raise SystemExit("REFUSED: arm token is malformed or disarmed.")
+        from live.arming import _now, _parse
+        exp = _parse(arm.context.request_expires_at)
+        if exp is None or _now() >= exp:
+            raise SystemExit(
+                f"REFUSED: arm token expired at {arm.context.request_expires_at}. "
+                "Arms do not renew themselves; create a new one.")
     config.ensure_dirs()
 
     # ── ownership: exactly one live process per state directory ──────────────
