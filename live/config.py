@@ -29,10 +29,12 @@ SYMBOL = "EURUSD"                                   # hard whitelist — single 
 CYCLE_BUDGET_S = 1500
 IDLE_HEARTBEAT_BUDGET_S = 120
 GOLDEN_CONFIG_RELPATH = "generated_configs/d6cdae589b1e4c37a67763253c466067.json"
-# M-CAP-INTEGRATE-1: recomputed from the Lux candidate b96fa7a (Options A+B and
-# the Lux-side governance repair). Both this and the manifest id below were
-# derived from that tree, never transcribed.
-ENGINE_VERSION_EXPECTED = "559fcb66385e5e9fe757e61dfdc5e9c01d50abd358cdbb771105403d874a8c04"
+# M-SESSION-DST-1: recomputed after the Europe/London session correction in
+# strategy_core/sessions.py. BOTH identities move: M-CAP-GOV-1 repaired
+# engine_version to hash the whole governed tree (the legacy 3-file list is
+# retained only for a regression test), so it is no longer blind to
+# strategy_core. Recomputed from the deployed tree, never transcribed.
+ENGINE_VERSION_EXPECTED = "d7274f7e5bae37598eb70abbd5703cb6399147f2d32582b92feac201b1e455dc"
 # Lux's own engine_version() hashes only src/execution.py, scripts/run_backtest.py
 # and src/resume_support.py. That list predates M2, which moved every strategy
 # subsystem into strategy_core/ and left src/execution.py a re-export shim — so
@@ -40,7 +42,7 @@ ENGINE_VERSION_EXPECTED = "559fcb66385e5e9fe757e61dfdc5e9c01d50abd358cdbb7711054
 # entire walk, can change without moving that digest. ENGINE_MANIFEST_ID_EXPECTED
 # is the complete identity over the governed tree (live/engine_manifest.json
 # lists every file and digest). Both are gated; neither replaces the other.
-ENGINE_MANIFEST_ID_EXPECTED = "5edc50abdb621daf4e33ab4c63ef8b93b2e417595a3022e416ac7e1ceb27ad6b"
+ENGINE_MANIFEST_ID_EXPECTED = "196acb79847f6d8bdab045b868d1b53ade7bb5a4493ffc298f7eef20e113dedf"
 ENGINE_MANIFEST_PATH = Path(__file__).resolve().parent / "engine_manifest.json"
 
 

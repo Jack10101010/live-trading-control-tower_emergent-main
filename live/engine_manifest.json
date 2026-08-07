@@ -112,7 +112,7 @@
   },
   {
    "path": "strategy_core/sessions.py",
-   "sha256": "245c7a8989e1a2d8032c12b1d60250e1ad89c9bfc993403336a8571fda66b7d9"
+   "sha256": "91ed67a56f58e8000e8f85f9e8c12799fb20fe0c3f4c73a192adb3930a617455"
   },
   {
    "path": "strategy_core/swings.py",
@@ -123,5 +123,5 @@
    "sha256": "7749131885cfa9485ffebc27b4879ef1b0dc5e4ba68f41fb3bb9e40da3feb2fd"
   }
  ],
- "engine_manifest_id": "5edc50abdb621daf4e33ab4c63ef8b93b2e417595a3022e416ac7e1ceb27ad6b"
+ "engine_manifest_id": "196acb79847f6d8bdab045b868d1b53ade7bb5a4493ffc298f7eef20e113dedf"
 }
