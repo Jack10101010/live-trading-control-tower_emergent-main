@@ -415,3 +415,72 @@ def test_unparseable_fill_time_abstains_rather_than_refusing(tmp_path):
         v = rails(tmp_path, arm=arm_now(tmp_path)).evaluate(
             open_intent(FRONTIER, fill=junk), "EURUSD", TODAY)
         assert v.allowed, f"{junk!r} caused a bogus stale_open refusal"
+
+
+# ── PART 4: arm-based elevation (launcher stays dry_run) ─────────────────────
+
+def _posture(tmp_path, monkeypatch, launcher_mode="dry_run"):
+    """Run main()'s posture block in isolation and report the resolved mode."""
+    from live.arming import ArmRuntime, _now, _parse
+
+    class C:
+        mode = launcher_mode
+        state_dir = tmp_path
+    cfg = C()
+    arm = ArmRuntime.load(cfg.state_dir)
+    if arm is not None and not arm.malformed and not arm.disarmed:
+        exp = _parse(arm.context.request_expires_at)
+        if (exp is not None and _now() < exp and str(arm.context.mode) == "live"
+                and isinstance(arm.remaining_attempts, int)
+                and arm.remaining_attempts > 0):
+            cfg.mode = "live"
+    return cfg.mode
+
+
+def test_launcher_default_stays_dry_run_without_an_arm(tmp_path, monkeypatch):
+    assert _posture(tmp_path, monkeypatch) == "dry_run"
+
+
+def test_valid_arm_elevates_to_live(tmp_path, monkeypatch):
+    arm_now(tmp_path, ttl=60, opens=3)
+    assert _posture(tmp_path, monkeypatch) == "live"
+
+
+def test_expired_arm_does_not_elevate(tmp_path, monkeypatch):
+    arm_now(tmp_path, ttl=-1)
+    assert _posture(tmp_path, monkeypatch) == "dry_run"
+
+
+def test_exhausted_arm_does_not_elevate(tmp_path, monkeypatch):
+    arm = arm_now(tmp_path, opens=1)
+    arm.consume_open_attempt()
+    assert _posture(tmp_path, monkeypatch) == "dry_run"
+
+
+def test_disarmed_arm_does_not_elevate(tmp_path, monkeypatch):
+    arm_now(tmp_path).disarm("operator")
+    assert _posture(tmp_path, monkeypatch) == "dry_run"
+
+
+def test_malformed_arm_does_not_elevate(tmp_path, monkeypatch):
+    arm_now(tmp_path)
+    (tmp_path / "arm_token.json").write_text("{not json")
+    assert _posture(tmp_path, monkeypatch) == "dry_run"
+
+
+def test_capability_disappears_with_no_launcher_edit(tmp_path, monkeypatch):
+    """The whole point of elevation: the same launcher config yields live while
+    armed and dry_run once the arm lapses."""
+    arm = arm_now(tmp_path, opens=1)
+    assert _posture(tmp_path, monkeypatch) == "live"
+    arm.consume_open_attempt()
+    assert _posture(tmp_path, monkeypatch) == "dry_run"
+
+
+def test_main_resolves_exactly_one_effective_mode():
+    """A partial migration (executor elevated, reconciliation not) would send
+    orders with no broker reconciliation. Elevation must be a single assignment
+    to config.mode, not a second parallel concept."""
+    src = (REPO_ROOT / "live" / "main.py").read_text(encoding="utf-8")
+    assert 'config.mode = "live"' in src
+    assert "effective_mode" not in src, "a second mode concept has appeared"

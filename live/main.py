@@ -3,8 +3,11 @@
 Usage (Windows VPS, repo root on PYTHONPATH):
     python -m live.main
 
-P1 SHADOW GUARD: LIVE_MODE=live is refused at startup. Promotion to P2 is an
-explicit operator decision recorded in PROJECT_STATE.md, not an env var flip.
+EXECUTION POSTURE: LIVE_MODE stays dry_run in the launcher. A valid, durable,
+expiring operator ARM (live/arming.py) temporarily elevates this process to
+live; expiry/exhaustion/revocation removes execution capability by itself, with
+no launcher edit. An env var alone never makes the node execution-capable, and
+the terminal's AutoTrading toggle remains a separate final gate.
 
 Every cycle is logged to <state_dir>/ops/cycles.jsonl (+ heartbeat.json):
 start/end, duration, boundary, bar timestamps, intent counts, reconcile
@@ -224,29 +227,53 @@ def _install_signal_handlers(stop: dict) -> None:  # pragma: no cover - OS wirin
 
 def main() -> None:  # pragma: no cover - VPS loop
     config = LiveConfig()
-    if config.mode == "live":
-        # The original P1 guard refused LIVE_MODE=live outright, so promotion
-        # could not happen by flipping an env var. That protection is KEPT and
-        # given a real key: the durable arm token (M-DEMO-ARM-1) IS the explicit
-        # operator decision the old message demanded. An env var alone still
-        # boots nothing; a token that is absent, malformed, disarmed or expired
-        # is refused here, and every individual OPEN is re-authorised against
-        # the OBSERVED account by the arm rail regardless of this check.
-        from live.arming import ArmRuntime
-        arm = ArmRuntime.load(config.state_dir)
-        if arm is None:
-            raise SystemExit(
-                "REFUSED: LIVE_MODE=live without an arm token. Create one "
-                "deliberately (python -m live.arm_cli create ...) — an env var "
-                "is not an operator decision.")
-        if arm.malformed or arm.disarmed:
-            raise SystemExit("REFUSED: arm token is malformed or disarmed.")
-        from live.arming import _now, _parse
+    # ── execution posture: the ARM elevates, the launcher does not ───────────
+    # LIVE_MODE stays the production default (dry_run) in the launcher. A valid
+    # operator arm temporarily elevates THIS PROCESS to live; when the arm
+    # expires, exhausts or is revoked, capability disappears on its own with no
+    # launcher edit and no deployment.
+    #
+    # Elevation resolves ONE effective mode here, at process start, and assigns
+    # it to config.mode so every existing `mode != "live"` check — executor,
+    # reconciliation, telemetry — inherits it consistently. A partial migration
+    # (executor elevated, reconciliation not) would send orders with no broker
+    # reconciliation, which is why this is a single assignment rather than a
+    # second "effective mode" concept threaded through call sites.
+    #
+    # An arm that lapses mid-process does NOT downgrade the running mode: the
+    # arm rail refuses every subsequent OPEN anyway, and staying in live keeps
+    # reconciliation watching the broker for whatever is already open. The node
+    # is not killed on expiry — that would cost telemetry, identity-guard
+    # extension and data collection exactly when attention is needed. The state
+    # is made loud instead: `arming.status`/`reason` publish every cycle.
+    from live.arming import ArmRuntime, _now, _parse
+    arm = ArmRuntime.load(config.state_dir)
+    arm_note = "no arm token"
+    if arm is None:
+        pass
+    elif arm.malformed:
+        arm_note = "arm token MALFORMED - staying dry_run"
+    elif arm.disarmed:
+        arm_note = "arm token DISARMED - staying dry_run"
+    else:
         exp = _parse(arm.context.request_expires_at)
-        if exp is None or _now() >= exp:
-            raise SystemExit(
-                f"REFUSED: arm token expired at {arm.context.request_expires_at}. "
-                "Arms do not renew themselves; create a new one.")
+        if exp is None:
+            arm_note = "arm token has no readable expiry - staying dry_run"
+        elif _now() >= exp:
+            arm_note = f"arm token EXPIRED at {arm.context.request_expires_at} - staying dry_run"
+        elif str(arm.context.mode) != "live":
+            arm_note = f"arm token is for mode {arm.context.mode!r} - staying dry_run"
+        elif not isinstance(arm.remaining_attempts, int) or arm.remaining_attempts <= 0:
+            arm_note = "arm token EXHAUSTED - staying dry_run"
+        else:
+            config.mode = "live"
+            arm_note = (f"ARMED: elevated to live until {arm.context.request_expires_at} "
+                        f"with {arm.remaining_attempts} OPEN attempt(s) remaining")
+    print(f"execution posture: mode={config.mode} | {arm_note}")
+    if config.mode == "live":
+        print("execution posture: AutoTrading in the terminal remains a separate, "
+              "final gate outside this process")
+
     config.ensure_dirs()
 
     # ── ownership: exactly one live process per state directory ──────────────
