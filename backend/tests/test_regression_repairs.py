@@ -54,7 +54,10 @@ def _cfg(tmp_path, **kw) -> LiveConfig:
 
 
 def _frame(rows):
-    return pd.DataFrame([{c: r.get(c, "") for c in COLS} for r in rows]).astype(str)
+    from conftest import with_identity_anchors
+    cols = COLS + ["ob_id", "detection_time"]
+    return pd.DataFrame([{c: r.get(c, "") for c in cols}
+                         for r in with_identity_anchors(rows)]).astype(str)
 
 
 def _server_epoch(wall: datetime) -> int:

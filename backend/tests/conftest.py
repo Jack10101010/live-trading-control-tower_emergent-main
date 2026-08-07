@@ -88,3 +88,19 @@ def pytest_configure(config):
     if os.environ.get("CANDIDATE_VALIDATION") == "1":
         raise pytest.UsageError("CANDIDATE_VALIDATION=1: " + message)
     print(f"\nWARNING: {message}")
+
+
+def with_identity_anchors(rows):
+    """Give test frames the identity anchor columns real engine frames always
+    carry (M-OB-ID-GUARD requires them on every frame). Deterministic defaults
+    derived from trade_id keep identity CONTINUOUS across successive frames."""
+    import hashlib
+    out = []
+    for r in rows:
+        r = dict(r)
+        tid = str(r.get("trade_id", "X_0"))
+        stable = int(hashlib.md5(tid.encode()).hexdigest()[:6], 16)
+        r.setdefault("ob_id", str(stable % 1000))
+        r.setdefault("detection_time", f"2026-07-0{(stable % 9) + 1} 08:00:00+00:00")
+        out.append(r)
+    return out

@@ -66,7 +66,8 @@ def _candles(last):
 
 
 def _frame(rows):
-    return pd.DataFrame(rows).astype(str)
+    from conftest import with_identity_anchors
+    return pd.DataFrame(with_identity_anchors(rows)).astype(str)
 
 
 def _runner(cfg, rows, last):
