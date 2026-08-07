@@ -484,3 +484,35 @@ def test_main_resolves_exactly_one_effective_mode():
     src = (REPO_ROOT / "live" / "main.py").read_text(encoding="utf-8")
     assert 'config.mode = "live"' in src
     assert "effective_mode" not in src, "a second mode concept has appeared"
+
+
+def test_build_resolves_posture_on_the_config_components_actually_hold(tmp_path, monkeypatch):
+    """The defect this pins: elevation originally ran in main() against a
+    SEPARATE LiveConfig instance, so build()'s config stayed dry_run. The node
+    published mode=dry_run while the operator believed it was armed — a silent
+    disagreement between the arm and the executor."""
+    import inspect
+    from live import main as m
+    src = inspect.getsource(m.build)
+    assert "resolve_execution_posture(config)" in src, \
+        "build() must resolve posture on its own config"
+    # and the function must mutate the object it is handed
+    arm_now(tmp_path, ttl=60, opens=2)
+
+    class C:
+        mode = "dry_run"
+        state_dir = tmp_path
+    cfg = C()
+    m.resolve_execution_posture(cfg)
+    assert cfg.mode == "live"
+
+
+def test_posture_resolution_leaves_dry_run_untouched_without_an_arm(tmp_path):
+    from live import main as m
+
+    class C:
+        mode = "dry_run"
+        state_dir = tmp_path
+    cfg = C()
+    note = m.resolve_execution_posture(cfg)
+    assert cfg.mode == "dry_run" and "no arm token" in note

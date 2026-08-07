@@ -36,8 +36,66 @@ from live.runner import LiveRunner, LuxSession
 MAX_CONSECUTIVE_ERRORS = 10
 
 
+def resolve_execution_posture(config) -> str:
+    """Resolve the ONE effective mode for this process and assign config.mode.
+
+    Called from build(), which is the config every downstream component
+    actually holds. An earlier version ran this in main() against a SEPARATE
+    LiveConfig instance, so the elevation never reached the executor,
+    reconciliation or telemetry: the node published mode=dry_run while the
+    operator believed it was armed. Returns a human-readable note.
+    """
+    # LIVE_MODE stays the production default (dry_run) in the launcher. A valid
+    # operator arm temporarily elevates THIS PROCESS to live; when the arm
+    # expires, exhausts or is revoked, capability disappears on its own with no
+    # launcher edit and no deployment.
+    #
+    # Elevation resolves ONE effective mode here, at process start, and assigns
+    # it to config.mode so every existing `mode != "live"` check — executor,
+    # reconciliation, telemetry — inherits it consistently. A partial migration
+    # (executor elevated, reconciliation not) would send orders with no broker
+    # reconciliation, which is why this is a single assignment rather than a
+    # second "effective mode" concept threaded through call sites.
+    #
+    # An arm that lapses mid-process does NOT downgrade the running mode: the
+    # arm rail refuses every subsequent OPEN anyway, and staying in live keeps
+    # reconciliation watching the broker for whatever is already open. The node
+    # is not killed on expiry — that would cost telemetry, identity-guard
+    # extension and data collection exactly when attention is needed. The state
+    # is made loud instead: `arming.status`/`reason` publish every cycle.
+    from live.arming import ArmRuntime, _now, _parse
+    arm = ArmRuntime.load(config.state_dir)
+    arm_note = "no arm token"
+    if arm is None:
+        pass
+    elif arm.malformed:
+        arm_note = "arm token MALFORMED - staying dry_run"
+    elif arm.disarmed:
+        arm_note = "arm token DISARMED - staying dry_run"
+    else:
+        exp = _parse(arm.context.request_expires_at)
+        if exp is None:
+            arm_note = "arm token has no readable expiry - staying dry_run"
+        elif _now() >= exp:
+            arm_note = f"arm token EXPIRED at {arm.context.request_expires_at} - staying dry_run"
+        elif str(arm.context.mode) != "live":
+            arm_note = f"arm token is for mode {arm.context.mode!r} - staying dry_run"
+        elif not isinstance(arm.remaining_attempts, int) or arm.remaining_attempts <= 0:
+            arm_note = "arm token EXHAUSTED - staying dry_run"
+        else:
+            config.mode = "live"
+            arm_note = (f"ARMED: elevated to live until {arm.context.request_expires_at} "
+                        f"with {arm.remaining_attempts} OPEN attempt(s) remaining")
+    return arm_note
+
+
 def build(lifecycle=None) -> tuple:
     config = LiveConfig()
+    note = resolve_execution_posture(config)
+    print(f"execution posture: mode={config.mode} | {note}")
+    if config.mode == "live":
+        print("execution posture: AutoTrading in the terminal remains a separate, "
+              "final gate outside this process")
     config.validate()          # reject nonsensical risk/runtime config before anything starts
     config.ensure_dirs()
     gateway = MT5Gateway(config)
@@ -227,53 +285,8 @@ def _install_signal_handlers(stop: dict) -> None:  # pragma: no cover - OS wirin
 
 def main() -> None:  # pragma: no cover - VPS loop
     config = LiveConfig()
-    # ── execution posture: the ARM elevates, the launcher does not ───────────
-    # LIVE_MODE stays the production default (dry_run) in the launcher. A valid
-    # operator arm temporarily elevates THIS PROCESS to live; when the arm
-    # expires, exhausts or is revoked, capability disappears on its own with no
-    # launcher edit and no deployment.
-    #
-    # Elevation resolves ONE effective mode here, at process start, and assigns
-    # it to config.mode so every existing `mode != "live"` check — executor,
-    # reconciliation, telemetry — inherits it consistently. A partial migration
-    # (executor elevated, reconciliation not) would send orders with no broker
-    # reconciliation, which is why this is a single assignment rather than a
-    # second "effective mode" concept threaded through call sites.
-    #
-    # An arm that lapses mid-process does NOT downgrade the running mode: the
-    # arm rail refuses every subsequent OPEN anyway, and staying in live keeps
-    # reconciliation watching the broker for whatever is already open. The node
-    # is not killed on expiry — that would cost telemetry, identity-guard
-    # extension and data collection exactly when attention is needed. The state
-    # is made loud instead: `arming.status`/`reason` publish every cycle.
-    from live.arming import ArmRuntime, _now, _parse
-    arm = ArmRuntime.load(config.state_dir)
-    arm_note = "no arm token"
-    if arm is None:
-        pass
-    elif arm.malformed:
-        arm_note = "arm token MALFORMED - staying dry_run"
-    elif arm.disarmed:
-        arm_note = "arm token DISARMED - staying dry_run"
-    else:
-        exp = _parse(arm.context.request_expires_at)
-        if exp is None:
-            arm_note = "arm token has no readable expiry - staying dry_run"
-        elif _now() >= exp:
-            arm_note = f"arm token EXPIRED at {arm.context.request_expires_at} - staying dry_run"
-        elif str(arm.context.mode) != "live":
-            arm_note = f"arm token is for mode {arm.context.mode!r} - staying dry_run"
-        elif not isinstance(arm.remaining_attempts, int) or arm.remaining_attempts <= 0:
-            arm_note = "arm token EXHAUSTED - staying dry_run"
-        else:
-            config.mode = "live"
-            arm_note = (f"ARMED: elevated to live until {arm.context.request_expires_at} "
-                        f"with {arm.remaining_attempts} OPEN attempt(s) remaining")
-    print(f"execution posture: mode={config.mode} | {arm_note}")
-    if config.mode == "live":
-        print("execution posture: AutoTrading in the terminal remains a separate, "
-              "final gate outside this process")
-
+    # Posture is resolved inside build() against the config every component
+    # holds; here we only report it.
     config.ensure_dirs()
 
     # ── ownership: exactly one live process per state directory ──────────────
