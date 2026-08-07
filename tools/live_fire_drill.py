@@ -118,6 +118,12 @@ def main(argv=None) -> int:
             return 0
         if args.action == "reconcile":
             rep = executor.reconcile()
+            # reconcile() mutates state in memory (mark_broker_closed drops the
+            # mirror and records the broker-side exit); production persists that
+            # via Executor.apply()'s save at the end of the cycle. A standalone
+            # reconcile must persist it too, or the finding is reported and then
+            # silently discarded when the process exits.
+            state.save()
             print(json.dumps(rep.to_dict(), indent=1))
             return 1 if rep.frozen else 0
 

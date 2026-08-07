@@ -175,3 +175,25 @@ def test_pid_alive_handles_garbage_pids():
     assert st._pid_alive(None) is None
     assert st._pid_alive(-5) is None
     assert st._pid_alive("4242") is None
+
+
+# ── kill-switch path derivation (M-LIVE-FIRE-1 defect) ──────────────────────
+
+def test_kill_file_defaults_beside_the_state_dir_it_protects(tmp_path, monkeypatch):
+    """The drill defect: a fixed './live_state/KILL' default meant a node with a
+    custom LIVE_STATE_DIR watched a path nobody wrote to, so creating KILL did
+    nothing and every rail passed. It failed in the only direction that matters."""
+    from live.config import LiveConfig
+    monkeypatch.delenv("LIVE_KILL_FILE", raising=False)
+    monkeypatch.setenv("LIVE_STATE_DIR", str(tmp_path / "somewhere_else"))
+    monkeypatch.setenv("MARKET_DATA_DIR", str(tmp_path / "md"))
+    cfg = LiveConfig()
+    assert cfg.kill_file == cfg.state_dir / "KILL"
+
+
+def test_explicit_kill_file_override_still_wins(tmp_path, monkeypatch):
+    from live.config import LiveConfig
+    monkeypatch.setenv("LIVE_KILL_FILE", str(tmp_path / "custom.KILL"))
+    monkeypatch.setenv("LIVE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MARKET_DATA_DIR", str(tmp_path / "md"))
+    assert LiveConfig().kill_file == (tmp_path / "custom.KILL").resolve()

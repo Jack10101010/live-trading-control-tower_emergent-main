@@ -54,7 +54,15 @@ class LiveConfig:
     lux_root: Path = field(default_factory=lambda: Path(_env("LUX_ROOT", "../Lux-OB-Backtester")))
     state_dir: Path = field(default_factory=lambda: Path(_env("LIVE_STATE_DIR", "./live_state")))
     market_data_dir: Path = field(default_factory=lambda: Path(_env("MARKET_DATA_DIR", "./live_state/market_data")))
-    kill_file: Path = field(default_factory=lambda: Path(_env("LIVE_KILL_FILE", "./live_state/KILL")))
+    # Sentinel default: resolved against state_dir in __post_init__ unless
+    # LIVE_KILL_FILE is set explicitly. A fixed "./live_state/KILL" default was
+    # WRONG in the one direction that matters: point LIVE_STATE_DIR somewhere
+    # else and the kill switch silently watches a path nobody writes to, so
+    # creating KILL does nothing and every rail passes. Measured in the
+    # M-LIVE-FIRE-1 drill — the KILL control opened a real (demo) position.
+    kill_file: Path | None = field(
+        default_factory=lambda: (Path(_env("LIVE_KILL_FILE", "")) or None)
+        if _env("LIVE_KILL_FILE", "") else None)
 
     # execution
     mode: str = field(default_factory=lambda: _env("LIVE_MODE", "dry_run"))  # dry_run | live
@@ -119,7 +127,10 @@ class LiveConfig:
         self.lux_root = Path(self.lux_root).resolve()
         self.state_dir = Path(self.state_dir).resolve()
         self.market_data_dir = Path(self.market_data_dir).resolve()
-        self.kill_file = Path(self.kill_file).resolve()
+        # Kill switch lives beside the state it protects unless overridden, so
+        # it can never end up watching a different deployment's directory.
+        self.kill_file = (Path(self.kill_file).resolve() if self.kill_file
+                          else self.state_dir / "KILL")
 
     @property
     def broker_symbol(self) -> str:
