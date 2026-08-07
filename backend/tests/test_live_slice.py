@@ -39,8 +39,22 @@ def _cfg(tmp_path, **kw) -> LiveConfig:
 
 
 def _frame(rows):
-    cols = ["trade_id", "direction", "fill_time", "outcome", "entry", "stop", "tp"]
-    return pd.DataFrame([{c: r.get(c, "") for c in cols} for r in rows]).astype(str)
+    # ob_id/detection_time: identity anchors the M-OB-ID-GUARD requires on
+    # every frame (real engine frames always carry them). Deterministic
+    # defaults derived from trade_id keep identity CONTINUOUS across the
+    # successive frames these tests feed the runner.
+    cols = ["trade_id", "direction", "fill_time", "outcome", "entry", "stop", "tp",
+            "ob_id", "detection_time"]
+    out = []
+    for r in rows:
+        r = dict(r)
+        tid = str(r.get("trade_id", "X_0"))
+        import hashlib as _h
+        stable = int(_h.md5(tid.encode()).hexdigest()[:6], 16)
+        r.setdefault("ob_id", str(stable % 1000))
+        r.setdefault("detection_time", f"2026-07-0{(stable % 9) + 1} 08:00:00+00:00")
+        out.append(r)
+    return pd.DataFrame([{c: r.get(c, "") for c in cols} for r in out]).astype(str)
 
 
 # ── intents ─────────────────────────────────────────────────────────────────────

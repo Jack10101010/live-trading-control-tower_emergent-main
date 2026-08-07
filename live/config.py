@@ -18,6 +18,16 @@ DATA_SEAM = "dukascopy-frozen->mt5-live (v1: accepted, monitored; no re-baseline
 # different base is refused at startup (see MT5BarBridge.verify_time_base).
 TIME_BASE = "utc-v2"
 SYMBOL = "EURUSD"                                   # hard whitelist — single symbol
+# Operational cycle budget. Derived from the MEASURED M-CAP-SHADOW candidate
+# distribution (48 cycles, 2026-08-06/07: median 1017.9s, p95 1123.5s, max
+# 1170.3s), not from the M15 interval — the old 900s value sat BELOW the normal
+# runtime, so every healthy cycle raised a false alarm and trained operators to
+# ignore the one row that matters. 1500s = measured max +28%: a cycle past this
+# is genuinely wedged, and a dead node is still detected in under 25 minutes.
+# Consumed by live.status heartbeat/stall/lifecycle rows and any VPS-side
+# freshness surface; the Mac derives its own staleness from received_at.
+CYCLE_BUDGET_S = 1500
+IDLE_HEARTBEAT_BUDGET_S = 120
 GOLDEN_CONFIG_RELPATH = "generated_configs/d6cdae589b1e4c37a67763253c466067.json"
 # M-CAP-INTEGRATE-1: recomputed from the Lux candidate b96fa7a (Options A+B and
 # the Lux-side governance repair). Both this and the manifest id below were

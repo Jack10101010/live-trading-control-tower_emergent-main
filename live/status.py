@@ -21,8 +21,44 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from live.config import LiveConfig
+from live.config import CYCLE_BUDGET_S, IDLE_HEARTBEAT_BUDGET_S, LiveConfig
 from live.state import LEDGER_SUPPRESSING
+
+
+def _pid_alive(pid) -> bool | None:
+    """Does the process exist RIGHT NOW? None = cannot determine.
+
+    Process existence and heartbeat freshness are different facts: a slow cycle
+    has a stale heartbeat and a live pid; a killed node has a stale heartbeat
+    and no pid. Conflating them made live.status assert "process is gone" about
+    a node that was mid-recompute — an alarm that is wrong every long cycle
+    teaches the operator to ignore the only row that detects a real death.
+    """
+    if not isinstance(pid, int) or pid <= 0:
+        return None
+    try:
+        import ctypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        h = ctypes.windll.kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not h:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            ok = ctypes.windll.kernel32.GetExitCodeProcess(h, ctypes.byref(code))
+            STILL_ACTIVE = 259
+            return bool(ok) and code.value == STILL_ACTIVE
+        finally:
+            ctypes.windll.kernel32.CloseHandle(h)
+    except Exception:
+        try:                                   # POSIX fallback
+            import os
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except Exception:
+            return None
 
 OK, WARN, FAIL, NA = "OK", "WARN", "FAIL", "n/a"
 _RANK = {OK: 0, NA: 1, WARN: 2, FAIL: 3}
@@ -250,13 +286,16 @@ def collect(cfg: LiveConfig, probe_mt5: bool = True) -> None:
         row("heartbeat current?", NA, "no heartbeat.json — engine has never run")
         row("system stalled?", NA, "unknown")
     else:
-        limit = 900 if phase == "cycle_running" else 120
+        limit = CYCLE_BUDGET_S if phase == "cycle_running" else IDLE_HEARTBEAT_BUDGET_S
         row("heartbeat current?", OK if age is not None and age < limit else FAIL,
             f"{age:.0f}s old, phase={phase} (limit {limit}s)" if age is not None else "unparseable")
-        # A cycle legitimately runs for minutes; past the bar budget it is stalled.
-        stalled = phase == "cycle_running" and age is not None and age > 900
+        # A cycle legitimately runs ~17-20 min (measured); past the OPERATIONAL
+        # budget it is stalled. The budget is measured-max+28%, not the M15 bar
+        # interval — see CYCLE_BUDGET_S in live/config.py.
+        stalled = phase == "cycle_running" and age is not None and age > CYCLE_BUDGET_S
         row("system stalled?", FAIL if stalled else OK,
-            "recompute exceeded the 900s bar budget" if stalled else f"phase={phase}")
+            f"recompute exceeded the {CYCLE_BUDGET_S}s operational budget"
+            if stalled else f"phase={phase}")
 
     # ── engine progress ──────────────────────────────────────────────────────
     boundaries = [c.get("boundary") for c in cycles if c.get("boundary")]
@@ -280,7 +319,9 @@ def collect(cfg: LiveConfig, probe_mt5: bool = True) -> None:
         md_age = _age_s((md_hb or {}).get("at"))
         appended = (md_hb or {}).get("appended")
         err = (md_hb or {}).get("error")
-        verdict = FAIL if err else (OK if md_age is not None and md_age < 900 else WARN)
+        # Bridge appends once per cycle, so beat spacing tracks cycle duration —
+        # the same operational budget applies, not the M15 interval.
+        verdict = FAIL if err else (OK if md_age is not None and md_age < CYCLE_BUDGET_S else WARN)
         row("market data healthy?", verdict,
             f"bridge beat {md_age:.0f}s old, last append {appended}"
             + (f", error={err[:50]}" if err else "") if md_age is not None else "no bridge heartbeat")
@@ -330,20 +371,34 @@ def collect(cfg: LiveConfig, probe_mt5: bool = True) -> None:
         phase = lc.get("phase", "?")
         # Only RUNNING may trade. STOPPED is a correct resting state, not a fault.
         healthy_phase = phase in ("RUNNING", "STOPPED")
-        # CORROBORATE against the heartbeat before believing "RUNNING". lifecycle.json
-        # records the last TRANSITION, and a process that is killed cannot write
-        # STOPPED — so the file keeps asserting RUNNING for a pid that no longer
-        # exists. Observed for 3.5h after a real node death: this row read OK while
-        # the heartbeat row correctly read FAIL. A row that lies is worse than no
-        # row, because it is the one an operator scans for "is the node alive?".
-        # `age` and `phase` come from the heartbeat block already read above.
-        hb_limit = 900 if (hb or {}).get("phase") == "cycle_running" else 120
-        abandoned = (phase == "RUNNING" and age is not None and age > hb_limit)
-        if abandoned:
+        # CORROBORATE "RUNNING" against the PROCESS, not the heartbeat.
+        # lifecycle.json records the last TRANSITION, and a killed process cannot
+        # write STOPPED — so the file keeps asserting RUNNING after a death. The
+        # previous version inferred death from heartbeat staleness alone, which
+        # misfired on every long-but-healthy cycle ("process is gone" about a pid
+        # that was mid-recompute). Existence and freshness are different facts:
+        #   pid dead   + RUNNING claim          -> crashed (the real alarm)
+        #   pid alive  + heartbeat past budget  -> stalled (alarm, different fix)
+        #   pid alive  + heartbeat within budget-> healthy
+        #   liveness undeterminable             -> say so; fall back to staleness
+        hb_limit = CYCLE_BUDGET_S if (hb or {}).get("phase") == "cycle_running" \
+            else IDLE_HEARTBEAT_BUDGET_S
+        hb_stale = age is not None and age > hb_limit
+        alive = _pid_alive(lc.get("pid")) if phase == "RUNNING" else None
+        if phase == "RUNNING" and alive is False:
             row("lifecycle state?", FAIL,
-                f"claims RUNNING (pid {lc.get('pid')}) but no heartbeat for {age:.0f}s "
-                f"(limit {hb_limit}s) — process is gone; lifecycle records the last "
-                f"transition, and a killed process cannot write STOPPED")
+                f"claims RUNNING but pid {lc.get('pid')} does not exist — process "
+                f"died without a clean stop; lifecycle records the last transition, "
+                f"and a killed process cannot write STOPPED")
+        elif phase == "RUNNING" and alive is True and hb_stale:
+            row("lifecycle state?", FAIL,
+                f"pid {lc.get('pid')} is ALIVE but heartbeat is {age:.0f}s old "
+                f"(budget {hb_limit}s) — process exists and is not progressing: "
+                f"stalled, not dead")
+        elif phase == "RUNNING" and alive is None and hb_stale:
+            row("lifecycle state?", FAIL,
+                f"claims RUNNING (pid {lc.get('pid')}), liveness undeterminable, "
+                f"no heartbeat for {age:.0f}s (budget {hb_limit}s) — investigate")
         else:
             row("lifecycle state?", OK if healthy_phase else WARN if phase == "READY" else FAIL,
                 f"{phase} since {lc.get('since', '?')}"

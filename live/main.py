@@ -181,7 +181,8 @@ def _write_cycle_record(ops, record, bridge_result, runner_result, ex, delivery,
         applied=len(ex.get("applied", [])), blocked=len(ex.get("blocked", [])),
         skipped=len(ex.get("skipped", [])),
         reconcile_findings=(ex.get("reconcile") or {}).get("findings"),
-        frozen=bool(ex.get("frozen")), published=delivery, error=error)
+        frozen=bool(ex.get("frozen")) or bool(runner_result.get("frozen")),
+        published=delivery, error=error)
     return record
 
 

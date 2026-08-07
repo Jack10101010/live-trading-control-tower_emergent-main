@@ -105,7 +105,7 @@ def latest_closed_boundary(last_m1_time: pd.Timestamp) -> pd.Timestamp:
 
 class LiveRunner:
     def __init__(self, config, session: LuxSession | None = None, pipeline=None,
-                 candles_provider=None):
+                 candles_provider=None, identity_guard=None):
         self.config = config
         config.ensure_dirs()
         self.session = session
@@ -113,6 +113,14 @@ class LiveRunner:
         self._pipeline = pipeline                    # injectable for tests
         self._candles_provider = candles_provider    # injectable for rehearsal (P0)
         self._pending_commit: tuple | None = None    # LR-1: see commit_cycle()
+        if identity_guard is not None:
+            self.identity_guard = identity_guard     # injectable for tests
+        else:
+            from live.identity_guard import IdentityGuard, config_digest
+            self.identity_guard = IdentityGuard(
+                config.state_dir,
+                config_digest=config_digest(getattr(config, "golden_config_path", None)),
+                engine_version=(session.engine_version if session else "injected"))
 
     # ── pipeline (mirrors the Golden driver stage-for-stage) ─────────────────
     def golden_pipeline(self, candles_raw: pd.DataFrame, frontier_date: str,
@@ -213,6 +221,19 @@ class LiveRunner:
         frontier_date = str(boundary.date())
         trades = pipeline(candles, frontier_date)
         trades_str = trades.astype(str)
+
+        # M-OB-ID-GUARD: identity continuity gates EVERYTHING downstream. On
+        # refusal: no diff, no intents, no staging, no boundary advance — the
+        # executor is unreachable because live.main only applies on status
+        # "ok". last_boundary stays unchanged, so the node retries (and keeps
+        # refusing) every cycle until an operator resolves the drift.
+        id_ok, id_detail = self.identity_guard.verify_and_extend(
+            trades_str, self.state.data)
+        if not id_ok:
+            return {"status": "identity_frozen", "boundary": boundary_str,
+                    "intents": [], "trades_rows": len(trades), "frozen": True,
+                    "error": f"identity drift refused: {id_detail}",
+                    "engine_version": self.session.engine_version if self.session else "injected"}
 
         prev = self.state.load_prev_frame()
         # frontier fill_time format matches the engine's candle time strings
