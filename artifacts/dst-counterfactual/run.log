@@ -1,0 +1,6 @@
+candles: 4271083 rows | end_date 2026-06-19
+[new] starting full-history run...
+[new] 2060 rows in 771s -> trades_new_sessions.csv
+[old] starting full-history run...
+[old] 2060 rows in 754s -> trades_old_sessions.csv
+DONE
