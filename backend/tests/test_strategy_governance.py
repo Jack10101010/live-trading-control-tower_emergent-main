@@ -298,3 +298,62 @@ def test_telemetry_cannot_invent_authority():
     blob = json.dumps(snap)
     for banned in ("node_mt5", "live_mt5", "admitted", "execution_authority"):
         assert banned not in blob
+
+
+# ── decision-feed WIRING: additive, never altering the canonical contract ────
+
+def _snapshot_with(decisions):
+    from live import telemetry as nt
+    return nt.build_snapshot(
+        instance_id="t", runner_result={}, executor_result={}, engine_version="v",
+        mode="dry_run", config=_Cfg(), state={}, arm_runtime=None, observed=None,
+        bridge=None, decisions=decisions)
+
+
+def test_decisions_block_is_absent_when_there_is_nothing_to_report():
+    """A receiver that predates the block must see exactly the old payload."""
+    for empty in (None, {}, {"decisions": []},
+                  {"schema_version": "x", "decisions": []}):
+        assert "decisions" not in _snapshot_with(empty)
+
+
+def test_decisions_block_is_published_when_present():
+    payload = build_decision_records(_decision_frame(2))
+    snap = _snapshot_with(payload)
+    assert snap["decisions"]["schema_version"] == SCHEMA_VERSION
+    assert len(snap["decisions"]["decisions"]) == 2
+
+
+def test_decisions_is_not_a_required_top_level_key():
+    from live import telemetry as nt
+    assert "decisions" not in nt.REQUIRED_TOP_LEVEL
+
+
+def test_canonical_required_keys_are_unchanged_by_the_new_block():
+    from live import telemetry as nt
+    snap = _snapshot_with(build_decision_records(_decision_frame(1)))
+    assert not [k for k in nt.REQUIRED_TOP_LEVEL if k not in snap]
+    assert snap["schema_version"] == nt.SCHEMA_VERSION
+
+
+def test_publishing_decisions_grants_no_authority():
+    snap = _snapshot_with(build_decision_records(_decision_frame(3)))
+    blob = json.dumps(snap)
+    for banned in ("node_mt5", "live_mt5", "admitted", "admissionReasons",
+                   "execution_authority", "provenance"):
+        assert banned not in blob
+    assert snap["runtime"]["open_eligibility"]["eligible"] is False
+
+
+def test_runner_projects_decisions_without_publishing_the_frame():
+    """The 211-column frame must never reach the payload."""
+    src = (REPO / "live" / "runner.py").read_text(encoding="utf-8")
+    assert "build_decision_records(trades_str" in src
+    tsrc = (REPO / "live" / "telemetry.py").read_text(encoding="utf-8")
+    assert "snapshot[\"decisions\"] = decisions" in tsrc
+
+
+def test_decision_projection_failure_cannot_break_a_cycle():
+    src = (REPO / "live" / "runner.py").read_text(encoding="utf-8")
+    blk = src[src.index("from live.decisions import"):src.index('"status": "bootstrap"')]
+    assert "except Exception" in blk, "projection must contain its own failure"

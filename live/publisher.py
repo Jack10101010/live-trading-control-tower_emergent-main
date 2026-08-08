@@ -63,6 +63,7 @@ class CTPublisher:
             arm_runtime=arm_runtime,
             observed=observed,
             bridge=bridge,
+            decisions=(runner_result or {}).get("decisions"),
             sequence=sequence,
         )
 

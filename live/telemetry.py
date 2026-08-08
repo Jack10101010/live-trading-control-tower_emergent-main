@@ -515,6 +515,7 @@ def build_snapshot(
     execution_node_id: str | None = None,
     sequence: int | None = None,
     bridge: dict | None = None,
+    decisions: dict | None = None,
 ) -> dict:
     """Assemble the v1 snapshot. Pure: no I/O, no broker calls, no mutation.
 
@@ -628,7 +629,7 @@ def build_snapshot(
             arming=arming_summary, reconciliation=recon, health=health),
     }
 
-    return {
+    snapshot = {
         "schema_version": SCHEMA_VERSION,
         # M-NODE-ACCT-1: a POSITIVE marker that this node is capable of observing
         # its MT5 account at all. It exists because the Control Tower otherwise
@@ -685,6 +686,15 @@ def build_snapshot(
         "execution": safe_execution(ex, ledger_counts, pending_intents, sent,
                                     cycle_intents=runner_result.get("intents")),
     }
+    # OPTIONAL, ADDITIVE observational block. Deliberately NOT in
+    # REQUIRED_TOP_LEVEL: it is omitted entirely when the cycle produced no
+    # projection, so a receiver that predates it sees exactly the payload it
+    # always saw. Read-only -- it reports what the strategy decided and grants
+    # nothing. Passed through untouched: the allowlist and bounding live in
+    # live/decisions.py, and re-filtering here would create a second contract.
+    if isinstance(decisions, dict) and decisions.get("decisions"):
+        snapshot["decisions"] = decisions
+    return snapshot
 
 
 # ── lineage helpers (import lazily so this module stays cheap and pure) ────────

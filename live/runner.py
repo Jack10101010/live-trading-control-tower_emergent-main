@@ -251,10 +251,20 @@ class LiveRunner:
         else:
             self.state.store_frame(trades_str, boundary_str)
             self.state.save()
+        # Bounded per-decision projection for the Control Tower. Built HERE
+        # because this is the only scope holding the frame; the frame itself is
+        # never published (211 columns), only the allowlisted projection.
+        try:
+            from live.decisions import build_decision_records
+            decisions = build_decision_records(trades_str, intents=intents)
+        except Exception as exc:            # telemetry must never break a cycle
+            print(f"decision projection failed (continuing): {type(exc).__name__}: {exc}")
+            decisions = None
         return {
             "status": "bootstrap" if first_run else "ok",
             "boundary": boundary_str,
             "intents": intents,
+            "decisions": decisions,
             "trades_rows": len(trades),
             "engine_version": self.session.engine_version if self.session else "injected",
             "note": ("first run establishes the baseline frame; no intents emitted"
