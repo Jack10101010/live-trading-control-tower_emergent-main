@@ -42,7 +42,7 @@ from live.state import RunnerState
 # M-CAP-INTEGRATE-1: Lux candidate commit (was d978074a2ee938fb4803e50d419788c584d6ef57).
 # Duplicated in live/deploy_check.py and live/rehearsal.py; the two MUST
 # agree. backend/tests/test_lux_pin_agreement.py enforces it.
-EXPECTED_COMMIT = "b96fa7aee7605dd2115117116f9c2eb9b6669c23"
+EXPECTED_COMMIT = "23c68bc81da34c61225aeb7d768eae1f485c5cc5"
 CHECKS: list[dict] = []
 
 
