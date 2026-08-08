@@ -88,6 +88,12 @@ def preflight(cfg: LiveConfig) -> int:
         check("engine_modules_governed", *verify_loaded_modules(cfg.lux_root, m_actual))
         gc = session.golden_config(cfg.golden_config_path, "2026-06-19")
         check("golden_config_include_disabled", gc.portfolio_include_disabled_cohorts is True)
+        # The cohort x market-state matrix IS the strategy; prove the config the
+        # engine loads is byte-identical to the TRACKED authority, not just to
+        # some generated file. Fails closed on missing/unreadable/mismatch.
+        from live.strategy_authority import verify as _verify_strategy
+        _sa_ok, _sa_detail, _ = _verify_strategy(cfg.lux_root, cfg.golden_config_path)
+        check("strategy_authority", _sa_ok, _sa_detail)
     except Exception as exc:
         check("lux_session", False, f"{type(exc).__name__}: {exc}")
     # Recorded, not gated: dependency versions move governed floats (a measured

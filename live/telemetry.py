@@ -576,6 +576,15 @@ def build_snapshot(
     # this node observed", which is the whole point of the section.
     if obs.get("fingerprint_matches") is not None:
         arming_summary["fingerprint_matches"] = bool(obs["fingerprint_matches"])
+    elif arming_summary.get("account_fingerprint") and identity.get("available") is True:
+        # REPORTING ONLY. `authorize_open` remains the sole authority and does
+        # its own observed-account comparison; this merely tells the Control
+        # Tower whether the account observed THIS cycle is the one the arm was
+        # bound to, so `runtime_identity_not_evaluated` stops being permanent.
+        # Computed only when BOTH sides exist: an unavailable identity leaves
+        # the value None, because "not observed" is not evidence of a match.
+        arming_summary["fingerprint_matches"] = (
+            identity.get("fingerprint") == arming_summary["account_fingerprint"])
 
     health = safe_health(obs.get("health"), obs.get("health_verdict"), obs.get("observed_at"))
     market_obs = obs.get("market")

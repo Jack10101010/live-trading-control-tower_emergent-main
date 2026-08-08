@@ -62,6 +62,7 @@ REFUSE_VANISHED = "trade_id_vanished"
 REFUSE_MALFORMED = "witness_malformed"
 REFUSE_COLUMNS = "anchor_columns_missing"
 REFUSE_POLICY = "policy_drift"
+REFUSE_STRATEGY = "strategy_drift"
 
 
 def _utcnow() -> str:
@@ -115,11 +116,17 @@ class IdentityGuard:
     """One instance per runner; verify_and_extend() once per cycle, pre-diff."""
 
     def __init__(self, state_dir: Path, *, config_digest: str | None,
-                 engine_version: str | None, policy_digest: str | None = None):
+                 engine_version: str | None, policy_digest: str | None = None,
+                 strategy_digest: str | None = None):
         self.path = Path(state_dir) / "identity_witness.json"
         self.config_digest = config_digest
         self.engine_version = engine_version
         self.policy_digest = policy_digest
+        #: Digest of the TRACKED strategy specification (live/strategy_authority).
+        #: The cohort x market-state matrix is the strategy, so a change here is
+        #: a strategy change and must freeze the cycle like any other identity
+        #: drift.
+        self.strategy_digest = strategy_digest
 
     # ── persistence ──────────────────────────────────────────────────────────
     def _load(self) -> dict | None:
@@ -162,6 +169,7 @@ class IdentityGuard:
                         "engine_version": self.engine_version,
                         "config_digest": self.config_digest,
                         "policy_digest": self.policy_digest,
+                        "strategy_digest": self.strategy_digest,
                         "window_start": window_start,
                         "anchors": anchors,
                         "bootstrapped_at": _utcnow(),
@@ -177,6 +185,11 @@ class IdentityGuard:
             return False, (f"{REFUSE_CONFIG}: golden config digest changed "
                            f"({str(witness.get('config_digest'))[:12]}… -> "
                            f"{str(self.config_digest)[:12]}…)")
+        if witness.get("strategy_digest") != self.strategy_digest:
+            return False, (f"{REFUSE_STRATEGY}: tracked strategy digest changed "
+                           f"({str(witness.get('strategy_digest'))[:12]}… -> "
+                           f"{str(self.strategy_digest)[:12]}…) — the cohort x "
+                           "market-state matrix IS the strategy")
         if witness.get("policy_digest") != self.policy_digest:
             return False, (f"{REFUSE_POLICY}: deployed policy digest changed "
                            f"({str(witness.get('policy_digest'))[:12]}… -> "

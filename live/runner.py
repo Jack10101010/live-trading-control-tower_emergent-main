@@ -118,11 +118,13 @@ class LiveRunner:
         else:
             from live.identity_guard import (IdentityGuard, config_digest,
                                               policy_digest)
+            from live.strategy_authority import authority_digest
             self.identity_guard = IdentityGuard(
                 config.state_dir,
                 config_digest=config_digest(getattr(config, "golden_config_path", None)),
                 engine_version=(session.engine_version if session else "injected"),
-                policy_digest=policy_digest(getattr(config, "lux_root", None)))
+                policy_digest=policy_digest(getattr(config, "lux_root", None)),
+                strategy_digest=authority_digest(getattr(config, "lux_root", None)))
 
     # ── pipeline (mirrors the Golden driver stage-for-stage) ─────────────────
     def golden_pipeline(self, candles_raw: pd.DataFrame, frontier_date: str,
