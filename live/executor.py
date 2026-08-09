@@ -31,14 +31,16 @@ class ReconcileReport:
 
 class Executor:
     def __init__(self, config, state, gateway, lifecycle=None,
-                 arm_runtime=None, observed_account=None):
+                 arm_runtime=None, observed_account=None, news_gate=None):
         self.config = config
         self.state = state
         self.gateway = gateway
         self.lifecycle = lifecycle
         self.arm_runtime = arm_runtime
+        self.news_gate = news_gate
         self.rails = SafetyRails(config, state, arm_runtime=arm_runtime,
-                                 observed_account=observed_account)
+                                 observed_account=observed_account,
+                                 news_gate=news_gate)
         self._reconciling = False       # single-flight guard
 
     # ── reconciliation ───────────────────────────────────────────────────────

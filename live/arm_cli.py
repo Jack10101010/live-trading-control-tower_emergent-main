@@ -41,6 +41,9 @@ def main(argv=None) -> int:
     ap.add_argument("--max-opens", type=int, default=3)
     ap.add_argument("--allow-live-account", action="store_true",
                     help="required to arm anything that is not a DEMO account")
+    ap.add_argument("--allow-stale-news", action="store_true",
+                    help="arm despite unprovable news protection; the OPEN rail "
+                         "still refuses, so this only skips the preflight")
     args = ap.parse_args(argv)
     cfg = LiveConfig()
 
@@ -85,6 +88,37 @@ def main(argv=None) -> int:
         print(f"REFUSED: broker is not flat ({positions} positions). Arm from a "
               "known-flat state so the first OPEN is the arm's own.")
         return 2
+
+    # M-LIVE-NEWS-1 preflight. Arming is the moment a human hands the node
+    # permission to open positions unattended, so it is the right place to
+    # prove news protection actually works -- not the moment it first tries to
+    # trade. The rail would refuse those OPENs anyway; this turns a silent
+    # night of refusals into an answer now, while someone is watching.
+    #
+    # WHAT THIS PROVES: the cached calendar parses, is covered for at least
+    # REQUIRED_HORIZON_S beyond now, and was refreshed within MAX_STALE_S. It
+    # does NOT assert that an event exists -- a genuinely quiet week passes,
+    # because coverage comes from the source's publication window and not from
+    # `max(event_time)`.
+    from live.news_feed import NewsCalendar
+    cal = NewsCalendar(cfg)
+    cal.refresh_if_due()                       # one bounded GET, TTL-gated
+    health = cal.health()
+    if not health.ok and not args.allow_stale_news:
+        print(f"REFUSED: news protection is not provable ({health.reason}): "
+              f"{health.detail}\n"
+              f"         source={health.source} last_refresh={health.fetched_at} "
+              f"coverage_until={health.coverage_until}\n"
+              "         Fix with: python -m live.news_cli refresh\n"
+              "         Override only with deliberate authorisation: "
+              "--allow-stale-news (the node will still refuse OPENs while the "
+              "calendar stays unprovable -- the rail is not bypassed).")
+        return 2
+    if not health.ok:
+        print(f"WARNING: arming with UNPROVABLE news protection "
+              f"({health.reason}): {health.detail}. The safety rail will still "
+              "refuse every OPEN until the calendar recovers.")
+
     arm = ArmRuntime.create(cfg.state_dir, login=login, server=server,
                             mode="live", ttl_minutes=args.ttl_minutes,
                             max_opens=args.max_opens)

@@ -31,7 +31,8 @@ class CTPublisher:
     def build_payload(self, runner_result: dict, executor_result: dict | None,
                       engine_version: str, mode: str,
                       state=None, arm_runtime=None, observed: dict | None = None,
-                      bridge: dict | None = None, sequence: int | None = None) -> dict:
+                      bridge: dict | None = None, sequence: int | None = None,
+                      news: dict | None = None) -> dict:
         """Build the canonical `ct.node-telemetry.v1` snapshot.
 
         Replaces the flat pre-UI-2 payload. That shape carried no
@@ -64,6 +65,7 @@ class CTPublisher:
             observed=observed,
             bridge=bridge,
             decisions=(runner_result or {}).get("decisions"),
+            news=news,
             sequence=sequence,
         )
 

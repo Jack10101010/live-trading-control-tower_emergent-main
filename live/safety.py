@@ -22,9 +22,15 @@ class RailVerdict:
 
 
 class SafetyRails:
-    def __init__(self, config, state, arm_runtime=None, observed_account=None):
+    def __init__(self, config, state, arm_runtime=None, observed_account=None,
+                 news_gate=None):
         self.config = config
         self.state = state
+        #: `live.news_feed.NewsCalendar`, or None to disable the news rail
+        #: entirely (tests and pre-M-LIVE-NEWS-1 call sites). Consulted for
+        #: OPEN only: it reads memory, never the network, so a rail can never
+        #: acquire an I/O failure mode.
+        self.news_gate = news_gate
         #: Durable operator authorisation. None => unarmed. Only consulted for
         #: OPEN in live mode; CLOSE/MODIFY are risk-reducing and never gated on
         #: it (a node that cannot close what it opened is the worse failure).
@@ -110,6 +116,31 @@ class SafetyRails:
                                f"entry at a price the engine never saw")
         return None
 
+    def _news_verdict(self, intent) -> "RailVerdict | None":
+        """M-LIVE-NEWS-1. Refuse a NEW OPEN during a high-impact blackout, or
+        whenever the calendar cannot PROVE it is current enough to know.
+
+        Deliberately asymmetric, and the asymmetry is the whole design:
+
+          * OPEN is refused — increasing exposure into an event we may not be
+            able to see is the risk being managed;
+          * CLOSE and MODIFY are never consulted here, so an existing position
+            stays fully manageable through a blackout AND through a total
+            outage of the news source. A node that cannot exit because a
+            calendar server is down is a worse failure than one that cannot
+            enter, and stranding a live position is not a safety property.
+
+        `verdict()` is total: it returns a refusal for any internal fault
+        rather than raising, because a rail that raises fails the whole cycle
+        and a rail that passes on error is not a rail.
+        """
+        if self.news_gate is None or intent.action != OPEN_POSITION:
+            return None
+        allowed, reason, detail = self.news_gate.verdict()
+        if allowed:
+            return None
+        return RailVerdict(False, reason or "news_calendar_unavailable", detail[:200])
+
     def _kill_switch_on(self) -> bool:
         return self.config.kill_file.exists()
 
@@ -140,7 +171,8 @@ class SafetyRails:
         # 3b) operator arming + entry freshness. Placed AFTER the duplicate rail
         # so a replayed intent is still named a duplicate, and BEFORE the
         # economic rails so an unarmed node never reaches sizing decisions.
-        for verdict in (self._arm_verdict(intent), self._stale_open_verdict(intent)):
+        for verdict in (self._arm_verdict(intent), self._stale_open_verdict(intent),
+                        self._news_verdict(intent)):
             if verdict is not None:
                 return verdict
         # 4) daily loss kill switch (opens only)

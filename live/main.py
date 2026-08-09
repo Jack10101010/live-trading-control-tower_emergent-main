@@ -117,8 +117,22 @@ def build(lifecycle=None) -> tuple:
             observed_account = {"login": acct.get("login"), "server": acct.get("server")}
     except Exception:                      # never let arming binding break boot
         observed_account = None
+    # M-LIVE-NEWS-1. One calendar per process. Refreshed once per cycle on its
+    # own TTL (never per decision), read from memory by the safety rail. An
+    # unreachable source at boot is NOT fatal: the node still starts, still
+    # reconciles and can still CLOSE — it simply refuses to OPEN until the
+    # calendar can prove itself current.
+    from live.news_feed import NewsCalendar
+    news_gate = NewsCalendar(config)
+    try:
+        boot = news_gate.refresh_if_due()
+        print(f"news calendar: {boot}")
+    except Exception as exc:                       # never let news break boot
+        print(f"news calendar refresh failed at boot (continuing, OPENs will "
+              f"refuse until it succeeds): {type(exc).__name__}: {exc}")
     executor = Executor(config, runner.state, gateway, lifecycle=lifecycle,
-                        arm_runtime=arm_runtime, observed_account=observed_account)
+                        arm_runtime=arm_runtime, observed_account=observed_account,
+                        news_gate=news_gate)
     publisher = CTPublisher(config)
     # ONE observer for the process, sharing the governed gateway. It owns its own
     # bounded cadence, so calling it every cycle does not mean a terminal read
@@ -126,6 +140,25 @@ def build(lifecycle=None) -> tuple:
     observer = AccountObserver(gateway)
     ops = OpsLog(config.state_dir)
     return config, gateway, bridge, runner, executor, publisher, ops, observer
+
+
+def _news_block(news_gate) -> dict | None:
+    """News-protection health for the snapshot, or None.
+
+    Same containment rule as `_observe`: reporting is never allowed to raise
+    into the trading try-block, where a telemetry fault would be recorded as a
+    cycle error. A missing block means "not reported", which the Control Tower
+    renders as unknown — it never means "healthy".
+    """
+    if news_gate is None:
+        return None
+    try:
+        return news_gate.telemetry_block()
+    except Exception as exc:
+        return {"schema_version": "ct.news-calendar.v1", "health": "unavailable",
+                "healthy": False, "new_open_allowed": False,
+                "refusal_reason": "news_calendar_unavailable",
+                "detail": f"telemetry build failed: {type(exc).__name__}"}
 
 
 def _observe(observer) -> dict | None:
@@ -200,6 +233,19 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops,
             except Exception as exc:
                 print(f"transition publish failed (continuing): {exc}")
 
+        # M-LIVE-NEWS-1: keep the calendar current. TTL-gated, so this is at
+        # most one ~10KB GET per cycle and usually a no-op. A failure is
+        # recorded and published, never raised — the calendar going stale must
+        # refuse OPENs, not break the cycle that still has to reconcile.
+        news_gate = getattr(executor, "news_gate", None)
+        if news_gate is not None:
+            try:
+                news_refresh = news_gate.refresh_if_due()
+                if not news_refresh.get("ok"):
+                    print(f"news calendar refresh FAILED: {news_refresh.get('error')} "
+                          f"(cached calendar retained; OPENs refuse once stale)")
+            except Exception as exc:
+                print(f"news calendar refresh raised: {type(exc).__name__}: {exc}")
         runner_result = runner.run_once(defer_commit=True,
                                         on_work_start=_announce_recompute)
         if runner_result.get("status") == "ok" and runner_result.get("intents"):
@@ -221,7 +267,8 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops,
             state=getattr(runner, "state", None),
             arm_runtime=getattr(executor, "arm_runtime", None),
             observed=_observe(observer),
-            bridge=bridge_result)
+            bridge=bridge_result,
+            news=_news_block(news_gate))
         delivery = publisher.publish(payload)
     except Exception as exc:  # logged, loop continues; supervisor handles repeats
         error = f"{type(exc).__name__}: {exc}"

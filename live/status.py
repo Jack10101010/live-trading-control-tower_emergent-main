@@ -445,6 +445,33 @@ def collect(cfg: LiveConfig, probe_mt5: bool = True) -> None:
     # operator needs to reason about when the Mac disagrees.
     _account_rows(cfg)
 
+    # ── news protection (M-LIVE-NEWS-1) ──────────────────────────────────────
+    # The defect this surfaces: the node ran for 78 days on a calendar that had
+    # stopped in May, and NOTHING said so. "No blackout" and "no calendar" look
+    # identical from the outside, so the distinction has to be stated out loud.
+    # Read-only: this reports the cached calendar, and never fetches.
+    try:
+        from live.news_feed import NewsCalendar
+        cal = NewsCalendar(cfg)
+        h = cal.health()
+        nxt = None
+        try:
+            from live.news_feed import next_event
+            nxt = next_event(cal.relevant_events(), datetime.now(timezone.utc))
+        except Exception:
+            pass
+        tail = (f"; next {nxt['impact'].upper()} {nxt['currency']} {nxt['event']} "
+                f"at {nxt['time']}" if nxt else "; no relevant event in the covered week")
+        if h.ok:
+            row("news protection?", OK,
+                f"{h.source}: fresh {h.age_s/60:.0f}m, covered {h.coverage_s/3600:.0f}h, "
+                f"{h.relevant_count} relevant{tail}"[:190])
+        else:
+            row("news protection?", FAIL,
+                f"{h.reason} — NEW OPENS ARE BLOCKED: {h.detail}"[:190])
+    except Exception as exc:  # never let diagnostics throw
+        row("news protection?", FAIL, f"{type(exc).__name__}: {exc}"[:90])
+
     # ── supervision maintenance marker ───────────────────────────────────────
     # Supervision is a repeating scheduled trigger, so a node that is simply
     # stopped comes back within one interval. This marker is what makes an

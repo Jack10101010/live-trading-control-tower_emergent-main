@@ -516,6 +516,7 @@ def build_snapshot(
     sequence: int | None = None,
     bridge: dict | None = None,
     decisions: dict | None = None,
+    news: dict | None = None,
 ) -> dict:
     """Assemble the v1 snapshot. Pure: no I/O, no broker calls, no mutation.
 
@@ -694,6 +695,13 @@ def build_snapshot(
     # live/decisions.py, and re-filtering here would create a second contract.
     if isinstance(decisions, dict) and decisions.get("decisions"):
         snapshot["decisions"] = decisions
+    # M-LIVE-NEWS-1. Additive and backward-compatible, exactly like `decisions`:
+    # a consumer that does not know the key is unaffected, and a node that
+    # cannot report news simply omits it. Already projected and bounded by
+    # live/news_feed.NewsCalendar.telemetry_block -- no raw feed payload, no
+    # credentials, no URLs beyond the public source.
+    if isinstance(news, dict) and news:
+        snapshot["news"] = news
     return snapshot
 
 
