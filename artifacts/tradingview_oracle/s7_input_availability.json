@@ -1,0 +1,43 @@
+{
+ "_schema": "tradingview-oracle-s7-input-availability-v1",
+ "_note": "Two independent inputs the chart does not have. The intrabar one is total and is what makes S7 unattainable; the news one is partial and would have been survivable on its own.",
+ "intrabar_execution_path": {
+  "reason": "INTRABAR_EXECUTION_PATH_UNAVAILABLE",
+  "production_execution_frame": "data/candles/EURUSD_1m_extended_2015_2026.csv",
+  "production_execution_minutes": 1,
+  "detection_frame_minutes": 15,
+  "chart_frame_minutes": 15,
+  "delay_candles": 3,
+  "delay_minutes": 3,
+  "_why": "simulate_trades is handed `candles` (the raw candle file), not the detection resample. Arming, the 3-candle delay and the containment touch are minute-by-minute. A 15-minute bar carries four numbers and cannot order events inside itself.",
+  "measured_window": "2025-09-30 .. 2026-06-20",
+  "execution_candles": 267648,
+  "setups": 110,
+  "admitted": 109,
+  "armed": 97,
+  "resolved_setups": 58,
+  "arm_and_outcome_in_one_chart_bar": 33,
+  "share_undecidable": 0.5689655172413793,
+  "production_selfcheck_compared": 109,
+  "production_selfcheck_mismatches": 0,
+  "report_path": "artifacts/tradingview_oracle/s7_selfcheck_chart_window.json"
+ },
+ "news_calendar": {
+  "reason": "NEWS_CALENDAR_UNAVAILABLE",
+  "production_file": "data/news/master_economic_calendar_2020_present.csv",
+  "calendar_rows": 28148,
+  "rows_after_production_filter": 2353,
+  "impacts": ["high"],
+  "currencies": [],
+  "minutes_before": 3,
+  "minutes_after": 3,
+  "chart_window": "2025-09-30 .. 2026-06-20",
+  "events_in_window": 218,
+  "blackout_minutes": 1308,
+  "total_bars": 17800,
+  "unavailable_bars": 255,
+  "scored_bars": 17545,
+  "coverage_pct": 98.5674157303371,
+  "_why": "The blackout branch sits at execution.py:2493, BEFORE the arm logic, so it gates S7 and not only S8. Pine cannot read a file."
+ }
+}

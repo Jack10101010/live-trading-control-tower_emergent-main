@@ -1,0 +1,92 @@
+{
+ "compared": 109,
+ "config": {
+  "can_fill_is_constant": true,
+  "delay_candles": 3,
+  "detection_timeframe": "15min",
+  "entry_level_pct": 0.0,
+  "entry_model": "triggered_edge",
+  "execution_basis": "candle_file",
+  "execution_mode": "allow_multi_position",
+  "inert_branches": {
+   "EXITED_OB_BEFORE_ARM": {
+    "flag": "triggered_edge_cancel_if_exits_ob_before_arm",
+    "reason": "not passed by simulation_kwargs; simulate_trades defaults it to False",
+    "source": "strategy_core/execution.py:2535-2556",
+    "stage": "S7"
+   },
+   "FIRST_FAILED_TAG_CANCEL": {
+    "flag": "triggered_edge_cancel_on_first_failed_tag",
+    "reason": "triggered_edge_cancel_on_first_failed_tag = False",
+    "source": "strategy_core/execution.py:2999-3041",
+    "stage": "S7"
+   },
+   "REGIME_BLOCKED": {
+    "flag": "regime_gate_enabled",
+    "reason": "regime_gate_enabled = False, so regime_emit_for_run returns None",
+    "source": "strategy_core/execution.py:2662",
+    "stage": "S8"
+   },
+   "REVERSE_TOUCH_CANCEL": {
+    "flag": "reverse_touch_cancel_enabled",
+    "reason": "hard-forced False in run_backtest.simulation_kwargs",
+    "source": "strategy_core/execution.py:2600-2631",
+    "stage": "S7"
+   },
+   "REVISIT_CONFIRMATION": {
+    "flag": "triggered_edge_require_revisit_confirmation",
+    "reason": "not passed by simulation_kwargs; simulate_trades defaults it to False, so the fill gate's revisit clause is vacuously true",
+    "source": "strategy_core/execution.py:2562-2598",
+    "stage": "S7"
+   },
+   "SESSION_FILTERED": {
+    "flag": "session_filter_enabled",
+    "reason": "session_filter_enabled = False",
+    "source": "strategy_core/execution.py:2647",
+    "stage": "S8"
+   },
+   "USED_OB_RETRACE_CANCEL": {
+    "flag": "triggered_edge_cancel_on_retrace",
+    "reason": "triggered_edge_cancel_on_retrace = False",
+    "source": "strategy_core/execution.py:2970-2997",
+    "stage": "S7"
+   }
+  },
+  "news_blackout_enabled": true,
+  "news_cancel_if_touched_during_blackout": true,
+  "news_pause_pending_orders": true,
+  "pip_size": 0.0001,
+  "stop_buffer": 0.0001,
+  "trade_direction": "both",
+  "trigger_threshold_pct": 25.0
+ },
+ "decidability": {
+  "_note": "a setup whose arm and outcome share one chart bar cannot be resolved from that bar's OHLC \u2014 the chart has no way to order the events inside it",
+  "arm_and_outcome_in_different_chart_bars": 25,
+  "arm_and_outcome_in_one_chart_bar": 33,
+  "chart_minutes": 15,
+  "delay_expires_inside_the_arm_chart_bar": 47,
+  "resolved_setups": 58,
+  "share_undecidable": 0.5689655172413793
+ },
+ "examples": [],
+ "mismatches": 0,
+ "production_rows": 109,
+ "stats": {
+  "admitted": 109,
+  "armed": 97,
+  "execution_candles": 267648,
+  "gate_ready": 58,
+  "invalidated_before_edge_entry": 39,
+  "max_concurrent_pending": 13,
+  "never_filled_after_trigger": 0,
+  "never_triggered": 12,
+  "news_applied": true,
+  "news_paused": 73,
+  "news_touch_cancel": 0,
+  "order_blocks_seen": 110,
+  "setups": 110,
+  "suppressed": 1,
+  "tapped_before_trigger": 68
+ }
+}

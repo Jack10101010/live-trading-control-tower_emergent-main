@@ -1,0 +1,288 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// 10 — INPUTS
+//
+// Cosmetic only. No input may change a computed value, and no input may hide a
+// parity warning: the SHADOW MODE / EXECUTION STATE UNKNOWN / NEWS UNAVAILABLE
+// banner and the data-context status are rendered unconditionally (fragment 99).
+// ─────────────────────────────────────────────────────────────────────────────
+
+grpDisplay = "Display"
+grpDebug   = "Debug"
+
+i_showHud       = input.bool(true,  "Show HUD",                     group = grpDisplay)
+i_hudPos        = input.string("Top right", "HUD position",
+     options = ["Top right", "Top left", "Bottom right", "Bottom left", "Middle right"],
+     tooltip = "The HUD is a table, so it is pinned to the pane and does NOT scroll " +
+               "with the bars — that is intentional. Move it if it covers price.",
+     group = grpDisplay)
+i_hudSize       = input.string("Tiny", "HUD text size",
+     options = ["Tiny", "Small", "Normal"], group = grpDisplay)
+
+i_shadeSessions = input.bool(true,  "Shade sessions",               group = grpDisplay)
+i_shadeStrength = input.int(96, "Session shading transparency", minval = 80, maxval = 99,
+     tooltip = "Higher is fainter. The first on-chart build baked in 90 and the " +
+               "bands competed with the candles for attention.",
+     group = grpDisplay)
+// The risk/reward AREA fill, for both layers.
+//
+// It shipped fully opaque, then fully clear. Neither is right for everyone: the
+// areas are the fastest way to read a ratio at a glance, and they are also the
+// third translucent layer over the candles after the session shading and the
+// market-state band. Which of those matters depends on how many setups are on
+// screen and how dark your theme is, so it is a dial rather than a decision.
+//
+// 100 = clear (borders only, the default). Lower = more fill.
+i_rrFill        = input.int(100, "Risk/reward area fill", minval = 60, maxval = 100,
+     tooltip = "100 leaves the areas as outlines only. Around 88-92 gives the " +
+               "filled look. Applies to BOTH the live setups and the replayed " +
+               "production setups; the reward area is always kept two points " +
+               "fainter than the risk area, because a 3R box is three times " +
+               "the height and would otherwise dominate.",
+     group = grpDisplay)
+i_showLegend    = input.bool(true,  "Show session legend",
+     tooltip = "Static colour key for the shading, with the CURRENT session marked. " +
+               "This replaces the per-transition markers as the default way to read " +
+               "the chart — the mapping is fixed, so stating it once beats restating " +
+               "it on every transition.", group = grpDisplay)
+i_legendPos     = input.string("Bottom left", "Legend position",
+     options = ["Bottom left", "Bottom right", "Top left", "Top right", "Middle left"],
+     group = grpDisplay)
+
+// Per-transition markers are now OFF by default. They are correct and still
+// available, but they produce ~6 objects per day forever: on a multi-month chart
+// they bury the price action and hit the retention cap. The legend carries the
+// same information statically.
+i_showOpens     = input.bool(false, "Mark session opens",           group = grpDisplay)
+i_showCloses    = input.bool(false, "Mark session closes",          group = grpDisplay)
+i_showTransLbl  = input.bool(false, "Session transition labels",    group = grpDisplay)
+
+// ── S3 / S4 structure display ────────────────────────────────────────────────
+grpStruct = "Structure (S3/S4)"
+i_showSwings      = input.bool(true,  "Active swing levels",
+     tooltip = "Only ever TWO lines. Production retains one uncrossed swing per " +
+               "side, so drawing more would misrepresent the state.",
+     group = grpStruct)
+i_showSwingMarks  = input.bool(true,  "Swing confirmation markers",
+     tooltip = "Drawn at the PIVOT bar, which is swing_length bars before the bar " +
+               "that confirmed it — that is where production records it.",
+     group = grpStruct)
+i_showStructure   = input.bool(true,  "BOS / CHoCH break lines",
+     tooltip = "A line from the swing that was broken to the bar that broke it " +
+               "— it shows WHICH level went, which a badge at the break bar " +
+               "never did.", group = grpStruct)
+i_showStructLabels = input.bool(true, "  with BOS / CH chips",
+     tooltip = "Off = lines only. The lines alone are often enough once you " +
+               "know the colour convention: teal broke a swing high, red broke " +
+               "a swing low.", group = grpStruct)
+i_showStructLines = input.bool(false, "Broken-level lines",         group = grpStruct)
+i_showOrderBlocks = input.bool(true,  "Order-block boxes (S5)",     group = grpStruct)
+i_showRegime      = input.bool(true,  "Market-state band (S6)",     group = grpStruct)
+
+// ── setup replay (entry / stop / target / RR / status) ───────────────────────
+grpReplay = "Setup replay"
+i_showReplay      = input.bool(true,  "Show setups from the Python engine",
+     tooltip = "Entry, stop, target, risk-reward, status, blocking reason and " +
+               "outcome — as PRODUCTION decided them, not recomputed here. " +
+               "Prices are production's feed (bid); this chart is mid, so a " +
+               "level can sit a fraction of a pip off the candle that caused it.",
+     group = grpReplay)
+i_replayCount     = input.string("50", "Setups to draw (most recent)",
+     options = ["25", "50", "100", "200"],
+     tooltip = "Older setups are never CREATED, so the object budget is bounded " +
+               "before Pine sees it. The recording itself may hold more — the " +
+               "HUD says how many.",
+     group = grpReplay)
+i_showPending     = input.bool(false, "Include setups that never triggered",
+     tooltip = "Off by default: they are the majority and they never became a " +
+               "trade, so they bury the ones that did.",
+     group = grpReplay)
+i_replayTailBars  = input.int(6, "Tail beyond the terminal event (bars)",
+     minval = 0, maxval = 40,
+     tooltip = "How far an order block extends PAST the event that ended it, so " +
+               "the box does not stop dead on the candle and you can see where " +
+               "it finished.",
+     group = grpReplay)
+i_obSource        = input.string("Both", "Order-block boxes",
+     options = ["Both", "Production lifecycle", "Chart-derived"],
+     tooltip = "Which HISTORICAL boxes are drawn. BOTH (default) and " +
+               "PRODUCTION LIFECYCLE draw the recorded setups coloured by what " +
+               "became of them. CHART-DERIVED suppresses those and draws the " +
+               "indicator's own static detection instead — the cross-check, not " +
+               "the outcome. The LIVE layer below has its own switch and is " +
+               "unaffected, so no choice here can leave the chart empty.",
+     group = grpReplay)
+
+// ── live setups (chart-derived, production target table) ────────────────────
+grpLive = "Live setups"
+i_showLive        = input.bool(true, "Show live setups from chart structure",
+     tooltip = "Entry, stop, target and risk-reward for order blocks THIS CHART " +
+               "derives, using the target production would select for the same " +
+               "cohort. Independent of the Python replay — stale replay data " +
+               "never suppresses these.",
+     group = grpLive)
+i_showArm         = input.bool(true, "  arm / trigger level",
+     tooltip = "The dotted line at " +
+               "triggered_edge_trigger_thresholds% INTO the block. This is the " +
+               "penetration that ARMS the order — it is NOT the entry, which " +
+               "sits on the block EDGE (triggered_edge_entry_level_pct = 0). " +
+               "Off if you only want the edge.",
+     group = grpLive)
+i_showLiveRr      = input.bool(true, "  risk-reward tool",
+     tooltip = "Anchored to the RIGHT EDGE of its order block, so it travels " +
+               "with the block while it is live and freezes when the block is " +
+               "mitigated — next to the interaction that matters, rather than " +
+               "stranded at the origin.",
+     group = grpLive)
+i_rrWidthBars     = input.int(40, "  risk-reward width (bars)",
+     minval = 5, maxval = 200, group = grpLive)
+i_liveTailBars    = input.int(4, "  tail past mitigation (bars)",
+     minval = 0, maxval = 40,
+     tooltip = "How far a block extends PAST the bar that mitigated or " +
+               "invalidated it, so it does not end exactly on the candle and " +
+               "you can see where price met it.",
+     group = grpLive)
+i_liveMaxObs      = input.int(40, "  max tracked order blocks",
+     minval = 5, maxval = 50,
+     tooltip = "Oldest retired first. Each tracked block holds 3 boxes, 4 lines " +
+               "and 1 label, so 60 is 240 lines — and Pine's ceiling is 500 per " +
+               "type for the WHOLE script, shared with the replay layer and the " +
+               "structure markers (limitation L-08).",
+     group = grpLive)
+
+// ── target overrides ────────────────────────────────────────────────────────
+// WHY THIS IS NOT 144 INPUT BOXES.
+//
+// The production table is 24 base cells x 6 market states = 144 addressable
+// targets. Pine's settings UI has no dynamic list, no table editor and no way to
+// persist a variable-length map: the only primitive is a fixed input declared at
+// compile time. 144 `input.float` calls would compile, but they would produce an
+// unusable settings page AND fix the count into the source, so a scenario change
+// would silently leave stale boxes behind.
+//
+// So overrides are TIERED instead. Each tier is one number plus a selector, and
+// the most specific tier that matches wins. That covers "try London BOS Long at
+// 2.5R" and "try everything at 3R" without pretending to be a spreadsheet.
+// 0 means "no override at this tier" — never a target of zero.
+grpOv = "Target overrides"
+i_ovMode        = input.string("Production defaults", "Target mode",
+     options = ["Production defaults", "Local overrides"],
+     tooltip = "Local overrides change ONLY what this chart draws. They cannot " +
+               "reach production, and the tooltip always shows the production " +
+               "value alongside the effective one.",
+     group = grpOv)
+i_ovGlobal      = input.float(0, "Global target (R)", minval = 0, step = 0.05,
+     tooltip = "0 = off. Applies to every setup unless a more specific tier wins.",
+     group = grpOv)
+i_ovSessionName = input.string("london", "  session to override",
+     options = ["asia", "london", "lull", "newYork", "ny_pm", "outside"],
+     group = grpOv)
+i_ovSession     = input.float(0, "  session target (R)", minval = 0, step = 0.05,
+     group = grpOv)
+i_ovStateName   = input.string("Bull/Expand", "  market state to override",
+     options = ["Bull/Expand", "Bull/Compress", "Bull/Chop",
+                "Bear/Expand", "Bear/Compress", "Bear/Chop"],
+     group = grpOv)
+i_ovState       = input.float(0, "  state target (R)", minval = 0, step = 0.05,
+     group = grpOv)
+i_ovCellSession = input.string("london", "  cell: session",
+     options = ["asia", "london", "lull", "newYork", "ny_pm", "outside"],
+     group = grpOv)
+i_ovCellStruct  = input.string("BOS", "  cell: structure",
+     options = ["BOS", "CHoCH"], group = grpOv)
+i_ovCellDir     = input.string("Long", "  cell: direction",
+     options = ["Long", "Short"], group = grpOv)
+i_ovCell        = input.float(0, "  cell target (R)", minval = 0, step = 0.05,
+     tooltip = "The most specific tier — it outranks every other override.",
+     group = grpOv)
+
+i_debug         = input.bool(false, "Debug mode",                   group = grpDebug)
+// `i_showParsed` was removed here. It controlled parsed-price CROSSES that were
+// deleted when the script hit TradingView's 64-plot ceiling (RE10140), so it had
+// been a switch wired to nothing. The values are still exported as
+// `oracleParsedHigh` / `oracleParsedLow` and still shown in the debug table.
+i_showDayRoll   = input.bool(false, "Mark UTC day rollover",        group = grpDebug)
+
+// RETENTION, and why the default is high.
+//
+// Pine hard-limits labels to `max_labels_count` (500, set in the indicator
+// declaration). Beyond that the ENGINE evicts them, unpredictably. This script
+// therefore evicts its own oldest label once the cap is reached, so the eviction
+// is deterministic and ours.
+//
+// The first release defaulted this to 200. At roughly six session transitions a
+// day that retained only ~33 days, so panning back through history showed NO
+// markers at all — which reads as "the labels aren't anchored to the bars". They
+// always were (`label.new(bar_index, …)`); there simply weren't any left to see.
+// The default is now close to Pine's ceiling, and the debug panel reports how
+// many are retained and the timestamp of the oldest, so the horizon is visible
+// rather than surprising.
+i_maxObjects    = input.int(100,    "Max retained markers", minval = 10, maxval = 120,
+     tooltip = "Oldest markers are dropped beyond this. Pine's ceiling is 500 per " +
+               "OBJECT TYPE for the WHOLE script — not per layer — and this buffer " +
+               "shares it with the replay layer and the live setups. It defaulted " +
+               "to 450, which starved them: the engine then evicted whichever " +
+               "objects it liked, silently. Markers beyond this are GONE, not " +
+               "misplaced — see limitation L-08.",
+     group = grpDebug)
+
+// ── shared chrome palette ────────────────────────────────────────────────────
+// Defined HERE, in the first hand-written fragment, because both the legend (70)
+// and the HUD (99) use it and Pine resolves top-to-bottom — declaring it in 99
+// would be a forward reference from 70 and would not compile.
+//
+// Near-opaque on purpose: the first on-chart build used 75% TRANSPARENT panels,
+// so candles bled through and the text was unreadable over price.
+BG_HUD  = color.new(#0E1117, 8)
+BG_WARN = color.new(#B00020, 5)
+BG_STAT = color.new(#E08000, 10)
+BG_HEAD = color.new(#1A2340, 5)
+
+f_textSize() =>
+    i_hudSize == "Normal" ? size.normal : i_hudSize == "Small" ? size.small : size.tiny
+
+f_hudPosition() =>
+    i_hudPos == "Top left"      ? position.top_left :
+     i_hudPos == "Bottom right" ? position.bottom_right :
+     i_hudPos == "Bottom left"  ? position.bottom_left :
+     i_hudPos == "Middle right" ? position.middle_right :
+     position.top_right
+
+// Whether fragment 65's STATIC order-block boxes are drawn.
+//
+// They span origin to break bar and never move. The LIVE layer (fragment 68)
+// draws the same blocks but extends them to the trigger and hangs the
+// risk-reward tool off the end, so while it is on these would be a second box
+// at the same levels — which is what made the first version unreadable.
+//
+// `i_obSource` USED TO BE IGNORED HERE, which made "Chart-derived" a setting
+// that turned boxes OFF: it suppressed the replay layer's lifecycle boxes
+// (fragment 67 honours it) and fragment 65 stayed hidden anyway because live
+// setups were on. Selecting a source must never leave the chart with fewer
+// boxes than "Both".
+f_drawChartObs() =>
+    i_obSource == "Chart-derived" or not i_showLive
+
+// ── packed-transport helper ─────────────────────────────────────────────────
+// One field of a packed plot: apply the generated OFFSET, then CLAMP into the
+// generated WIDTH.
+//
+// The clamp is the safety property. Pine has no range check, so a field that
+// overflowed its radix would silently carry into its neighbour and BOTH sides
+// would decode plausible-looking wrong values — the one failure mode a packed
+// transport must not have. Clamping instead produces a packed integer that
+// cannot equal Python's (whose `pack` raises outright on the same input), so the
+// comparator reports a mismatch on that bar. A wrong number that is loudly wrong
+// beats a wrong number that reads as agreement.
+//
+// `na` maps to 0 BEFORE the offset, which is why every optional field is
+// specified with offset 1 — its absence gets code 0 and its smallest real value
+// gets 1, rather than a blank cell whose meaning depends on the reader.
+f_packv(float v, int width, int offset) =>
+    x = (na(v) ? -offset : v) + offset
+    x < 0 ? 0 : x > width - 1 ? width - 1 : x
+
+// ── S5 order-block palette ──────────────────────────────────────────────────
+// Deliberately distinct from the session palette: an order block is a level, not
+// a time window, and the two must not be confusable at a glance.
+COL_OB_BULL = #2E86DE
+COL_OB_BEAR = #E67E22

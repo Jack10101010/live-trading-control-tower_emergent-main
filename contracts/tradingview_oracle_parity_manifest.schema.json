@@ -1,0 +1,718 @@
+{
+ "$schema": "http://json-schema.org/draft-07/schema#",
+ "$id": "tradingview_oracle_parity_manifest.schema.json",
+ "title": "TradingView Visual Oracle — released-build parity manifest (v2, split logic / feed / production-replay parity)",
+ "description": "Committed record of ONE released Pine build: exactly which production behaviour it mirrors, which stages were validated ALONG WHICH PARITY DIMENSION, and what it is known not to do. Written by the update workflow, read by tools/oracle/check_freshness.py. Location: artifacts/tradingview_oracle/parity_manifest.json. This file is the ONLY authority on whether a released chart is current — never a timestamp, never a commit message. v2 replaces v1's single overloaded per-stage status with four independent dimensions, because one string could not distinguish 'the Pine is a faithful port' from 'the broker's feed matches production'. A v1 manifest is migrated fail-closed: a legacy MATCHED is NOT carried into any dimension (see tools/oracle/parity_status.py::migrate_stage_record).",
+ "type": "object",
+ "required": [
+  "schema",
+  "oracle_version",
+  "fingerprint",
+  "pine_source",
+  "stages",
+  "global_status",
+  "validation"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "schema": {
+   "type": "string",
+   "const": "tradingview-oracle-parity-manifest-v2"
+  },
+  "oracle_version": {
+   "type": "string",
+   "description": "Semver of the Pine oracle build itself, independent of the engine it mirrors.",
+   "pattern": "^\\d+\\.\\d+\\.\\d+$"
+  },
+  "generated_at": {
+   "type": "string",
+   "description": "UTC ISO-8601. Provenance only — never used for freshness."
+  },
+  "fingerprint": {
+   "type": "object",
+   "description": "Verbatim copy of the contract's fingerprint block. `inputs` is what check_freshness compares field by field.",
+   "required": [
+    "oracle_engine_id",
+    "oracle_engine_hash",
+    "inputs"
+   ],
+   "properties": {
+    "oracle_engine_id": {
+     "type": "string",
+     "description": "Human-readable HUD label. NEVER a comparison key."
+    },
+    "oracle_engine_hash": {
+     "type": "string",
+     "pattern": "^[0-9a-f]{64}$"
+    },
+    "inputs": {
+     "type": "object",
+     "required": [
+      "engine_manifest_id",
+      "engine_version",
+      "resolved_config_hash",
+      "policy_version",
+      "policy_content_sha256",
+      "contract_schema_version",
+      "trace_schema_version",
+      "generator_version",
+      "symbol",
+      "detection_timeframe",
+      "execution_timeframe"
+     ],
+     "properties": {
+      "engine_manifest_id": {
+       "type": "string"
+      },
+      "engine_version": {
+       "type": "string"
+      },
+      "resolved_config_hash": {
+       "type": "string"
+      },
+      "policy_version": {
+       "type": "string"
+      },
+      "policy_content_sha256": {
+       "type": "string"
+      },
+      "contract_schema_version": {
+       "type": "string"
+      },
+      "trace_schema_version": {
+       "type": "string"
+      },
+      "generator_version": {
+       "type": "string"
+      },
+      "symbol": {
+       "type": "string"
+      },
+      "detection_timeframe": {
+       "type": "string"
+      },
+      "execution_timeframe": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  },
+  "production": {
+   "type": "object",
+   "description": "Provenance of the tree the build was generated from. Recorded for humans; the fingerprint is what gates.",
+   "properties": {
+    "control_tower_commit": {
+     "type": "string"
+    },
+    "control_tower_branch": {
+     "type": "string"
+    },
+    "engine_commit": {
+     "type": "string"
+    },
+    "engine_branch": {
+     "type": "string"
+    },
+    "golden_config_relpath": {
+     "type": "string"
+    },
+    "environment_provenance": {
+     "type": "object"
+    }
+   }
+  },
+  "pine_source": {
+   "type": "object",
+   "description": "The generated artefact. `sha256` is line-ending normalised, so a Windows/macOS checkout of the same content agrees. A mismatch means the generated file was HAND-EDITED and is reported as INCOMPATIBLE.",
+   "required": [
+    "path",
+    "sha256",
+    "line_count"
+   ],
+   "properties": {
+    "path": {
+     "type": "string",
+     "description": "Repo-relative, e.g. generated/tradingview_oracle.pine"
+    },
+    "sha256": {
+     "type": "string",
+     "pattern": "^[0-9a-f]{64}$"
+    },
+    "line_count": {
+     "type": "integer"
+    },
+    "module_sources": {
+     "type": "array",
+     "description": "The structured fragments the artefact was assembled from, in assembly order.",
+     "items": {
+      "type": "object",
+      "required": [
+       "path",
+       "sha256"
+      ],
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "sha256": {
+        "type": "string"
+       }
+      }
+     }
+    }
+   }
+  },
+  "supported_context": {
+   "type": "object",
+   "description": "A chart outside this is UNSUPPORTED_DATA_CONTEXT — the oracle must say so rather than render a plausible wrong answer.",
+   "properties": {
+    "symbols": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "detection_timeframes": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "execution_timeframes": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "chart_timezone": {
+     "type": "string",
+     "const": "UTC"
+    },
+    "minimum_history_bars": {
+     "type": "object",
+     "description": "Below these depths the history-seeded values (ATR RMA seed, swing_trend_bias, regime panel) have not converged and parity is meaningless.",
+     "properties": {
+      "detection": {
+       "type": "integer"
+      },
+      "daily": {
+       "type": "integer"
+      }
+     }
+    }
+   }
+  },
+  "stages": {
+   "type": "object",
+   "description": "Per-stage parity record keyed by the Phase 0 audit section 18 stage ids (S1..S14). Each stage carries FOUR independent statuses. A passing early stage must never imply whole-engine parity, and a passing LOGIC parity must never imply the chart reproduces production's numbers.",
+   "additionalProperties": {
+    "type": "object",
+    "required": [
+     "implementation_status",
+     "logic_parity",
+     "feed_parity",
+     "production_replay_parity"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "implementation_status": {
+      "enum": [
+       "UNIMPLEMENTED",
+       "IMPLEMENTED_UNVERIFIED",
+       "IMPLEMENTED",
+       "STALE",
+       "INCOMPATIBLE"
+      ],
+      "description": "Does the released Pine contain this stage at all? Never a statement about correctness."
+     },
+     "logic_parity": {
+      "type": "object",
+      "description": "Given the SAME ordered bars and the same declared initialisation, does Pine reproduce the Python algorithm? The ONLY dimension a Pine defect can move, and the only one a chart_bars comparison can establish.",
+      "required": [
+       "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+       "status": {
+        "enum": [
+         "LOGIC_UNIMPLEMENTED",
+         "LOGIC_UNVERIFIED",
+         "LOGIC_MATCHED",
+         "LOGIC_MATCHED_WITH_DECLARED_BOOTSTRAP",
+         "LOGIC_FAILED",
+         "LOGIC_INCOMPATIBLE"
+        ]
+       },
+       "input_basis": {
+        "enum": [
+         "fixture_bars",
+         "chart_bars",
+         null
+        ],
+        "description": "MUST be chart_bars for any matched status: a fixture_bars divergence may be the feed."
+       },
+       "bootstrap_bars": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Declared initialisation interval excluded from scoring. Required and positive for LOGIC_MATCHED_WITH_DECLARED_BOOTSTRAP."
+       },
+       "bootstrap_window": {
+        "type": [
+         "array",
+         "null"
+        ],
+        "minItems": 2,
+        "maxItems": 2,
+        "items": {
+         "type": "string"
+        },
+        "description": "[first, last] UTC bar of the excluded interval. An unbounded bootstrap is not a declared one."
+       },
+       "compared_bars": {
+        "type": "integer",
+        "minimum": 0
+       },
+       "post_bootstrap_divergences": {
+        "type": [
+         "integer",
+         "null"
+        ],
+        "minimum": 0,
+        "description": "Divergences AFTER the declared interval. Must be 0 for any matched status — a recurring divergence is not a seed."
+       },
+       "report_sha256": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "pattern": "^[0-9a-f]{64}$"
+       },
+       "report_path": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "build_fingerprint": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "pattern": "^[0-9a-f]{64}$",
+        "description": "The build fingerprint this evidence was gathered against. Freshness compares it to the current build so evidence cannot silently outlive what it measured."
+       },
+       "superseded": {
+        "type": [
+         "object",
+         "null"
+        ],
+        "description": "A claim demoted because its build fingerprint no longer matches. Kept so the demotion is auditable and so a refresh can be seen to restore what was lost.",
+        "additionalProperties": true
+       }
+      }
+     },
+     "feed_parity": {
+      "type": "object",
+      "description": "Does the TradingView feed deliver the same bars as production? A property of the DATA. No Pine change can move it.",
+      "required": [
+       "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+       "status": {
+        "enum": [
+         "FEED_UNVERIFIED",
+         "FEED_MATCHED",
+         "FEED_DIFFERENT",
+         "FEED_PARTIAL",
+         "FEED_UNAVAILABLE"
+        ]
+       },
+       "production_feed": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "tradingview_feed": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "report_sha256": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "pattern": "^[0-9a-f]{64}$"
+       },
+       "report_path": {
+        "type": [
+         "string",
+         "null"
+        ]
+       }
+      }
+     },
+     "production_replay_parity": {
+      "type": "object",
+      "description": "Does Pine reproduce the exact historical production trace — production feed, production seed, full history? Presupposes logic parity AND feed parity.",
+      "required": [
+       "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+       "status": {
+        "enum": [
+         "REPLAY_UNVERIFIED",
+         "REPLAY_MATCHED",
+         "REPLAY_DIVERGENT",
+         "REPLAY_UNATTAINABLE_IN_CURRENT_CONTEXT"
+        ]
+       },
+       "reason": {
+        "enum": [
+         "BID_VS_MID_AND_HISTORY_LIMIT",
+         "INSUFFICIENT_DAILY_HISTORY_FOR_EMA200_SEED",
+         "FEED_UNAVAILABLE",
+         "HISTORY_TOO_SHALLOW",
+         null
+        ],
+        "description": "Required when the status is REPLAY_UNATTAINABLE_IN_CURRENT_CONTEXT."
+       },
+       "report_sha256": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "pattern": "^[0-9a-f]{64}$"
+       },
+       "report_path": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "build_fingerprint": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "pattern": "^[0-9a-f]{64}$",
+        "description": "The build fingerprint this evidence was gathered against. Freshness compares it to the current build so evidence cannot silently outlive what it measured."
+       },
+       "superseded": {
+        "type": [
+         "object",
+         "null"
+        ],
+        "description": "A claim demoted because its build fingerprint no longer matches. Kept so the demotion is auditable and so a refresh can be seen to restore what was lost.",
+        "additionalProperties": true
+       }
+      }
+     },
+     "migrated_from": {
+      "type": "object",
+      "description": "Present only on a stage carried over from a v1 manifest. Records the legacy claim that was DISCARDED, so the downgrade is auditable rather than silent.",
+      "required": [
+       "schema",
+       "legacy_status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+       "schema": {
+        "type": "string"
+       },
+       "legacy_status": {
+        "enum": [
+         "UNIMPLEMENTED",
+         "IMPLEMENTED_UNVERIFIED",
+         "UNVERIFIED",
+         "MATCHED",
+         "FAILING"
+        ]
+       },
+       "note": {
+        "type": "string"
+       }
+      }
+     }
+    }
+   }
+  },
+  "global_status": {
+   "enum": [
+    "MATCHED",
+    "PARTIAL",
+    "UNVERIFIED",
+    "STALE",
+    "INCOMPATIBLE"
+   ],
+   "description": "Derived, never hand-set. MATCHED requires EVERY stage to be implemented AND logic-matched AND feed-matched AND replay-matched — a strictly stronger claim than v1's MATCHED, and unreachable on a feed that differs from production's. INCOMPATIBLE if any unsupported feature is active or the Pine source hash mismatches; STALE if the engine moved; PARTIAL if any stage is unimplemented or any dimension is unproven; UNVERIFIED if never validated."
+  },
+  "tested_windows": {
+   "type": "array",
+   "description": "The data windows parity was actually measured over. A claim outside a tested window is not evidence.",
+   "items": {
+    "type": "object",
+    "required": [
+     "fixture_id",
+     "start",
+     "end"
+    ],
+    "properties": {
+     "fixture_id": {
+      "type": "string"
+     },
+     "start": {
+      "type": "string"
+     },
+     "end": {
+      "type": "string"
+     },
+     "detection_bars": {
+      "type": "integer"
+     },
+     "execution_bars": {
+      "type": "integer"
+     },
+     "warmup_excluded_bars": {
+      "type": "integer"
+     }
+    }
+   }
+  },
+  "golden_fixtures": {
+   "type": "array",
+   "description": "Content hashes of the trace fixtures this build was validated against. A changed hash means the baseline moved and the stage must be re-validated.",
+   "items": {
+    "type": "object",
+    "required": [
+     "fixture_id",
+     "path",
+     "sha256"
+    ],
+    "properties": {
+     "fixture_id": {
+      "type": "string"
+     },
+     "path": {
+      "type": "string"
+     },
+     "sha256": {
+      "type": "string"
+     },
+     "trace_schema_version": {
+      "type": "string"
+     },
+     "rows": {
+      "type": "integer"
+     }
+    }
+   }
+  },
+  "known_limitations": {
+   "type": "array",
+   "description": "Limitation ids from audit section 12 that are ACTIVE for this build, with the approximation actually shipped.",
+   "items": {
+    "type": "object",
+    "required": [
+     "id",
+     "approximation_label"
+    ],
+    "properties": {
+     "id": {
+      "type": "string",
+      "examples": [
+       "L-03",
+       "L-04",
+       "L-06"
+      ]
+     },
+     "approximation_label": {
+      "type": "string",
+      "examples": [
+       "HISTORY-SEEDED",
+       "NEWS-UNAVAILABLE"
+      ]
+     },
+     "expected_divergence": {
+      "type": "string"
+     },
+     "measured_divergence": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Populated once a fixture has actually measured it. null means the expectation is still unverified."
+     }
+    }
+   }
+  },
+  "unsupported_active_features": {
+   "type": "array",
+   "description": "MUST be empty for a compatible build. A non-empty list forces global_status INCOMPATIBLE: a production mechanism the oracle does not implement is live.",
+   "items": {
+    "type": "object",
+    "properties": {
+     "field": {
+      "type": "string"
+     },
+     "actual": {},
+     "impact": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  "enum_coverage": {
+   "type": "object",
+   "description": "Proof that every production enum value has a Pine mapping. `unmapped` MUST be empty — an unmapped value would render as a generic state, which is exactly what the design forbids.",
+   "properties": {
+    "checked_enums": {
+     "type": "integer"
+    },
+    "unmapped": {
+     "type": "object",
+     "additionalProperties": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    },
+    "oracle_extensions_used": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  "validation": {
+   "type": "object",
+   "required": [
+    "result",
+    "validated_at"
+   ],
+   "properties": {
+    "result": {
+     "enum": [
+      "PASS",
+      "FAIL",
+      "NOT_RUN"
+     ]
+    },
+    "validated_at": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "command": {
+     "type": "string"
+    },
+    "stages_run": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "exact_match_failures": {
+     "type": "integer"
+    },
+    "tolerance_failures": {
+     "type": "integer"
+    },
+    "feed_attributed_divergences": {
+     "type": "integer"
+    },
+    "news_excluded_rows": {
+     "type": "integer"
+    },
+    "warmup_excluded_rows": {
+     "type": "integer"
+    },
+    "report_path": {
+     "type": "string"
+    }
+   }
+  },
+  "feed_measurement": {
+   "type": [
+    "object",
+    "null"
+   ],
+   "description": "The measured difference between the production dataset and the charted feed. Carried once and referenced by every stage's feed_parity. This is the evidence behind FEED_DIFFERENT; without it the status is an opinion.",
+   "additionalProperties": false,
+   "properties": {
+    "production_feed": {
+     "type": "string"
+    },
+    "tradingview_feed": {
+     "type": "string"
+    },
+    "production_quote_basis": {
+     "enum": [
+      "bid",
+      "ask",
+      "mid",
+      "unknown"
+     ]
+    },
+    "tradingview_quote_basis": {
+     "enum": [
+      "bid",
+      "ask",
+      "mid",
+      "unknown"
+     ]
+    },
+    "window": {
+     "type": "array",
+     "minItems": 2,
+     "maxItems": 2,
+     "items": {
+      "type": "string"
+     }
+    },
+    "shared_bars": {
+     "type": "integer"
+    },
+    "python_only_bars": {
+     "type": "integer"
+    },
+    "tradingview_only_bars": {
+     "type": "integer"
+    },
+    "fields": {
+     "type": "object",
+     "description": "Per-OHLC-field agreement statistics.",
+     "additionalProperties": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+       "bit_exact_fraction": {
+        "type": "number"
+       },
+       "median_signed_diff": {
+        "type": "number"
+       },
+       "mean_signed_diff": {
+        "type": "number"
+       },
+       "max_abs_diff": {
+        "type": "number"
+       }
+      }
+     }
+    },
+    "note": {
+     "type": "string"
+    }
+   }
+  }
+ }
+}

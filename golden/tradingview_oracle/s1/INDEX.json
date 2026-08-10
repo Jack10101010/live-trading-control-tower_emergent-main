@@ -1,0 +1,577 @@
+{
+ "fixtures": [
+  {
+   "description": "One full UTC weekday: every session opening and closing boundary, the Outside fallback, and the midnight rollover.",
+   "detection_bars_est": 95,
+   "fixture_id": "F-S1-DAY",
+   "kind": "slice",
+   "path": "golden/tradingview_oracle/s1/F-S1-DAY.csv",
+   "rows": 1438,
+   "sha256": "3dfe00894e763e87e9d5e281a11ca0f6c95284efc6ecc2ec49489421ca1ddf6a",
+   "stage": "S1",
+   "status": "written",
+   "window_end_utc_exclusive": "2026-01-06 00:00:00",
+   "window_start_utc": "2026-01-05 00:00:00"
+  },
+  {
+   "description": "The minute before, at, and after every session boundary (07/10/12/15/17) plus 00:00 \u2014 the inclusivity proof.",
+   "detection_bars_est": 1,
+   "fixture_id": "F-S1-BOUNDARIES",
+   "kind": "boundary_minutes",
+   "path": "golden/tradingview_oracle/s1/F-S1-BOUNDARIES.csv",
+   "rows": 18,
+   "sha256": "1835fb975373ec4ec877799fe49e4108481e2b9a35dd84bf1362b91a93c2531f",
+   "stage": "S1",
+   "status": "written",
+   "window_end_utc_exclusive": "2026-01-06 00:00:00",
+   "window_start_utc": "2026-01-05 00:00:00"
+  },
+  {
+   "description": "UTC midnight rollover across two days: day-key change and the Outside -> Asia transition at 00:00.",
+   "detection_bars_est": 7,
+   "fixture_id": "F-S1-MIDNIGHT",
+   "kind": "slice",
+   "path": "golden/tradingview_oracle/s1/F-S1-MIDNIGHT.csv",
+   "rows": 119,
+   "sha256": "e1035793fa3b9fdba89aa9aa948271836dca461321317b590b469bdc3a7b6d6a",
+   "stage": "S1",
+   "status": "written",
+   "window_end_utc_exclusive": "2026-01-06 01:00:00",
+   "window_start_utc": "2026-01-05 23:00:00"
+  },
+  {
+   "description": "Friday close through Monday open. Production has NO weekend logic \u2014 the gap is simply absent bars, and the first Monday bar is a gap_resync transition.",
+   "detection_bars_est": 63,
+   "fixture_id": "F-S1-WEEKEND",
+   "kind": "slice",
+   "path": "golden/tradingview_oracle/s1/F-S1-WEEKEND.csv",
+   "rows": 956,
+   "sha256": "7fadd50fb76f64b0131721124a53c757fb1457de264b8f60b98d3767986b985a",
+   "stage": "S1",
+   "status": "written",
+   "window_end_utc_exclusive": "2026-01-12 08:00:00",
+   "window_start_utc": "2026-01-09 16:00:00"
+  },
+  {
+   "description": "US DST start 2026-03-08 (the date this broker's server clock MEASURABLY shifts). Sessions must NOT move: they are pure UTC.",
+   "detection_bars_est": 20,
+   "fixture_id": "F-S1-DST-US",
+   "kind": "slice",
+   "path": "golden/tradingview_oracle/s1/F-S1-DST-US.csv",
+   "rows": 300,
+   "sha256": "b14bba63771d4257d27ac7dbc925df87ba48028738405a4b68124cf03469b51c",
+   "stage": "S1",
+   "status": "written",
+   "window_end_utc_exclusive": "2026-03-09 02:00:00",
+   "window_start_utc": "2026-03-07 22:00:00"
+  },
+  {
+   "description": "EU DST start 2026-03-29 \u2014 the date an IANA European zone WOULD shift. Sessions must not move here either.",
+   "detection_bars_est": 19,
+   "fixture_id": "F-S1-DST-EU",
+   "kind": "slice",
+   "path": "golden/tradingview_oracle/s1/F-S1-DST-EU.csv",
+   "rows": 286,
+   "sha256": "4c9b24c2d6746c5afcbe332d0673ce5dd2c7030b1fc6b29a3127874a5f5044d1",
+   "stage": "S1",
+   "status": "written",
+   "window_end_utc_exclusive": "2026-03-30 02:00:00",
+   "window_start_utc": "2026-03-28 22:00:00"
+  },
+  {
+   "description": "US DST end 2025-11-02 \u2014 the repeated local hour. Pure-UTC assignment means no UTC hour repeats in the trace and no session boundary moves.",
+   "detection_bars_est": 16,
+   "fixture_id": "F-S1-DST-END-US",
+   "kind": "slice",
+   "path": "golden/tradingview_oracle/s1/F-S1-DST-END-US.csv",
+   "rows": 240,
+   "sha256": "efba7390aa00bea8e43ab8a00242025ae7616898b3914bff47a1ce251f2a3220",
+   "stage": "S1",
+   "status": "written",
+   "window_end_utc_exclusive": "2025-11-03 02:00:00",
+   "window_start_utc": "2025-11-01 22:00:00"
+  },
+  {
+   "description": "EU DST end 2025-10-26 \u2014 the date an IANA European zone would shift back. Sessions must not move.",
+   "detection_bars_est": 19,
+   "fixture_id": "F-S1-DST-END-EU",
+   "kind": "slice",
+   "path": "golden/tradingview_oracle/s1/F-S1-DST-END-EU.csv",
+   "rows": 296,
+   "sha256": "b2880fcfb2d86af4bc6ba6066fa0cee8520b6c5ae1d4d5b4f367c7102ec00b2d",
+   "stage": "S1",
+   "status": "written",
+   "window_end_utc_exclusive": "2025-10-27 02:00:00",
+   "window_start_utc": "2025-10-25 22:00:00"
+  },
+  {
+   "description": "A real intra-session data gap: proves empty resample intervals are DROPPED, so bar_index is not a time grid (limitation L-09).",
+   "detection_bars_est": 89,
+   "fixture_id": "F-S1-GAP",
+   "kind": "drop_middle",
+   "path": "golden/tradingview_oracle/s1/F-S1-GAP.csv",
+   "rows": 1348,
+   "sha256": "2b5c6ab63f9223bcc6bcecf468437d45b56e113bfda9394bee31d1393ff5ac76",
+   "stage": "S1",
+   "status": "written",
+   "window_end_utc_exclusive": "2026-01-06 00:00:00",
+   "window_start_utc": "2026-01-05 00:00:00"
+  },
+  {
+   "description": "A duplicated timestamp. Production SORTS but does NOT de-duplicate \u2014 the trace must show both rows.",
+   "detection_bars_est": 4,
+   "fixture_id": "F-S1-DUPLICATE",
+   "kind": "duplicate_row",
+   "path": "golden/tradingview_oracle/s1/F-S1-DUPLICATE.csv",
+   "rows": 61,
+   "sha256": "5f48b89e2f9950cd51ef46138286e338d5c04005f60ee95ee72b3fb019af8dba",
+   "stage": "S1",
+   "status": "written",
+   "window_end_utc_exclusive": "2026-01-05 08:00:00",
+   "window_start_utc": "2026-01-05 07:00:00"
+  },
+  {
+   "description": "Rows shuffled out of chronological order. Production silently re-sorts (stable); the trace must come out ordered.",
+   "detection_bars_est": 4,
+   "fixture_id": "F-S1-OUTOFORDER",
+   "kind": "shuffle",
+   "path": "golden/tradingview_oracle/s1/F-S1-OUTOFORDER.csv",
+   "rows": 60,
+   "sha256": "5acf46021b087ad0c47577fbf2fd4bddcadab7ef96f8295af15b8f47ea5e1778",
+   "stage": "S1",
+   "status": "written",
+   "window_end_utc_exclusive": "2026-01-05 08:00:00",
+   "window_start_utc": "2026-01-05 07:00:00"
+  },
+  {
+   "description": "From the very first bar of the frozen dataset: the RMA seed, the first 200 bars of ATR warm-up, and the max(index,1) divisor quirk at index 0/1.",
+   "detection_bars_est": 391,
+   "fixture_id": "F-S2-WARMUP",
+   "kind": "slice",
+   "path": "golden/tradingview_oracle/s1/F-S2-WARMUP.csv",
+   "rows": 5877,
+   "sha256": "99032b959db015453de0546f5de825ad96c35f5b6a234740daf03bb6368d38cc",
+   "stage": "S2",
+   "status": "written",
+   "window_end_utc_exclusive": "2015-01-08 00:00:00",
+   "window_start_utc": "2015-01-01 00:00:00"
+  },
+  {
+   "description": "The divergence fixture. Long enough for a first-value-seeded RMA and an SMA-seeded ta.rma to be compared bar by bar and shown never to converge exactly.",
+   "detection_bars_est": 2015,
+   "fixture_id": "F-S2-RMASEED",
+   "kind": "slice",
+   "path": "golden/tradingview_oracle/s1/F-S2-RMASEED.csv",
+   "rows": 30230,
+   "sha256": "68b3a63cb69931f7caeacc5ef5c6842d9e4a90e7010559dd23397b6aaacc7b46",
+   "stage": "S2",
+   "status": "written",
+   "window_end_utc_exclusive": "2015-02-01 00:00:00",
+   "window_start_utc": "2015-01-01 00:00:00"
+  },
+  {
+   "description": "A month containing high-volatility bars that trip the (H-L) >= 2*measure flip, so parsed_high/parsed_low swap.",
+   "detection_bars_est": 2121,
+   "fixture_id": "F-S2-FLIP",
+   "kind": "slice",
+   "path": "golden/tradingview_oracle/s1/F-S2-FLIP.csv",
+   "rows": 31825,
+   "sha256": "71d995909a2fb3ebf1d8351752726f73231605b896cf670a2719b7db3f5cfaa1",
+   "stage": "S2",
+   "status": "written",
+   "window_end_utc_exclusive": "2020-04-01 00:00:00",
+   "window_start_utc": "2020-03-01 00:00:00"
+  },
+  {
+   "description": "Three months at 15m: many confirmed swing highs and lows, replacement of the retained swing, and the +50-bar confirmation lag.",
+   "detection_bars_est": 6045,
+   "fixture_id": "F-S3-SWINGS",
+   "kind": "slice",
+   "path": "golden/tradingview_oracle/s1/F-S3-SWINGS.csv",
+   "rows": 90689,
+   "sha256": "2407614747c8c1c49cbf690369c3070e9ace2f616a7581c79b2e3b7e864181b2",
+   "stage": "S3",
+   "status": "written",
+   "window_end_utc_exclusive": "2025-04-01 00:00:00",
+   "window_start_utc": "2025-01-01 00:00:00"
+  },
+  {
+   "description": "Exactly the first bars of the dataset: production's loop starts at index swing_length, so the first 50 detection bars have NO structure state at all.",
+   "detection_bars_est": 95,
+   "fixture_id": "F-S3-WARMUP",
+   "kind": "slice",
+   "path": "golden/tradingview_oracle/s1/F-S3-WARMUP.csv",
+   "rows": 1439,
+   "sha256": "e31ad69320e5da252ad56cc88a7d0d3064f13525816ad6ea0e60ea767e43312c",
+   "stage": "S3",
+   "status": "written",
+   "window_end_utc_exclusive": "2015-01-03 00:00:00",
+   "window_start_utc": "2015-01-01 00:00:00"
+  },
+  {
+   "description": "Six months: BOS and CHoCH in both directions, repeated same-direction breaks, and bias flips.",
+   "detection_bars_est": 12273,
+   "fixture_id": "F-S4-STRUCTURE",
+   "kind": "slice",
+   "path": "golden/tradingview_oracle/s1/F-S4-STRUCTURE.csv",
+   "rows": 184107,
+   "sha256": "9d2d608b2909b57b2b1eb6c01ab482e9b649dd720cd1c2a1c055fd4873074a91",
+   "stage": "S4",
+   "status": "written",
+   "window_end_utc_exclusive": "2025-07-01 00:00:00",
+   "window_start_utc": "2025-01-01 00:00:00"
+  },
+  {
+   "description": "Starts mid-history. The bias is seeded by the FIRST break in THIS window, which is what makes a truncated chart tag BOS where full history tags CHoCH (limitation L-04).",
+   "detection_bars_est": 6196,
+   "fixture_id": "F-S4-SEED",
+   "kind": "slice",
+   "path": "golden/tradingview_oracle/s1/F-S4-SEED.csv",
+   "rows": 92953,
+   "sha256": "1e03612934137d71ad9b0804f05024347df82e3ec77804ccb78bce8b8854099f",
+   "stage": "S4",
+   "status": "written",
+   "window_end_utc_exclusive": "2024-09-01 00:00:00",
+   "window_start_utc": "2024-06-01 00:00:00"
+  },
+  {
+   "description": "A high-volatility regime: rapid alternating breaks and back-to-back structure events.",
+   "detection_bars_est": 5187,
+   "fixture_id": "F-S4-VOLATILE",
+   "kind": "slice",
+   "path": "golden/tradingview_oracle/s1/F-S4-VOLATILE.csv",
+   "rows": 77812,
+   "sha256": "8a2a2163a9207a696d76961d12f3e51179d57885c8b6ed7dbfa3e3f3764b0117",
+   "stage": "S4",
+   "status": "written",
+   "window_end_utc_exclusive": "2020-05-01 00:00:00",
+   "window_start_utc": "2020-02-15 00:00:00"
+  },
+  {
+   "description": "A REAL inverted order block: the origin bar trips (H-L) >= 2*ATR, so its parsed high and low are SWAPPED and the box has top < bottom. Production does not normalise it and neither may the oracle. 2026-04-17 20:15 is the only one of the 20 in the dataset that a TradingView chart can still load.",
+   "detection_bars_est": 563,
+   "fixture_id": "F-S5-INVERTED",
+   "kind": "slice",
+   "path": "golden/tradingview_oracle/s1/F-S5-INVERTED.csv",
+   "rows": 8445,
+   "sha256": "b5b051e66f4a0a05d41c329d5fefd1b35a57d4c1a27c7b7a9f479fbcc2238129",
+   "stage": "S5",
+   "status": "written",
+   "window_end_utc_exclusive": "2026-04-19 00:00:00",
+   "window_start_utc": "2026-04-10 00:00:00"
+  },
+  {
+   "description": "The origin search finds EQUAL extremes and must take the EARLIEST bar. `search[search == search.min()].index[0]` is first-wins; a `<=` scan would silently take the last and move the whole box. Contains the real tie detected at 2025-11-25 13:15.",
+   "detection_bars_est": 478,
+   "fixture_id": "F-S5-ORIGIN-TIE",
+   "kind": "slice",
+   "path": "golden/tradingview_oracle/s1/F-S5-ORIGIN-TIE.csv",
+   "rows": 7178,
+   "sha256": "4485e53e979ed48ba2b2ac535003dc21923950cef6db532b66638aafc5edee32",
+   "stage": "S5",
+   "status": "written",
+   "window_end_utc_exclusive": "2025-11-27 00:00:00",
+   "window_start_utc": "2025-11-20 00:00:00"
+  },
+  {
+   "description": "The closest thing production contains to a same-bar dual candidate: a bullish and a bearish break 12 bars apart, with the bias carried between them so the second is tagged CHoCH. A TRUE same-bar pair is unreachable \u2014 see the audit; the break conditions are mutually exclusive.",
+   "detection_bars_est": 295,
+   "fixture_id": "F-S5-OPPOSITE-BREAKS",
+   "kind": "slice",
+   "path": "golden/tradingview_oracle/s1/F-S5-OPPOSITE-BREAKS.csv",
+   "rows": 4427,
+   "sha256": "47f149e72dbe0ecc504aefb649ce88c7a60c34b8562353664e41869c1f58c8e7",
+   "stage": "S5",
+   "status": "written",
+   "window_end_utc_exclusive": "2026-02-12 00:00:00",
+   "window_start_utc": "2026-02-08 00:00:00"
+  },
+  {
+   "description": "From the very first day of the frozen dataset: the day-0 null row, the EMA seed (where close == ema and pxVsEma is EXACTLY 0, which classifies BEAR because the operator is `> 0`), and the 20-day wait before BBW \u2014 and therefore any market state \u2014 becomes valid at all.",
+   "detection_bars_est": 3932,
+   "fixture_id": "F-S6-WARMUP",
+   "kind": "slice",
+   "path": "golden/tradingview_oracle/s1/F-S6-WARMUP.csv",
+   "rows": 58984,
+   "sha256": "c08b6201d11f6ad3981a9ac23081b5bb27602e2cd972a4d98951e1242e9fe1bc",
+   "stage": "S6",
+   "status": "written",
+   "window_end_utc_exclusive": "2015-03-01 00:00:00",
+   "window_start_utc": "2015-01-01 00:00:00"
+  },
+  {
+   "description": "A year spanning every one of the six market states, both trend sides and both volatility labels, with ADX crossing the chop level in both directions.",
+   "detection_bars_est": 24897,
+   "fixture_id": "F-S6-STATES",
+   "kind": "slice",
+   "path": "golden/tradingview_oracle/s1/F-S6-STATES.csv",
+   "rows": 373466,
+   "sha256": "ec2b9d89053716de227cef87ddd31ef88a093d7b9757c3ddad4b9ae564f11f8f",
+   "stage": "S6",
+   "status": "written",
+   "window_end_utc_exclusive": "2021-01-01 00:00:00",
+   "window_start_utc": "2020-01-01 00:00:00"
+  },
+  {
+   "description": "A dense run of market-state transitions \u2014 the COVID volatility regime \u2014 so the transition flag, the previous-state field and the one-day shift are all exercised repeatedly rather than once.",
+   "detection_bars_est": 8153,
+   "fixture_id": "F-S6-TRANSITIONS",
+   "kind": "slice",
+   "path": "golden/tradingview_oracle/s1/F-S6-TRANSITIONS.csv",
+   "rows": 122309,
+   "sha256": "8a6591865347853f96f849e88d35cf26704b708830842394c8b6a94bb6b62c7b",
+   "stage": "S6",
+   "status": "written",
+   "window_end_utc_exclusive": "2020-06-01 00:00:00",
+   "window_start_utc": "2020-02-01 00:00:00"
+  },
+  {
+   "description": "THE one-export verification window. Starts at the chart's earliest bar so Pine and Python seed identically, and runs to the end of the frozen dataset so a SINGLE export can verify S1-S5. Contains the Christmas one-sided feed gap (36 bars absent from OANDA), 7 origin ties, the only chart-reachable inverted box (2026-04-17), and 59 opposite-side break pairs.",
+   "detection_bars_est": 17843,
+   "fixture_id": "F-TV-S1S5",
+   "kind": "slice",
+   "path": "golden/tradingview_oracle/s1/F-TV-S1S5.csv",
+   "rows": 267648,
+   "sha256": "f4b0e8b676b90fa6b5c15e10c6250bf8447f5b4fc8837ee10f7147c48bc6afd3",
+   "stage": "S1-S5",
+   "status": "written",
+   "window_end_utc_exclusive": "2026-06-20 00:00:00",
+   "window_start_utc": "2025-09-30 00:00:00"
+  },
+  {
+   "description": "PRIMARY comparison window. Starts at the chart's earliest available bar so the Pine and Python seeds match exactly. Three months of 15m bars carrying session/day transitions, ATR warm-up and decay, ~97 swings and 39 structure events in both directions.",
+   "detection_bars_est": 6313,
+   "fixture_id": "F-TV-S1S4",
+   "kind": "slice",
+   "path": "golden/tradingview_oracle/s1/F-TV-S1S4.csv",
+   "rows": 94705,
+   "sha256": "6aa0fde13ca19b38520293cc89d6d8c60b38da93c078ed5291a7c8b1bccb60fc",
+   "stage": "S1-S4",
+   "status": "written",
+   "window_end_utc_exclusive": "2026-01-01 00:00:00",
+   "window_start_utc": "2025-09-30 00:00:00"
+  },
+  {
+   "description": "Order block comfortably inside the 100-pip limit: accepted, appended, and assigned ob_id 1.",
+   "detection_bars_est": 179,
+   "fixture_id": "F-S5-SIZE-UNDER",
+   "kind": "synthetic",
+   "path": "golden/tradingview_oracle/s1/F-S5-SIZE-UNDER.csv",
+   "rows": 2685,
+   "sha256": "a01399b91c2f408813c46143f9a1a3d7cdc34a5be480e3acf4d3d5a49af9f5c7",
+   "stage": "S5",
+   "status": "written",
+   "synthetic_expectations": {
+    "appended": 1,
+    "candidates": 1,
+    "ids": [
+     1
+    ],
+    "inverted": 0,
+    "reasons": [
+     null
+    ],
+    "rejected": 0
+   },
+   "synthetic_observed": {
+    "appended": 1,
+    "candidates": 1,
+    "ids": [
+     1
+    ],
+    "inverted": 0,
+    "reasons": [
+     null
+    ],
+    "rejected": 0,
+    "sides": [
+     "bullish"
+    ],
+    "tags": [
+     "BOS"
+    ],
+    "widths": [
+     99.0
+    ]
+   },
+   "window_end_utc_exclusive": "2026-01-06 20:44:00+00:00",
+   "window_start_utc": "2026-01-05 00:00:00+00:00"
+  },
+  {
+   "description": "The widest order block the gate ACCEPTS. An exactly-100.0-pip width is not representable \u2014 |high-low|/pip_size steps from 99.99999999999787 straight to 100.00000000000009 \u2014 so this is the closest double at or below the limit. The gate is `width > max`, STRICT, so it passes.",
+   "detection_bars_est": 179,
+   "fixture_id": "F-S5-SIZE-AT-LIMIT",
+   "kind": "synthetic",
+   "path": "golden/tradingview_oracle/s1/F-S5-SIZE-AT-LIMIT.csv",
+   "rows": 2685,
+   "sha256": "8d515e92674633b7c6e04b81186728b9db632ea858eae436a1d00e99c9d0c14a",
+   "stage": "S5",
+   "status": "written",
+   "synthetic_expectations": {
+    "appended": 1,
+    "candidates": 1,
+    "ids": [
+     1
+    ],
+    "rejected": 0
+   },
+   "synthetic_observed": {
+    "appended": 1,
+    "candidates": 1,
+    "ids": [
+     1
+    ],
+    "inverted": 0,
+    "reasons": [
+     null
+    ],
+    "rejected": 0,
+    "sides": [
+     "bullish"
+    ],
+    "tags": [
+     "BOS"
+    ],
+    "widths": [
+     100.0
+    ]
+   },
+   "window_end_utc_exclusive": "2026-01-06 20:44:00+00:00",
+   "window_start_utc": "2026-01-05 00:00:00+00:00"
+  },
+  {
+   "description": "The narrowest order block the gate REJECTS \u2014 one ULP wider than the fixture above, 2e-12 pips more. Rejected with reason size_filter, and it consumes NO ob_id.",
+   "detection_bars_est": 179,
+   "fixture_id": "F-S5-SIZE-OVER",
+   "kind": "synthetic",
+   "path": "golden/tradingview_oracle/s1/F-S5-SIZE-OVER.csv",
+   "rows": 2685,
+   "sha256": "5fbfcdc2ad3a9380ea388a7a2b32705fac18b28d2d5f903dc180fe5075d0bc56",
+   "stage": "S5",
+   "status": "written",
+   "synthetic_expectations": {
+    "appended": 0,
+    "candidates": 1,
+    "ids": [
+     null
+    ],
+    "reasons": [
+     "size_filter"
+    ],
+    "rejected": 1
+   },
+   "synthetic_observed": {
+    "appended": 0,
+    "candidates": 1,
+    "ids": [
+     null
+    ],
+    "inverted": 0,
+    "reasons": [
+     "size_filter"
+    ],
+    "rejected": 1,
+    "sides": [
+     "bullish"
+    ],
+    "tags": [
+     "BOS"
+    ],
+    "widths": [
+     100.0
+    ]
+   },
+   "window_end_utc_exclusive": "2026-01-06 20:44:00+00:00",
+   "window_start_utc": "2026-01-05 00:00:00+00:00"
+  },
+  {
+   "description": "A rejected candidate followed by an accepted one. The rejected block never takes an id, so the accepted block that follows is ob_id 1, not 2 \u2014 the observable consequence of production incrementing the counter only inside the accept branch. The rejection still burns its swing and still flips the bias, which is why the second cycle can happen at all.",
+   "detection_bars_est": 398,
+   "fixture_id": "F-S5-ID-DENSITY",
+   "kind": "synthetic",
+   "path": "golden/tradingview_oracle/s1/F-S5-ID-DENSITY.csv",
+   "rows": 5970,
+   "sha256": "a1662b2f3227f48a6c2a1eda7a9a2465cf04d3a48ecd11b0ef8e08aed2142327",
+   "stage": "S5",
+   "status": "written",
+   "synthetic_expectations": {
+    "appended": 1,
+    "candidates": 2,
+    "ids": [
+     null,
+     1
+    ],
+    "reasons": [
+     "size_filter",
+     null
+    ],
+    "rejected": 1
+   },
+   "synthetic_observed": {
+    "appended": 1,
+    "candidates": 2,
+    "ids": [
+     null,
+     1
+    ],
+    "inverted": 0,
+    "reasons": [
+     "size_filter",
+     null
+    ],
+    "rejected": 1,
+    "sides": [
+     "bullish",
+     "bullish"
+    ],
+    "tags": [
+     "BOS",
+     "BOS"
+    ],
+    "widths": [
+     100.0,
+     30.0
+    ]
+   },
+   "window_end_utc_exclusive": "2026-01-09 03:29:00+00:00",
+   "window_start_utc": "2026-01-05 00:00:00+00:00"
+  }
+ ],
+ "source": {
+  "engine_manifest_id": "196acb79847f6d8bdab045b868d1b53ade7bb5a4493ffc298f7eef20e113dedf",
+  "frozen_dataset": "data/candles/EURUSD_1m_extended_2015_2026.csv",
+  "lux_root_basename": "Lux-OB-Backtester"
+ },
+ "unsupported_contexts": [
+  {
+   "context": {
+    "symbol": "GBPUSD",
+    "timeframe": "15min"
+   },
+   "expected": "UNSUPPORTED_DATA_CONTEXT",
+   "fixture_id": "F-S1-BADSYMBOL",
+   "note": "no candle file \u2014 the context guard must fire before any bar is read",
+   "reason": "symbol outside the production whitelist"
+  },
+  {
+   "context": {
+    "symbol": "EURUSD",
+    "timeframe": "H4"
+   },
+   "expected": "UNSUPPORTED_DATA_CONTEXT",
+   "fixture_id": "F-S1-BADTF",
+   "note": "no candle file \u2014 the context guard must fire before any bar is read",
+   "reason": "H4 does not divide 60, so a bar can straddle a session boundary"
+  },
+  {
+   "context": {
+    "symbol": "EURUSD",
+    "timeframe": "1440min"
+   },
+   "expected": "UNSUPPORTED_DATA_CONTEXT",
+   "fixture_id": "F-S1-BADTF-D1",
+   "note": "no candle file \u2014 the context guard must fire before any bar is read",
+   "reason": "daily is neither the detection nor the execution timeframe"
+  }
+ ]
+}

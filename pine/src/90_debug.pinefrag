@@ -1,0 +1,136 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// 90 — DEBUG PANEL
+//
+// Off by default. Shows the intermediate values a parity investigation needs:
+// the raw and normalised timestamps, the exact comparison that selected the
+// session, and the generated constants the decision came from.
+//
+// Deliberately a single table on the last bar — not per-bar labels — so enabling
+// debug cannot exhaust the drawing budget (limitation L-08).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Same capacity discipline as the HUD. This table was declared with 18 rows
+// while 21 f_dbg calls were reachable — a latent RE10040 that would have fired
+// the first time anyone ticked "Debug mode". Found by the row-capacity lint rule
+// added after the HUD overflow, not by hitting it.
+DBG_ROWS = 48
+
+var table dbg = table.new(position.bottom_left, 2, DBG_ROWS,
+     border_width = 1, border_color = color.new(color.gray, 70),
+     frame_width  = 1, frame_color  = color.new(color.gray, 50))
+
+f_dbg(int r, string k, string v) =>
+    if r < DBG_ROWS
+        table.cell(dbg, 0, r, k, text_size = size.tiny,
+             text_halign = text.align_left, text_color = color.new(color.silver, 20),
+             bgcolor = color.new(color.black, 80))
+        table.cell(dbg, 1, r, v, text_size = size.tiny,
+             text_halign = text.align_left, text_color = color.white,
+             bgcolor = color.new(color.black, 80))
+
+if barstate.islast and i_debug
+    table.clear(dbg, 0, 0, 1, DBG_ROWS - 1)
+    int d = 0
+
+    f_dbg(d, "DEBUG", "S1 · data/time/session")
+    d := d + 1
+    f_dbg(d, "time (epoch ms)", str.tostring(utcEpochMs, "#"))
+    d := d + 1
+    f_dbg(d, "UTC normalised", str.format_time(time, "yyyy-MM-dd HH:mm:ss", "UTC"))
+    d := d + 1
+    f_dbg(d, "chart tz render", str.format_time(time, "yyyy-MM-dd HH:mm:ss", syminfo.timezone))
+    d := d + 1
+    f_dbg(d, "utc y/m/d", str.tostring(utcYear) + "/" + str.tostring(utcMonth) +
+                          "/" + str.tostring(utcDom))
+    d := d + 1
+    f_dbg(d, "utc hour:min", str.tostring(utcHour) + ":" + str.tostring(utcMin))
+    d := d + 1
+    f_dbg(d, "day key", str.tostring(dayKey) + (dayTransition ? "  (ROLLOVER)" : ""))
+    d := d + 1
+    f_dbg(d, "prev day key", na(dispPrevDayKey) ? "na" : str.tostring(dispPrevDayKey))
+    d := d + 1
+
+    // The exact comparison production performs, shown as it was evaluated.
+    f_dbg(d, "window test", sessIsFall ?
+         "no window matched -> fallback '" + SESSION_FALLBACK_KEY + "'" :
+         str.tostring(sessStartH) + " <= " + str.tostring(utcHour) +
+         " < " + str.tostring(sessEndH) + "  -> idx " + str.tostring(sessIdx))
+    d := d + 1
+    f_dbg(d, "session", sessKey + " / " + sessLabel + " / code " + str.tostring(sessCode))
+    d := d + 1
+    f_dbg(d, "prev session", na(dispPrevSessKey) ? "na" :
+          dispPrevSessKey + " (code " + str.tostring(dispPrevSessCode) + ")")
+    d := d + 1
+    f_dbg(d, "transition", str.tostring(sessTransition) +
+          (sessTransition ? "  reason=" + sessTransitionReason +
+                            " code=" + str.tostring(sessTransitionCode) : ""))
+    d := d + 1
+    f_dbg(d, "bars since tr", str.tostring(barsSinceTransition))
+    d := d + 1
+    f_dbg(d, "bar closed", str.tostring(barClosed))
+    d := d + 1
+    f_dbg(d, "ctx", CTX_STATUS + " (code " + str.tostring(CTX_CODE) + ")")
+    d := d + 1
+    f_dbg(d, "ticker norm", CTX_TICKER_RAW + " -> " + CTX_TICKER_NORM)
+    d := d + 1
+    f_dbg(d, "tf seconds", str.tostring(timeframe.in_seconds()))
+    d := d + 1
+    // Marker retention horizon — makes limitation L-08 visible instead of
+    // letting an empty history look like a broken anchor.
+    //
+    // DERIVED, not counted: no global counter is kept, because a Pine function
+    // may not modify a global (CE10088). `array.size()` is what is retained, and
+    // reaching the cap is itself the signal that older markers were dropped.
+    f_dbg(d, "markers kept", str.tostring(array.size(oracleLabels)) + " / " +
+          str.tostring(i_maxObjects) +
+          (array.size(oracleLabels) >= i_maxObjects ? "  (CAP — older dropped)" : ""))
+    d := d + 1
+    f_dbg(d, "oldest marker", array.size(oracleLabels) == 0 ? "none" :
+          "bar " + str.tostring(label.get_x(array.get(oracleLabels, 0))))
+    d := d + 1
+    f_dbg(d, "full build id", ORACLE_ENGINE_ID_SHORT)
+    d := d + 1
+    f_dbg(d, "source hash", ORACLE_SOURCE_HASH_SHORT)
+
+    // ── S6 · UTC daily regime panel ─────────────────────────────────────────
+    // The daily aggregate and every indicator intermediate, so a divergence can
+    // be located at the step it began rather than after it has folded into ADX.
+    f_dbg(d, "S6 day / src", str.tostring(s6_dayKey) + " <- " +
+              str.tostring(s6_srcKey))
+    d := d + 1
+    f_dbg(d, "S6 daily OHLC", str.tostring(s6_dOpen, format.mintick) + " " +
+              str.tostring(s6_dHigh, format.mintick) + " " +
+              str.tostring(s6_dLow, format.mintick) + " " +
+              str.tostring(s6_dClose, format.mintick) +
+              "  (" + str.tostring(s6_dBars) + " bars)")
+    d := d + 1
+    f_dbg(d, "S6 day index", str.tostring(s6_dayIndex) + " of chart history")
+    d := d + 1
+    f_dbg(d, "S6 ema/px", str.tostring(s6_fEma, format.mintick) + "  px " +
+              str.tostring(s6_fPxVsEma) + "%")
+    d := d + 1
+    f_dbg(d, "S6 bb basis/sd", str.tostring(s6_fBasis, format.mintick) + " / " +
+              str.tostring(s6_fSd))
+    d := d + 1
+    f_dbg(d, "S6 bbw", str.tostring(s6_fBbw) + " vs " +
+              str.tostring(REGIME_BBW_THRESHOLD) +
+              (na(s6_fBbw) ? "" : s6_fBbw > REGIME_BBW_THRESHOLD ? "  EXPAND" :
+                   "  COMPRESS"))
+    d := d + 1
+    f_dbg(d, "S6 dm/tr", "+" + str.tostring(s6_fPlusDm) + " -" +
+              str.tostring(s6_fMinusDm) + " tr " + str.tostring(s6_fTr))
+    d := d + 1
+    f_dbg(d, "S6 di/dx", "+" + str.tostring(s6_fPlusDi) + " -" +
+              str.tostring(s6_fMinusDi) + " dx " + str.tostring(s6_fDx))
+    d := d + 1
+    f_dbg(d, "S6 adx", str.tostring(s6_fAdx) + " vs " +
+              str.tostring(REGIME_ADX_CHOP) +
+              (na(s6_fAdx) ? "" : s6_fAdx < REGIME_ADX_CHOP ? "  CHOP" : "  TREND"))
+    d := d + 1
+    f_dbg(d, "S6 state", (s6_stateCode == 0 ? "none" :
+              array.get(REGIME_STATE_NAME, s6_stateCode - 1)) +
+              (s6_transition ? "  (changed)" : ""))
+    d := d + 1
+    f_dbg(d, "S6 validity", s6_validity == CODE_REGIME_VALID ? "valid" :
+              s6_validity == CODE_REGIME_WARMUP ? "warmup" : "INVALID")
+

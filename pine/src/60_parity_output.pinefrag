@@ -1,0 +1,155 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// 60 — PARITY OUTPUT
+//
+// Pine cannot write files, so the only way to get per-bar values OUT of
+// TradingView for comparison is to plot them. These plots are the machine-
+// readable half of verification: every one has an exact counterpart field in the
+// Python trace, and all are NUMERIC — comparing background colours by eye is not
+// verification.
+//
+// `display.data_window` keeps them off the chart while still exposing them in
+// the Data Window (and in exported chart data), so the oracle stays readable.
+//
+// PACKED TRANSPORT
+// TradingView caps a script at 64 plots and raises RE10140 at RUNTIME on a live
+// chart — the compiler does not catch it. Small-integer fields therefore travel
+// several-to-a-plot. Every multiplier, width and offset below is GENERATED from
+// tools/oracle/session_codes.py::PACKED_SPEC, which is also what the comparator
+// decodes with; there is deliberately no hand-written radix arithmetic here.
+// `f_packv` (fragment 10) applies the offset and clamps, so an overflow fails
+// the comparison rather than corrupting a neighbouring field.
+//
+// HOW TO COMPARE  (see docs/tradingview_visual_oracle_maintenance.md §S1)
+//   1. python -m tools.oracle.export_trace ... --output trace.json
+//   2. open the same fixture window on TradingView at the same timeframe
+//   3. export chart data, then run tools.oracle.compare_stages — it unpacks
+//      through PACKED_SPEC and diffs field by field
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── S1 ───────────────────────────────────────────────────────────────────────
+plot(utcEpochMs,           "oracleBarEpochMs",     display = display.data_window)
+plot(dayKey,               "oracleDayKey",         display = display.data_window)
+plot(barsSinceTransition,  "oracleBarsSinceTrans", display = display.data_window)
+// PACKED: session · utcHour · transition · fallback · context.
+plot(f_packv(sessCode,             PACK_S1_W0, PACK_S1_O0) * PACK_S1_0 +
+     f_packv(utcHour,              PACK_S1_W1, PACK_S1_O1) * PACK_S1_1 +
+     f_packv(sessTransitionCode,   PACK_S1_W2, PACK_S1_O2) * PACK_S1_2 +
+     f_packv(sessIsFall ? 1 : 0,   PACK_S1_W3, PACK_S1_O3) * PACK_S1_3 +
+     f_packv(CTX_CODE,             PACK_S1_W4, PACK_S1_O4) * PACK_S1_4,
+     "oracleS1Codes", display = display.data_window)
+plot(barClosed ? 1 : 0,    "oracleBarClosed",      display = display.data_window)
+plot(ORACLE_BUILD_CODE,    "oracleBuildCode",      display = display.data_window)
+
+// ── S2 ───────────────────────────────────────────────────────────────────────
+// Prices are compared under a tolerance, not exactly: TradingView's CSV export
+// rounds, and the feeds differ. The BRANCH flags are exact — those are decisions,
+// not measurements — and travel packed.
+plot(s2_tr,                "oracleTrueRange",      display = display.data_window)
+plot(s2_atr,               "oracleAtr",            display = display.data_window)
+plot(s2_atr_prev,          "oracleAtrPrev",        display = display.data_window)
+plot(s2_measure,           "oracleVolMeasure",     display = display.data_window)
+plot(s2_parsed_high,       "oracleParsedHigh",     display = display.data_window)
+plot(s2_parsed_low,        "oracleParsedLow",      display = display.data_window)
+// PACKED: volatility flip · ATR warm-up.
+plot(f_packv(s2_high_vol  ? 1 : 0, PACK_S2_W0, PACK_S2_O0) * PACK_S2_0 +
+     f_packv(s2_atr_warm  ? 1 : 0, PACK_S2_W1, PACK_S2_O1) * PACK_S2_1,
+     "oracleS2Codes", display = display.data_window)
+
+// ── S3 ───────────────────────────────────────────────────────────────────────
+// PACKED: ready · newLegHigh · newLegLow · currentLeg · legChange · swingCreated ·
+// hasSwingHigh · swingHighCrossed · hasSwingLow · swingLowCrossed.
+// legChange is -1..+1 and is lifted by its GENERATED offset, not a literal +1.
+plot(f_packv(s3_ready ? 1 : 0,                PACK_S3_W0, PACK_S3_O0) * PACK_S3_0 +
+     f_packv(s3_new_leg_high ? 1 : 0,         PACK_S3_W1, PACK_S3_O1) * PACK_S3_1 +
+     f_packv(s3_new_leg_low ? 1 : 0,          PACK_S3_W2, PACK_S3_O2) * PACK_S3_2 +
+     f_packv(s3_current_leg,                  PACK_S3_W3, PACK_S3_O3) * PACK_S3_3 +
+     f_packv(s3_leg_change,                   PACK_S3_W4, PACK_S3_O4) * PACK_S3_4 +
+     f_packv(s3_created,                      PACK_S3_W5, PACK_S3_O5) * PACK_S3_5 +
+     f_packv(na(s3_swing_high_level) ? 0 : 1, PACK_S3_W6, PACK_S3_O6) * PACK_S3_6 +
+     f_packv(s3_swing_high_crossed ? 1 : 0,   PACK_S3_W7, PACK_S3_O7) * PACK_S3_7 +
+     f_packv(na(s3_swing_low_level) ? 0 : 1,  PACK_S3_W8, PACK_S3_O8) * PACK_S3_8 +
+     f_packv(s3_swing_low_crossed ? 1 : 0,    PACK_S3_W9, PACK_S3_O9) * PACK_S3_9,
+     "oracleS3Codes", display = display.data_window)
+plot(s3_swing_high_level,        "oracleSwingHigh",     display = display.data_window)
+plot(s3_swing_high_seq,          "oracleSwingHighSeq",  display = display.data_window)
+plot(s3_swing_low_level,         "oracleSwingLow",      display = display.data_window)
+plot(s3_swing_low_seq,           "oracleSwingLowSeq",   display = display.data_window)
+
+// ── S4 ───────────────────────────────────────────────────────────────────────
+// PACKED: bias · structure event · event count.
+// `oracleTrend` USED to be plotted here. It was a pure duplicate: Python read
+// `swing_trend_bias` for both it and `oracleBias`, and
+// `s4_trend = bias == BIAS_BULLISH ? 1 : bias == BIAS_BEARISH ? -1 : 0` is the
+// identity map when the contract pins BULLISH = 1 and BEARISH = -1. It cost a
+// plot and proved nothing `oracleBias` did not.
+plot(f_packv(s4_bias,        PACK_S4_W0, PACK_S4_O0) * PACK_S4_0 +
+     f_packv(s4_event_code,  PACK_S4_W1, PACK_S4_O1) * PACK_S4_1 +
+     f_packv(s4_event_count, PACK_S4_W2, PACK_S4_O2) * PACK_S4_2,
+     "oracleS4Codes", display = display.data_window)
+plot(s4_broken_level,      "oracleBrokenLevel",    display = display.data_window)
+plot(s4_history_warn ? 1 : 0, "oracleHistoryWarn", display = display.data_window)
+
+// ── S5 ───────────────────────────────────────────────────────────────────────
+// `oracleObId` is EXPECTED to differ from production's (limitation L-05): the
+// counter starts at the first bar of loaded history, not in 2015. It is exported
+// so the SEQUENCE can be checked — dense, gap-free, incremented only on append.
+// PACKED (per-bar decisions, reset every bar): candidates · created · reject ·
+// side · tag.
+plot(f_packv(s5_candidate_count, PACK_S5A_W0, PACK_S5A_O0) * PACK_S5A_0 +
+     f_packv(s5_created_count,   PACK_S5A_W1, PACK_S5A_O1) * PACK_S5A_1 +
+     f_packv(s5_last_reject,     PACK_S5A_W2, PACK_S5A_O2) * PACK_S5A_2 +
+     f_packv(s5_last_side,       PACK_S5A_W3, PACK_S5A_O3) * PACK_S5A_3 +
+     f_packv(s5_last_tag,        PACK_S5A_W4, PACK_S5A_O4) * PACK_S5A_4,
+     "oracleS5Codes", display = display.data_window)
+// PACKED (latched identity, in bars back from the break bar): originBack ·
+// pivotBack. `na` before the first candidate maps to code 0 via the generated
+// offset — see f_packv.
+plot(f_packv(s5_last_origin_back, PACK_S5B_W0, PACK_S5B_O0) * PACK_S5B_0 +
+     f_packv(s5_last_pivot_back,  PACK_S5B_W1, PACK_S5B_O1) * PACK_S5B_1,
+     "oracleS5Ids", display = display.data_window)
+plot(s5_last_top,          "oracleObTop",         display = display.data_window)
+plot(s5_last_bottom,       "oracleObBottom",      display = display.data_window)
+plot(s5_last_width,        "oracleObWidthPips",   display = display.data_window)
+plot(s5_last_ob_id,        "oracleObId",          display = display.data_window)
+plot(s5_active_count,      "oracleObActive",      display = display.data_window)
+plot(s5_last_break_level,  "oracleObBreakLevel",  display = display.data_window)
+// Bounded summary of the ACCEPTED inventory. bar_index is feed-local (L-09) and
+// ob_id is history-local (L-05), so neither can be compared directly — but a
+// running total over every accepted bound can, and it fails loudly the moment a
+// single box differs anywhere in the loaded window.
+plot(s5_checksum,          "oracleObChecksum",    display = display.data_window)
+
+// ── S6 ───────────────────────────────────────────────────────────────────────
+// The DAILY values are those of the last COMPLETED UTC day — the one the current
+// day's state was classified from. They are constant across every intraday bar
+// of a day, which is what makes them comparable against a per-day Python panel.
+plot(s6_srcKey,            "oracleRgSrcDay",      display = display.data_window)
+plot(s6_dOpen,             "oracleRgDayOpen",     display = display.data_window)
+plot(s6_dHigh,             "oracleRgDayHigh",     display = display.data_window)
+plot(s6_dLow,              "oracleRgDayLow",      display = display.data_window)
+plot(s6_dClose,            "oracleRgDayClose",    display = display.data_window)
+plot(s6_dBars,             "oracleRgDayBars",     display = display.data_window)
+plot(s6_fEma,              "oracleRgEma",         display = display.data_window)
+plot(s6_fPxVsEma,          "oracleRgPxVsEma",     display = display.data_window)
+plot(s6_fBasis,            "oracleRgBasis",       display = display.data_window)
+plot(s6_fSd,               "oracleRgSd",          display = display.data_window)
+plot(s6_fUpper,            "oracleRgUpper",       display = display.data_window)
+plot(s6_fLower,            "oracleRgLower",       display = display.data_window)
+plot(s6_fBbw,              "oracleRgBbw",         display = display.data_window)
+plot(s6_fAdx,              "oracleRgAdx",         display = display.data_window)
+// PACKED: trend · volatility · chop · state · prevState · validity.
+plot(f_packv(s6_trendCode,     PACK_S6_W0, PACK_S6_O0) * PACK_S6_0 +
+     f_packv(s6_volCode,       PACK_S6_W1, PACK_S6_O1) * PACK_S6_1 +
+     f_packv(s6_chopCode,      PACK_S6_W2, PACK_S6_O2) * PACK_S6_2 +
+     f_packv(s6_stateCode,     PACK_S6_W3, PACK_S6_O3) * PACK_S6_3 +
+     f_packv(s6_prevStateCode, PACK_S6_W4, PACK_S6_O4) * PACK_S6_4 +
+     f_packv(s6_validity,      PACK_S6_W5, PACK_S6_O5) * PACK_S6_5,
+     "oracleRgCodes", display = display.data_window)
+plot(s6_dayIndex,          "oracleRgDayIndex",    display = display.data_window)
+
+// Alert payload — the bulk-export path when hovering bar by bar is impractical.
+// One line per transition, in a fixed field order a script can split on "|".
+alertcondition(sessTransition,
+     title = "Oracle session transition",
+     message = "ORACLE|{{time}}|sess={{plot('oracleS1Codes')}}" +
+               "|day={{plot('oracleDayKey')}}|build={{plot('oracleBuildCode')}}")

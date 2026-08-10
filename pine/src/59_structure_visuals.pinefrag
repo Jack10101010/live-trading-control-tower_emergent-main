@@ -1,0 +1,117 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// 59 — S2/S3/S4 VISUALS
+//
+// Event-driven only. Nothing is drawn on every bar, and every drawing goes
+// through the shared retention buffer so the object budget stays deterministic
+// (limitation L-08). S2 intermediates are debug-only: they are inputs to Stage
+// S5, not structure a reader needs on the default chart.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── S2 (debug only) ──────────────────────────────────────────────────────────
+// The parsed high/low CROSSES were removed when the script hit TradingView's
+// 64-plot ceiling (RE10140 at 82 plots, raised at RUNTIME on a live chart).
+// Nothing verifiable was lost: the values are still exported as
+// `oracleParsedHigh` / `oracleParsedLow` and still shown in the debug table —
+// only the on-chart marker is gone, and a marker is not evidence.
+//
+// A flipped bar is where parsed_high < parsed_low. It cannot produce a tradeable
+// candidate (risk <= 0), so it is worth seeing while debugging S5 prerequisites.
+plotchar(i_debug and s2_high_vol, "volFlip", "◆", location.belowbar,
+     color = color.new(color.orange, 20), size = size.tiny)
+
+// ── S3: active uncrossed swing levels ────────────────────────────────────────
+// Only ever TWO lines — production retains one swing per side, so drawing more
+// would misrepresent the state. These are LINE OBJECTS rather than plots: a plot
+// costs one of the 64 slots on every bar, while two lines cost none and are
+// bounded by construction (created once, moved thereafter).
+var line s3_hiLine = na
+var line s3_loLine = na
+if barstate.islast
+    bool showHi = i_showSwings and not na(s3_swing_high_level)
+         and not s3_swing_high_crossed
+    bool showLo = i_showSwings and not na(s3_swing_low_level)
+         and not s3_swing_low_crossed
+    line.delete(s3_hiLine)
+    line.delete(s3_loLine)
+    if showHi
+        s3_hiLine := line.new(math.max(bar_index - 300, 0), s3_swing_high_level,
+             bar_index, s3_swing_high_level, color = color.new(#EF476F, 25),
+             width = 1)
+    if showLo
+        s3_loLine := line.new(math.max(bar_index - 300, 0), s3_swing_low_level,
+             bar_index, s3_swing_low_level, color = color.new(#06D6A0, 25),
+             width = 1)
+
+// Swing confirmation markers, drawn AT THE PIVOT BAR (swing_length back), which
+// is where production records them — not at the bar that confirmed them.
+if CTX_OK and barClosed and i_showSwingMarks and s3_created != 0
+    f_pushLabel(label.new(bar_index - SWING_LENGTH,
+         s3_created == 1 ? s3_swing_high_level : s3_swing_low_level,
+         s3_created == 1 ? "SH" : "SL",
+         style = s3_created == 1 ? label.style_label_down : label.style_label_up,
+         size = size.tiny, textcolor = color.white,
+         color = s3_created == 1 ? color.new(#EF476F, 25) : color.new(#06D6A0, 25),
+         tooltip = "confirmed " + (s3_created == 1 ? "swing high" : "swing low") +
+                   " · pivot bar " + str.tostring(bar_index - SWING_LENGTH) +
+                   " · confirmed " + str.tostring(SWING_LENGTH) + " bars later" +
+                   " · seq " + str.tostring(s3_created == 1 ? s3_swing_high_seq
+                                                            : s3_swing_low_seq)))
+
+// ── S4: structure events ─────────────────────────────────────────────────────
+f_eventText(int c) =>
+    c == CODE_EV_BOS_BULL   ? "BOS"   :
+     c == CODE_EV_CHOCH_BULL ? "CHoCH" :
+     c == CODE_EV_BOS_BEAR   ? "BOS"   :
+     c == CODE_EV_CHOCH_BEAR ? "CHoCH" : ""
+
+f_eventIsBull(int c) =>
+    c == CODE_EV_BOS_BULL or c == CODE_EV_CHOCH_BULL
+
+// A BREAK IS A LEVEL BEING CROSSED, so the drawing is a LEVEL, not a badge.
+//
+// The previous version stamped a `BOS`/`CHoCH` label at the break bar. It said an
+// event happened but not WHAT WAS BROKEN, and at one label per event it buried
+// the price action. Now: a line runs from the swing that was broken to the bar
+// that broke it, with a compact `BOS` / `CH` chip at its midpoint. The line IS
+// the answer to "which level went".
+//
+// The left edge is the pivot bar of the broken swing. `s4_broken_bar` is tracked
+// in fragment 58; where it is unavailable the line falls back to a short stub so
+// the event is still visible rather than silently skipped.
+if CTX_OK and barClosed and i_showStructure and s4_event_code != 0
+    bull = f_eventIsBull(s4_event_code)
+    isChoch = s4_event_code == CODE_EV_CHOCH_BULL or s4_event_code == CODE_EV_CHOCH_BEAR
+    // Bull breaks take out a swing HIGH, bear breaks a swing LOW — colour by
+    // direction so the chart reads without decoding the tag.
+    col = bull ? #26A69A : #EF5350
+    x0 = na(s4_broken_bar) or s4_broken_bar <= 0 ? bar_index - 1 : s4_broken_bar
+    mid = x0 + math.max(1, math.round((bar_index - x0) / 2))
+
+    f_pushLine(line.new(x0, s4_broken_level, bar_index, s4_broken_level,
+         color = color.new(col, 20), width = 1,
+         style = isChoch ? line.style_dashed : line.style_solid))
+
+    // Compact chip at the middle of the line. `CH` rather than `CHoCH`: at
+    // size.tiny the longer word is what made the old chart unreadable. Optional
+    // — the line alone carries the level, which is the part that matters.
+    if i_showStructLabels
+        f_pushLabel(label.new(mid, s4_broken_level,
+         (isChoch ? "CH" : "BOS") + (s4_event_count > 1 ? "×2" : ""),
+         style = label.style_label_center, size = size.tiny,
+         textcolor = color.white, color = color.new(col, 15),
+         tooltip = (isChoch ? "CHoCH" : "BOS") + " " +
+                   (bull ? "bullish" : "bearish") +
+                   "\nbroke " + str.tostring(s4_broken_level, format.mintick) +
+                   "\nbias " + str.tostring(s4_bias_before) + " -> " +
+                   str.tostring(s4_bias) +
+                   (s4_event_count > 1 ? "\nTWO events on this bar (bull first)"
+                                       : "")))
+
+    // The old standalone marker, kept behind the structure-line toggle for
+    // anyone who wants the break bar itself flagged at the candle.
+    if i_showStructLines
+        f_pushLabel(label.new(bar_index, bull ? high : low,
+             f_eventText(s4_event_code),
+             style = bull ? label.style_label_down : label.style_label_up,
+             size = size.tiny, textcolor = color.white,
+             color = color.new(col, 25)))

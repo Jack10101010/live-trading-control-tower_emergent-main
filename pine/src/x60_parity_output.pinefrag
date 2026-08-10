@@ -1,0 +1,50 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// x60 — PARITY OUTPUT (execution oracle)
+//
+// The execution build starts its plot budget from zero and spends it only on
+// what can be PROVED today: the derived detection frame. S7's own fields are
+// not plotted, because S7 is not implemented and a column of zeros that looks
+// like evidence is worse than no column.
+//
+// What these five prove is the cross-timeframe handoff — that this script's
+// derived 15-minute frame is the same frame `resample_candles` produces:
+//
+//   oracleXfBucket   the confirmed bucket LABEL (epoch ms, left edge). Joining
+//                    on this against the detection oracle's own bars is what
+//                    shows the two agree about WHICH bars exist — the 28.8% of
+//                    empty buckets production drops are absent from both or the
+//                    join fails loudly.
+//   oracleXfOpen/High/Low/Close   first / max / min / last over the bucket.
+//   oracleXfCodes    packed: bar count, new-bar flag, context, warm-up.
+//
+// `oracleXfBucket` is a TIMESTAMP, not a bar index, and is therefore comparable
+// across feeds — unlike `bar_index` (L-09).
+// ─────────────────────────────────────────────────────────────────────────────
+
+plot(xf_detBucket,      "oracleXfBucket",  display = display.data_window)
+plot(xf_detOpen,        "oracleXfOpen",    display = display.data_window)
+plot(xf_detHigh,        "oracleXfHigh",    display = display.data_window)
+plot(xf_detLow,         "oracleXfLow",     display = display.data_window)
+plot(xf_detClose,       "oracleXfClose",   display = display.data_window)
+
+// PACKED: 1-minute bars in the bucket · new-bar flag · data context · warm-up.
+// A 15-minute bucket holds at most 15 one-minute bars, so width 16 is exact
+// rather than generous; a value of 16 would mean the bucket arithmetic is wrong,
+// and `f_packv` clamps it into a value the comparator cannot match.
+plot(f_packv(xf_detBars,               PACK_X1_W0, PACK_X1_O0) * PACK_X1_0 +
+     f_packv(xf_newDetectionBar ? 1 : 0, PACK_X1_W1, PACK_X1_O1) * PACK_X1_1 +
+     f_packv(CTX_CODE,                 PACK_X1_W2, PACK_X1_O2) * PACK_X1_2 +
+     f_packv(xf_frameWarm ? 1 : 0,     PACK_X1_W3, PACK_X1_O3) * PACK_X1_3,
+     "oracleXfCodes", display = display.data_window)
+
+// Running totals. Confirmed detection bars and dropped empty buckets together
+// account for every 15-minute slot the loaded window spans, so a disagreement in
+// either is visible without hunting for the bar it started on.
+plot(xf_detCount,       "oracleXfBarCount", display = display.data_window)
+plot(xf_detGaps,        "oracleXfGapCount", display = display.data_window)
+
+// The boundary marker. Drawn on the FIRST 1-minute bar after a bucket closes,
+// which is the instant the bucket becomes readable — the visible form of the
+// causality claim in fragment x30.
+plotchar(i_showFrame and xf_newDetectionBar, "detectionBar", "▏",
+     location.bottom, color = color.new(#2E86DE, 40), size = size.tiny)

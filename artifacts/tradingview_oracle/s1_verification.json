@@ -1,0 +1,247 @@
+{
+ "global_status": "PARTIAL",
+ "pine_static": {
+  "all_pass": true,
+  "constants": {
+   "ORACLE_CONTRACT_SCHEMA": "1.0.0",
+   "ORACLE_ENGINE_HASH": "f0ba3e6d0d78b16a937ef77e83fc77cb9fe7543f8b08a0ce796fbaf4cb88c24b",
+   "ORACLE_GLOBAL_STATUS": "PARTIAL",
+   "ORACLE_S1_STATUS": "UNVERIFIED",
+   "ORACLE_SYMBOL": "EURUSD",
+   "ORACLE_TRACE_SCHEMA": "1.1.0",
+   "SESSION_CODE": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "SESSION_KEY": [
+    "asia",
+    "london",
+    "lull",
+    "newYork",
+    "ny_pm"
+   ]
+  },
+  "cross_checks": [
+   {
+    "detail": "pine=f0ba3e6d0d78b16a\u2026 trace=f0ba3e6d0d78b16a\u2026",
+    "invariant": "pine_matches_trace_fingerprint",
+    "result": "PASS"
+   },
+   {
+    "detail": "pine=1.1.0 tool=1.1.0",
+    "invariant": "pine_trace_schema_matches",
+    "result": "PASS"
+   },
+   {
+    "detail": "codes agree",
+    "invariant": "pine_session_codes_match_contract",
+    "result": "PASS"
+   },
+   {
+    "detail": "S1=UNVERIFIED global=PARTIAL",
+    "invariant": "pine_status_not_overclaimed",
+    "result": "PASS"
+   }
+  ],
+  "lint_errors": []
+ },
+ "python_side": {
+  "all_pass": true,
+  "fixtures": [
+   {
+    "bars": 96,
+    "checks": [
+     {
+      "detail": "96 bars (expect 96 = 1440/15)",
+      "invariant": "full_day_bars",
+      "result": "PASS"
+     },
+     {
+      "detail": "6 transitions (first_bar + 5 session changes)",
+      "invariant": "six_transitions",
+      "result": "PASS"
+     },
+     {
+      "detail": "day keys: ['2026-01-05']",
+      "invariant": "one_day_key",
+      "result": "PASS"
+     }
+    ],
+    "fixture_id": "F-S1-DAY",
+    "status": "PASS",
+    "timeframe": "15min"
+   },
+   {
+    "bars": 18,
+    "checks": [
+     {
+      "detail": "all [start, end) boundaries correct",
+      "invariant": "boundary_inclusivity",
+      "result": "PASS"
+     }
+    ],
+    "fixture_id": "F-S1-BOUNDARIES",
+    "status": "PASS",
+    "timeframe": "1min"
+   },
+   {
+    "bars": 119,
+    "checks": [
+     {
+      "detail": "2 rollovers, 1 at 00:00 UTC",
+      "invariant": "day_rollover",
+      "result": "PASS"
+     }
+    ],
+    "fixture_id": "F-S1-MIDNIGHT",
+    "status": "PASS",
+    "timeframe": "1min"
+   },
+   {
+    "bars": 64,
+    "checks": [
+     {
+      "detail": "1 multi-hour gap(s); none produced a session transition (both sides sit inside `outside`)",
+      "invariant": "weekend_gap_is_session_invisible",
+      "result": "PASS"
+     }
+    ],
+    "fixture_id": "F-S1-WEEKEND",
+    "status": "PASS",
+    "timeframe": "15min"
+   },
+   {
+    "bars": 300,
+    "checks": [
+     {
+      "detail": "every bar maps by UTC hour; DST moved nothing",
+      "invariant": "sessions_do_not_shift",
+      "result": "PASS"
+     }
+    ],
+    "fixture_id": "F-S1-DST-US",
+    "status": "PASS",
+    "timeframe": "1min"
+   },
+   {
+    "bars": 286,
+    "checks": [
+     {
+      "detail": "every bar maps by UTC hour; DST moved nothing",
+      "invariant": "sessions_do_not_shift",
+      "result": "PASS"
+     }
+    ],
+    "fixture_id": "F-S1-DST-EU",
+    "status": "PASS",
+    "timeframe": "1min"
+   },
+   {
+    "bars": 240,
+    "checks": [
+     {
+      "detail": "every bar maps by UTC hour; DST moved nothing",
+      "invariant": "sessions_do_not_shift",
+      "result": "PASS"
+     },
+     {
+      "detail": "240 bars, 240 distinct UTC stamps",
+      "invariant": "no_repeated_utc_hour",
+      "result": "PASS"
+     }
+    ],
+    "fixture_id": "F-S1-DST-END-US",
+    "status": "PASS",
+    "timeframe": "1min"
+   },
+   {
+    "bars": 296,
+    "checks": [
+     {
+      "detail": "every bar maps by UTC hour; DST moved nothing",
+      "invariant": "sessions_do_not_shift",
+      "result": "PASS"
+     },
+     {
+      "detail": "296 bars, 296 distinct UTC stamps",
+      "invariant": "no_repeated_utc_hour",
+      "result": "PASS"
+     }
+    ],
+    "fixture_id": "F-S1-DST-END-EU",
+    "status": "PASS",
+    "timeframe": "1min"
+   },
+   {
+    "bars": 91,
+    "checks": [
+     {
+      "detail": "91 bars < 96 \u2014 empty intervals dropped, so bar_index is not a time grid (L-09)",
+      "invariant": "gap_drops_bars",
+      "result": "PASS"
+     }
+    ],
+    "fixture_id": "F-S1-GAP",
+    "status": "PASS",
+    "timeframe": "15min"
+   },
+   {
+    "bars": 61,
+    "checks": [
+     {
+      "detail": "2 duplicate input rows survive into the trace \u2014 production does NOT de-duplicate",
+      "invariant": "duplicates_preserved",
+      "result": "PASS"
+     }
+    ],
+    "fixture_id": "F-S1-DUPLICATE",
+    "status": "PASS",
+    "timeframe": "1min"
+   },
+   {
+    "bars": 60,
+    "checks": [
+     {
+      "detail": "30 out-of-order input rows silently re-sorted by production",
+      "invariant": "reordered_ascending",
+      "result": "PASS"
+     }
+    ],
+    "fixture_id": "F-S1-OUTOFORDER",
+    "status": "PASS",
+    "timeframe": "1min"
+   }
+  ]
+ },
+ "s1_status": "UNVERIFIED",
+ "s1_status_reason": "Python-side invariants and Pine static validation pass, but no TradingView comparison has been recorded. S1 is promoted to MATCHED only by `--record PASS` after the checklist is completed.",
+ "stage": "S1",
+ "tradingview_comparison": {
+  "checklist": "artifacts/tradingview_oracle/s1_tv_checklist.md",
+  "performed": false,
+  "reason": "TradingView cannot be executed from this environment; it has no headless or API run path. The Pine half of S1 parity is unproven until an operator completes the checklist."
+ },
+ "unsupported_contexts": {
+  "all_pass": true,
+  "checks": [
+   {
+    "detail": "unsupported symbol",
+    "invariant": "refuse[GBPUSD/15min]",
+    "result": "PASS"
+   },
+   {
+    "detail": "H4 straddles a session boundary",
+    "invariant": "refuse[EURUSD/H4]",
+    "result": "PASS"
+   },
+   {
+    "detail": "daily is not a production timeframe",
+    "invariant": "refuse[EURUSD/1440min]",
+    "result": "PASS"
+   }
+  ]
+ }
+}

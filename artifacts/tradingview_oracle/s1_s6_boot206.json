@@ -1,0 +1,389 @@
+{
+ "coverage": {
+  "_note": "bars on only one side are FEED_DIFFERENCE (L-02), not a Pine defect; they are excluded, not failed. warmup_bars_excluded is a DECLARED exclusion \u2014 a stage that only passes because of it can be seen to have done so.",
+  "bars_in_both": 17606,
+  "bars_shared_before_warmup": 17812,
+  "first_shared_bar": "2025-10-03 00:30",
+  "last_shared_bar": "2026-06-19 09:45",
+  "measured_convergence": {
+   "_note": "With a MATCHED start these are all zero \u2014 both sides seed identically. They quantify what a mismatched start costs.",
+   "atr_within_1e9_bar": 2000,
+   "bias_converges_bar": 122,
+   "flip_decisions_differing": 3,
+   "swings_converge_bar": 84
+  },
+  "python_only": 0,
+  "tradingview_only": 3193,
+  "warmup_bars_excluded": 206,
+  "warmup_window": [
+   "2025-09-30 21:00",
+   "2025-10-03 00:15"
+  ]
+ },
+ "export": {
+  "file": "TV_ORACLE_OANDA_EURUSD_15M_S1-S6_PACKED.csv",
+  "missing_columns": {},
+  "rows": 21005,
+  "sha256": "eb418af3fd1f0d9f8cc141a2a554f94db12df4738f73c8721f41c0187e4b00fb"
+ },
+ "feed": "OANDA:EURUSD",
+ "fixture": "F-TV-S1S5",
+ "input_basis": {
+  "means": "Python was re-run over the EXPORT'S OWN OHLC, so both sides saw byte-identical bars. The feed is eliminated as a variable: any divergence is Pine logic or a seed/warm-up boundary. This does NOT show that a chart on this feed reproduces production's values.",
+  "mode": "chart_bars",
+  "rebased_bars": 17812
+ },
+ "result": "PASS",
+ "results": {
+  "S1": {
+   "compared": 17606,
+   "examples": [],
+   "fields": {
+    "oracleBarsSinceTrans": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleDayKey": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleS1Codes": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 17606,
+     "result": "PASS"
+    }
+   },
+   "first_divergence": null,
+   "price_tolerance": 0.0,
+   "result": "PASS"
+  },
+  "S2": {
+   "compared": 17606,
+   "examples": [],
+   "fields": {
+    "oracleAtr": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleAtrWarm": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleParsedHigh": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleParsedLow": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleTrueRange": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleVolFlip": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleVolMeasure": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 17606,
+     "result": "PASS"
+    }
+   },
+   "first_divergence": null,
+   "price_tolerance": 5e-05,
+   "result": "PASS"
+  },
+  "S3": {
+   "compared": 17606,
+   "examples": [],
+   "fields": {
+    "oracleS3Codes": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleSwingHigh": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleSwingLow": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 17606,
+     "result": "PASS"
+    }
+   },
+   "first_divergence": null,
+   "price_tolerance": 1e-06,
+   "result": "PASS"
+  },
+  "S4": {
+   "compared": 17606,
+   "examples": [],
+   "fields": {
+    "oracleBias": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleBrokenLevel": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleStructEvent": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleStructEventCount": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleTrend": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 17606,
+     "result": "PASS"
+    }
+   },
+   "first_divergence": null,
+   "price_tolerance": 1e-06,
+   "result": "PASS"
+  },
+  "S5": {
+   "compared": 17606,
+   "examples": [],
+   "fields": {
+    "oracleObActive": {
+     "fail": 0,
+     "kind": "cumulative",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleObBottom": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleObBreakLevel": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleObCandidates": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleObChecksum": {
+     "fail": 0,
+     "kind": "cumulative",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleObCreated": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleObOriginBack": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleObPivotBack": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleObReject": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleObSide": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleObTag": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleObTop": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 17606,
+     "result": "PASS"
+    },
+    "oracleObWidthPips": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 17606,
+     "result": "PASS"
+    }
+   },
+   "first_divergence": null,
+   "price_tolerance": 5e-05,
+   "result": "PASS"
+  },
+  "S6": {
+   "compared": 16264,
+   "examples": [],
+   "fields": {
+    "oracleRgAdx": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 16264,
+     "result": "PASS"
+    },
+    "oracleRgBasis": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 16264,
+     "result": "PASS"
+    },
+    "oracleRgBbw": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 16264,
+     "result": "PASS"
+    },
+    "oracleRgCodes": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 16264,
+     "result": "PASS"
+    },
+    "oracleRgDayClose": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 16264,
+     "result": "PASS"
+    },
+    "oracleRgDayHigh": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 16264,
+     "result": "PASS"
+    },
+    "oracleRgDayLow": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 16264,
+     "result": "PASS"
+    },
+    "oracleRgDayOpen": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 16264,
+     "result": "PASS"
+    },
+    "oracleRgEma": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 16264,
+     "result": "PASS"
+    },
+    "oracleRgLower": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 16264,
+     "result": "PASS"
+    },
+    "oracleRgPxVsEma": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 16264,
+     "result": "PASS"
+    },
+    "oracleRgSd": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 16264,
+     "result": "PASS"
+    },
+    "oracleRgSrcDay": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 16264,
+     "result": "PASS"
+    },
+    "oracleRgUpper": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 16264,
+     "result": "PASS"
+    }
+   },
+   "first_divergence": null,
+   "price_tolerance": 5e-05,
+   "result": "PASS"
+  }
+ },
+ "schema": "tradingview-oracle-stage-comparison-v1",
+ "stages": [
+  "S1",
+  "S2",
+  "S3",
+  "S4",
+  "S5",
+  "S6"
+ ],
+ "timeframe": "15min",
+ "trace": {
+  "oracle_engine_hash": "f9f6cf7e8d731176b58e08860e77a86896c496feb260e644fa48a0f788749ceb",
+  "oracle_engine_id": "lux-6cb6cbc_cfg-a4cb908_pol-d1dfc11_c1.0.0_t1.4.0_g0.5.1",
+  "sections_implemented": [
+   "time",
+   "session",
+   "utc_day",
+   "data_context",
+   "volatility",
+   "swings",
+   "structure",
+   "order_blocks",
+   "regime"
+  ],
+  "trace_schema_version": "1.4.0"
+ }
+}

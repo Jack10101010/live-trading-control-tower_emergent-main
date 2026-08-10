@@ -1,0 +1,10 @@
+{
+ "schema": "tradingview-oracle-execution-feed-v1",
+ "source_name": "EURUSD_1m_live.csv",
+ "source_sha256": "f0d5aad661ab60de62249740f0de3e90974d73cd23c833629bedf19c840b128b",
+ "rows": 51861,
+ "first": "2026-06-19 00:01:00+00:00",
+ "last": "2026-08-10 13:03:00+00:00",
+ "dropped_trailing_row": true,
+ "_note": "The LIVE MT5 1-minute segment. It is NOT the frozen historical source; anything recorded from it must say so."
+}

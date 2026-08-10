@@ -1,0 +1,82 @@
+{
+ "compared": 21,
+ "config": {
+  "can_fill_is_constant": true,
+  "delay_candles": 3,
+  "detection_timeframe": "15min",
+  "entry_level_pct": 0.0,
+  "entry_model": "triggered_edge",
+  "execution_basis": "candle_file",
+  "execution_mode": "allow_multi_position",
+  "inert_branches": {
+   "REGIME_BLOCKED": {
+    "flag": "regime_gate_enabled",
+    "reason": "regime_gate_enabled = False, so regime_emit_for_run returns None",
+    "source": "strategy_core/execution.py:2662",
+    "stage": "S8"
+   },
+   "REVERSE_TOUCH_CANCEL": {
+    "flag": "reverse_touch_cancel_enabled",
+    "reason": "hard-forced False in run_backtest.simulation_kwargs",
+    "source": "strategy_core/execution.py:2600-2631",
+    "stage": "S7"
+   },
+   "SESSION_FILTERED": {
+    "flag": "session_filter_enabled",
+    "reason": "session_filter_enabled = False",
+    "source": "strategy_core/execution.py:2647",
+    "stage": "S8"
+   }
+  },
+  "news_blackout_enabled": true,
+  "news_cancel_if_touched_during_blackout": true,
+  "news_pause_pending_orders": true,
+  "pip_size": 0.0001,
+  "stop_buffer": 0.0001,
+  "trade_direction": "both",
+  "trigger_threshold_pct": 25.0
+ },
+ "decidability": {
+  "_note": "a setup whose arm and outcome share one chart bar cannot be resolved from that bar's OHLC \u2014 the chart has no way to order the events inside it",
+  "arm_and_outcome_in_different_chart_bars": 6,
+  "arm_and_outcome_in_one_chart_bar": 6,
+  "chart_minutes": 15,
+  "delay_expires_inside_the_arm_chart_bar": 9,
+  "resolved_setups": 12,
+  "share_undecidable": 0.5
+ },
+ "examples": [
+  {
+   "armed": false,
+   "detection_time": "2026-02-11 10:30:00+00:00",
+   "ob_id": 13,
+   "ours": "NEWS_TOUCH_CANCEL",
+   "production": "FILL_GATE_READY"
+  },
+  {
+   "armed": false,
+   "detection_time": "2026-02-13 07:00:00+00:00",
+   "ob_id": 15,
+   "ours": "NEWS_TOUCH_CANCEL",
+   "production": "FILL_GATE_READY"
+  }
+ ],
+ "mismatches": 2,
+ "production_rows": 21,
+ "stats": {
+  "admitted": 21,
+  "armed": 13,
+  "execution_candles": 58854,
+  "gate_ready": 12,
+  "max_concurrent_pending": 7,
+  "never_filled_after_trigger": 1,
+  "never_triggered": 6,
+  "news_applied": true,
+  "news_paused": 19,
+  "news_touch_cancel": 2,
+  "order_blocks_seen": 21,
+  "setups": 21,
+  "suppressed": 0,
+  "tapped_before_trigger": 9
+ }
+}

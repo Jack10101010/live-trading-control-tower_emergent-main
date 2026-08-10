@@ -1,0 +1,52 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// x10 — INPUTS (execution oracle)
+//
+// Cosmetic only, exactly as in the detection build: no input may change a
+// computed value, and no input may hide a parity warning. The data-context
+// banner and the S7-unimplemented notice are rendered unconditionally.
+//
+// This build deliberately does NOT inherit the detection oracle's display
+// controls. It has no swings, no structure labels and no session shading to
+// toggle — carrying that furniture across would imply it draws things it does
+// not.
+// ─────────────────────────────────────────────────────────────────────────────
+
+grpDisplay = "Display"
+grpDebug   = "Debug"
+
+i_showHud    = input.bool(true, "Show HUD", group = grpDisplay)
+i_hudPos     = input.string("Top right", "HUD position",
+     options = ["Top right", "Top left", "Bottom right", "Bottom left", "Middle right"],
+     group = grpDisplay)
+i_hudSize    = input.string("Tiny", "HUD text size",
+     options = ["Tiny", "Small", "Normal"], group = grpDisplay)
+i_showFrame  = input.bool(true, "Mark derived 15m detection bars",
+     tooltip = "One marker on the first 1-minute bar after each 15-minute " +
+               "bucket closes. That is the instant the bucket becomes readable " +
+               "— it is what proves the frame is causal rather than a claim.",
+     group = grpDisplay)
+i_debug      = input.bool(false, "Debug mode", group = grpDebug)
+
+// ── shared chrome palette ────────────────────────────────────────────────────
+BG_HUD  = color.new(#0E1117, 8)
+BG_WARN = color.new(#B00020, 5)
+BG_STAT = color.new(#E08000, 10)
+BG_HEAD = color.new(#1A2340, 5)
+
+f_textSize() =>
+    i_hudSize == "Normal" ? size.normal : i_hudSize == "Small" ? size.small : size.tiny
+
+f_hudPosition() =>
+    i_hudPos == "Top left"      ? position.top_left :
+     i_hudPos == "Bottom right" ? position.bottom_right :
+     i_hudPos == "Bottom left"  ? position.bottom_left :
+     i_hudPos == "Middle right" ? position.middle_right :
+     position.top_right
+
+// ── packed-transport helper ─────────────────────────────────────────────────
+// Identical semantics to the detection build's `f_packv` (pine/src/10_inputs).
+// Duplicated rather than shared because the two builds are separate scripts and
+// Pine has no include; the behaviour is pinned by the same tests.
+f_packv(float v, int width, int offset) =>
+    x = (na(v) ? -offset : v) + offset
+    x < 0 ? 0 : x > width - 1 ? width - 1 : x

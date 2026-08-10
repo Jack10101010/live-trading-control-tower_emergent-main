@@ -1,0 +1,675 @@
+{
+ "_note": "An UNKNOWN or UNCONFIRMED market state uses the BASE target \u2014 production does not block on it and does not borrow a neighbouring state's value.",
+ "base": [
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "enabled": true,
+   "present": true,
+   "session": "asia",
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "enabled": true,
+   "present": true,
+   "session": "asia",
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "enabled": true,
+   "present": true,
+   "session": "asia",
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "enabled": true,
+   "present": true,
+   "session": "asia",
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "enabled": true,
+   "present": true,
+   "session": "london",
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "enabled": true,
+   "present": true,
+   "session": "london",
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "enabled": true,
+   "present": true,
+   "session": "london",
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "enabled": true,
+   "present": true,
+   "session": "london",
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "enabled": true,
+   "present": true,
+   "session": "lull",
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "enabled": true,
+   "present": true,
+   "session": "lull",
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "enabled": true,
+   "present": true,
+   "session": "lull",
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "enabled": true,
+   "present": true,
+   "session": "lull",
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "enabled": true,
+   "present": true,
+   "session": "newYork",
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "enabled": true,
+   "present": true,
+   "session": "newYork",
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "enabled": true,
+   "present": true,
+   "session": "newYork",
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "enabled": true,
+   "present": true,
+   "session": "newYork",
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "enabled": true,
+   "present": true,
+   "session": "ny_pm",
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "enabled": true,
+   "present": true,
+   "session": "ny_pm",
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "enabled": true,
+   "present": true,
+   "session": "ny_pm",
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "enabled": true,
+   "present": true,
+   "session": "ny_pm",
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "enabled": true,
+   "present": true,
+   "session": "outside",
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "enabled": true,
+   "present": true,
+   "session": "outside",
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "enabled": true,
+   "present": true,
+   "session": "outside",
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "enabled": true,
+   "present": true,
+   "session": "outside",
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  }
+ ],
+ "config_hash": "51d0d8fc4fa089b89732da5b064eeb2e2c26ddc31de39f6779b40bc2ad96da24",
+ "counts": {
+  "addressable_cells": 144,
+  "base_cells": 24,
+  "base_cells_enabled": 24,
+  "base_cells_present": 24,
+  "cells_with_a_defined_target": 102,
+  "state_eligibility_rules": 62,
+  "state_target_overrides": 78
+ },
+ "delay_candles": 3,
+ "directions": [
+  "Long",
+  "Short"
+ ],
+ "entry_level_pct": 0.0,
+ "global_rr": 2.0,
+ "market_states": [
+  "Bull/Expand",
+  "Bull/Compress",
+  "Bull/Chop",
+  "Bear/Expand",
+  "Bear/Compress",
+  "Bear/Chop"
+ ],
+ "missing_keys": [],
+ "pip_size": 0.0001,
+ "schema": "tradingview-oracle-target-table-v1",
+ "sessions": [
+  "asia",
+  "london",
+  "lull",
+  "newYork",
+  "ny_pm",
+  "outside"
+ ],
+ "state_elig": [
+  [
+   "none",
+   "block",
+   "block",
+   "none",
+   "block",
+   "block"
+  ],
+  [
+   "none",
+   "none",
+   "block",
+   "none",
+   "none",
+   "none"
+  ],
+  [
+   "none",
+   "none",
+   "none",
+   "block",
+   "none",
+   "none"
+  ],
+  [
+   "none",
+   "block",
+   "block",
+   "none",
+   "none",
+   "none"
+  ],
+  [
+   "none",
+   "none",
+   "block",
+   "none",
+   "none",
+   "none"
+  ],
+  [
+   "block",
+   "none",
+   "none",
+   "block",
+   "block",
+   "block"
+  ],
+  [
+   "block",
+   "block",
+   "block",
+   "block",
+   "none",
+   "block"
+  ],
+  [
+   "block",
+   "none",
+   "none",
+   "none",
+   "none",
+   "none"
+  ],
+  [
+   "block",
+   "none",
+   "block",
+   "none",
+   "block",
+   "block"
+  ],
+  [
+   "none",
+   "none",
+   "block",
+   "none",
+   "none",
+   "none"
+  ],
+  [
+   "block",
+   "none",
+   "block",
+   "block",
+   "none",
+   "block"
+  ],
+  [
+   "none",
+   "none",
+   "block",
+   "none",
+   "none",
+   "none"
+  ],
+  [
+   "block",
+   "none",
+   "block",
+   "block",
+   "none",
+   "block"
+  ],
+  [
+   "none",
+   "none",
+   "none",
+   "none",
+   "none",
+   "none"
+  ],
+  [
+   "block",
+   "block",
+   "none",
+   "block",
+   "block",
+   "none"
+  ],
+  [
+   "none",
+   "none",
+   "block",
+   "none",
+   "none",
+   "none"
+  ],
+  [
+   "none",
+   "none",
+   "none",
+   "block",
+   "block",
+   "block"
+  ],
+  [
+   "none",
+   "block",
+   "block",
+   "block",
+   "block",
+   "block"
+  ],
+  [
+   "none",
+   "none",
+   "block",
+   "none",
+   "none",
+   "none"
+  ],
+  [
+   "none",
+   "none",
+   "block",
+   "none",
+   "none",
+   "none"
+  ],
+  [
+   "none",
+   "block",
+   "block",
+   "block",
+   "block",
+   "none"
+  ],
+  [
+   "block",
+   "block",
+   "block",
+   "block",
+   "none",
+   "block"
+  ],
+  [
+   "none",
+   "none",
+   "block",
+   "none",
+   "none",
+   "block"
+  ],
+  [
+   "block",
+   "block",
+   "block",
+   "none",
+   "none",
+   "none"
+  ]
+ ],
+ "state_rr": [
+  [
+   0.6,
+   null,
+   null,
+   1.25,
+   null,
+   null
+  ],
+  [
+   0.9,
+   1.5,
+   null,
+   0.8,
+   0.7,
+   1.75
+  ],
+  [
+   0.6,
+   0.7,
+   0.5,
+   null,
+   0.8,
+   0.6
+  ],
+  [
+   1.25,
+   null,
+   null,
+   0.6,
+   0.9,
+   0.8
+  ],
+  [
+   2.25,
+   1.0,
+   null,
+   2.75,
+   1.75,
+   0.9
+  ],
+  [
+   null,
+   1.75,
+   0.9,
+   null,
+   null,
+   null
+  ],
+  [
+   null,
+   null,
+   null,
+   null,
+   0.6,
+   null
+  ],
+  [
+   2.0,
+   1.75,
+   1.75,
+   1.5,
+   0.5,
+   2.75
+  ],
+  [
+   null,
+   0.8,
+   null,
+   0.5,
+   null,
+   null
+  ],
+  [
+   1.5,
+   1.0,
+   null,
+   3.0,
+   2.75,
+   0.5
+  ],
+  [
+   null,
+   0.6,
+   null,
+   null,
+   0.9,
+   null
+  ],
+  [
+   4.5,
+   1.0,
+   null,
+   1.0,
+   2.75,
+   1.0
+  ],
+  [
+   null,
+   0.5,
+   null,
+   null,
+   0.7,
+   null
+  ],
+  [
+   1.25,
+   2.0,
+   2.5,
+   0.7,
+   0.9,
+   1.0
+  ],
+  [
+   null,
+   null,
+   1.75,
+   null,
+   null,
+   2.0
+  ],
+  [
+   null,
+   null,
+   null,
+   2.0,
+   3.0,
+   2.75
+  ],
+  [
+   0.6,
+   0.5,
+   0.9,
+   null,
+   null,
+   null
+  ],
+  [
+   0.5,
+   null,
+   null,
+   null,
+   null,
+   null
+  ],
+  [
+   0.5,
+   0.5,
+   null,
+   1.25,
+   0.8,
+   1.5
+  ],
+  [
+   null,
+   null,
+   null,
+   null,
+   1.0,
+   1.25
+  ],
+  [
+   0.7,
+   null,
+   null,
+   null,
+   null,
+   1.25
+  ],
+  [
+   null,
+   null,
+   null,
+   null,
+   1.5,
+   null
+  ],
+  [
+   0.5,
+   0.5,
+   null,
+   0.9,
+   0.6,
+   null
+  ],
+  [
+   null,
+   null,
+   null,
+   1.5,
+   1.25,
+   1.0
+  ]
+ ],
+ "stop_buffer_pips": 1.0,
+ "structures": [
+  "BOS",
+  "CHoCH"
+ ],
+ "trigger_pct": 25.0
+}

@@ -1,0 +1,203 @@
+{
+ "schema": "tradingview-oracle-disputed-structure-v1",
+ "question": "Is the bullish BOS + bullish order block in early August 2026 a Pine defect, or does the canonical Python engine produce it too?",
+ "input": {
+  "basis": "PRODUCTION SEAM, NOT TradingView. Frozen Dukascopy history (data/candles/EURUSD_1m_extended_2015_2026.csv, ends 2026-06-19 09:53) + live MT5 rows after that, per live_state/market_data/provenance.json seam policy.",
+  "sha256": "d370e67ee413e9630d2d0b1d7245ddadc68224db9a718cd98a606f124c4b864a",
+  "rows": 222779,
+  "span": "2026-01-01 22:04 .. 2026-08-07 12:58 UTC",
+  "caveat": "This is NOT the TradingView/OANDA feed the chart draws. It removes the ENGINE as a variable, not the FEED. The identical-input comparison still needs a TradingView export (compare_stages --input-basis chart_bars)."
+ },
+ "engine": "lux-5edc50a_cfg-a4cb908_pol-d1dfc11_c1.0.0_t1.4.0_g0.5.1",
+ "structure_config": {
+  "swing_length": 50,
+  "ob_filter": "Atr",
+  "atr_period": 200,
+  "volatility_multiple": 2.0,
+  "_note": "S2/S3/S4 are emitted only at the detection timeframe. Production computes structure on the resampled detection frame, never on 1m, so a 1m trace carries S1 only."
+ },
+ "events": [
+  {
+   "detection_bar": "2026-08-05 18:15:00+00:00",
+   "ohlcv": {
+    "open": 1.1555,
+    "high": 1.15594,
+    "low": 1.15541,
+    "close": 1.1559,
+    "volume": 683.0
+   },
+   "s3": {
+    "warmup": false,
+    "pivot_index": 14723,
+    "pivot_high": 1.15379,
+    "pivot_low": 1.15342,
+    "right_window_max_high": 1.15594,
+    "right_window_min_low": 1.15312,
+    "new_leg_high": false,
+    "new_leg_low": false,
+    "current_leg": 1,
+    "leg_change": 0,
+    "swing_created": null,
+    "swing_high_level": 1.15588,
+    "swing_high_index": 14501,
+    "swing_high_crossed": true,
+    "swing_high_seq": 104,
+    "swing_low_level": 1.15002,
+    "swing_low_index": 14570,
+    "swing_low_crossed": false,
+    "swing_low_seq": 105
+   },
+   "s4": {
+    "warmup": false,
+    "prev_close": 1.1555,
+    "cur_close": 1.1559,
+    "swing_trend_bias": 1,
+    "events": [
+     {
+      "side": "bullish",
+      "tag": "BOS",
+      "swing_seq": 104,
+      "swing_level": 1.15588,
+      "swing_index": 14501,
+      "prev_close": 1.1555,
+      "cur_close": 1.1559,
+      "bias_before": 1,
+      "bias_after": 1,
+      "ob_id": 95
+     }
+    ],
+    "event_count": 1
+   },
+   "obs_created": [
+    {
+     "ob_id": 95,
+     "direction": "bullish",
+     "structure_tag": "BOS",
+     "top": 1.15058,
+     "bottom": 1.15002,
+     "break_level": 1.15588,
+     "width_pips": 5.599999999998939,
+     "origin_index": 14570,
+     "pivot_index": 14501,
+     "detection_index": 14773
+    }
+   ],
+   "pivot_bar": {
+    "bar_index": 14501,
+    "_note": "outside the exported slice"
+   },
+   "origin_bar": {
+    "bar_index": 14570,
+    "time": "2026-08-03 15:30:00+00:00",
+    "open": 1.15043,
+    "high": 1.15058,
+    "low": 1.15002,
+    "close": 1.15034,
+    "volume": 1296.0
+   },
+   "prior_bar": {
+    "bar_index": 14772,
+    "time": "2026-08-05 18:00:00+00:00",
+    "open": 1.15563,
+    "high": 1.15584,
+    "low": 1.1555,
+    "close": 1.1555,
+    "volume": 712.0
+   }
+  },
+  {
+   "detection_bar": "2026-08-07 09:00:00+00:00",
+   "ohlcv": {
+    "open": 1.15236,
+    "high": 1.15287,
+    "low": 1.15229,
+    "close": 1.15284,
+    "volume": 729.0
+   },
+   "s3": {
+    "warmup": false,
+    "pivot_index": 14878,
+    "pivot_high": 1.15222,
+    "pivot_low": 1.15199,
+    "right_window_max_high": 1.15287,
+    "right_window_min_low": 1.15176,
+    "new_leg_high": false,
+    "new_leg_low": false,
+    "current_leg": 0,
+    "leg_change": 0,
+    "swing_created": null,
+    "swing_high_level": 1.15256,
+    "swing_high_index": 14875,
+    "swing_high_crossed": true,
+    "swing_high_seq": 107,
+    "swing_low_level": 1.15171,
+    "swing_low_index": 14873,
+    "swing_low_crossed": false,
+    "swing_low_seq": 107
+   },
+   "s4": {
+    "warmup": false,
+    "prev_close": 1.15235,
+    "cur_close": 1.15284,
+    "swing_trend_bias": 1,
+    "events": [
+     {
+      "side": "bullish",
+      "tag": "BOS",
+      "swing_seq": 107,
+      "swing_level": 1.15256,
+      "swing_index": 14875,
+      "prev_close": 1.15235,
+      "cur_close": 1.15284,
+      "bias_before": 1,
+      "bias_after": 1,
+      "ob_id": 96
+     }
+    ],
+    "event_count": 1
+   },
+   "obs_created": [
+    {
+     "ob_id": 96,
+     "direction": "bullish",
+     "structure_tag": "BOS",
+     "top": 1.15234,
+     "bottom": 1.15176,
+     "break_level": 1.15256,
+     "width_pips": 5.800000000000249,
+     "origin_index": 14920,
+     "pivot_index": 14875,
+     "detection_index": 14928
+    }
+   ],
+   "pivot_bar": {
+    "bar_index": 14875,
+    "time": "2026-08-06 19:45:00+00:00",
+    "open": 1.15186,
+    "high": 1.15256,
+    "low": 1.15184,
+    "close": 1.15231,
+    "volume": 647.0
+   },
+   "origin_bar": {
+    "bar_index": 14920,
+    "time": "2026-08-07 07:00:00+00:00",
+    "open": 1.15221,
+    "high": 1.15234,
+    "low": 1.15176,
+    "close": 1.15226,
+    "volume": 719.0
+   },
+   "prior_bar": {
+    "bar_index": 14927,
+    "time": "2026-08-07 08:45:00+00:00",
+    "open": 1.15241,
+    "high": 1.15253,
+    "low": 1.15225,
+    "close": 1.15235,
+    "volume": 676.0
+   }
+  }
+ ],
+ "verdict": "The canonical Python engine CREATES both August blocks. This is not a Pine-only event."
+}

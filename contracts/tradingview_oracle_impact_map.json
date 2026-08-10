@@ -1,0 +1,1021 @@
+{
+ "schema": "tradingview-oracle-impact-map-v1",
+ "description": "Maps a change in the governed production surface to the Pine modules, trace fields, golden fixtures and parity stages it invalidates. Consumed by tools/oracle/impact.py. Every 'production' path is a real file in the 30-file governed manifest (live/engine_manifest.json) or in the live wrapper; every 'stage' is a stage in the Phase 0 audit section 18.",
+ "categories": {
+  "NO_ORACLE_IMPACT": "The changed surface is not mirrored by Pine. Record and move on.",
+  "CONFIG_ONLY_ORACLE_UPDATE": "Algorithms unchanged; regenerate config constants and re-run affected fixtures.",
+  "GENERATED_CONSTANTS_UPDATE": "An enum, reason code or lookup table changed. Regenerate; generation FAILS if Pine has no mapping.",
+  "ALGORITHM_PARITY_UPDATE": "A decision rule changed. The named Pine module must be re-derived from the new Python and its fixtures re-baselined.",
+  "TRACE_SCHEMA_UPDATE": "The per-bar trace shape changed. Bump trace_schema_version and regenerate every fixture.",
+  "PINE_LIMITATION_CHANGE": "The feasibility of mirroring something changed. The limitation register must be reviewed.",
+  "FULL_PARITY_REVALIDATION_REQUIRED": "Change is broad or crosses several subsystems. Re-run every stage."
+ },
+ "default_for_unmapped_governed_file": {
+  "category": "FULL_PARITY_REVALIDATION_REQUIRED",
+  "rationale": "Fail closed. A governed file with no entry here is one nobody has classified, so it must not be assumed harmless. Add an explicit entry instead of widening this default."
+ },
+ "entries": [
+  {
+   "id": "backtest-config-defaults",
+   "production": [
+    "src/config.py"
+   ],
+   "symbols": [
+    "BacktestConfig",
+    "ACTIVE_CONFIG"
+   ],
+   "surface": "the 120-field config dataclass the Golden JSON overrides",
+   "category": "CONFIG_ONLY_ORACLE_UPDATE",
+   "contract_sections": [
+    "configuration.pine_relevant",
+    "feature_flags"
+   ],
+   "pine_modules": [
+    "pine/src/05_generated_contract.pinefrag"
+   ],
+   "trace_fields": [],
+   "fixtures": [
+    "F-STEADY"
+   ],
+   "stages": [
+    "S10"
+   ],
+   "python_tests": [],
+   "notes": "A DEFAULT changes only what the Golden JSON does not override, so most edits here are inert. The extractor still fails closed: extract_contract exits 3 if a field listed in PINE_RELEVANT_CONFIG disappears, and exits 4 if a default flips an UNSUPPORTED_IF_ACTIVE flag."
+  },
+  {
+   "id": "cohort-eligibility",
+   "production": [
+    "strategy_core/scenario.py",
+    "strategy_core/execution.py"
+   ],
+   "symbols": [
+    "_build_cohort_index",
+    "_resolve_risk_amount"
+   ],
+   "surface": "cohort rule compilation, eligibility base/rescue/block, state target overrides",
+   "category": "GENERATED_CONSTANTS_UPDATE",
+   "contract_sections": [
+    "cohorts",
+    "enums.cancel_reason",
+    "enums.missed_reason"
+   ],
+   "pine_modules": [
+    "pine/src/70_cohorts.pinefrag"
+   ],
+   "trace_fields": [
+    "cohort_key",
+    "eligibility",
+    "block_reasons",
+    "rr_effective"
+   ],
+   "fixtures": [
+    "F-LONDON",
+    "F-STATE"
+   ],
+   "stages": [
+    "S10"
+   ],
+   "python_tests": [
+    "tests/test_eligibility_policy.py",
+    "tests/test_state_target_policy.py",
+    "tests/test_combined_smoke_eligibility_target.py"
+   ],
+   "notes": "164 populated cells today (24 cohorts + 78 state-override + 62 eligibility-state). Never hand-transcribe."
+  },
+  {
+   "id": "costs",
+   "production": [
+    "strategy_core/execution.py"
+   ],
+   "symbols": [
+    "_apply_execution_costs",
+    "_cost_r_components",
+    "_apply_weighted_r"
+   ],
+   "surface": "spread/slippage/commission applied to every row",
+   "category": "CONFIG_ONLY_ORACLE_UPDATE",
+   "contract_sections": [
+    "configuration.pine_relevant.risk"
+   ],
+   "pine_modules": [
+    "pine/src/80_risk_targets.pinefrag"
+   ],
+   "trace_fields": [
+    "net_r"
+   ],
+   "fixtures": [
+    "F-STEADY"
+   ],
+   "stages": [
+    "S9"
+   ],
+   "python_tests": [],
+   "notes": "Config constants, not live spread."
+  },
+  {
+   "id": "detection-resample",
+   "production": [
+    "src/resample.py"
+   ],
+   "symbols": [
+    "resample_candles"
+   ],
+   "surface": "M1 to 15m aggregation",
+   "category": "ALGORITHM_PARITY_UPDATE",
+   "contract_sections": [
+    "time_and_data.resample_rule"
+   ],
+   "pine_modules": [
+    "pine/src/20_data_context.pinefrag",
+    "pine/src/30_time.pinefrag"
+   ],
+   "trace_fields": [
+    "bar_timestamp",
+    "bar_epoch_ms",
+    "bar_index",
+    "bar_completeness",
+    "ohlcv"
+   ],
+   "fixtures": [
+    "F-S1-DAY",
+    "F-S1-GAP",
+    "F-S1-DUPLICATE",
+    "F-S1-OUTOFORDER"
+   ],
+   "stages": [
+    "S1"
+   ],
+   "python_tests": [
+    "backend/tests/test_oracle_s1.py"
+   ],
+   "notes": "Empty intervals are DROPPED by dropna, so bar_index is not a uniform time grid (limitation L-09)."
+  },
+  {
+   "id": "driver-report-path",
+   "production": [
+    "src/retest_tracker.py",
+    "src/fair_baseline.py",
+    "src/portfolio_replay.py",
+    "src/sweeps.py",
+    "src/reports.py",
+    "src/run_metadata.py",
+    "src/resume_support.py",
+    "src/data_loader.py",
+    "src/ghost_tracker.py",
+    "src/structure.py",
+    "src/regime.py",
+    "strategy_core/ghost_tracker.py",
+    "strategy_core/ports.py",
+    "strategy_core/types.py"
+   ],
+   "symbols": [],
+   "surface": "report/validator/shim modules not reached by execute_scenario_job",
+   "category": "NO_ORACLE_IMPACT",
+   "contract_sections": [],
+   "pine_modules": [],
+   "trace_fields": [],
+   "fixtures": [],
+   "stages": [],
+   "python_tests": [],
+   "notes": "Governed (so they move engine_manifest_id and therefore the fingerprint) but NOT on the live decision path. A change here makes the oracle STALE_ENGINE without making it wrong \u2014 re-stamp the manifest, no fixture rerun needed. strategy_core/ghost_tracker.py is inert under the deployed config."
+  },
+  {
+   "id": "engine-version-digest",
+   "production": [
+    "src/run_outputs.py"
+   ],
+   "symbols": [
+    "engine_version"
+   ],
+   "surface": "Lux's own 3-file digest, gated at startup",
+   "category": "NO_ORACLE_IMPACT",
+   "contract_sections": [
+    "fingerprint.inputs.engine_version"
+   ],
+   "pine_modules": [
+    "pine/src/00_generated_header.pinefrag"
+   ],
+   "trace_fields": [],
+   "fixtures": [],
+   "stages": [],
+   "python_tests": [
+    "backend/tests/test_engine_identity.py"
+   ],
+   "notes": "Changes the fingerprint (so the build reads STALE_ENGINE) without changing any rendered decision. Re-stamp the manifest; no fixture rerun."
+  },
+  {
+   "id": "entry-plan",
+   "production": [
+    "strategy_core/execution.py"
+   ],
+   "symbols": [
+    "_planned_trade"
+   ],
+   "surface": "entry / stop / target / risk computation",
+   "category": "ALGORITHM_PARITY_UPDATE",
+   "contract_sections": [
+    "configuration.pine_relevant.risk",
+    "configuration.pine_relevant.entry"
+   ],
+   "pine_modules": [
+    "pine/src/60_candidates.pinefrag",
+    "pine/src/80_risk_targets.pinefrag"
+   ],
+   "trace_fields": [
+    "entry",
+    "stop",
+    "tp",
+    "risk",
+    "rr_base"
+   ],
+   "fixtures": [
+    "F-STEADY"
+   ],
+   "stages": [
+    "S7",
+    "S9"
+   ],
+   "python_tests": [
+    "tests/test_strategy_core_slice7_execution.py"
+   ],
+   "notes": "risk <= 0 silently rejects the candidate with no trade row (blocking matrix B01)."
+  },
+  {
+   "id": "entry-trigger-and-fill",
+   "production": [
+    "strategy_core/execution.py"
+   ],
+   "symbols": [
+    "_triggered_edge_touched",
+    "_is_filled",
+    "_triggered_edge_mark_tap",
+    "simulate_trades"
+   ],
+   "surface": "25% wick arm, +3 candle delay, in-range fill gate",
+   "category": "ALGORITHM_PARITY_UPDATE",
+   "contract_sections": [
+    "configuration.pine_relevant.entry"
+   ],
+   "pine_modules": [
+    "pine/src/60_candidates.pinefrag",
+    "pine/src/90_lifecycle.pinefrag"
+   ],
+   "trace_fields": [
+    "candidate_state",
+    "lifecycle_state",
+    "eligibility"
+   ],
+   "fixtures": [
+    "F-STEADY"
+   ],
+   "stages": [
+    "S7",
+    "S8"
+   ],
+   "python_tests": [
+    "tests/test_delayed_te_fill.py"
+   ],
+   "notes": "The compound fill gate is one expression at execution.py:2644; treat any edit to that line as an algorithm change."
+  },
+  {
+   "id": "exit-resolution",
+   "production": [
+    "strategy_core/execution.py"
+   ],
+   "symbols": [
+    "_exit_outcome",
+    "_fill_candle_exit_outcome",
+    "_fill_candle_bookable_extreme"
+   ],
+   "surface": "stop/target resolution incl. the fill-candle special case",
+   "category": "ALGORITHM_PARITY_UPDATE",
+   "contract_sections": [],
+   "pine_modules": [
+    "pine/src/90_lifecycle.pinefrag"
+   ],
+   "trace_fields": [
+    "lifecycle_state",
+    "transition_events"
+   ],
+   "fixtures": [
+    "F-STEADY"
+   ],
+   "stages": [
+    "S9"
+   ],
+   "python_tests": [
+    "tests/test_same_candle_fill_ordering.py"
+   ],
+   "notes": "Stop wins same-candle ambiguity; a same-candle TP needs gap-fill or a confirming close."
+  },
+  {
+   "id": "invalidation",
+   "production": [
+    "strategy_core/execution.py"
+   ],
+   "symbols": [
+    "simulate_trades"
+   ],
+   "surface": "far-edge invalidation (execution.py:2957-2968)",
+   "category": "ALGORITHM_PARITY_UPDATE",
+   "contract_sections": [],
+   "pine_modules": [
+    "pine/src/90_lifecycle.pinefrag"
+   ],
+   "trace_fields": [
+    "lifecycle_state",
+    "ob_lifecycle_events"
+   ],
+   "fixtures": [
+    "F-STEADY"
+   ],
+   "stages": [
+    "S8"
+   ],
+   "python_tests": [],
+   "notes": "No dedicated Python test exists for this rule \u2014 Phase 0 flagged it as a coverage gap. Add a fixture before relying on it."
+  },
+  {
+   "id": "legacy-shims",
+   "production": [
+    "src/order_blocks.py",
+    "strategy_core/__init__.py",
+    "strategy_core/swings.py"
+   ],
+   "symbols": [
+    "detect_swings"
+   ],
+   "surface": "re-export shims and the package surface",
+   "category": "NO_ORACLE_IMPACT",
+   "contract_sections": [],
+   "pine_modules": [],
+   "trace_fields": [],
+   "fixtures": [],
+   "stages": [],
+   "python_tests": [
+    "tests/test_strategy_core_slice2_swings.py",
+    "tests/test_strategy_core_slice8_boundary.py"
+   ],
+   "notes": "src/order_blocks.py re-exports strategy_core.order_blocks; strategy_core/__init__.py is the public surface; strategy_core/swings.py::detect_swings is DEAD on the live path (the live pipeline uses the inlined loop inside detect_order_blocks). A change to any of these moves engine_manifest_id but cannot change a rendered decision. CAUTION: if __init__.py ever stops re-exporting a symbol the extractor imports, extraction fails loudly rather than silently \u2014 that is intended."
+  },
+  {
+   "id": "live-boundary",
+   "production": [
+    "live/runner.py"
+   ],
+   "symbols": [
+    "latest_closed_boundary",
+    "assemble_candles"
+   ],
+   "surface": "15m boundary arithmetic and the frozen/live seam",
+   "category": "ALGORITHM_PARITY_UPDATE",
+   "contract_sections": [
+    "time_and_data.boundary_rule"
+   ],
+   "pine_modules": [
+    "pine/src/30_time.pinefrag",
+    "pine/src/95_limitations.pinefrag"
+   ],
+   "trace_fields": [
+    "bar_timestamp"
+   ],
+   "fixtures": [
+    "F-FRONTIER"
+   ],
+   "stages": [
+    "S1",
+    "S12"
+   ],
+   "python_tests": [
+    "backend/tests/test_live_slice.py::test_latest_closed_boundary"
+   ],
+   "notes": "Drives the INTRA-WINDOW marking in S12."
+  },
+  {
+   "id": "live-intents",
+   "production": [
+    "live/intents.py"
+   ],
+   "symbols": [
+    "diff_frontier",
+    "_EXITED",
+    "SKIP_INTRA_WINDOW"
+   ],
+   "surface": "frame diff to broker intents",
+   "category": "PINE_LIMITATION_CHANGE",
+   "contract_sections": [
+    "enums.intent_action",
+    "enums.engine_exited_outcome"
+   ],
+   "pine_modules": [
+    "pine/src/95_limitations.pinefrag"
+   ],
+   "trace_fields": [
+    "transition_events"
+   ],
+   "fixtures": [
+    "F-FRONTIER"
+   ],
+   "stages": [
+    "S12"
+   ],
+   "python_tests": [
+    "backend/tests/test_live_slice.py"
+   ],
+   "notes": "Only SKIP_INTRA_WINDOW is Pine-reproducible; the rest is execution state Pine cannot see (limitations L-12..L-15)."
+  },
+  {
+   "id": "live-rails",
+   "production": [
+    "live/safety.py",
+    "live/executor.py"
+   ],
+   "symbols": [
+    "SafetyRails.evaluate",
+    "Executor.reconcile",
+    "Executor.apply"
+   ],
+   "surface": "hard rails and reconciliation",
+   "category": "NO_ORACLE_IMPACT",
+   "contract_sections": [
+    "enums.safety_rail"
+   ],
+   "pine_modules": [
+    "pine/src/95_limitations.pinefrag"
+   ],
+   "trace_fields": [],
+   "fixtures": [],
+   "stages": [],
+   "python_tests": [
+    "backend/tests/test_live_slice.py",
+    "backend/tests/test_production_hardening.py"
+   ],
+   "notes": "Pine has no broker, ledger or account state. Recorded so the HUD banner text stays honest, but no fixture depends on it."
+  },
+  {
+   "id": "market-state",
+   "production": [
+    "strategy_core/regime.py"
+   ],
+   "symbols": [
+    "daily_regime_panel",
+    "classify_state",
+    "ewm_adjust_false",
+    "resolve_bbw_threshold",
+    "MARKET_STATES",
+    "BBW_THRESHOLD_BY_SYMBOL",
+    "REGIME_DEFAULTS"
+   ],
+   "surface": "daily EMA/BBW/ADX panel and the 6-state classifier",
+   "category": "ALGORITHM_PARITY_UPDATE",
+   "contract_sections": [
+    "market_state",
+    "enums.market_state",
+    "enums.trend_state",
+    "enums.volatility_state",
+    "enums.chop_state"
+   ],
+   "pine_modules": [
+    "pine/src/50_market_state.pinefrag"
+   ],
+   "trace_fields": [
+    "market_state",
+    "trend_state",
+    "volatility_state",
+    "chop_state",
+    "state_confirmed"
+   ],
+   "fixtures": [
+    "F-STATE"
+   ],
+   "stages": [
+    "S6",
+    "S10"
+   ],
+   "python_tests": [
+    "tests/test_regime_parity.py",
+    "tests/test_regime_config.py",
+    "tests/test_regime_emission.py"
+   ],
+   "notes": "UTC calendar days, shifted one day (limitation L-06). Eligibility is keyed on marketState, so any change here also invalidates S10."
+  },
+  {
+   "id": "news",
+   "production": [
+    "strategy_core/news.py",
+    "src/execution.py"
+   ],
+   "symbols": [
+    "_news_blackout_match",
+    "_news_flatten_match",
+    "prepare_news_cache"
+   ],
+   "surface": "blackout and flatten window matching",
+   "category": "PINE_LIMITATION_CHANGE",
+   "contract_sections": [
+    "configuration.pine_relevant.news"
+   ],
+   "pine_modules": [
+    "pine/src/95_limitations.pinefrag"
+   ],
+   "trace_fields": [
+    "block_reasons"
+   ],
+   "fixtures": [
+    "F-NEWS"
+   ],
+   "stages": [],
+   "python_tests": [
+    "tests/test_strategy_core_slice6_news_scenario.py"
+   ],
+   "notes": "Unreproducible in Pine (limitation L-07). A change here alters how many rows must be EXCLUDED from parity scoring, so the limitation register and the exclusion counts must be reviewed."
+  },
+  {
+   "id": "ob-lifecycle-vocabulary",
+   "production": [
+    "scripts/run_backtest.py"
+   ],
+   "symbols": [
+    "_status_label",
+    "_derive_ob_lifecycle_from_trade",
+    "OB_LIFECYCLE_COLUMNS"
+   ],
+   "surface": "driver-side OB status vocabulary used by the chart layer",
+   "category": "GENERATED_CONSTANTS_UPDATE",
+   "contract_sections": [
+    "enums.ob_final_status",
+    "enums.ob_final_status_label",
+    "oracle_status_extensions"
+   ],
+   "pine_modules": [
+    "pine/src/40_order_blocks.pinefrag",
+    "pine/src/99_hud.pinefrag"
+   ],
+   "trace_fields": [
+    "ob_lifecycle_events"
+   ],
+   "fixtures": [
+    "F-STEADY"
+   ],
+   "stages": [
+    "S5",
+    "S13"
+   ],
+   "python_tests": [],
+   "notes": "This vocabulary does NOT cover STATE_BLOCKED / COHORT_DISABLED / REGIME_BLOCKED \u2014 they fall through to 'unknown' (809 of 2080 OBs in the committed golden run). The oracle extends it deliberately; see oracle_status_extensions in the contract."
+  },
+  {
+   "id": "oracle-pine-source",
+   "production": [
+    "pine/src/10_inputs.pinefrag",
+    "pine/src/20_data_context.pinefrag",
+    "pine/src/30_time.pinefrag",
+    "pine/src/40_sessions.pinefrag",
+    "pine/src/45_volatility.pinefrag",
+    "pine/src/50_visuals.pinefrag",
+    "pine/src/55_swings.pinefrag",
+    "pine/src/58_structure.pinefrag",
+    "pine/src/59_structure_visuals.pinefrag",
+    "pine/src/60_parity_output.pinefrag",
+    "pine/src/70_legend.pinefrag",
+    "pine/src/90_debug.pinefrag",
+    "pine/src/99_hud.pinefrag"
+   ],
+   "symbols": [],
+   "surface": "hand-written Pine fragments assembled into the generated artefact",
+   "category": "ALGORITHM_PARITY_UPDATE",
+   "contract_sections": [],
+   "pine_modules": [
+    "pine/generated/tradingview_visual_oracle.pine"
+   ],
+   "trace_fields": [],
+   "fixtures": [
+    "F-S1-DAY",
+    "F-S1-BOUNDARIES",
+    "F-S3-SWINGS",
+    "F-S4-STRUCTURE"
+   ],
+   "stages": [
+    "S1",
+    "S2",
+    "S3",
+    "S4"
+   ],
+   "python_tests": [
+    "backend/tests/test_oracle_s1.py",
+    "backend/tests/test_oracle_s234.py"
+   ],
+   "notes": "Editing a fragment REQUIRES regeneration: check_freshness compares fragment hashes against the manifest and reports STALE_CONTRACT until `generate_pine --write` is re-run. The assembled file itself must never be hand-edited (reported INCOMPATIBLE)."
+  },
+  {
+   "id": "oracle-structure-replay",
+   "production": [
+    "tools/oracle/replay_structure.py"
+   ],
+   "symbols": [
+    "replay",
+    "true_range",
+    "pine_rma",
+    "parsed_prices",
+    "selfcheck"
+   ],
+   "surface": "the oracle's transparent replay of the S2/S3/S4 production algorithms",
+   "category": "ALGORITHM_PARITY_UPDATE",
+   "contract_sections": [],
+   "pine_modules": [
+    "pine/src/45_volatility.pinefrag",
+    "pine/src/55_swings.pinefrag",
+    "pine/src/58_structure.pinefrag"
+   ],
+   "trace_fields": [
+    "s2.*",
+    "s3.*",
+    "s4.*"
+   ],
+   "comparator_fields": [],
+   "fixtures": [
+    "F-S2-RMASEED",
+    "F-S3-SWINGS",
+    "F-S4-STRUCTURE"
+   ],
+   "stages": [
+    "S2",
+    "S3",
+    "S4"
+   ],
+   "invalidates_stages": [
+    "S5"
+   ],
+   "python_tests": [
+    "backend/tests/test_oracle_s234.py"
+   ],
+   "notes": "This is the REFERENCE the Pine fragments mirror, so an edit here changes every S2-S4 trace. selfcheck() replays a real frame and asserts the order blocks it WOULD produce match detect_order_blocks field for field (verified: 350/350 over 2 years). If that check fails the replay has drifted and the trace is lying."
+  },
+  {
+   "id": "order-block-construction",
+   "production": [
+    "strategy_core/order_blocks.py"
+   ],
+   "symbols": [
+    "_make_order_block",
+    "_passes_size_filter",
+    "_ob_width_pips"
+   ],
+   "surface": "OB bounds, origin selection tie-break, size gate, ob_id counter",
+   "category": "ALGORITHM_PARITY_UPDATE",
+   "contract_sections": [
+    "configuration.pine_relevant.structure"
+   ],
+   "pine_modules": [
+    "pine/src/40_order_blocks.pinefrag"
+   ],
+   "trace_fields": [
+    "obs_created",
+    "active_ob_ids"
+   ],
+   "fixtures": [
+    "F-STEADY"
+   ],
+   "stages": [
+    "S5"
+   ],
+   "python_tests": [
+    "tests/test_strategy_core_slice4_order_blocks.py"
+   ],
+   "notes": "ob_id is history-start dependent (limitation L-05); fixtures match on (detection_time, direction, top, bottom), never on id."
+  },
+  {
+   "id": "parsed-prices-atr",
+   "production": [
+    "strategy_core/order_blocks.py"
+   ],
+   "symbols": [
+    "_add_parsed_prices",
+    "_pine_rma",
+    "_true_range"
+   ],
+   "surface": "volatility measure and the parsed_high/parsed_low flip",
+   "category": "ALGORITHM_PARITY_UPDATE",
+   "contract_sections": [
+    "configuration.pine_relevant.structure.ob_filter"
+   ],
+   "pine_modules": [
+    "pine/src/45_volatility.pinefrag",
+    "pine/src/59_structure_visuals.pinefrag"
+   ],
+   "trace_fields": [
+    "s2.true_range",
+    "s2.high_low",
+    "s2.high_close",
+    "s2.low_close",
+    "s2.rma_prev",
+    "s2.atr",
+    "s2.cumulative_mean_range",
+    "s2.volatility_measure",
+    "s2.threshold",
+    "s2.high_volatility",
+    "s2.parsed_high",
+    "s2.parsed_low",
+    "s2.atr_warm"
+   ],
+   "fixtures": [
+    "F-S2-WARMUP",
+    "F-S2-RMASEED",
+    "F-S2-FLIP"
+   ],
+   "stages": [
+    "S2"
+   ],
+   "python_tests": [
+    "tests/test_strategy_core_slice4_order_blocks.py",
+    "backend/tests/test_oracle_s234.py"
+   ],
+   "notes": "First-value-seeded RMA. ta.rma/ta.atr are SMA-seeded and measured to agree on 0 of 1818 bars (max 27.4% rel). Parsed prices feed the S5 order-block BOX only \u2014 NOT swings or breaks, which read raw prices. An S2 divergence therefore cannot move a swing or a BOS.",
+   "comparator_fields": [
+    "oracleTrueRange",
+    "oracleAtr",
+    "oracleVolMeasure",
+    "oracleParsedHigh",
+    "oracleParsedLow",
+    "oracleVolFlip",
+    "oracleAtrWarm"
+   ],
+   "invalidates_stages": [
+    "S5"
+   ]
+  },
+  {
+   "id": "portfolio-policy",
+   "production": [
+    "strategy_core/policy.py",
+    "strategy_core/execution.py",
+    "src/portfolio_policy.py",
+    "configs/policy/deployed_policy.v1.json"
+   ],
+   "symbols": [
+    "decide",
+    "with_disabled_as_label",
+    "_portfolio_regime_gate",
+    "_portfolio_policy_block_row"
+   ],
+   "surface": "deployed decision table and the enforce-mode gate",
+   "category": "GENERATED_CONSTANTS_UPDATE",
+   "contract_sections": [
+    "portfolio_policy",
+    "enums.policy_regime",
+    "enums.regime_block_reason"
+   ],
+   "pine_modules": [
+    "pine/src/70_cohorts.pinefrag"
+   ],
+   "trace_fields": [
+    "portfolio_regime_deployed",
+    "portfolio_regime_effective",
+    "block_reasons"
+   ],
+   "fixtures": [
+    "F-LONDON",
+    "F-STATE"
+   ],
+   "stages": [
+    "S10"
+   ],
+   "python_tests": [
+    "tests/test_portfolio_policy.py",
+    "tests/test_portfolio_execution.py",
+    "tests/test_pm_annotate_gate.py"
+   ],
+   "notes": "Pine must encode the EFFECTIVE table (post with_disabled_as_label), not the deployed one."
+  },
+  {
+   "id": "sessions",
+   "production": [
+    "strategy_core/sessions.py"
+   ],
+   "symbols": [
+    "_SESSION_SCHEDULE",
+    "_session_for_hour",
+    "_utc_session",
+    "_cohort_session_key"
+   ],
+   "surface": "UTC hour-of-day session table",
+   "category": "GENERATED_CONSTANTS_UPDATE",
+   "contract_sections": [
+    "sessions",
+    "enums.session_key",
+    "enums.session_label"
+   ],
+   "pine_modules": [
+    "pine/src/05_generated_contract.pinefrag",
+    "pine/src/40_sessions.pinefrag",
+    "pine/src/50_visuals.pinefrag"
+   ],
+   "trace_fields": [
+    "session.key",
+    "session.label",
+    "session.code",
+    "session.utc_hour",
+    "session.window_start_hour",
+    "session.window_end_hour",
+    "session.is_fallback",
+    "session.transition",
+    "session.transition_reason",
+    "session.bars_since_transition"
+   ],
+   "fixtures": [
+    "F-S1-DAY",
+    "F-S1-BOUNDARIES",
+    "F-S1-MIDNIGHT",
+    "F-S1-WEEKEND",
+    "F-S1-DST-US",
+    "F-S1-DST-EU",
+    "F-S1-DST-END-US",
+    "F-S1-DST-END-EU"
+   ],
+   "stages": [
+    "S1",
+    "S10"
+   ],
+   "python_tests": [
+    "tests/test_strategy_core_slice3_sessions.py",
+    "tests/test_session_assignment.py",
+    "backend/tests/test_oracle_s1.py"
+   ],
+   "notes": "Session keys feed the cohort gate, so a session change is also a cohort change."
+  },
+  {
+   "id": "structure-bos-choch",
+   "production": [
+    "strategy_core/order_blocks.py"
+   ],
+   "symbols": [
+    "detect_order_blocks"
+   ],
+   "surface": "BOS/CHoCH break detection + swing_trend_bias (order_blocks.py:173-220)",
+   "category": "ALGORITHM_PARITY_UPDATE",
+   "contract_sections": [
+    "enums.structure_tag"
+   ],
+   "pine_modules": [
+    "pine/src/58_structure.pinefrag",
+    "pine/src/59_structure_visuals.pinefrag",
+    "pine/src/99_hud.pinefrag"
+   ],
+   "trace_fields": [
+    "s4.prev_close",
+    "s4.cur_close",
+    "s4.swing_trend_bias",
+    "s4.events",
+    "s4.event_count",
+    "s4.warmup"
+   ],
+   "fixtures": [
+    "F-S4-STRUCTURE",
+    "F-S4-SEED",
+    "F-S4-VOLATILE"
+   ],
+   "stages": [
+    "S4"
+   ],
+   "python_tests": [
+    "tests/test_strategy_core_slice4_order_blocks.py",
+    "backend/tests/test_oracle_s234.py"
+   ],
+   "notes": "Two-bar RAW CLOSE test with asymmetric operators (prev<=lvl & cur>lvl for bulls). Bull is evaluated FIRST and both blocks can fire on one bar. swing_trend_bias is NEVER reset and is seeded by the first break in LOADED history \u2014 limitation L-04, the correctness cliff.",
+   "comparator_fields": [
+    "oracleBias",
+    "oracleTrend",
+    "oracleStructEvent",
+    "oracleStructEventCount",
+    "oracleBrokenLevel",
+    "oracleHistoryWarn"
+   ],
+   "invalidates_stages": [
+    "S5"
+   ]
+  },
+  {
+   "id": "swing-legs",
+   "production": [
+    "strategy_core/order_blocks.py"
+   ],
+   "symbols": [
+    "detect_order_blocks"
+   ],
+   "surface": "inlined swing-leg loop (order_blocks.py:144-171)",
+   "category": "ALGORITHM_PARITY_UPDATE",
+   "contract_sections": [
+    "configuration.pine_relevant.structure"
+   ],
+   "pine_modules": [
+    "pine/src/55_swings.pinefrag",
+    "pine/src/59_structure_visuals.pinefrag"
+   ],
+   "trace_fields": [
+    "s3.pivot_index",
+    "s3.right_window_max_high",
+    "s3.right_window_min_low",
+    "s3.new_leg_high",
+    "s3.new_leg_low",
+    "s3.current_leg",
+    "s3.leg_change",
+    "s3.swing_created",
+    "s3.swing_high_level",
+    "s3.swing_high_crossed",
+    "s3.swing_low_level",
+    "s3.swing_low_crossed",
+    "s3.swing_high_seq",
+    "s3.swing_low_seq",
+    "s3.warmup"
+   ],
+   "fixtures": [
+    "F-S3-WARMUP",
+    "F-S3-SWINGS",
+    "F-S4-STRUCTURE"
+   ],
+   "stages": [
+    "S3"
+   ],
+   "python_tests": [
+    "tests/test_strategy_core_slice4_order_blocks.py",
+    "backend/tests/test_oracle_s234.py"
+   ],
+   "notes": "strategy_core/swings.py::detect_swings is DEAD on the live path; changing it alone has NO oracle impact. Only the loop INLINED in detect_order_blocks matters. It reads RAW high/low, uses STRICT comparisons, records only on a leg TRANSITION, and retains one uncrossed swing per side.",
+   "comparator_fields": [
+    "oracleS3Ready",
+    "oracleNewLegHigh",
+    "oracleNewLegLow",
+    "oracleCurrentLeg",
+    "oracleLegChange",
+    "oracleSwingCreated",
+    "oracleHasSwingHigh",
+    "oracleSwingHigh",
+    "oracleSwingHighCrossed",
+    "oracleHasSwingLow",
+    "oracleSwingLow",
+    "oracleSwingLowCrossed"
+   ],
+   "invalidates_stages": [
+    "S4",
+    "S5"
+   ]
+  },
+  {
+   "id": "utc-day-key",
+   "production": [
+    "strategy_core/regime.py"
+   ],
+   "symbols": [
+    "utc_date_key"
+   ],
+   "surface": "UTC calendar-day key used for the regime panel lookup",
+   "category": "ALGORITHM_PARITY_UPDATE",
+   "contract_sections": [
+    "market_state.day_boundary",
+    "time_and_data"
+   ],
+   "pine_modules": [
+    "pine/src/30_time.pinefrag"
+   ],
+   "trace_fields": [
+    "utc_day.day_key",
+    "utc_day.prev_day_key",
+    "utc_day.day_transition"
+   ],
+   "fixtures": [
+    "F-S1-MIDNIGHT",
+    "F-S1-DAY"
+   ],
+   "stages": [
+    "S1",
+    "S6"
+   ],
+   "python_tests": [
+    "backend/tests/test_oracle_s1.py",
+    "tests/test_regime_parity.py"
+   ],
+   "notes": "Shared with S6: the regime panel keys on this day. Pine must derive it from the bar timestamp \u2014 request.security(...,'D',...) follows the EXCHANGE session day and is rejected by tools/oracle/lint_pine.py."
+  }
+ ],
+ "stage_dependencies": {
+  "_note": "A failure or change at a stage invalidates every stage that consumes it. S1 defines the bar series everything else is computed on; S3's swings are what S4 breaks; S2's parsed prices set the S5 order-block box. Enforced by tools/oracle/compare_stages.py.",
+  "S1": [],
+  "S2": [
+   "S1"
+  ],
+  "S3": [
+   "S1"
+  ],
+  "S4": [
+   "S1",
+   "S3"
+  ],
+  "S5": [
+   "S1",
+   "S2",
+   "S3",
+   "S4"
+  ]
+ }
+}

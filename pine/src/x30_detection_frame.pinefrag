@@ -1,0 +1,119 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// x30 — DETECTION FRAME, DERIVED FROM 1-MINUTE BARS
+//
+// WHY NOT request.security(syminfo.tickerid, "15", …)
+//
+// Because production does not ask anyone for 15-minute bars. `run_backtest`
+// builds them itself:
+//
+//     detection_candles = resample_candles(candles, "15min")
+//     # src/resample.py: pandas .resample("15min").agg(first/max/min/last/sum)
+//     #                  then .dropna(subset=[open, high, low, close])
+//
+// pandas' defaults here are LEFT-labelled and LEFT-closed, so the bar labelled
+// 10:30 covers [10:30, 10:45), and `dropna` DELETES buckets with no 1-minute
+// bars in them. Over the chart window that is 7,260 of 25,192 slots — 28.8%,
+// almost all weekend.
+//
+// `request.security("15")` would hand this script TradingView's OWN aggregation
+// of its own feed: a second authority, with its own session model and its own
+// view of which 15-minute bars exist. Deriving the frame here from the very
+// 1-minute bars the chart is already drawing uses production's rule on the
+// chart's data, which is the only arrangement in which a divergence can be
+// attributed to one of them rather than argued about.
+//
+// NO LOOKAHEAD, BY CONSTRUCTION
+// A bucket is finalised on the FIRST 1-minute bar of the NEXT bucket. Nothing
+// downstream ever reads a bucket that is still open, so there is no value that
+// could change after the fact — the property `request.security` needs
+// `lookahead_off` and a `[1]` offset to approximate.
+//
+// THE ONE DECLARED DIVERGENCE (limitation L-23)
+// Production admits an order block to the pending walk when
+// `detection_time <= candle.time`, and `detection_time` is the bucket's LEFT
+// edge. So production starts tracking a block at 10:30:00 using a bar that only
+// completes at 10:45:00 — up to fourteen minutes of lookahead in its own
+// backtest. This script cannot and must not reproduce that. Measured over the
+// chart window: of 97 armed setups, ONE had any decisive event inside that
+// window and NONE resolved inside it (minimum admission-to-outcome gap: 94
+// minutes). The divergence is therefore bounded, measured and declared — never
+// silently absorbed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── bucket identity ──────────────────────────────────────────────────────────
+// The UTC 15-minute bucket a 1-minute bar belongs to, as an epoch in ms. Derived
+// from the bar's OPEN time, which is what pandas indexes on. Integer division
+// floors toward zero, and `time` is non-negative for every bar this oracle
+// supports, so this is exactly `floor(t / 900000) * 900000`.
+DETECTION_BUCKET_MS = ORACLE_DETECTION_TF_SECONDS * 1000
+xf_bucket = math.floor(time / DETECTION_BUCKET_MS) * DETECTION_BUCKET_MS
+
+var int   xf_curBucket = na
+var float xf_curOpen   = na
+var float xf_curHigh   = na
+var float xf_curLow    = na
+var float xf_curClose  = na
+var int   xf_curBars   = 0
+
+// ── the CONFIRMED bucket: what downstream stages may read ────────────────────
+// Written only at a bucket boundary, so on any given 1-minute bar these describe
+// a 15-minute bar that has fully closed.
+var int   xf_detBucket = na      // label (left edge), epoch ms
+var float xf_detOpen   = na
+var float xf_detHigh   = na
+var float xf_detLow    = na
+var float xf_detClose  = na
+var int   xf_detBars   = 0       // 1-minute bars that composed it
+var int   xf_detCount  = 0       // confirmed detection bars seen so far
+var int   xf_detGaps   = 0       // dropped (empty) buckets skipped over
+
+// True on the ONE 1-minute bar where a new confirmed detection bar appears.
+xf_newDetectionBar = false
+
+if barstate.isconfirmed
+    if na(xf_curBucket)
+        xf_curBucket := xf_bucket
+        xf_curOpen   := open
+        xf_curHigh   := high
+        xf_curLow    := low
+        xf_curClose  := close
+        xf_curBars   := 1
+    else if xf_bucket == xf_curBucket
+        // still inside the same 15-minute window: aggregate exactly as
+        // first / max / min / last.
+        xf_curHigh  := math.max(xf_curHigh, high)
+        xf_curLow   := math.min(xf_curLow, low)
+        xf_curClose := close
+        xf_curBars  := xf_curBars + 1
+    else
+        // BOUNDARY. The bucket that just ended is now complete and immutable.
+        xf_detBucket := xf_curBucket
+        xf_detOpen   := xf_curOpen
+        xf_detHigh   := xf_curHigh
+        xf_detLow    := xf_curLow
+        xf_detClose  := xf_curClose
+        xf_detBars   := xf_curBars
+        xf_detCount  := xf_detCount + 1
+        xf_newDetectionBar := true
+        // EMPTY BUCKETS ARE DROPPED, not filled. pandas' `dropna` removes them,
+        // so production's detection frame simply has no bar there — and neither
+        // does this one. Counting them is the diagnostic that proves the two
+        // frames agree about which bars EXIST, which is a precondition for
+        // agreeing about their values.
+        _skipped = math.round((xf_bucket - xf_curBucket) / DETECTION_BUCKET_MS) - 1
+        xf_detGaps := xf_detGaps + math.max(0, _skipped)
+        // …and open the new one.
+        xf_curBucket := xf_bucket
+        xf_curOpen   := open
+        xf_curHigh   := high
+        xf_curLow    := low
+        xf_curClose  := close
+        xf_curBars   := 1
+
+// ── warm-up ──────────────────────────────────────────────────────────────────
+// The detection stack this frame feeds needs history before ANY of it means
+// anything: ATR over 200 detection bars (S2), a 50-bar swing window (S3), and
+// the daily regime panel (S6). Those are declared bootstraps on the detection
+// oracle and they become 1-minute bar counts here.
+XF_MIN_DETECTION_BARS = ATR_PERIOD + SWING_LENGTH
+xf_frameWarm = xf_detCount < XF_MIN_DETECTION_BARS

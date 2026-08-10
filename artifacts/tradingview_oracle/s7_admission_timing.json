@@ -1,0 +1,10 @@
+{
+ "counts": {
+  "event_inside_detection_bar:ARMED": 1,
+  "terminal_after_detection_bar_closed": 97
+ },
+ "detection_bars": 17932,
+ "empty_buckets_dropped": 7260,
+ "execution_candles": 267648,
+ "resolved": 97
+}

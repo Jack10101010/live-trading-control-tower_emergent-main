@@ -1,0 +1,62 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// 20 — DATA CONTEXT GUARD
+//
+// The oracle is generated for ONE symbol and a fixed set of timeframes. On any
+// other chart it must say so loudly rather than reinterpret the data.
+//
+// Timeframe rule, and why it is not arbitrary: production assigns a session from
+// the UTC HOUR of the bar-open timestamp over windows [start, end). A bar may
+// therefore only be assigned one session if it cannot span an hour boundary —
+// i.e. only when the timeframe divides 60. Measured against the production
+// schedule: M1/M5/M15/H1 never straddle; H4 straddles 4 bars a day. So H4+ is
+// refused even though the engine would happily accept the candles.
+//
+// Symbol matching is by NORMALISED ticker: feeds decorate the same instrument
+// (EURUSD, EURUSD.a, FX:EURUSD, EURUSD_OTC …), and refusing all of them would
+// make the oracle unusable on the very feed it is meant to be checked against.
+// The accepted alias list is GENERATED from the contract, never hand-typed here.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Normalise: uppercase, strip the exchange prefix, drop separators/suffix noise.
+f_normTicker(string raw) =>
+    string s = str.upper(raw)
+    int    c = str.pos(s, ":")
+    s := na(c) ? s : str.substring(s, c + 1)
+    s := str.replace_all(s, ".", "")
+    s := str.replace_all(s, "_", "")
+    s := str.replace_all(s, "-", "")
+    s
+
+var string CTX_TICKER_RAW  = syminfo.ticker
+var string CTX_TICKER_NORM = f_normTicker(syminfo.ticker)
+
+f_symbolSupported() =>
+    bool ok = false
+    for i = 0 to array.size(ORACLE_SYMBOL_ALIASES) - 1
+        if CTX_TICKER_NORM == array.get(ORACLE_SYMBOL_ALIASES, i)
+            ok := true
+    ok
+
+f_timeframeSupported() =>
+    int secs = timeframe.in_seconds()
+    bool ok = false
+    for i = 0 to array.size(ORACLE_TF_SECONDS) - 1
+        if secs == array.get(ORACLE_TF_SECONDS, i)
+            ok := true
+    ok
+
+var bool   CTX_SYMBOL_OK = f_symbolSupported()
+var bool   CTX_TF_OK     = f_timeframeSupported()
+var bool   CTX_OK        = CTX_SYMBOL_OK and CTX_TF_OK
+
+// Ordered reasons — same ordering discipline as the Python trace's
+// data_context.reasons, so the two can be compared position by position.
+var string CTX_REASON =
+     CTX_OK ? "" :
+     (not CTX_SYMBOL_OK ? "symbol " + CTX_TICKER_RAW + " != " + ORACLE_SYMBOL : "") +
+     (not CTX_SYMBOL_OK and not CTX_TF_OK ? " | " : "") +
+     (not CTX_TF_OK ? "timeframe " + timeframe.period + " (" +
+                      str.tostring(timeframe.in_seconds()) + "s) unsupported" : "")
+
+var string CTX_STATUS = CTX_OK ? "SUPPORTED" : "UNSUPPORTED_DATA_CONTEXT"
+var int    CTX_CODE   = CTX_OK ? CODE_CTX_SUPPORTED : CODE_CTX_UNSUPPORTED

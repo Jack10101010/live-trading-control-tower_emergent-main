@@ -1,0 +1,95 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// 50 — CHART VISUALS
+//
+// Shading is an OUTPUT of the canonical session calculation, never an input.
+// Nothing here reads a TradingView session string; every colour is selected from
+// `sessCode`, which came from the production algorithm in fragment 40.
+//
+// Object budget: Pine hard-limits boxes/labels/lines to 500 each. Markers are
+// created only on TRANSITION bars (≤ 6 per UTC day), and `i_maxObjects` trims the
+// oldest deterministically so eviction is ours, not the engine's — limitation
+// L-08 in the register.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Session background, indexed straight out of the GENERATED palette so the
+// shading and the legend (fragment 70) are the same list. A hand-written ternary
+// here was the previous approach; it meant the legend could describe a colour the
+// chart never painted, and adding a session upstream could silently reuse another
+// session's colour. An unmapped code still renders deliberately loud.
+sessShadeIdx = sessIsFall ? array.size(SESSION_SHADE) - 1 : sessIdx
+// Built from the OPAQUE swatch with the user's transparency applied, rather than
+// the pre-shaded array: `color.new` REPLACES transparency, so shading the shaded
+// copy would have compounded two values and ignored the input.
+sessColor = sessShadeIdx >= 0 and sessShadeIdx < array.size(SESSION_SWATCH)
+     ? color.new(array.get(SESSION_SWATCH, sessShadeIdx), i_shadeStrength)
+     : color.new(color.red, 60)
+
+bgcolor(i_shadeSessions and CTX_OK ? sessColor : na, title = "Session")
+
+// ── transition markers ───────────────────────────────────────────────────────
+// Markers ARE bar-anchored: `label.new(bar_index, …)` uses xloc.bar_index, so
+// they move with the bars. What is NOT unlimited is how many are RETAINED —
+// beyond `i_maxObjects` the oldest is deleted, so far enough back in history
+// there are none left. That horizon is tracked here and reported in the debug
+// panel, because the first release silently dropped everything older than ~33
+// days and the empty history read as "the labels aren't anchored".
+var array<label> oracleLabels = array.new<label>()
+
+// NOTE: this function must not touch any global. Pine forbids it outright —
+// "Cannot modify global variable ... in function" (CE10088) — which an earlier
+// version of this fragment tripped by keeping drop counters here. The retention
+// telemetry is therefore DERIVED from the array itself in the debug fragment,
+// where no mutation is needed: `array.size()` gives what is kept, and the first
+// element's x gives the oldest retained bar. Nothing has to be counted.
+f_pushLabel(label lbl) =>
+    array.push(oracleLabels, lbl)
+    if array.size(oracleLabels) > i_maxObjects
+        label.delete(array.shift(oracleLabels))
+
+// Same deterministic retention for lines (S4 broken-level marks). Pine's ceiling
+// for lines is separate from labels, so it gets its own buffer rather than
+// sharing a budget and starving one of them.
+var array<line> oracleLines = array.new<line>()
+
+f_pushLine(line ln) =>
+    array.push(oracleLines, ln)
+    if array.size(oracleLines) > i_maxObjects
+        line.delete(array.shift(oracleLines))
+
+if CTX_OK and barClosed
+    if i_showOpens and isSessionOpen
+        f_pushLabel(label.new(bar_index, low, "▲ " + sessLabel,
+             style = label.style_label_up, size = size.tiny,
+             color = color.new(color.teal, 20), textcolor = color.white,
+             tooltip = "session_open · code " + str.tostring(sessCode) +
+                       " · UTC " + str.tostring(utcHour, "00") + ":" +
+                       str.tostring(utcMin, "00")))
+
+    if i_showCloses and isSessionClose
+        f_pushLabel(label.new(bar_index, high, "▼ " + dispPrevSessKey + " → " + sessLabel,
+             style = label.style_label_down, size = size.tiny,
+             color = color.new(color.maroon, 20), textcolor = color.white,
+             tooltip = "session_close_to_fallback · code " + str.tostring(sessCode)))
+
+    if i_showTransLbl and sessTransition and not isSessionOpen and not isSessionClose
+        f_pushLabel(label.new(bar_index, high, sessTransitionReason,
+             style = label.style_label_down, size = size.tiny,
+             color = color.new(color.gray, 30), textcolor = color.white))
+
+    if i_showDayRoll and dayTransition
+        f_pushLabel(label.new(bar_index, low, "UTC " + str.tostring(dayKey),
+             style = label.style_label_up, size = size.tiny,
+             color = color.new(color.navy, 20), textcolor = color.white,
+             tooltip = "UTC calendar-day rollover (production utc_date_key)"))
+
+// Unsupported context: one persistent, unmissable label. Drawn even when the
+// HUD is switched off — a cosmetic input must not be able to hide this.
+var label ctxLabel = na
+if barstate.islast and not CTX_OK
+    label.delete(ctxLabel)
+    ctxLabel := label.new(bar_index, high,
+         "⛔ UNSUPPORTED DATA CONTEXT\n" + CTX_REASON +
+         "\nParity claims suppressed — this build mirrors " + ORACLE_SYMBOL +
+         " on " + ORACLE_TF_LABEL,
+         style = label.style_label_left, size = size.normal,
+         color = color.new(color.red, 10), textcolor = color.white)

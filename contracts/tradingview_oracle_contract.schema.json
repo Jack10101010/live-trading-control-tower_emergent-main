@@ -1,0 +1,158 @@
+{
+ "$schema": "http://json-schema.org/draft-07/schema#",
+ "$id": "tradingview_oracle_contract.schema.json",
+ "title": "TradingView Visual Oracle — canonical parity contract (v1.0.0)",
+ "description": "Machine-readable statement of every production behaviour the Pine oracle must mirror, extracted from the DEPLOYED engine by tools/oracle/extract_contract.py. Regenerated, never hand-edited: `python -m tools.oracle.extract_contract --write`. Validated by backend/tests/test_oracle_contract.py. The contract is derived state — if it disagrees with production, production is right and the contract is stale.",
+ "type": "object",
+ "required": ["contract_schema_version", "trace_schema_version", "generator_version", "fingerprint", "engine", "configuration", "feature_flags", "unsupported_active_features", "sessions", "market_state", "cohorts", "portfolio_policy", "time_and_data", "enums", "extraction_summary"],
+ "properties": {
+  "contract_schema_version": {"type": "string", "const": "1.0.0"},
+  "trace_schema_version": {"type": "string"},
+  "generator_version": {"type": "string"},
+
+  "fingerprint": {
+   "type": "object",
+   "required": ["oracle_engine_id", "oracle_engine_hash", "inputs", "canonical_payload"],
+   "properties": {
+    "oracle_engine_id": {"type": "string", "description": "HUD label only."},
+    "oracle_engine_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "inputs": {"type": "object", "description": "Exactly the fields hashed. end_date is deliberately absent — it is the one live delta and advances daily."},
+    "canonical_payload": {"type": "string", "description": "The sorted compact JSON that was hashed. Recorded so a mismatch can be diagnosed without re-running the tool."}
+   }
+  },
+
+  "engine": {
+   "type": "object",
+   "required": ["engine_version", "engine_manifest_id", "governed_file_count", "governed_files", "pin_verified"],
+   "properties": {
+    "engine_version": {"type": "string", "description": "Lux 3-file digest. Insufficient alone — covers 3 of ~23 production modules."},
+    "engine_manifest_id": {"type": "string", "description": "30-file governed digest. The real identity."},
+    "governed_file_count": {"type": "integer"},
+    "governed_files": {
+     "type": "array",
+     "description": "Per-file digests — the basis of `tools/oracle/impact.py --vs-contract`, which needs no git.",
+     "items": {"type": "object", "required": ["path", "sha256"],
+               "properties": {"path": {"type": "string"}, "sha256": {"type": "string"}}}
+    },
+    "pin_verified": {"type": "boolean", "description": "MUST be true for any released build."},
+    "environment_provenance": {"type": "object", "description": "Recorded, NEVER hashed."}
+   }
+  },
+
+  "configuration": {
+   "type": "object",
+   "required": ["provenance", "pine_relevant", "missing_expected_fields"],
+   "properties": {
+    "provenance": {"type": "object"},
+    "pine_relevant": {"type": "object", "description": "Grouped as the oracle consumes them."},
+    "missing_expected_fields": {
+     "type": "array", "items": {"type": "string"}, "maxItems": 0,
+     "description": "MUST be empty. A non-empty list means the engine dropped a field the oracle depends on — extraction fails with exit 3."
+    }
+   }
+  },
+
+  "feature_flags": {"type": "object"},
+  "unsupported_active_features": {
+   "type": "array", "maxItems": 0,
+   "description": "MUST be empty. Non-empty means a production mechanism the oracle does not implement is ACTIVE — extraction fails with exit 4 and the oracle is INCOMPATIBLE, not merely stale."
+  },
+
+  "sessions": {
+   "type": "object",
+   "required": ["windows", "fallback", "boundary_semantics"],
+   "properties": {
+    "windows": {"type": "array", "items": {"type": "object",
+      "required": ["start_hour", "end_hour", "label", "key"]}},
+    "fallback": {"type": "object"},
+    "boundary_semantics": {"type": "string"},
+    "dst": {"type": "string"}
+   }
+  },
+
+  "market_state": {
+   "type": "object",
+   "required": ["defaults", "resolved_bbw_threshold", "shifted_days", "day_boundary"],
+   "properties": {
+    "shifted_days": {"type": "integer", "const": 1},
+    "day_boundary": {"type": "string", "description": "UTC calendar day — NOT the exchange session (limitation L-06)."}
+   }
+  },
+
+  "cohorts": {
+   "type": "object",
+   "required": ["actionable", "cohort_count", "cohorts"],
+   "properties": {
+    "actionable": {"type": "boolean"},
+    "cohort_count": {"type": "integer"},
+    "addressable_cells": {"type": "integer", "description": "Populated cells = cohorts + state_override cells + eligibility_state cells."},
+    "cohorts": {"type": "array", "items": {"type": "object",
+      "required": ["session", "structure", "direction", "enabled"]}}
+   }
+  },
+
+  "portfolio_policy": {
+   "type": "object",
+   "required": ["policy_version", "policy_content_sha256", "include_disabled_cohorts", "cohorts"],
+   "properties": {
+    "include_disabled_cohorts": {"type": "boolean"},
+    "disable_cohorts_neutralised_to_label": {"type": "array", "items": {"type": "string"}},
+    "effective_blocking_regimes": {"type": "array", "items": {"type": "string"}},
+    "cohorts": {
+     "type": "array",
+     "items": {"type": "object", "required": ["cohort_key", "deployed_regime", "effective_regime"],
+       "description": "Pine encodes effective_regime. deployed_regime is shown alongside so the include-disabled override is visible rather than silent."}
+    }
+   }
+  },
+
+  "time_and_data": {
+   "type": "object",
+   "required": ["time_base", "timezone", "bar_timestamp_convention", "resample_rule", "boundary_rule"],
+   "properties": {
+    "live_only_config_deltas": {"type": "array", "items": {"type": "string"},
+      "description": "Config fields the live runner overrides per cycle and which are therefore excluded from oracle identity."}
+   }
+  },
+
+  "enums": {
+   "type": "object",
+   "description": "Every production enum / reason code Pine must handle. Generation FAILS if any value lacks a Pine mapping.",
+   "additionalProperties": {
+    "type": "object",
+    "required": ["values", "count", "source", "origin"],
+    "properties": {
+     "values": {"type": "array", "items": {"type": "string"}},
+     "count": {"type": "integer"},
+     "source": {"enum": ["live", "scan", "manual"],
+       "description": "live = imported from the running engine; scan = parsed from pinned source; manual = hand-maintained and drift-tested. `manual` must not appear for behavioural values."},
+     "origin": {"type": "string", "description": "Exact symbol or file the values came from."},
+     "note": {"type": "string"},
+     "label_map": {"type": "object"}
+    }
+   }
+  },
+
+  "oracle_status_extensions": {
+   "type": "object",
+   "description": "Statuses the ORACLE adds because the driver vocabulary does not cover them. Each carries its justification. This is a declared divergence, not a licence to invent labels.",
+   "additionalProperties": {
+    "type": "object",
+    "required": ["label", "python_outcome", "driver_status_would_be", "justification"]
+   }
+  },
+
+  "oracle_only_enums": {"type": "object", "description": "Oracle-side vocabularies with no production source."},
+
+  "extraction_summary": {
+   "type": "object",
+   "required": ["enum_count", "enums_by_source", "manual_behavioural_values"],
+   "properties": {
+    "manual_behavioural_values": {
+     "type": "integer", "maximum": 0,
+     "description": "MUST be 0. Every behavioural value is machine-extracted; hand-maintained behaviour is how a parity contract rots."
+    }
+   }
+  }
+ }
+}

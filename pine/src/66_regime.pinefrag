@@ -1,0 +1,261 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// 66 — S6 · UTC DAILY REGIME AND MARKET STATE
+//
+// Mirrors `strategy_core/regime.py::daily_regime_panel` as it is actually
+// reached in production: through `_portfolio_panel_index`
+// (scripts/run_backtest.py:2413), NOT through the global regime gate.
+// `regime_gate_enabled` is FALSE, so `regime_emit_for_run` returns None and the
+// in-loop regime gate never blocks — but the panel is still built, and its
+// consumers are the portfolio policy (mode `enforce`) and the state-target
+// policy. Mirroring the disabled gate would reproduce dead code.
+//
+// FIVE THINGS A "REASONABLE" IMPLEMENTATION GETS WRONG
+//   1. The daily bar is a UTC CALENDAR day built from the intraday bars on this
+//      chart. NOT `request.security(..., "D", ...)`, which returns the
+//      EXCHANGE session day and rolls at the broker's 22:00 — a different bar
+//      with a different close (limitation L-06).
+//   2. `ta.ema` seeds with an SMA of the first `length` values. Production's
+//      `ewm(adjust=False)` seeds with the FIRST VALUE. The two never converge.
+//   3. `ta.stdev` is a POPULATION deviation. Production uses pandas'
+//      `rolling().std()` default — ddof=1, a SAMPLE deviation. At length 20 they
+//      differ by sqrt(20/19) ≈ 2.6%, which is ~7000x the closest any real day
+//      comes to the BBW threshold, so the substitution would move the state.
+//   4. `ta.adx` smooths with an RMA seeded from a sum. Production reuses the
+//      same first-value-seeded `ewm(adjust=False)` at alpha = 1/14.
+//   5. The panel is SHIFTED ONE DAY: the state FOR day D is classified from the
+//      features of day D-1. Using today's own close would be lookahead.
+//
+// STATE IS BOUNDED. The only collection is a 20-element ring of daily closes
+// (the Bollinger window); everything else is scalar running state. Nothing here
+// grows with chart length.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── UTC day identity ────────────────────────────────────────────────────────
+// Built from the bar's own UTC timestamp, exactly as fragment 30 builds dayKey.
+s6_dayKey = dayKey
+s6_newDay = na(s6_dayKey[1]) or s6_dayKey != s6_dayKey[1]
+
+// ── in-progress daily aggregate ─────────────────────────────────────────────
+var float s6_curOpen  = na
+var float s6_curHigh  = na
+var float s6_curLow   = na
+var float s6_curClose = na
+var int   s6_curBars  = 0
+var int   s6_curKey   = na
+
+// ── the COMPLETED daily series, as running state ────────────────────────────
+// Only the previous completed day's OHLC is needed for Wilder's directional
+// movement, so the daily series itself is never stored.
+var float s6_pdHigh  = na
+var float s6_pdLow   = na
+var float s6_pdClose = na
+var int   s6_dayCount = 0        // completed UTC days seen so far
+
+// EMA(200) over daily closes — first-value seeded.
+var float s6_ema = na
+// Bollinger ring: exactly REGIME_BBW_LENGTH daily closes, oldest shifted out.
+var float[] s6_closeRing = array.new_float()
+// Wilder smoothing state (first-value seeded, alpha = 1/REGIME_ADX_LENGTH).
+var float s6_atr = na
+var float s6_psm = na
+var float s6_msm = na
+var float s6_adx = na
+
+// Features of the LAST COMPLETED day — these are what the CURRENT day is
+// classified from, which is the one-day shift.
+var float s6_fEma      = na
+var float s6_fPxVsEma  = na
+var float s6_fBasis    = na
+var float s6_fSd       = na
+var float s6_fUpper    = na
+var float s6_fLower    = na
+var float s6_fBbw      = na
+var float s6_fAdx      = na
+var float s6_fPlusDi   = na
+var float s6_fMinusDi  = na
+var float s6_fDx       = na
+var float s6_fTr       = na
+var float s6_fPlusDm   = na
+var float s6_fMinusDm  = na
+var int   s6_srcKey    = na
+
+// Classified state FOR the current day.
+var int s6_stateCode    = 0
+var int s6_prevStateCode = 0
+var int s6_trendCode    = 0
+var int s6_volCode      = 0
+var int s6_chopCode     = 0
+var int s6_validity     = 0      // CODE_REGIME_INVALID / WARMUP / VALID
+var bool s6_transition  = false
+var int s6_dayIndex     = 0      // 0-based index of the current day
+
+// Daily OHLC of the last COMPLETED day, exported for verification.
+var float s6_dOpen  = na
+var float s6_dHigh  = na
+var float s6_dLow   = na
+var float s6_dClose = na
+var int   s6_dBars  = 0
+
+// `ewm(adjust=False)`. A non-finite input passes the PREVIOUS output through
+// rather than reseeding, so a gap cannot restart the recurrence.
+f_ewm(float prev, float value, float alpha) =>
+    na(value) ? prev : na(prev) ? value : (1.0 - alpha) * prev + alpha * value
+
+// ── finalise the day that just ended ────────────────────────────────────────
+s6_transition := false
+if s6_newDay and not na(s6_curKey)
+    // 1. the completed daily bar
+    s6_dOpen  := s6_curOpen
+    s6_dHigh  := s6_curHigh
+    s6_dLow   := s6_curLow
+    s6_dClose := s6_curClose
+    s6_dBars  := s6_curBars
+    s6_srcKey := s6_curKey
+    s6_dayCount := s6_dayCount + 1
+
+    // 2. EMA(200) over daily closes
+    s6_ema := f_ewm(s6_ema, s6_dClose, REGIME_EMA_ALPHA)
+    s6_fEma := s6_ema
+    s6_fPxVsEma := na(s6_ema) or s6_ema == 0 ? na :
+         (s6_dClose - s6_ema) / s6_ema * 100.0
+
+    // 3. Bollinger basis and SAMPLE deviation (ddof = 1) over the last N closes
+    array.push(s6_closeRing, s6_dClose)
+    if array.size(s6_closeRing) > REGIME_BBW_LENGTH
+        array.shift(s6_closeRing)
+    if array.size(s6_closeRing) == REGIME_BBW_LENGTH
+        float sum = 0.0
+        for k = 0 to REGIME_BBW_LENGTH - 1
+            sum := sum + array.get(s6_closeRing, k)
+        float mean = sum / REGIME_BBW_LENGTH
+        float sq = 0.0
+        for k = 0 to REGIME_BBW_LENGTH - 1
+            float d = array.get(s6_closeRing, k) - mean
+            sq := sq + d * d
+        // ddof = 1 — divide by N-1, not N. `ta.stdev` divides by N.
+        float sd = math.sqrt(sq / (REGIME_BBW_LENGTH - 1))
+        s6_fBasis := mean
+        s6_fSd    := sd
+        s6_fUpper := mean + REGIME_BBW_STD * sd
+        s6_fLower := mean - REGIME_BBW_STD * sd
+        s6_fBbw   := mean == 0 ? na : (2.0 * REGIME_BBW_STD * sd) / mean * 100.0
+    else
+        s6_fBasis := na
+        s6_fSd    := na
+        s6_fUpper := na
+        s6_fLower := na
+        s6_fBbw   := na
+
+    // 4. Wilder directional movement and ADX
+    float tr = na(s6_pdClose) ? s6_dHigh - s6_dLow :
+         math.max(s6_dHigh - s6_dLow,
+              math.max(math.abs(s6_dHigh - s6_pdClose),
+                       math.abs(s6_dLow - s6_pdClose)))
+    float up = na(s6_pdHigh) ? 0.0 : s6_dHigh - s6_pdHigh
+    float dn = na(s6_pdLow) ? 0.0 : -(s6_dLow - s6_pdLow)
+    // STRICTLY greater and strictly positive: an equal move is NEITHER.
+    float pdm = (up > dn and up > 0) ? up : 0.0
+    float mdm = (dn > up and dn > 0) ? dn : 0.0
+    s6_atr := f_ewm(s6_atr, tr,  REGIME_ADX_ALPHA)
+    s6_psm := f_ewm(s6_psm, pdm, REGIME_ADX_ALPHA)
+    s6_msm := f_ewm(s6_msm, mdm, REGIME_ADX_ALPHA)
+    float pdi = na(s6_atr) or s6_atr == 0 ? na : 100.0 * s6_psm / s6_atr
+    float mdi = na(s6_atr) or s6_atr == 0 ? na : 100.0 * s6_msm / s6_atr
+    float den = na(pdi) or na(mdi) ? na : pdi + mdi
+    float dx  = na(den) or den == 0 ? na : 100.0 * math.abs(pdi - mdi) / den
+    s6_adx := f_ewm(s6_adx, dx, REGIME_ADX_ALPHA)
+    s6_fTr := tr
+    s6_fPlusDm := pdm
+    s6_fMinusDm := mdm
+    s6_fPlusDi := pdi
+    s6_fMinusDi := mdi
+    s6_fDx := dx
+    s6_fAdx := s6_adx
+    s6_pdHigh  := s6_dHigh
+    s6_pdLow   := s6_dLow
+    s6_pdClose := s6_dClose
+
+    // 5. classify the NEW day from the day that just closed (the one-day shift)
+    s6_prevStateCode := s6_stateCode
+    s6_dayIndex := s6_dayCount
+    bool inputsOk = not na(s6_fPxVsEma) and not na(s6_fBbw) and not na(s6_fAdx)
+    if s6_dayCount < 2
+        // No prior COMPLETED day existed when this one opened — production's
+        // day-0 row is null, never a plausible-looking default.
+        s6_stateCode := 0
+        s6_trendCode := 0
+        s6_volCode   := 0
+        s6_chopCode  := 0
+        s6_validity  := CODE_REGIME_WARMUP
+    else if not inputsOk
+        // Production returns None. A silent fallback to a generic range state is
+        // exactly the failure this refuses to make.
+        s6_stateCode := 0
+        s6_trendCode := 0
+        s6_volCode   := 0
+        s6_chopCode  := 0
+        s6_validity  := CODE_REGIME_WARMUP
+    else
+        // `> 0` — a price exactly ON the EMA is BEAR. Reachable: on the seed day
+        // close == ema and pxVsEma is exactly zero.
+        s6_trendCode := s6_fPxVsEma > 0 ? CODE_TREND_BULL : CODE_TREND_BEAR
+        // `> threshold` — exactly at the threshold is COMPRESS.
+        s6_volCode := s6_fBbw > REGIME_BBW_THRESHOLD ? CODE_VOL_EXPAND :
+             CODE_VOL_COMPRESS
+        // `< chop` — exactly at the chop level is TREND, not chop.
+        s6_chopCode := s6_fAdx < REGIME_ADX_CHOP ? CODE_CHOP_CHOP : CODE_CHOP_TREND
+        // Chop overrides the composite NAME but not the volatility field, so the
+        // two disagree on purpose and both are exported.
+        string nm = (s6_trendCode == CODE_TREND_BULL ? "Bull" : "Bear") + "/" +
+             (s6_chopCode == CODE_CHOP_CHOP ? "Chop" :
+                  s6_volCode == CODE_VOL_EXPAND ? "Expand" : "Compress")
+        int found = 0
+        for k = 0 to array.size(REGIME_STATE_NAME) - 1
+            if array.get(REGIME_STATE_NAME, k) == nm
+                found := array.get(REGIME_STATE_CODE, k)
+        // An unmatched name is a GENERATION defect, not a market condition. It
+        // is surfaced as invalid rather than mapped to something plausible.
+        s6_stateCode := found
+        s6_validity := found == 0 ? CODE_REGIME_INVALID : CODE_REGIME_VALID
+    s6_transition := s6_stateCode != s6_prevStateCode
+
+// ── accumulate the in-progress day ──────────────────────────────────────────
+if s6_newDay
+    s6_curOpen  := open
+    s6_curHigh  := high
+    s6_curLow   := low
+    s6_curClose := close
+    s6_curBars  := 1
+    s6_curKey   := s6_dayKey
+else
+    s6_curHigh  := math.max(s6_curHigh, high)
+    s6_curLow   := math.min(s6_curLow, low)
+    s6_curClose := close
+    s6_curBars  := s6_curBars + 1
+
+// ── visuals ─────────────────────────────────────────────────────────────────
+// Restrained by default: a background tint carrying the market state, and a
+// marker where it changes. Numbers live in the debug table.
+s6_stateColour = s6_stateCode == 0 ? na :
+     s6_trendCode == CODE_TREND_BULL ?
+          (s6_chopCode == CODE_CHOP_CHOP ? #2E86DE :
+               s6_volCode == CODE_VOL_EXPAND ? #06D6A0 : #118AB2) :
+          (s6_chopCode == CODE_CHOP_CHOP ? #8D99AE :
+               s6_volCode == CODE_VOL_EXPAND ? #EF476F : #C1666B)
+bgcolor(i_showRegime and s6_stateCode != 0 ?
+     color.new(s6_stateColour, 92) : na, title = "S6 market state")
+
+if i_showRegime and s6_transition and s6_stateCode != 0 and barstate.isconfirmed
+    f_pushLabel(label.new(bar_index, low,
+         array.get(REGIME_STATE_NAME, s6_stateCode - 1),
+         style = label.style_label_up, size = size.tiny,
+         color = color.new(s6_stateColour, 25), textcolor = color.white))
+
+// ── confirmed? ───────────────────────────────────────────────────────────────
+// Production's target lookup only honours a CONFIRMED market state: an
+// unconfirmed or warming-up one keeps the cohort's base target and never blocks.
+// Pine's nearest equivalent is a classification produced from a COMPLETED UTC
+// day by a warmed-up panel, which is exactly CODE_REGIME_VALID. Warm-up and
+// classifier refusal are both "not confirmed" — deliberately, because both mean
+// the state cannot be relied on to select a rule.
+s6_confirmed = s6_validity == CODE_REGIME_VALID

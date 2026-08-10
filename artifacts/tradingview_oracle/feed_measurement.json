@@ -1,0 +1,42 @@
+{
+ "export_sha256": "eb418af3fd1f0d9f8cc141a2a554f94db12df4738f73c8721f41c0187e4b00fb",
+ "fields": {
+  "close": {
+   "bit_exact_fraction": 0.11301369863013698,
+   "max_abs_diff": 0.0011700000000001154,
+   "mean_signed_diff": 2.4906804401527598e-05,
+   "median_signed_diff": 1.999999999990898e-05
+  },
+  "high": {
+   "bit_exact_fraction": 0.09330788232652144,
+   "max_abs_diff": 0.0009500000000000064,
+   "mean_signed_diff": 2.20564787783475e-05,
+   "median_signed_diff": 1.999999999990898e-05
+  },
+  "low": {
+   "bit_exact_fraction": 0.11312598248371884,
+   "max_abs_diff": 0.0012399999999999078,
+   "mean_signed_diff": 2.556310352571669e-05,
+   "median_signed_diff": 1.999999999990898e-05
+  },
+  "open": {
+   "bit_exact_fraction": 0.13457219851785313,
+   "max_abs_diff": 0.0011099999999999444,
+   "mean_signed_diff": 2.363575117897928e-05,
+   "median_signed_diff": 1.999999999990898e-05
+  }
+ },
+ "note": "mean signed difference +2.404e-05 (+0.240 pip); mean bar range 6.036 pip production vs 6.001 pip chart (ratio 0.9942). A shift with an unchanged range is a quoting-basis difference, not a different market; the quote bases above are INFERRED from the sign, not read from either provider.",
+ "production_feed": "LUX_ROOT/data/candles/EURUSD_1m_extended_2015_2026.csv",
+ "production_quote_basis": "bid",
+ "python_only_bars": 120,
+ "shared_bars": 17812,
+ "status": "FEED_DIFFERENT",
+ "tradingview_feed": "OANDA:EURUSD",
+ "tradingview_only_bars": 3193,
+ "tradingview_quote_basis": "mid",
+ "window": [
+  "2025-09-30 21:00",
+  "2026-06-19 09:45"
+ ]
+}

@@ -1,0 +1,362 @@
+{
+ "coverage": {
+  "_note": "bars on only one side are FEED_DIFFERENCE (L-02), not a Pine defect; they are excluded, not failed. warmup_bars_excluded is a DECLARED exclusion \u2014 a stage that only passes because of it can be seen to have done so.",
+  "bars_in_both": 6240,
+  "bars_shared_before_warmup": 6240,
+  "first_shared_bar": "2025-09-30 21:00",
+  "last_shared_bar": "2025-12-31 21:45",
+  "measured_convergence": {
+   "_note": "With a MATCHED start these are all zero \u2014 both sides seed identically. They quantify what a mismatched start costs.",
+   "atr_within_1e9_bar": 2000,
+   "bias_converges_bar": 122,
+   "flip_decisions_differing": 3,
+   "swings_converge_bar": 84
+  },
+  "python_only": 0,
+  "tradingview_only": 14679,
+  "warmup_bars_excluded": 0,
+  "warmup_window": null
+ },
+ "export": {
+  "file": "TV_ORACLE_OANDA_EURUSD_15M_2025-09-30_TO_2025-12-31.csv",
+  "missing_columns": {},
+  "rows": 20919,
+  "sha256": "099f7ae84a73fa8488a2f289dc2d71dd5cf164ace2c4e3a6d1daa2a20e68e158"
+ },
+ "feed": "OANDA:EURUSD",
+ "fixture": "F-TV-S1S4",
+ "input_basis": {
+  "means": "Python was re-run over the EXPORT'S OWN OHLC, so both sides saw byte-identical bars. The feed is eliminated as a variable: any divergence is Pine logic or a seed/warm-up boundary. This does NOT show that a chart on this feed reproduces production's values.",
+  "mode": "chart_bars",
+  "rebased_bars": 6240
+ },
+ "result": "FAIL",
+ "results": {
+  "S1": {
+   "compared": 6240,
+   "examples": [],
+   "fields": {
+    "oracleBarsSinceTrans": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 6240,
+     "result": "PASS"
+    },
+    "oracleCtxCode": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 6240,
+     "result": "PASS"
+    },
+    "oracleDayKey": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 6240,
+     "result": "PASS"
+    },
+    "oracleSessIsFallback": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 6240,
+     "result": "PASS"
+    },
+    "oracleSessionCode": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 6240,
+     "result": "PASS"
+    },
+    "oracleTransCode": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 6240,
+     "result": "PASS"
+    },
+    "oracleUtcHour": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 6240,
+     "result": "PASS"
+    }
+   },
+   "first_divergence": null,
+   "price_tolerance": 0.0,
+   "result": "PASS"
+  },
+  "S2": {
+   "compared": 6240,
+   "examples": [],
+   "fields": {
+    "oracleAtr": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 6240,
+     "result": "PASS"
+    },
+    "oracleAtrWarm": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 6240,
+     "result": "PASS"
+    },
+    "oracleParsedHigh": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 6240,
+     "result": "PASS"
+    },
+    "oracleParsedLow": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 6240,
+     "result": "PASS"
+    },
+    "oracleTrueRange": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 6240,
+     "result": "PASS"
+    },
+    "oracleVolFlip": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 6240,
+     "result": "PASS"
+    },
+    "oracleVolMeasure": {
+     "fail": 0,
+     "kind": "price",
+     "pass": 6240,
+     "result": "PASS"
+    }
+   },
+   "first_divergence": null,
+   "price_tolerance": 5e-05,
+   "result": "PASS"
+  },
+  "S3": {
+   "compared": 6190,
+   "examples": [
+    {
+     "bar_utc": "2025-10-01 09:30",
+     "expected_python": 0,
+     "field": "oracleNewLegLow",
+     "kind": "exact",
+     "observed_pine": "1"
+    },
+    {
+     "bar_utc": "2025-10-01 09:30",
+     "expected_python": 0,
+     "field": "oracleCurrentLeg",
+     "kind": "exact",
+     "observed_pine": "1"
+    },
+    {
+     "bar_utc": "2025-10-01 09:30",
+     "expected_python": 0,
+     "field": "oracleLegChange",
+     "kind": "exact",
+     "observed_pine": "1"
+    },
+    {
+     "bar_utc": "2025-10-01 09:30",
+     "expected_python": 0,
+     "field": "oracleSwingCreated",
+     "kind": "exact",
+     "observed_pine": "2"
+    },
+    {
+     "bar_utc": "2025-10-01 09:30",
+     "expected_python": 0,
+     "field": "oracleHasSwingLow",
+     "kind": "exact",
+     "observed_pine": "1"
+    }
+   ],
+   "fields": {
+    "oracleCurrentLeg": {
+     "fail": 38,
+     "kind": "exact",
+     "pass": 6152,
+     "result": "FAIL"
+    },
+    "oracleHasSwingHigh": {
+     "fail": 118,
+     "kind": "exact",
+     "pass": 6072,
+     "result": "FAIL"
+    },
+    "oracleHasSwingLow": {
+     "fail": 78,
+     "kind": "exact",
+     "pass": 6112,
+     "result": "FAIL"
+    },
+    "oracleLegChange": {
+     "fail": 2,
+     "kind": "exact",
+     "pass": 6188,
+     "result": "FAIL"
+    },
+    "oracleNewLegHigh": {
+     "fail": 2,
+     "kind": "exact",
+     "pass": 6188,
+     "result": "FAIL"
+    },
+    "oracleNewLegLow": {
+     "fail": 1,
+     "kind": "exact",
+     "pass": 6189,
+     "result": "FAIL"
+    },
+    "oracleS3Ready": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 6190,
+     "result": "PASS"
+    },
+    "oracleSwingCreated": {
+     "fail": 2,
+     "kind": "exact",
+     "pass": 6188,
+     "result": "FAIL"
+    },
+    "oracleSwingHigh": {
+     "fail": 118,
+     "kind": "price",
+     "pass": 6072,
+     "result": "FAIL"
+    },
+    "oracleSwingHighCrossed": {
+     "fail": 0,
+     "kind": "exact",
+     "pass": 6190,
+     "result": "PASS"
+    },
+    "oracleSwingLow": {
+     "fail": 78,
+     "kind": "price",
+     "pass": 6112,
+     "result": "FAIL"
+    },
+    "oracleSwingLowCrossed": {
+     "fail": 77,
+     "kind": "exact",
+     "pass": 6113,
+     "result": "FAIL"
+    }
+   },
+   "first_divergence": {
+    "bar_utc": "2025-10-01 09:30",
+    "expected_python": 0,
+    "field": "oracleNewLegLow",
+    "observed_pine": "1"
+   },
+   "price_tolerance": 1e-06,
+   "result": "FAIL"
+  },
+  "S4": {
+   "compared": 6190,
+   "examples": [
+    {
+     "bar_utc": "2025-10-01 09:45",
+     "expected_python": 0,
+     "field": "oracleBias",
+     "kind": "exact",
+     "observed_pine": "-1"
+    },
+    {
+     "bar_utc": "2025-10-01 09:45",
+     "expected_python": 0,
+     "field": "oracleTrend",
+     "kind": "exact",
+     "observed_pine": "-1"
+    },
+    {
+     "bar_utc": "2025-10-01 09:45",
+     "expected_python": 0,
+     "field": "oracleStructEvent",
+     "kind": "exact",
+     "observed_pine": "3"
+    },
+    {
+     "bar_utc": "2025-10-01 09:45",
+     "expected_python": 0,
+     "field": "oracleStructEventCount",
+     "kind": "exact",
+     "observed_pine": "1"
+    },
+    {
+     "bar_utc": "2025-10-01 09:45",
+     "expected_python": null,
+     "field": "oracleBrokenLevel",
+     "kind": "price",
+     "observed_pine": "1.17343"
+    }
+   ],
+   "fields": {
+    "oracleBias": {
+     "fail": 113,
+     "kind": "exact",
+     "pass": 6077,
+     "result": "FAIL"
+    },
+    "oracleBrokenLevel": {
+     "fail": 1,
+     "kind": "price",
+     "pass": 6189,
+     "result": "FAIL"
+    },
+    "oracleStructEvent": {
+     "fail": 1,
+     "kind": "exact",
+     "pass": 6189,
+     "result": "FAIL"
+    },
+    "oracleStructEventCount": {
+     "fail": 1,
+     "kind": "exact",
+     "pass": 6189,
+     "result": "FAIL"
+    },
+    "oracleTrend": {
+     "fail": 113,
+     "kind": "exact",
+     "pass": 6077,
+     "result": "FAIL"
+    }
+   },
+   "first_divergence": {
+    "bar_utc": "2025-10-01 09:45",
+    "expected_python": 0,
+    "field": "oracleBias",
+    "observed_pine": "-1"
+   },
+   "price_tolerance": 1e-06,
+   "result": "FAIL"
+  }
+ },
+ "schema": "tradingview-oracle-stage-comparison-v1",
+ "stages": [
+  "S1",
+  "S2",
+  "S3",
+  "S4"
+ ],
+ "timeframe": "15min",
+ "trace": {
+  "oracle_engine_hash": "0732f82c876c9d69705db72f6d0f366336034a819fc8567f416300212310c2b3",
+  "oracle_engine_id": "lux-6cb6cbc_cfg-a4cb908_pol-d1dfc11_c1.0.0_t1.2.0_g0.5.1",
+  "sections_implemented": [
+   "time",
+   "session",
+   "utc_day",
+   "data_context",
+   "volatility",
+   "swings",
+   "structure"
+  ],
+  "trace_schema_version": "1.2.0"
+ }
+}

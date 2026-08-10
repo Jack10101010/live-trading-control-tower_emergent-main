@@ -1,0 +1,66 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// 30 — CANONICAL TIME AND UTC DAY SEMANTICS
+//
+// Production timestamps are UTC end to end above the MT5 gateway
+// (live/config.py TIME_BASE = "utc-v2"), stored as
+// datetime64[us, UTC] after strategy_core.execution.prepare_candles_for_simulation,
+// and every bar label is the bar OPEN (pandas resample is left-labelled,
+// left-closed — verified by execution).
+//
+// Pine's `time` is likewise the bar-OPEN in UTC epoch milliseconds, so the two
+// agree WITHOUT conversion. Everything below therefore passes "UTC" explicitly
+// to the calendar functions; the chart's display timezone is irrelevant to the
+// computation and must not leak into it.
+//
+// UTC DAY: production uses strategy_core.regime.utc_date_key — the UTC CALENDAR
+// day. It does NOT use an exchange session day. This is limitation L-06, and it
+// is why `timeframe.change("D")` and `request.security(..., "D", ...)` are
+// forbidden here: on FX those follow a 17:00 New York session boundary and would
+// roll the day at the wrong instant.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Bar-open, UTC. Identical quantity to the trace's `bar_epoch_ms`.
+utcEpochMs = time
+
+utcYear  = year(time,        "UTC")
+utcMonth = month(time,       "UTC")
+utcDom   = dayofmonth(time,  "UTC")
+utcHour  = hour(time,        "UTC")
+utcMin   = minute(time,      "UTC")
+
+// ── LONDON WALL-CLOCK HOUR — the session classifier's input ──────────────────
+//
+// NOT the same quantity as `utcHour`, and the difference is the whole of
+// M-SESSION-DST-1. `strategy_core/sessions.py::_london_hour` converts the UTC
+// instant through `ZoneInfo("Europe/London")` and classifies on the LOCAL hour,
+// so every session boundary sits one hour earlier in UTC during BST than during
+// GMT. The schedule numbers (0/7/10/12/15/17) are London local and never move.
+//
+// Pine's `hour(time, timezone)` takes an IANA identifier and applies the same
+// tz database, so this is a genuine conversion — not a month test, not a
+// hard-coded +1, and not a separate summer table. Those approximations all fail
+// in the ~3 weeks each spring and autumn when the UK and US clocks disagree,
+// and they fail differently every year because the transition instants move.
+//
+// `utcHour` is deliberately kept: it is what the S1 packed export carries and
+// what the trace compares, and conflating the two would make a passing
+// comparison meaningless.
+londonHour = hour(time, "Europe/London")
+
+// The offset is DERIVED, never assumed — the HUD shows it so an operator can
+// see GMT/BST at a glance, and a wrong timezone database would be visible
+// rather than silent. Modulo 24 so the day wrap at 23:00 UTC reads as +1.
+londonOffsetH = (londonHour - utcHour + 24) % 24
+
+// Canonical day key, integer form: 2026-03-08 -> 20260308.
+// Mirrors tools/oracle/session_codes.day_key_to_int so the Data Window value is
+// directly comparable to the trace's day_key without arithmetic.
+dayKey = utcYear * 10000 + utcMonth * 100 + utcDom
+
+var int prevDayKey = na
+dayTransition = na(prevDayKey) or dayKey != prevDayKey
+
+// Bar completeness. Production only ever admits CLOSED bars — the bridge pulls
+// closed M1 bars only (live/mt5_bridge.py). A forming bar has no production
+// counterpart, so the oracle marks it and the comparator ignores it.
+barClosed = barstate.isconfirmed

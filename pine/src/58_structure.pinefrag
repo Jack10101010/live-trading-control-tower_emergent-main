@@ -1,0 +1,119 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// 58 — STAGE S4: BOS / CHoCH / STRUCTURAL BIAS
+//
+// Mirrors strategy_core/order_blocks.py::detect_order_blocks lines 173-220.
+//
+//     previous_close = close[index-1]
+//     current_close  = close[index]
+//     if swing_high.level is not None and not swing_high.crossed:
+//         bull_break = previous_close <= level and current_close > level
+//         tag = CHOCH if swing_trend_bias == BEARISH else BOS
+//         swing_high.crossed = True ; swing_trend_bias = BULLISH
+//     if swing_low.level is not None and not swing_low.crossed:
+//         bear_break = previous_close >= level and current_close < level
+//         tag = CHOCH if swing_trend_bias == BULLISH else BOS
+//         swing_low.crossed = True ; swing_trend_bias = BEARISH
+//
+// Load-bearing details:
+//   * RAW CLOSES, two-bar test. Not a wick break, not parsed prices.
+//   * asymmetric operators on purpose: `prev <= level` with `cur > level` for
+//     bulls, `prev >= level` with `cur < level` for bears. A previous close
+//     exactly AT the level still permits a break.
+//   * `crossed` LATCHES — a swing can be broken exactly once.
+//   * the two blocks are independent `if`s, so BOTH can fire on one bar. BULL is
+//     evaluated FIRST, and the bear tag is then computed from the bias the bull
+//     break just set. That ordering is part of the behaviour.
+//   * BOS when the bias is 0 (initial) or already the same side; CHoCH ONLY when
+//     flipping from the opposite bias. The FIRST break of a run is therefore
+//     always BOS, because the bias starts at 0 which equals neither side.
+//
+// LIMITATION L-04 — THE CORRECTNESS CLIFF
+// `swing_trend_bias` is NEVER reset and is seeded by the first break in LOADED
+// history. Python loads from 2015; a TradingView chart loads whatever the plan
+// allows. If the first break in the chart's window has the opposite side to the
+// first break in Python's, every subsequent BOS/CHoCH tag can be inverted — not
+// approximately, permanently. The HUD warns while the loaded window is too
+// shallow to have converged; it cannot detect the inversion itself, because Pine
+// has no access to what Python saw.
+// ─────────────────────────────────────────────────────────────────────────────
+
+s4_prev_close = close[1]
+s4_cur_close  = close
+
+var int s4_bias = 0            // 0 neutral · BIAS_BULLISH · BIAS_BEARISH
+var int s4_bias_before = 0
+var int s4_event_code  = 0     // CODE_EV_* for THIS bar (0 = none)
+var int s4_event_count = 0
+var float s4_broken_level = na
+// The PIVOT BAR of the swing that was broken. The structure visual draws a line
+// from there to the break, which is what answers "which level went" — a badge at
+// the break bar never did.
+var int s4_broken_bar = na
+var int s4_last_event_bar = na
+var int s4_last_event_code = 0
+// Exposed for S5 (fragment 65). A break is what CREATES an order-block
+// candidate, and the per-side code is needed because when BOTH fire on one bar
+// `s4_event_code` ends up holding the bear one — labelling the bullish box from
+// it would report the wrong tag.
+var bool s4_bull_break = false
+var bool s4_bear_break = false
+var int  s4_bull_code  = 0
+var int  s4_bear_code_out = 0
+
+s4_event_code  := 0
+s4_event_count := 0
+s4_bull_break  := false
+s4_bear_break  := false
+s4_bias_before := s4_bias
+s4_broken_level := na
+s4_broken_bar := na
+
+s4_can_bull = s3_ready and not na(s3_swing_high_level) and not s3_swing_high_crossed
+s4_can_bear = s3_ready and not na(s3_swing_low_level)  and not s3_swing_low_crossed
+
+// ── bullish break — evaluated FIRST ──────────────────────────────────────────
+if s4_can_bull and s4_prev_close <= s3_swing_high_level and s4_cur_close > s3_swing_high_level
+    s4_event_code := s4_bias == BIAS_BEARISH ? CODE_EV_CHOCH_BULL : CODE_EV_BOS_BULL
+    s4_broken_level := s3_swing_high_level
+    s4_broken_bar := s3_swing_high_bar
+    s3_swing_high_crossed := true
+    s4_bias := BIAS_BULLISH
+    s4_event_count := s4_event_count + 1
+    s4_last_event_bar  := bar_index
+    s4_last_event_code := s4_event_code
+    s4_bull_break := true
+    s4_bull_code  := s4_event_code
+
+// ── bearish break — tag uses the bias the bull break may have JUST set ───────
+if s4_can_bear and s4_prev_close >= s3_swing_low_level and s4_cur_close < s3_swing_low_level
+    s4_bear_code = s4_bias == BIAS_BULLISH ? CODE_EV_CHOCH_BEAR : CODE_EV_BOS_BEAR
+    s4_broken_level := s3_swing_low_level
+    s4_broken_bar := s3_swing_low_bar
+    s3_swing_low_crossed := true
+    s4_bias := BIAS_BEARISH
+    s4_event_count := s4_event_count + 1
+    s4_last_event_bar  := bar_index
+    s4_last_event_code := s4_bear_code
+    s4_bear_break := true
+    s4_bear_code_out := s4_bear_code
+    // When both fired, the LAST event on the bar is the bear one; the plotted
+    // code reports it, and s4_event_count == 2 marks the double.
+    s4_event_code := s4_bear_code
+
+// `s4_trend` was removed here in Wave 2b-i. It was
+//     s4_bias == BIAS_BULLISH ? 1 : s4_bias == BIAS_BEARISH ? -1 : 0
+// which is the IDENTITY on s4_bias, because the contract pins BULLISH = 1 and
+// BEARISH = -1 (contract._engine_constants). Python compared both `oracleBias`
+// and `oracleTrend` against the same `swing_trend_bias`, so the second plot cost
+// one of 64 plot slots and could not fail unless the first did.
+
+// ── loaded-history sufficiency ───────────────────────────────────────────────
+// Not proof of correctness — only that the window is deep enough for the seed to
+// be plausible. `s4_bias_seeded_at_bar` is the bar the bias first left 0, which
+// is the value an operator compares against the Python trace.
+var int s4_bias_seeded_at_bar = na
+if na(s4_bias_seeded_at_bar) and s4_bias != 0
+    s4_bias_seeded_at_bar := bar_index
+
+s4_history_ok = bar_index >= (SWING_LENGTH + ATR_PERIOD)
+s4_history_warn = not s4_history_ok or na(s4_bias_seeded_at_bar)

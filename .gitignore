@@ -106,3 +106,15 @@ golden/run-001/reference/candles.csv
 # Live-slice runtime state (ledger, ops logs, bar segments, reports)
 live_state/
 rehearsal_out/
+
+# ── TradingView Visual Oracle: derived market data, not source ───────────────
+# Both of these are REGENERABLE with one command and are large enough that
+# committing them would dominate the repository. The manifests, the index and
+# the provenance JSON beside them ARE tracked, so what a fixture or a recording
+# was built from stays auditable.
+#
+#   golden fixtures      python -m tools.oracle.build_fixtures --write   (~90 MB)
+#   live feed extension  python -m tools.oracle.snapshot_execution_feed \
+#                            --from <the node's 1m csv> --write          (~3 MB)
+golden/tradingview_oracle/**/*.csv
+artifacts/tradingview_oracle/execution_feed_extension.csv

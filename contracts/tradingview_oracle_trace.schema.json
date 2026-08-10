@@ -1,0 +1,1668 @@
+{
+ "$schema": "http://json-schema.org/draft-07/schema#",
+ "$id": "tradingview_oracle_trace.schema.json",
+ "title": "TradingView Visual Oracle — canonical per-bar trace (v1.1.0)",
+ "description": "The versioned parity interface between the Python engine and the Pine oracle. One record per DETECTION bar, with a nested per-execution-bar section. Produced by an OFFLINE parity runner that derives from already-computed frames — it must never alter a production decision. See docs/tradingview_visual_oracle_parity_audit.md section 17 for why derivation is preferred over instrumenting the live loop.\n\nCHANGELOG 1.0.0 -> 1.1.0 (Stage S1): the trace became STAGE-SCOPED. `header.stage` and `header.sections_implemented` were added, and `detection_bar.structure` moved from required to optional. Rationale: S1 implements data/time/session only, and requiring a `structure` block would have forced fabricated placeholder values into every S1 row — indistinguishable from implemented parity, which the design forbids. A section that is absent is UNIMPLEMENTED; a section that is present is COMPARED. Also added: `utc_day`, session transition fields, `bar_completeness`, and `data_context`.",
+ "type": "object",
+ "required": [
+  "header",
+  "bars"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "header": {
+   "type": "object",
+   "required": [
+    "trace_schema_version",
+    "stage",
+    "sections_implemented",
+    "oracle_engine_hash",
+    "symbol",
+    "detection_timeframe",
+    "execution_timeframe",
+    "window"
+   ],
+   "additionalProperties": false,
+   "properties": {
+    "trace_schema_version": {
+     "type": "string",
+     "const": "1.4.0"
+    },
+    "stage": {
+     "type": "string",
+     "pattern": "^S\\d+$",
+     "description": "The highest parity stage this trace covers, e.g. 'S1'."
+    },
+    "sections_implemented": {
+     "type": "array",
+     "items": {
+      "enum": [
+       "time",
+       "session",
+       "utc_day",
+       "data_context",
+       "volatility",
+       "structure",
+       "order_blocks",
+       "market_state",
+       "candidates",
+       "cohorts",
+       "lifecycle",
+       "regime"
+      ]
+     },
+     "description": "Which per-bar sections carry real values. A comparator MUST ignore any section not listed here rather than treating its absence as a mismatch."
+    },
+    "sections_unimplemented": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Explicitly declared as not yet produced. Present for readability; `sections_implemented` is authoritative."
+    },
+    "oracle_engine_hash": {
+     "type": "string",
+     "pattern": "^[0-9a-f]{64}$"
+    },
+    "oracle_engine_id": {
+     "type": "string"
+    },
+    "engine_manifest_id": {
+     "type": "string"
+    },
+    "resolved_config_hash": {
+     "type": "string"
+    },
+    "policy_version": {
+     "type": "string"
+    },
+    "symbol": {
+     "type": "string"
+    },
+    "detection_timeframe": {
+     "type": "string"
+    },
+    "execution_timeframe": {
+     "type": "string"
+    },
+    "window": {
+     "type": "object",
+     "required": [
+      "start",
+      "end"
+     ],
+     "properties": {
+      "start": {
+       "type": "string",
+       "description": "UTC ISO-8601, inclusive"
+      },
+      "end": {
+       "type": "string",
+       "description": "UTC ISO-8601, exclusive"
+      },
+      "fixture_id": {
+       "type": "string",
+       "description": "e.g. F-INIT, F-STEADY"
+      }
+     }
+    },
+    "environment_provenance": {
+     "type": "object",
+     "description": "Recorded, never hashed. Dependency versions have measurably moved governed floats (~220 ULP bbw_value between hosts). Used only during divergence triage.",
+     "properties": {
+      "python": {
+       "type": "string"
+      },
+      "numpy": {
+       "type": "string"
+      },
+      "pandas": {
+       "type": "string"
+      },
+      "platform": {
+       "type": "string"
+      },
+      "machine": {
+       "type": "string"
+      }
+     }
+    },
+    "warmup_excluded_bars": {
+     "type": "object",
+     "description": "Leading bars excluded from scoring because history-seeded values have not converged. Comparison MUST honour these.",
+     "properties": {
+      "swings": {
+       "type": "integer",
+       "description": ">= swing_length (50)"
+      },
+      "atr": {
+       "type": "integer",
+       "description": ">= 200 detection bars"
+      },
+      "regime": {
+       "type": "integer",
+       "description": ">= 200 daily bars"
+      }
+     }
+    }
+   }
+  },
+  "bars": {
+   "type": "array",
+   "items": {
+    "$ref": "#/definitions/detection_bar"
+   }
+  }
+ },
+ "definitions": {
+  "field_class": {
+   "description": "Comparison discipline. exact = zero tolerance, any difference fails. price = compared within the fixture's price tolerance. normalized = compared after canonicalisation (case/whitespace/ordering). feed = expected to differ between data providers; divergence is recorded, not failed. python_only = has no Pine counterpart and is never compared. pine_unavailable = Pine cannot compute it at all; presence in Pine output is itself an error.",
+   "enum": [
+    "exact",
+    "price",
+    "normalized",
+    "feed",
+    "python_only",
+    "pine_unavailable"
+   ]
+  },
+  "detection_bar": {
+   "type": "object",
+   "required": [
+    "bar_timestamp",
+    "bar_index",
+    "ohlcv",
+    "session",
+    "utc_day"
+   ],
+   "description": "`structure` and every later-stage section are OPTIONAL and are absent — not null, not zero — until their stage is implemented. See header.sections_implemented.",
+   "additionalProperties": false,
+   "properties": {
+    "bar_timestamp": {
+     "type": "string",
+     "description": "UTC bar-OPEN, '%Y-%m-%d %H:%M:%S+00:00'. class: exact"
+    },
+    "bar_epoch_ms": {
+     "type": "integer",
+     "description": "UTC bar-open as epoch milliseconds — the form Pine's `time` gives, so the comparator can match without string parsing. class: exact"
+    },
+    "bar_index": {
+     "type": "integer",
+     "description": "Position in the canonical dataset, NOT a time grid — missing intervals are dropped. class: python_only (compare index DELTAS, never absolute values; limitation L-09)"
+    },
+    "bar_completeness": {
+     "type": "string",
+     "enum": [
+      "closed",
+      "forming"
+     ],
+     "description": "Production only ever admits CLOSED bars (MT5BarBridge.closed_m1_bars); an offline trace over a stored file is always 'closed'. Pine must gate on barstate.isconfirmed to match. class: exact"
+    },
+    "utc_day": {
+     "type": "object",
+     "required": [
+      "day_key",
+      "day_transition"
+     ],
+     "description": "Production UTC calendar day (strategy_core.regime.utc_date_key). NOT an exchange session day — limitation L-06.",
+     "properties": {
+      "day_key": {
+       "type": "string",
+       "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+       "description": "class: exact"
+      },
+      "prev_day_key": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "description": "class: exact"
+      },
+      "day_transition": {
+       "type": "boolean",
+       "description": "True on the first bar of a new UTC day. class: exact"
+      },
+      "utc_year": {
+       "type": "integer"
+      },
+      "utc_month": {
+       "type": "integer"
+      },
+      "utc_dom": {
+       "type": "integer"
+      }
+     }
+    },
+    "data_context": {
+     "type": "object",
+     "description": "Whether this bar is inside the oracle's supported context.",
+     "properties": {
+      "status": {
+       "enum": [
+        "SUPPORTED",
+        "UNSUPPORTED_DATA_CONTEXT"
+       ],
+       "description": "class: exact"
+      },
+      "reasons": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       },
+       "description": "class: exact (ordered)"
+      }
+     }
+    },
+    "ohlcv": {
+     "type": "object",
+     "description": "class: feed",
+     "required": [
+      "open",
+      "high",
+      "low",
+      "close"
+     ],
+     "properties": {
+      "open": {
+       "type": "number"
+      },
+      "high": {
+       "type": "number"
+      },
+      "low": {
+       "type": "number"
+      },
+      "close": {
+       "type": "number"
+      },
+      "volume": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "Never used in any decision. class: feed"
+      }
+     }
+    },
+    "parsed": {
+     "type": "object",
+     "description": "The volatility flip that decides OB bounds (limitation L-03).",
+     "properties": {
+      "true_range": {
+       "type": "number",
+       "description": "class: price"
+      },
+      "atr_rma_200": {
+       "type": "number",
+       "description": "First-value seeded RMA, NOT ta.atr. class: price"
+      },
+      "volatility_measure": {
+       "type": "number",
+       "description": "class: price"
+      },
+      "high_volatility": {
+       "type": "boolean",
+       "description": "(H-L) >= 2.0 * measure. class: exact"
+      },
+      "parsed_high": {
+       "type": "number",
+       "description": "class: price"
+      },
+      "parsed_low": {
+       "type": "number",
+       "description": "class: price"
+      }
+     }
+    },
+    "session": {
+     "type": "object",
+     "required": [
+      "key",
+      "label",
+      "utc_hour",
+      "code"
+     ],
+     "description": "Assigned by strategy_core.sessions from the UTC HOUR of the bar-open timestamp, window [start, end). No DST, no weekday, no exchange session.",
+     "properties": {
+      "key": {
+       "type": "string",
+       "description": "class: exact"
+      },
+      "label": {
+       "type": "string",
+       "description": "class: exact"
+      },
+      "code": {
+       "type": "integer",
+       "description": "Generated stable numeric code for the key (contract-derived), so Pine can PLOT it for comparison instead of relying on colour. class: exact"
+      },
+      "utc_hour": {
+       "type": "integer",
+       "minimum": 0,
+       "maximum": 23,
+       "description": "class: exact"
+      },
+      "window_start_hour": {
+       "type": [
+        "integer",
+        "null"
+       ],
+       "description": "null for the Outside fallback. class: exact"
+      },
+      "window_end_hour": {
+       "type": [
+        "integer",
+        "null"
+       ],
+       "description": "EXCLUSIVE. null for Outside. class: exact"
+      },
+      "is_fallback": {
+       "type": "boolean",
+       "description": "True when no window matched and Outside was used. class: exact"
+      },
+      "prev_key": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "description": "Session of the PREVIOUS bar in this trace, not of the previous clock hour. class: exact"
+      },
+      "transition": {
+       "type": "boolean",
+       "description": "True when key != prev_key. class: exact"
+      },
+      "transition_reason": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "enum": [
+        "session_open",
+        "session_close_to_fallback",
+        "fallback_to_session",
+        "first_bar",
+        "gap_resync",
+        null
+       ],
+       "description": "first_bar = no previous bar in the window. gap_resync = the previous bar was more than one timeframe step earlier, so the change may hide unobserved sessions. class: exact"
+      },
+      "bars_since_transition": {
+       "type": "integer",
+       "description": "class: exact"
+      }
+     }
+    },
+    "market_state": {
+     "type": "object",
+     "description": "Leakage-safe daily panel row for this bar's UTC date, already shifted one day (limitation L-06).",
+     "properties": {
+      "market_state": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "description": "class: exact"
+      },
+      "trend_state": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "description": "class: exact"
+      },
+      "volatility_state": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "description": "class: exact"
+      },
+      "chop_state": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "description": "class: exact"
+      },
+      "confirmed": {
+       "type": "boolean",
+       "description": "class: exact"
+      },
+      "px_vs_ema": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: price"
+      },
+      "bbw": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: price"
+      },
+      "adx": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: price"
+      },
+      "bbw_threshold": {
+       "type": "number",
+       "description": "class: exact"
+      },
+      "known_at": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "description": "class: exact"
+      }
+     }
+    },
+    "structure": {
+     "type": "object",
+     "required": [
+      "current_leg",
+      "swing_trend_bias"
+     ],
+     "properties": {
+      "current_leg": {
+       "type": "integer",
+       "enum": [
+        0,
+        1
+       ],
+       "description": "class: exact"
+      },
+      "swing_trend_bias": {
+       "type": "integer",
+       "enum": [
+        -1,
+        0,
+        1
+       ],
+       "description": "Never reset; history-seeded (limitation L-04). class: exact"
+      },
+      "swing_high": {
+       "$ref": "#/definitions/swing_record"
+      },
+      "swing_low": {
+       "$ref": "#/definitions/swing_record"
+      },
+      "structure_event": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "enum": [
+        "BOS_BULL",
+        "CHOCH_BULL",
+        "BOS_BEAR",
+        "CHOCH_BEAR",
+        null
+       ],
+       "description": "Both a bull and a bear event can fire on one bar; when they do, BULL is emitted first. class: exact"
+      }
+     }
+    },
+    "s2": {
+     "type": "object",
+     "description": "Stage S2 — volatility and parsed prices. Mirrors _true_range, _pine_rma(200) and _add_parsed_prices. NOTE: parsed prices are consumed ONLY by _make_order_block (S5); they do NOT feed swings or breaks.",
+     "properties": {
+      "high_low": {
+       "type": "number",
+       "description": "class: price"
+      },
+      "high_close": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "null on bar 0 (no previous close). class: price"
+      },
+      "low_close": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "null on bar 0. class: price"
+      },
+      "true_range": {
+       "type": "number",
+       "description": "Bar 0 resolves to high-low: production takes a row-wise max over three columns and pandas skips NaN. class: price"
+      },
+      "rma_prev": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "The RMA's previous value — lets a comparator locate a divergence at the bar it began rather than after it compounds. class: price"
+      },
+      "atr": {
+       "type": "number",
+       "description": "FIRST-VALUE seeded RMA, alpha = 1/200. NOT ta.atr/ta.rma, which seed with an SMA. class: price"
+      },
+      "cumulative_mean_range": {
+       "type": "number",
+       "description": "tr.cumsum()/max(index,1) — index 0 AND 1 both divide by 1. Only used when ob_filter != 'Atr'. class: price"
+      },
+      "volatility_measure": {
+       "type": "number",
+       "description": "The selected branch. class: price"
+      },
+      "volatility_branch": {
+       "type": "string",
+       "enum": [
+        "Atr",
+        "Range"
+       ],
+       "description": "class: exact"
+      },
+      "threshold": {
+       "type": "number",
+       "description": "2.0 * volatility_measure. class: price"
+      },
+      "bar_range": {
+       "type": "number",
+       "description": "class: price"
+      },
+      "high_volatility": {
+       "type": "boolean",
+       "description": "(H-L) >= 2.0*measure — note >=, not >. class: exact"
+      },
+      "parsed_high": {
+       "type": "number",
+       "description": "SWAPPED with parsed_low when high_volatility. class: price"
+      },
+      "parsed_low": {
+       "type": "number",
+       "description": "class: price"
+      },
+      "atr_warm": {
+       "type": "boolean",
+       "description": "True while fewer than 200 bars have been seen. class: exact"
+      }
+     }
+    },
+    "s3": {
+     "type": "object",
+     "description": "Stage S3 — the INLINED swing loop inside detect_order_blocks. strategy_core/swings.py::detect_swings is dead on the live path and is NOT mirrored. Reads RAW high/low, never parsed prices.",
+     "required": [
+      "warmup"
+     ],
+     "properties": {
+      "warmup": {
+       "type": "boolean",
+       "description": "True for bars before swing_length; production's loop never reaches them. Structure fields are ABSENT, not zero. class: exact"
+      },
+      "pivot_index": {
+       "type": "integer",
+       "description": "i - swing_length. class: python_only"
+      },
+      "pivot_high": {
+       "type": "number"
+      },
+      "pivot_low": {
+       "type": "number"
+      },
+      "right_window_max_high": {
+       "type": "number",
+       "description": "max over bars [pivot+1, i] INCLUSIVE — exactly swing_length bars. class: price"
+      },
+      "right_window_min_low": {
+       "type": "number",
+       "description": "class: price"
+      },
+      "new_leg_high": {
+       "type": "boolean",
+       "description": "pivot high STRICTLY > window max. class: exact"
+      },
+      "new_leg_low": {
+       "type": "boolean",
+       "description": "STRICTLY <. class: exact"
+      },
+      "current_leg": {
+       "type": "integer",
+       "enum": [
+        0,
+        1
+       ],
+       "description": "class: exact"
+      },
+      "leg_change": {
+       "type": "integer",
+       "enum": [
+        -1,
+        0,
+        1
+       ],
+       "description": "A swing is recorded only on a TRANSITION. class: exact"
+      },
+      "swing_created": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "enum": [
+        "swing_high",
+        "swing_low",
+        null
+       ],
+       "description": "class: exact"
+      },
+      "swing_high_level": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "The single most-recent uncrossed swing high. class: price"
+      },
+      "swing_high_index": {
+       "type": [
+        "integer",
+        "null"
+       ],
+       "description": "class: python_only"
+      },
+      "swing_high_crossed": {
+       "type": "boolean",
+       "description": "Latches; a swing breaks once. class: exact"
+      },
+      "swing_high_seq": {
+       "type": [
+        "integer",
+        "null"
+       ],
+       "description": "ORACLE-side monotonic label. Production has no swing id — it keeps one dict per side. Used only to line the two traces up. class: normalized"
+      },
+      "swing_low_level": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: price"
+      },
+      "swing_low_index": {
+       "type": [
+        "integer",
+        "null"
+       ],
+       "description": "class: python_only"
+      },
+      "swing_low_crossed": {
+       "type": "boolean",
+       "description": "class: exact"
+      },
+      "swing_low_seq": {
+       "type": [
+        "integer",
+        "null"
+       ],
+       "description": "class: normalized"
+      }
+     }
+    },
+    "s4": {
+     "type": "object",
+     "description": "Stage S4 — BOS/CHoCH from a two-bar RAW CLOSE test. Bull is evaluated FIRST; both blocks are independent ifs, so both can fire on one bar and the order is part of the behaviour.",
+     "required": [
+      "warmup"
+     ],
+     "properties": {
+      "warmup": {
+       "type": "boolean"
+      },
+      "prev_close": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: price"
+      },
+      "cur_close": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: price"
+      },
+      "swing_trend_bias": {
+       "type": "integer",
+       "enum": [
+        -1,
+        0,
+        1
+       ],
+       "description": "0 until the first break, then BULLISH(1)/BEARISH(-1). NEVER reset — seeded by the first break in LOADED history (limitation L-04). class: exact"
+      },
+      "event_count": {
+       "type": "integer",
+       "description": "class: exact"
+      },
+      "events": {
+       "type": "array",
+       "description": "In production evaluation order: bullish first, then bearish.",
+       "items": {
+        "type": "object",
+        "properties": {
+         "side": {
+          "type": "string",
+          "enum": [
+           "bullish",
+           "bearish"
+          ],
+          "description": "class: exact"
+         },
+         "tag": {
+          "type": "string",
+          "enum": [
+           "BOS",
+           "CHoCH"
+          ],
+          "description": "CHoCH only when flipping from the OPPOSITE bias; bias 0 yields BOS, so the first break of a run is always BOS. class: exact"
+         },
+         "swing_seq": {
+          "type": [
+           "integer",
+           "null"
+          ],
+          "description": "class: normalized"
+         },
+         "swing_level": {
+          "type": "number",
+          "description": "class: price"
+         },
+         "swing_index": {
+          "type": [
+           "integer",
+           "null"
+          ],
+          "description": "class: python_only"
+         },
+         "prev_close": {
+          "type": "number"
+         },
+         "cur_close": {
+          "type": "number"
+         },
+         "bias_before": {
+          "type": "integer",
+          "description": "class: exact"
+         },
+         "bias_after": {
+          "type": "integer",
+          "description": "class: exact"
+         },
+         "ob_id": {
+          "type": "integer",
+          "description": "class: python_only — history-start dependent (L-05)"
+         }
+        }
+       }
+      }
+     }
+    },
+    "obs_created": {
+     "type": "array",
+     "description": "Order blocks created on THIS bar, in production append order. NOT produced before Stage S5.",
+     "items": {
+      "$ref": "#/definitions/order_block"
+     }
+    },
+    "active_ob_ids": {
+     "type": "array",
+     "items": {
+      "type": [
+       "integer",
+       "string"
+      ]
+     },
+     "description": "class: python_only — match by (detection_time, direction, top, bottom), never by id (limitation L-05)"
+    },
+    "execution_bars": {
+     "type": "array",
+     "description": "The 1m candles inside this detection bar that changed candidate or lifecycle state. Bars with no state change MAY be omitted; omission is not a difference.",
+     "items": {
+      "$ref": "#/definitions/execution_bar"
+     }
+    },
+    "s5": {
+     "type": "object",
+     "description": "Stage S5 — order-block CREATION only. Mirrors `_make_order_block`, `_ob_width_pips` and `_passes_size_filter`. No mitigation, invalidation, expiry or retirement: production assigns no lifecycle state at creation, so creation is separable and stops here.",
+     "required": [
+      "warmup"
+     ],
+     "properties": {
+      "warmup": {
+       "type": "boolean",
+       "description": "True before swing_length; production's loop never reaches these bars. Fields are ABSENT, not zero."
+      },
+      "candidates": {
+       "type": "array",
+       "items": {
+        "$ref": "#/definitions/ob_candidate"
+       }
+      },
+      "candidate_count": {
+       "type": "integer"
+      },
+      "created_count": {
+       "type": "integer"
+      },
+      "next_ob_id": {
+       "type": "integer",
+       "description": "Counter state AFTER this bar. class: python_only"
+      },
+      "active_ob_count": {
+       "type": "integer",
+       "description": "Order blocks created so far. Nothing is ever removed. class: python_only"
+      },
+      "inventory_checksum": {
+       "type": "number",
+       "description": "Running total of round(top*1e5)+round(bottom*1e5) over every ACCEPTED block so far. A bounded, exactly-reproducible summary of the whole inventory: neither ob_id (L-05) nor bar_index (L-09) can be compared across feeds, but this can. class: exact"
+      }
+     }
+    },
+    "s6": {
+     "type": "object",
+     "description": "Stage S6 — the UTC daily regime panel. Mirrors strategy_core/regime.py::daily_regime_panel AS REACHED IN PRODUCTION, i.e. through scripts/run_backtest.py::_portfolio_panel_index. The global regime gate (`regime_gate_enabled`) is FALSE and `regime_emit_for_run` returns None, so mirroring THAT path would reproduce dead code; the panel is live via the portfolio policy (mode `enforce`) and the state-target policy. Values are those of the LAST COMPLETED UTC day and are constant across every intraday bar of the current day.",
+     "required": [
+      "warmup"
+     ],
+     "properties": {
+      "warmup": {
+       "type": "boolean",
+       "description": "No prior COMPLETED day, or an indicator is not yet valid. Fields are null, never zero."
+      },
+      "day_key": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "description": "UTC calendar day of THIS bar. class: exact"
+      },
+      "source_day": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "description": "The completed day the state was classified from — the one-day shift. class: exact"
+      },
+      "day_index": {
+       "type": "integer",
+       "description": "0-based index into the chart's daily series. class: python_only"
+      },
+      "daily_open": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: price"
+      },
+      "daily_high": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: price"
+      },
+      "daily_low": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: price"
+      },
+      "daily_close": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: price"
+      },
+      "daily_bars": {
+       "type": [
+        "integer",
+        "null"
+       ],
+       "description": "Intraday bars aggregated into that day. Feed-dependent (L-02). class: normalized"
+      },
+      "ema": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "EMA(200) of daily closes, FIRST-VALUE seeded (ewm adjust=False). NOT ta.ema. class: price"
+      },
+      "px_vs_ema": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "(close-ema)/ema*100. Exactly 0 classifies BEAR — the operator is `> 0`. class: price"
+      },
+      "bb_basis": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: price"
+      },
+      "bb_sd": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "SAMPLE deviation, ddof=1. ta.stdev is a POPULATION deviation, differing by sqrt(n/(n-1)). class: price"
+      },
+      "bb_upper": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: price"
+      },
+      "bb_lower": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: price"
+      },
+      "bbw": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "(2*mult*sd)/basis*100. class: price"
+      },
+      "bbw_threshold": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: exact"
+      },
+      "bbw_above": {
+       "type": [
+        "boolean",
+        "null"
+       ],
+       "description": "`bbw > threshold` — equality is COMPRESS. class: exact"
+      },
+      "tr": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: price"
+      },
+      "plus_dm": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: price"
+      },
+      "minus_dm": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: price"
+      },
+      "atr": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: price"
+      },
+      "plus_dm_smooth": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: price"
+      },
+      "minus_dm_smooth": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: price"
+      },
+      "plus_di": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: price"
+      },
+      "minus_di": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: price"
+      },
+      "dx": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: price"
+      },
+      "adx": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "Wilder, smoothed with the same first-value-seeded ewm at alpha=1/14. NOT ta.adx. class: price"
+      },
+      "adx_chop": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "class: exact"
+      },
+      "adx_is_chop": {
+       "type": [
+        "boolean",
+        "null"
+       ],
+       "description": "`adx < chop` — equality is TREND. class: exact"
+      },
+      "market_state": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "description": "class: exact"
+      },
+      "prev_market_state": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "description": "class: exact"
+      },
+      "trend_state": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "description": "class: exact"
+      },
+      "volatility_state": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "description": "Still reported on a Chop row: the ADX test overrides the state NAME, not this field. class: exact"
+      },
+      "chop_state": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "description": "class: exact"
+      },
+      "transition": {
+       "type": [
+        "boolean",
+        "null"
+       ],
+       "description": "class: exact"
+      },
+      "transition_reason": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "description": "class: exact"
+      },
+      "validity": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "description": "`warmup` and `invalid` are DISTINCT: the first is 'not enough daily history', the second is 'the classifier refused'. class: exact"
+      },
+      "confirmed": {
+       "type": [
+        "boolean",
+        "null"
+       ],
+       "description": "class: exact"
+      },
+      "replay_unattainable": {
+       "type": "boolean",
+       "description": "Always true. The chart's daily series is ~226 days; production seeds EMA(200) in 2015 and it never converges. class: exact"
+      }
+     }
+    }
+   }
+  },
+  "swing_record": {
+   "type": "object",
+   "properties": {
+    "level": {
+     "type": [
+      "number",
+      "null"
+     ],
+     "description": "class: price"
+    },
+    "index": {
+     "type": [
+      "integer",
+      "null"
+     ],
+     "description": "class: python_only"
+    },
+    "crossed": {
+     "type": "boolean",
+     "description": "Latches; a swing breaks once. class: exact"
+    }
+   }
+  },
+  "order_block": {
+   "type": "object",
+   "required": [
+    "ob_id",
+    "direction",
+    "structure_tag",
+    "top",
+    "bottom"
+   ],
+   "properties": {
+    "ob_id": {
+     "type": [
+      "integer",
+      "string"
+     ],
+     "description": "class: python_only (limitation L-05)"
+    },
+    "direction": {
+     "type": "string",
+     "enum": [
+      "bullish",
+      "bearish"
+     ],
+     "description": "class: exact"
+    },
+    "structure_tag": {
+     "type": "string",
+     "enum": [
+      "BOS",
+      "CHoCH"
+     ],
+     "description": "class: exact"
+    },
+    "top": {
+     "type": "number",
+     "description": "origin parsed_high; may be BELOW bottom on a flipped high-volatility origin. class: price"
+    },
+    "bottom": {
+     "type": "number",
+     "description": "class: price"
+    },
+    "break_level": {
+     "type": "number",
+     "description": "class: price"
+    },
+    "width_pips": {
+     "type": [
+      "number",
+      "null"
+     ],
+     "description": "class: price"
+    },
+    "origin_time": {
+     "type": "string",
+     "description": "class: exact"
+    },
+    "pivot_time": {
+     "type": "string",
+     "description": "class: exact"
+    },
+    "detection_time": {
+     "type": "string",
+     "description": "class: exact"
+    },
+    "origin_index": {
+     "type": "integer",
+     "description": "class: python_only"
+    },
+    "pivot_index": {
+     "type": "integer",
+     "description": "class: python_only"
+    },
+    "detection_index": {
+     "type": "integer",
+     "description": "class: python_only"
+    },
+    "rejected_reason": {
+     "type": [
+      "string",
+      "null"
+     ],
+     "enum": [
+      "size_filter",
+      "empty_search_window",
+      "non_positive_risk",
+      null
+     ],
+     "description": "Present when the OB or its plan was rejected and NO trade row exists. These are invisible in the trades CSV and must be derived. class: exact"
+    }
+   }
+  },
+  "execution_bar": {
+   "type": "object",
+   "required": [
+    "bar_timestamp",
+    "ob_ref"
+   ],
+   "properties": {
+    "bar_timestamp": {
+     "type": "string",
+     "description": "UTC 1m bar-open. class: exact"
+    },
+    "bar_index_delta": {
+     "type": "integer",
+     "description": "Offset from this candidate's trigger bar. Compared instead of the absolute index (limitation L-09). class: exact"
+    },
+    "ob_ref": {
+     "type": "object",
+     "description": "Identity of the OB this record concerns, by content not id.",
+     "properties": {
+      "detection_time": {
+       "type": "string"
+      },
+      "direction": {
+       "type": "string"
+      },
+      "top": {
+       "type": "number"
+      },
+      "bottom": {
+       "type": "number"
+      }
+     }
+    },
+    "candidate_state": {
+     "type": "string",
+     "enum": [
+      "PENDING",
+      "TAPPED",
+      "ARMED",
+      "FILLED",
+      "TERMINAL"
+     ],
+     "description": "class: exact"
+    },
+    "lifecycle_state": {
+     "type": "string",
+     "description": "Production outcome vocabulary. class: exact"
+    },
+    "eligibility": {
+     "type": "string",
+     "enum": [
+      "ALLOWED",
+      "BLOCKED",
+      "NOT_EVALUATED"
+     ],
+     "description": "class: exact"
+    },
+    "block_reasons": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "ORDERED in production evaluation order (audit section 7). The FIRST entry is the authoritative one; later entries are informational. Order is part of the comparison. class: exact"
+    },
+    "cohort": {
+     "type": "object",
+     "properties": {
+      "cohort_key": {
+       "type": "string",
+       "description": "class: exact"
+      },
+      "session_key": {
+       "type": "string",
+       "description": "From the FILL candle, not the detection candle. class: exact"
+      },
+      "structure": {
+       "type": "string"
+      },
+      "direction": {
+       "type": "string"
+      },
+      "portfolio_regime_deployed": {
+       "type": "string",
+       "description": "class: exact"
+      },
+      "portfolio_regime_effective": {
+       "type": "string",
+       "description": "Post with_disabled_as_label. This is what the walk uses. class: exact"
+      },
+      "state_eligibility": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "enum": [
+        "rescued",
+        null
+       ],
+       "description": "class: exact"
+      }
+     }
+    },
+    "plan": {
+     "type": "object",
+     "properties": {
+      "entry": {
+       "type": "number",
+       "description": "class: price"
+      },
+      "stop": {
+       "type": "number",
+       "description": "class: price"
+      },
+      "tp": {
+       "type": "number",
+       "description": "class: price"
+      },
+      "risk": {
+       "type": "number",
+       "description": "class: price"
+      },
+      "rr_base": {
+       "type": "number",
+       "description": "class: exact"
+      },
+      "rr_effective": {
+       "type": "number",
+       "description": "After cohort/state override. class: exact"
+      },
+      "trigger_level": {
+       "type": "number",
+       "description": "The 25% penetration price. class: price"
+      }
+     }
+    },
+    "protection": {
+     "type": "object",
+     "description": "INERT under the deployed config (protection_modes=['baseline']). Present so a future activation is visible as a schema-populated field rather than a silent behaviour change.",
+     "properties": {
+      "mode": {
+       "type": "string"
+      },
+      "armed": {
+       "type": "boolean"
+      },
+      "exit_price": {
+       "type": [
+        "number",
+        "null"
+       ]
+      }
+     }
+    },
+    "break_even": {
+     "type": "object",
+     "description": "INERT under the deployed config (be_enabled=false, no cohort be/risk_reduction).",
+     "properties": {
+      "arm_price": {
+       "type": [
+        "number",
+        "null"
+       ]
+      },
+      "stop_price": {
+       "type": [
+        "number",
+        "null"
+       ]
+      },
+      "armed": {
+       "type": "boolean"
+      },
+      "triggered": {
+       "type": "boolean"
+      }
+     }
+    },
+    "outcome": {
+     "type": [
+      "string",
+      "null"
+     ],
+     "description": "class: exact"
+    },
+    "pnl_r": {
+     "type": [
+      "number",
+      "null"
+     ],
+     "description": "Fixed -1.0 or rr_multiple, never derived from exit price. class: exact"
+    },
+    "net_r": {
+     "type": [
+      "number",
+      "null"
+     ],
+     "description": "Cost-inclusive. class: price"
+    },
+    "transition_events": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Catalogue names from audit section 15. class: exact"
+    },
+    "limitation_flags": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Limitation IDs that apply to this record — e.g. NEWS-UNAVAILABLE marks a row that MUST be excluded from parity scoring, INTRA-WINDOW marks a fill+exit inside one 15m window. class: exact",
+     "examples": [
+      [
+       "NEWS-UNAVAILABLE"
+      ],
+      [
+       "INTRA-WINDOW"
+      ]
+     ]
+    },
+    "python_only": {
+     "type": "object",
+     "description": "Recorded for triage, never compared: state Pine has no access to.",
+     "properties": {
+      "news_event": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "news_paused": {
+       "type": [
+        "boolean",
+        "null"
+       ]
+      },
+      "intent_action": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "ledger_status": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "rail_verdict": {
+       "type": [
+        "string",
+        "null"
+       ]
+      }
+     }
+    }
+   }
+  },
+  "ob_candidate": {
+   "type": "object",
+   "description": "ONE order-block candidate, recorded whether or not it was appended. Production builds the dict, assigns the CURRENT ob_id into it, then runs the size gate, and increments the counter only inside the accept branch — so a rejected candidate leaves no trace in the output frame at all. It is captured here because 'why is there no box on this break' is otherwise unanswerable, and because the id sequence is only verifiable if the rejections are visible.",
+   "required": [
+    "event_index",
+    "side",
+    "tag",
+    "appended"
+   ],
+   "additionalProperties": false,
+   "properties": {
+    "event_index": {
+     "type": "integer",
+     "description": "Order WITHIN the bar. Bullish is evaluated first and both branches are independent `if`s, so a bar can carry two candidates and the order is behaviour. class: exact"
+    },
+    "side": {
+     "enum": [
+      "bullish",
+      "bearish"
+     ],
+     "description": "class: exact"
+    },
+    "tag": {
+     "enum": [
+      "BOS",
+      "CHoCH"
+     ],
+     "description": "From the bias ENTERING the break. A same-bar bull break flips the bias before the bear branch reads it, so the second candidate can be CHoCH from a bias that did not exist when the bar opened. class: exact"
+    },
+    "swing_seq": {
+     "type": [
+      "integer",
+      "null"
+     ],
+     "description": "Oracle-side swing label. class: normalized"
+    },
+    "pivot_index": {
+     "type": [
+      "integer",
+      "null"
+     ],
+     "description": "class: python_only"
+    },
+    "pivot_price": {
+     "type": [
+      "number",
+      "null"
+     ],
+     "description": "RAW swing level; equals break_level. class: price"
+    },
+    "break_index": {
+     "type": "integer",
+     "description": "class: python_only"
+    },
+    "break_level": {
+     "type": [
+      "number",
+      "null"
+     ],
+     "description": "class: price"
+    },
+    "break_close": {
+     "type": [
+      "number",
+      "null"
+     ],
+     "description": "The close that crossed it. class: price"
+    },
+    "break_prev_close": {
+     "type": [
+      "number",
+      "null"
+     ],
+     "description": "class: price"
+    },
+    "origin_index": {
+     "type": [
+      "integer",
+      "null"
+     ],
+     "description": "Bar the BOX is taken from: the extreme parsed price over [pivot_index, break_index-1], EARLIEST on a tie. null when the search window was empty. class: python_only"
+    },
+    "proposed_top": {
+     "type": [
+      "number",
+      "null"
+     ],
+     "description": "origin parsed_high — may be BELOW bottom on a high-volatility origin. class: price"
+    },
+    "proposed_bottom": {
+     "type": [
+      "number",
+      "null"
+     ],
+     "description": "class: price"
+    },
+    "proposed_width_pips": {
+     "type": [
+      "number",
+      "null"
+     ],
+     "description": "abs(top-bottom)/pip_size — abs() keeps an inverted box positive. class: price"
+    },
+    "size_gate_min_pips": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "size_gate_max_pips": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "size_gate_passed": {
+     "type": "boolean",
+     "description": "BOTH comparisons are strict, so the gate is INCLUSIVE at both boundaries: a width of exactly max_pips passes. class: exact"
+    },
+    "appended": {
+     "type": "boolean",
+     "description": "class: exact"
+    },
+    "ob_id": {
+     "type": [
+      "integer",
+      "null"
+     ],
+     "description": "Assigned ONLY on append; null when rejected, and the next accepted block reuses the integer. Dense 1..N over accepted blocks. Counted from the first bar of LOADED history, so a chart's ids will not equal production's (limitation L-05) — match on (detection_time, direction, top, bottom). class: python_only"
+    },
+    "rejected_reason": {
+     "enum": [
+      "size_filter",
+      "empty_search_window",
+      null
+     ],
+     "description": "class: exact"
+    },
+    "active": {
+     "type": "boolean",
+     "description": "Production has NO active flag at creation: membership in the list IS admission. True for appended, false for rejected. class: exact"
+    }
+   }
+  }
+ }
+}

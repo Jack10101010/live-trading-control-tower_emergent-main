@@ -1,0 +1,2545 @@
+{
+ "count": 360,
+ "currencies": [],
+ "enabled": true,
+ "first_ms": 1748872620000,
+ "flags": {
+  "block_new_fills": true,
+  "cancel_if_touched": true,
+  "flatten_active_trades": false,
+  "pause_pending_orders": true
+ },
+ "impacts": [
+  "high"
+ ],
+ "last_ms": 1779300180000,
+ "minutes_after": 3,
+ "minutes_before": 3,
+ "schema": "tradingview-oracle-news-v1",
+ "source_file": "data/news/master_economic_calendar_2020_present.csv",
+ "source_last_event_at_impact_ms": 1779375600000,
+ "source_last_event_ms": 1779406200000,
+ "source_rows": 28148,
+ "windows": [
+  {
+   "at_ms": 1748872800000,
+   "currency": "USD",
+   "end_ms": 1748872980000,
+   "impact": "high",
+   "start_ms": 1748872620000
+  },
+  {
+   "at_ms": 1748883600000,
+   "currency": "USD",
+   "end_ms": 1748883780000,
+   "impact": "high",
+   "start_ms": 1748883420000
+  },
+  {
+   "at_ms": 1748959200000,
+   "currency": "USD",
+   "end_ms": 1748959380000,
+   "impact": "high",
+   "start_ms": 1748959020000
+  },
+  {
+   "at_ms": 1749039300000,
+   "currency": "USD",
+   "end_ms": 1749039480000,
+   "impact": "high",
+   "start_ms": 1749039120000
+  },
+  {
+   "at_ms": 1749045600000,
+   "currency": "USD",
+   "end_ms": 1749045780000,
+   "impact": "high",
+   "start_ms": 1749045420000
+  },
+  {
+   "at_ms": 1749125700000,
+   "currency": "EUR",
+   "end_ms": 1749125880000,
+   "impact": "high",
+   "start_ms": 1749125520000
+  },
+  {
+   "at_ms": 1749125700000,
+   "currency": "EUR",
+   "end_ms": 1749125880000,
+   "impact": "high",
+   "start_ms": 1749125520000
+  },
+  {
+   "at_ms": 1749126600000,
+   "currency": "USD",
+   "end_ms": 1749126780000,
+   "impact": "high",
+   "start_ms": 1749126420000
+  },
+  {
+   "at_ms": 1749127500000,
+   "currency": "EUR",
+   "end_ms": 1749127680000,
+   "impact": "high",
+   "start_ms": 1749127320000
+  },
+  {
+   "at_ms": 1749213000000,
+   "currency": "USD",
+   "end_ms": 1749213180000,
+   "impact": "high",
+   "start_ms": 1749212820000
+  },
+  {
+   "at_ms": 1749213000000,
+   "currency": "USD",
+   "end_ms": 1749213180000,
+   "impact": "high",
+   "start_ms": 1749212820000
+  },
+  {
+   "at_ms": 1749213000000,
+   "currency": "USD",
+   "end_ms": 1749213180000,
+   "impact": "high",
+   "start_ms": 1749212820000
+  },
+  {
+   "at_ms": 1749645000000,
+   "currency": "USD",
+   "end_ms": 1749645180000,
+   "impact": "high",
+   "start_ms": 1749644820000
+  },
+  {
+   "at_ms": 1749645000000,
+   "currency": "USD",
+   "end_ms": 1749645180000,
+   "impact": "high",
+   "start_ms": 1749644820000
+  },
+  {
+   "at_ms": 1749645000000,
+   "currency": "USD",
+   "end_ms": 1749645180000,
+   "impact": "high",
+   "start_ms": 1749644820000
+  },
+  {
+   "at_ms": 1749731400000,
+   "currency": "USD",
+   "end_ms": 1749731580000,
+   "impact": "high",
+   "start_ms": 1749731220000
+  },
+  {
+   "at_ms": 1749731400000,
+   "currency": "USD",
+   "end_ms": 1749731580000,
+   "impact": "high",
+   "start_ms": 1749731220000
+  },
+  {
+   "at_ms": 1749731400000,
+   "currency": "USD",
+   "end_ms": 1749731580000,
+   "impact": "high",
+   "start_ms": 1749731220000
+  },
+  {
+   "at_ms": 1749823200000,
+   "currency": "USD",
+   "end_ms": 1749823380000,
+   "impact": "high",
+   "start_ms": 1749823020000
+  },
+  {
+   "at_ms": 1749823200000,
+   "currency": "USD",
+   "end_ms": 1749823380000,
+   "impact": "high",
+   "start_ms": 1749823020000
+  },
+  {
+   "at_ms": 1750163400000,
+   "currency": "USD",
+   "end_ms": 1750163580000,
+   "impact": "high",
+   "start_ms": 1750163220000
+  },
+  {
+   "at_ms": 1750163400000,
+   "currency": "USD",
+   "end_ms": 1750163580000,
+   "impact": "high",
+   "start_ms": 1750163220000
+  },
+  {
+   "at_ms": 1750249800000,
+   "currency": "USD",
+   "end_ms": 1750249980000,
+   "impact": "high",
+   "start_ms": 1750249620000
+  },
+  {
+   "at_ms": 1750269600000,
+   "currency": "USD",
+   "end_ms": 1750269780000,
+   "impact": "high",
+   "start_ms": 1750269420000
+  },
+  {
+   "at_ms": 1750269600000,
+   "currency": "USD",
+   "end_ms": 1750269780000,
+   "impact": "high",
+   "start_ms": 1750269420000
+  },
+  {
+   "at_ms": 1750269600000,
+   "currency": "USD",
+   "end_ms": 1750269780000,
+   "impact": "high",
+   "start_ms": 1750269420000
+  },
+  {
+   "at_ms": 1750271400000,
+   "currency": "USD",
+   "end_ms": 1750271580000,
+   "impact": "high",
+   "start_ms": 1750271220000
+  },
+  {
+   "at_ms": 1750557600000,
+   "currency": "USD",
+   "end_ms": 1750557780000,
+   "impact": "high",
+   "start_ms": 1750557420000
+  },
+  {
+   "at_ms": 1750662900000,
+   "currency": "EUR",
+   "end_ms": 1750663080000,
+   "impact": "high",
+   "start_ms": 1750662720000
+  },
+  {
+   "at_ms": 1750662900000,
+   "currency": "EUR",
+   "end_ms": 1750663080000,
+   "impact": "high",
+   "start_ms": 1750662720000
+  },
+  {
+   "at_ms": 1750663800000,
+   "currency": "EUR",
+   "end_ms": 1750663980000,
+   "impact": "high",
+   "start_ms": 1750663620000
+  },
+  {
+   "at_ms": 1750663800000,
+   "currency": "EUR",
+   "end_ms": 1750663980000,
+   "impact": "high",
+   "start_ms": 1750663620000
+  },
+  {
+   "at_ms": 1750686300000,
+   "currency": "USD",
+   "end_ms": 1750686480000,
+   "impact": "high",
+   "start_ms": 1750686120000
+  },
+  {
+   "at_ms": 1750686300000,
+   "currency": "USD",
+   "end_ms": 1750686480000,
+   "impact": "high",
+   "start_ms": 1750686120000
+  },
+  {
+   "at_ms": 1750773600000,
+   "currency": "USD",
+   "end_ms": 1750773780000,
+   "impact": "high",
+   "start_ms": 1750773420000
+  },
+  {
+   "at_ms": 1750860000000,
+   "currency": "USD",
+   "end_ms": 1750860180000,
+   "impact": "high",
+   "start_ms": 1750859820000
+  },
+  {
+   "at_ms": 1750941000000,
+   "currency": "USD",
+   "end_ms": 1750941180000,
+   "impact": "high",
+   "start_ms": 1750940820000
+  },
+  {
+   "at_ms": 1750941000000,
+   "currency": "USD",
+   "end_ms": 1750941180000,
+   "impact": "high",
+   "start_ms": 1750940820000
+  },
+  {
+   "at_ms": 1751027400000,
+   "currency": "USD",
+   "end_ms": 1751027580000,
+   "impact": "high",
+   "start_ms": 1751027220000
+  },
+  {
+   "at_ms": 1751376600000,
+   "currency": "USD",
+   "end_ms": 1751376780000,
+   "impact": "high",
+   "start_ms": 1751376420000
+  },
+  {
+   "at_ms": 1751378400000,
+   "currency": "USD",
+   "end_ms": 1751378580000,
+   "impact": "high",
+   "start_ms": 1751378220000
+  },
+  {
+   "at_ms": 1751378400000,
+   "currency": "USD",
+   "end_ms": 1751378580000,
+   "impact": "high",
+   "start_ms": 1751378220000
+  },
+  {
+   "at_ms": 1751458500000,
+   "currency": "USD",
+   "end_ms": 1751458680000,
+   "impact": "high",
+   "start_ms": 1751458320000
+  },
+  {
+   "at_ms": 1751545800000,
+   "currency": "USD",
+   "end_ms": 1751545980000,
+   "impact": "high",
+   "start_ms": 1751545620000
+  },
+  {
+   "at_ms": 1751545800000,
+   "currency": "USD",
+   "end_ms": 1751545980000,
+   "impact": "high",
+   "start_ms": 1751545620000
+  },
+  {
+   "at_ms": 1751545800000,
+   "currency": "USD",
+   "end_ms": 1751545980000,
+   "impact": "high",
+   "start_ms": 1751545620000
+  },
+  {
+   "at_ms": 1751551200000,
+   "currency": "USD",
+   "end_ms": 1751551380000,
+   "impact": "high",
+   "start_ms": 1751551020000
+  },
+  {
+   "at_ms": 1752084000000,
+   "currency": "USD",
+   "end_ms": 1752084180000,
+   "impact": "high",
+   "start_ms": 1752083820000
+  },
+  {
+   "at_ms": 1752150600000,
+   "currency": "USD",
+   "end_ms": 1752150780000,
+   "impact": "high",
+   "start_ms": 1752150420000
+  },
+  {
+   "at_ms": 1752582600000,
+   "currency": "USD",
+   "end_ms": 1752582780000,
+   "impact": "high",
+   "start_ms": 1752582420000
+  },
+  {
+   "at_ms": 1752582600000,
+   "currency": "USD",
+   "end_ms": 1752582780000,
+   "impact": "high",
+   "start_ms": 1752582420000
+  },
+  {
+   "at_ms": 1752582600000,
+   "currency": "USD",
+   "end_ms": 1752582780000,
+   "impact": "high",
+   "start_ms": 1752582420000
+  },
+  {
+   "at_ms": 1752669000000,
+   "currency": "USD",
+   "end_ms": 1752669180000,
+   "impact": "high",
+   "start_ms": 1752668820000
+  },
+  {
+   "at_ms": 1752669000000,
+   "currency": "USD",
+   "end_ms": 1752669180000,
+   "impact": "high",
+   "start_ms": 1752668820000
+  },
+  {
+   "at_ms": 1752755400000,
+   "currency": "USD",
+   "end_ms": 1752755580000,
+   "impact": "high",
+   "start_ms": 1752755220000
+  },
+  {
+   "at_ms": 1752755400000,
+   "currency": "USD",
+   "end_ms": 1752755580000,
+   "impact": "high",
+   "start_ms": 1752755220000
+  },
+  {
+   "at_ms": 1752755400000,
+   "currency": "USD",
+   "end_ms": 1752755580000,
+   "impact": "high",
+   "start_ms": 1752755220000
+  },
+  {
+   "at_ms": 1753341300000,
+   "currency": "EUR",
+   "end_ms": 1753341480000,
+   "impact": "high",
+   "start_ms": 1753341120000
+  },
+  {
+   "at_ms": 1753341300000,
+   "currency": "EUR",
+   "end_ms": 1753341480000,
+   "impact": "high",
+   "start_ms": 1753341120000
+  },
+  {
+   "at_ms": 1753342200000,
+   "currency": "EUR",
+   "end_ms": 1753342380000,
+   "impact": "high",
+   "start_ms": 1753342020000
+  },
+  {
+   "at_ms": 1753342200000,
+   "currency": "EUR",
+   "end_ms": 1753342380000,
+   "impact": "high",
+   "start_ms": 1753342020000
+  },
+  {
+   "at_ms": 1753359300000,
+   "currency": "EUR",
+   "end_ms": 1753359480000,
+   "impact": "high",
+   "start_ms": 1753359120000
+  },
+  {
+   "at_ms": 1753359300000,
+   "currency": "EUR",
+   "end_ms": 1753359480000,
+   "impact": "high",
+   "start_ms": 1753359120000
+  },
+  {
+   "at_ms": 1753360200000,
+   "currency": "USD",
+   "end_ms": 1753360380000,
+   "impact": "high",
+   "start_ms": 1753360020000
+  },
+  {
+   "at_ms": 1753361100000,
+   "currency": "EUR",
+   "end_ms": 1753361280000,
+   "impact": "high",
+   "start_ms": 1753360920000
+  },
+  {
+   "at_ms": 1753364700000,
+   "currency": "USD",
+   "end_ms": 1753364880000,
+   "impact": "high",
+   "start_ms": 1753364520000
+  },
+  {
+   "at_ms": 1753364700000,
+   "currency": "USD",
+   "end_ms": 1753364880000,
+   "impact": "high",
+   "start_ms": 1753364520000
+  },
+  {
+   "at_ms": 1753797600000,
+   "currency": "USD",
+   "end_ms": 1753797780000,
+   "impact": "high",
+   "start_ms": 1753797420000
+  },
+  {
+   "at_ms": 1753862400000,
+   "currency": "EUR",
+   "end_ms": 1753862580000,
+   "impact": "high",
+   "start_ms": 1753862220000
+  },
+  {
+   "at_ms": 1753877700000,
+   "currency": "USD",
+   "end_ms": 1753877880000,
+   "impact": "high",
+   "start_ms": 1753877520000
+  },
+  {
+   "at_ms": 1753878600000,
+   "currency": "USD",
+   "end_ms": 1753878780000,
+   "impact": "high",
+   "start_ms": 1753878420000
+  },
+  {
+   "at_ms": 1753898400000,
+   "currency": "USD",
+   "end_ms": 1753898580000,
+   "impact": "high",
+   "start_ms": 1753898220000
+  },
+  {
+   "at_ms": 1753898400000,
+   "currency": "USD",
+   "end_ms": 1753898580000,
+   "impact": "high",
+   "start_ms": 1753898220000
+  },
+  {
+   "at_ms": 1753900200000,
+   "currency": "USD",
+   "end_ms": 1753900380000,
+   "impact": "high",
+   "start_ms": 1753900020000
+  },
+  {
+   "at_ms": 1753965000000,
+   "currency": "USD",
+   "end_ms": 1753965180000,
+   "impact": "high",
+   "start_ms": 1753964820000
+  },
+  {
+   "at_ms": 1753965000000,
+   "currency": "USD",
+   "end_ms": 1753965180000,
+   "impact": "high",
+   "start_ms": 1753964820000
+  },
+  {
+   "at_ms": 1753965000000,
+   "currency": "USD",
+   "end_ms": 1753965180000,
+   "impact": "high",
+   "start_ms": 1753964820000
+  },
+  {
+   "at_ms": 1754051400000,
+   "currency": "USD",
+   "end_ms": 1754051580000,
+   "impact": "high",
+   "start_ms": 1754051220000
+  },
+  {
+   "at_ms": 1754051400000,
+   "currency": "USD",
+   "end_ms": 1754051580000,
+   "impact": "high",
+   "start_ms": 1754051220000
+  },
+  {
+   "at_ms": 1754051400000,
+   "currency": "USD",
+   "end_ms": 1754051580000,
+   "impact": "high",
+   "start_ms": 1754051220000
+  },
+  {
+   "at_ms": 1754056800000,
+   "currency": "USD",
+   "end_ms": 1754056980000,
+   "impact": "high",
+   "start_ms": 1754056620000
+  },
+  {
+   "at_ms": 1754402400000,
+   "currency": "USD",
+   "end_ms": 1754402580000,
+   "impact": "high",
+   "start_ms": 1754402220000
+  },
+  {
+   "at_ms": 1754569800000,
+   "currency": "USD",
+   "end_ms": 1754569980000,
+   "impact": "high",
+   "start_ms": 1754569620000
+  },
+  {
+   "at_ms": 1755001800000,
+   "currency": "USD",
+   "end_ms": 1755001980000,
+   "impact": "high",
+   "start_ms": 1755001620000
+  },
+  {
+   "at_ms": 1755001800000,
+   "currency": "USD",
+   "end_ms": 1755001980000,
+   "impact": "high",
+   "start_ms": 1755001620000
+  },
+  {
+   "at_ms": 1755001800000,
+   "currency": "USD",
+   "end_ms": 1755001980000,
+   "impact": "high",
+   "start_ms": 1755001620000
+  },
+  {
+   "at_ms": 1755174600000,
+   "currency": "USD",
+   "end_ms": 1755174780000,
+   "impact": "high",
+   "start_ms": 1755174420000
+  },
+  {
+   "at_ms": 1755174600000,
+   "currency": "USD",
+   "end_ms": 1755174780000,
+   "impact": "high",
+   "start_ms": 1755174420000
+  },
+  {
+   "at_ms": 1755174600000,
+   "currency": "USD",
+   "end_ms": 1755174780000,
+   "impact": "high",
+   "start_ms": 1755174420000
+  },
+  {
+   "at_ms": 1755261000000,
+   "currency": "USD",
+   "end_ms": 1755261180000,
+   "impact": "high",
+   "start_ms": 1755260820000
+  },
+  {
+   "at_ms": 1755261000000,
+   "currency": "USD",
+   "end_ms": 1755261180000,
+   "impact": "high",
+   "start_ms": 1755260820000
+  },
+  {
+   "at_ms": 1755266400000,
+   "currency": "USD",
+   "end_ms": 1755266580000,
+   "impact": "high",
+   "start_ms": 1755266220000
+  },
+  {
+   "at_ms": 1755266400000,
+   "currency": "USD",
+   "end_ms": 1755266580000,
+   "impact": "high",
+   "start_ms": 1755266220000
+  },
+  {
+   "at_ms": 1755298500000,
+   "currency": "USD",
+   "end_ms": 1755298680000,
+   "impact": "high",
+   "start_ms": 1755298320000
+  },
+  {
+   "at_ms": 1755712800000,
+   "currency": "USD",
+   "end_ms": 1755712980000,
+   "impact": "high",
+   "start_ms": 1755712620000
+  },
+  {
+   "at_ms": 1755761400000,
+   "currency": "EUR",
+   "end_ms": 1755761580000,
+   "impact": "high",
+   "start_ms": 1755761220000
+  },
+  {
+   "at_ms": 1755761400000,
+   "currency": "EUR",
+   "end_ms": 1755761580000,
+   "impact": "high",
+   "start_ms": 1755761220000
+  },
+  {
+   "at_ms": 1755779400000,
+   "currency": "USD",
+   "end_ms": 1755779580000,
+   "impact": "high",
+   "start_ms": 1755779220000
+  },
+  {
+   "at_ms": 1755783900000,
+   "currency": "USD",
+   "end_ms": 1755784080000,
+   "impact": "high",
+   "start_ms": 1755783720000
+  },
+  {
+   "at_ms": 1755783900000,
+   "currency": "USD",
+   "end_ms": 1755784080000,
+   "impact": "high",
+   "start_ms": 1755783720000
+  },
+  {
+   "at_ms": 1755871200000,
+   "currency": "USD",
+   "end_ms": 1755871380000,
+   "impact": "high",
+   "start_ms": 1755871020000
+  },
+  {
+   "at_ms": 1755882300000,
+   "currency": "USD",
+   "end_ms": 1755882480000,
+   "impact": "high",
+   "start_ms": 1755882120000
+  },
+  {
+   "at_ms": 1755966300000,
+   "currency": "EUR",
+   "end_ms": 1755966480000,
+   "impact": "high",
+   "start_ms": 1755966120000
+  },
+  {
+   "at_ms": 1756384200000,
+   "currency": "USD",
+   "end_ms": 1756384380000,
+   "impact": "high",
+   "start_ms": 1756384020000
+  },
+  {
+   "at_ms": 1756384200000,
+   "currency": "USD",
+   "end_ms": 1756384380000,
+   "impact": "high",
+   "start_ms": 1756384020000
+  },
+  {
+   "at_ms": 1756470600000,
+   "currency": "USD",
+   "end_ms": 1756470780000,
+   "impact": "high",
+   "start_ms": 1756470420000
+  },
+  {
+   "at_ms": 1756821600000,
+   "currency": "USD",
+   "end_ms": 1756821780000,
+   "impact": "high",
+   "start_ms": 1756821420000
+  },
+  {
+   "at_ms": 1756908000000,
+   "currency": "USD",
+   "end_ms": 1756908180000,
+   "impact": "high",
+   "start_ms": 1756907820000
+  },
+  {
+   "at_ms": 1756988100000,
+   "currency": "USD",
+   "end_ms": 1756988280000,
+   "impact": "high",
+   "start_ms": 1756987920000
+  },
+  {
+   "at_ms": 1756989000000,
+   "currency": "USD",
+   "end_ms": 1756989180000,
+   "impact": "high",
+   "start_ms": 1756988820000
+  },
+  {
+   "at_ms": 1756994400000,
+   "currency": "USD",
+   "end_ms": 1756994580000,
+   "impact": "high",
+   "start_ms": 1756994220000
+  },
+  {
+   "at_ms": 1756994400000,
+   "currency": "USD",
+   "end_ms": 1756994580000,
+   "impact": "high",
+   "start_ms": 1756994220000
+  },
+  {
+   "at_ms": 1757075400000,
+   "currency": "USD",
+   "end_ms": 1757075580000,
+   "impact": "high",
+   "start_ms": 1757075220000
+  },
+  {
+   "at_ms": 1757075400000,
+   "currency": "USD",
+   "end_ms": 1757075580000,
+   "impact": "high",
+   "start_ms": 1757075220000
+  },
+  {
+   "at_ms": 1757075400000,
+   "currency": "USD",
+   "end_ms": 1757075580000,
+   "impact": "high",
+   "start_ms": 1757075220000
+  },
+  {
+   "at_ms": 1757426400000,
+   "currency": "USD",
+   "end_ms": 1757426580000,
+   "impact": "high",
+   "start_ms": 1757426220000
+  },
+  {
+   "at_ms": 1757507400000,
+   "currency": "USD",
+   "end_ms": 1757507580000,
+   "impact": "high",
+   "start_ms": 1757507220000
+  },
+  {
+   "at_ms": 1757507400000,
+   "currency": "USD",
+   "end_ms": 1757507580000,
+   "impact": "high",
+   "start_ms": 1757507220000
+  },
+  {
+   "at_ms": 1757592900000,
+   "currency": "EUR",
+   "end_ms": 1757593080000,
+   "impact": "high",
+   "start_ms": 1757592720000
+  },
+  {
+   "at_ms": 1757592900000,
+   "currency": "EUR",
+   "end_ms": 1757593080000,
+   "impact": "high",
+   "start_ms": 1757592720000
+  },
+  {
+   "at_ms": 1757593800000,
+   "currency": "USD",
+   "end_ms": 1757593980000,
+   "impact": "high",
+   "start_ms": 1757593620000
+  },
+  {
+   "at_ms": 1757593800000,
+   "currency": "USD",
+   "end_ms": 1757593980000,
+   "impact": "high",
+   "start_ms": 1757593620000
+  },
+  {
+   "at_ms": 1757593800000,
+   "currency": "USD",
+   "end_ms": 1757593980000,
+   "impact": "high",
+   "start_ms": 1757593620000
+  },
+  {
+   "at_ms": 1757593800000,
+   "currency": "USD",
+   "end_ms": 1757593980000,
+   "impact": "high",
+   "start_ms": 1757593620000
+  },
+  {
+   "at_ms": 1757594700000,
+   "currency": "EUR",
+   "end_ms": 1757594880000,
+   "impact": "high",
+   "start_ms": 1757594520000
+  },
+  {
+   "at_ms": 1757685600000,
+   "currency": "USD",
+   "end_ms": 1757685780000,
+   "impact": "high",
+   "start_ms": 1757685420000
+  },
+  {
+   "at_ms": 1757685600000,
+   "currency": "USD",
+   "end_ms": 1757685780000,
+   "impact": "high",
+   "start_ms": 1757685420000
+  },
+  {
+   "at_ms": 1758025800000,
+   "currency": "USD",
+   "end_ms": 1758025980000,
+   "impact": "high",
+   "start_ms": 1758025620000
+  },
+  {
+   "at_ms": 1758025800000,
+   "currency": "USD",
+   "end_ms": 1758025980000,
+   "impact": "high",
+   "start_ms": 1758025620000
+  },
+  {
+   "at_ms": 1758132000000,
+   "currency": "USD",
+   "end_ms": 1758132180000,
+   "impact": "high",
+   "start_ms": 1758131820000
+  },
+  {
+   "at_ms": 1758132000000,
+   "currency": "USD",
+   "end_ms": 1758132180000,
+   "impact": "high",
+   "start_ms": 1758131820000
+  },
+  {
+   "at_ms": 1758132000000,
+   "currency": "USD",
+   "end_ms": 1758132180000,
+   "impact": "high",
+   "start_ms": 1758131820000
+  },
+  {
+   "at_ms": 1758133800000,
+   "currency": "USD",
+   "end_ms": 1758133980000,
+   "impact": "high",
+   "start_ms": 1758133620000
+  },
+  {
+   "at_ms": 1758198600000,
+   "currency": "USD",
+   "end_ms": 1758198780000,
+   "impact": "high",
+   "start_ms": 1758198420000
+  },
+  {
+   "at_ms": 1758612600000,
+   "currency": "EUR",
+   "end_ms": 1758612780000,
+   "impact": "high",
+   "start_ms": 1758612420000
+  },
+  {
+   "at_ms": 1758612600000,
+   "currency": "EUR",
+   "end_ms": 1758612780000,
+   "impact": "high",
+   "start_ms": 1758612420000
+  },
+  {
+   "at_ms": 1758635100000,
+   "currency": "USD",
+   "end_ms": 1758635280000,
+   "impact": "high",
+   "start_ms": 1758634920000
+  },
+  {
+   "at_ms": 1758635100000,
+   "currency": "USD",
+   "end_ms": 1758635280000,
+   "impact": "high",
+   "start_ms": 1758634920000
+  },
+  {
+   "at_ms": 1758645300000,
+   "currency": "USD",
+   "end_ms": 1758645480000,
+   "impact": "high",
+   "start_ms": 1758645120000
+  },
+  {
+   "at_ms": 1758803400000,
+   "currency": "USD",
+   "end_ms": 1758803580000,
+   "impact": "high",
+   "start_ms": 1758803220000
+  },
+  {
+   "at_ms": 1758803400000,
+   "currency": "USD",
+   "end_ms": 1758803580000,
+   "impact": "high",
+   "start_ms": 1758803220000
+  },
+  {
+   "at_ms": 1758889800000,
+   "currency": "USD",
+   "end_ms": 1758889980000,
+   "impact": "high",
+   "start_ms": 1758889620000
+  },
+  {
+   "at_ms": 1759240800000,
+   "currency": "USD",
+   "end_ms": 1759240980000,
+   "impact": "high",
+   "start_ms": 1759240620000
+  },
+  {
+   "at_ms": 1759320900000,
+   "currency": "USD",
+   "end_ms": 1759321080000,
+   "impact": "high",
+   "start_ms": 1759320720000
+  },
+  {
+   "at_ms": 1759327200000,
+   "currency": "USD",
+   "end_ms": 1759327380000,
+   "impact": "high",
+   "start_ms": 1759327020000
+  },
+  {
+   "at_ms": 1759500000000,
+   "currency": "USD",
+   "end_ms": 1759500180000,
+   "impact": "high",
+   "start_ms": 1759499820000
+  },
+  {
+   "at_ms": 1759770000000,
+   "currency": "EUR",
+   "end_ms": 1759770180000,
+   "impact": "high",
+   "start_ms": 1759769820000
+  },
+  {
+   "at_ms": 1759946400000,
+   "currency": "USD",
+   "end_ms": 1759946580000,
+   "impact": "high",
+   "start_ms": 1759946220000
+  },
+  {
+   "at_ms": 1760104800000,
+   "currency": "USD",
+   "end_ms": 1760104980000,
+   "impact": "high",
+   "start_ms": 1760104620000
+  },
+  {
+   "at_ms": 1760104800000,
+   "currency": "USD",
+   "end_ms": 1760104980000,
+   "impact": "high",
+   "start_ms": 1760104620000
+  },
+  {
+   "at_ms": 1760458800000,
+   "currency": "USD",
+   "end_ms": 1760458980000,
+   "impact": "high",
+   "start_ms": 1760458620000
+  },
+  {
+   "at_ms": 1761291000000,
+   "currency": "EUR",
+   "end_ms": 1761291180000,
+   "impact": "high",
+   "start_ms": 1761290820000
+  },
+  {
+   "at_ms": 1761291000000,
+   "currency": "EUR",
+   "end_ms": 1761291180000,
+   "impact": "high",
+   "start_ms": 1761290820000
+  },
+  {
+   "at_ms": 1761309000000,
+   "currency": "USD",
+   "end_ms": 1761309180000,
+   "impact": "high",
+   "start_ms": 1761308820000
+  },
+  {
+   "at_ms": 1761309000000,
+   "currency": "USD",
+   "end_ms": 1761309180000,
+   "impact": "high",
+   "start_ms": 1761308820000
+  },
+  {
+   "at_ms": 1761309000000,
+   "currency": "USD",
+   "end_ms": 1761309180000,
+   "impact": "high",
+   "start_ms": 1761308820000
+  },
+  {
+   "at_ms": 1761313500000,
+   "currency": "USD",
+   "end_ms": 1761313680000,
+   "impact": "high",
+   "start_ms": 1761313320000
+  },
+  {
+   "at_ms": 1761313500000,
+   "currency": "USD",
+   "end_ms": 1761313680000,
+   "impact": "high",
+   "start_ms": 1761313320000
+  },
+  {
+   "at_ms": 1761760800000,
+   "currency": "USD",
+   "end_ms": 1761760980000,
+   "impact": "high",
+   "start_ms": 1761760620000
+  },
+  {
+   "at_ms": 1761760800000,
+   "currency": "USD",
+   "end_ms": 1761760980000,
+   "impact": "high",
+   "start_ms": 1761760620000
+  },
+  {
+   "at_ms": 1761762600000,
+   "currency": "USD",
+   "end_ms": 1761762780000,
+   "impact": "high",
+   "start_ms": 1761762420000
+  },
+  {
+   "at_ms": 1761830100000,
+   "currency": "EUR",
+   "end_ms": 1761830280000,
+   "impact": "high",
+   "start_ms": 1761829920000
+  },
+  {
+   "at_ms": 1761830100000,
+   "currency": "EUR",
+   "end_ms": 1761830280000,
+   "impact": "high",
+   "start_ms": 1761829920000
+  },
+  {
+   "at_ms": 1761831900000,
+   "currency": "EUR",
+   "end_ms": 1761832080000,
+   "impact": "high",
+   "start_ms": 1761831720000
+  },
+  {
+   "at_ms": 1762182000000,
+   "currency": "USD",
+   "end_ms": 1762182180000,
+   "impact": "high",
+   "start_ms": 1762181820000
+  },
+  {
+   "at_ms": 1762348500000,
+   "currency": "USD",
+   "end_ms": 1762348680000,
+   "impact": "high",
+   "start_ms": 1762348320000
+  },
+  {
+   "at_ms": 1762354800000,
+   "currency": "USD",
+   "end_ms": 1762354980000,
+   "impact": "high",
+   "start_ms": 1762354620000
+  },
+  {
+   "at_ms": 1763453400000,
+   "currency": "USD",
+   "end_ms": 1763453580000,
+   "impact": "high",
+   "start_ms": 1763453220000
+  },
+  {
+   "at_ms": 1763578800000,
+   "currency": "USD",
+   "end_ms": 1763578980000,
+   "impact": "high",
+   "start_ms": 1763578620000
+  },
+  {
+   "at_ms": 1763645400000,
+   "currency": "USD",
+   "end_ms": 1763645580000,
+   "impact": "high",
+   "start_ms": 1763645220000
+  },
+  {
+   "at_ms": 1763645400000,
+   "currency": "USD",
+   "end_ms": 1763645580000,
+   "impact": "high",
+   "start_ms": 1763645220000
+  },
+  {
+   "at_ms": 1763645400000,
+   "currency": "USD",
+   "end_ms": 1763645580000,
+   "impact": "high",
+   "start_ms": 1763645220000
+  },
+  {
+   "at_ms": 1763645400000,
+   "currency": "USD",
+   "end_ms": 1763645580000,
+   "impact": "high",
+   "start_ms": 1763645220000
+  },
+  {
+   "at_ms": 1763713800000,
+   "currency": "EUR",
+   "end_ms": 1763713980000,
+   "impact": "high",
+   "start_ms": 1763713620000
+  },
+  {
+   "at_ms": 1763713800000,
+   "currency": "EUR",
+   "end_ms": 1763713980000,
+   "impact": "high",
+   "start_ms": 1763713620000
+  },
+  {
+   "at_ms": 1763736300000,
+   "currency": "USD",
+   "end_ms": 1763736480000,
+   "impact": "high",
+   "start_ms": 1763736120000
+  },
+  {
+   "at_ms": 1763736300000,
+   "currency": "USD",
+   "end_ms": 1763736480000,
+   "impact": "high",
+   "start_ms": 1763736120000
+  },
+  {
+   "at_ms": 1764077400000,
+   "currency": "USD",
+   "end_ms": 1764077580000,
+   "impact": "high",
+   "start_ms": 1764077220000
+  },
+  {
+   "at_ms": 1764077400000,
+   "currency": "USD",
+   "end_ms": 1764077580000,
+   "impact": "high",
+   "start_ms": 1764077220000
+  },
+  {
+   "at_ms": 1764077400000,
+   "currency": "USD",
+   "end_ms": 1764077580000,
+   "impact": "high",
+   "start_ms": 1764077220000
+  },
+  {
+   "at_ms": 1764077400000,
+   "currency": "USD",
+   "end_ms": 1764077580000,
+   "impact": "high",
+   "start_ms": 1764077220000
+  },
+  {
+   "at_ms": 1764163800000,
+   "currency": "USD",
+   "end_ms": 1764163980000,
+   "impact": "high",
+   "start_ms": 1764163620000
+  },
+  {
+   "at_ms": 1764601200000,
+   "currency": "USD",
+   "end_ms": 1764601380000,
+   "impact": "high",
+   "start_ms": 1764601020000
+  },
+  {
+   "at_ms": 1764767700000,
+   "currency": "USD",
+   "end_ms": 1764767880000,
+   "impact": "high",
+   "start_ms": 1764767520000
+  },
+  {
+   "at_ms": 1764774000000,
+   "currency": "USD",
+   "end_ms": 1764774180000,
+   "impact": "high",
+   "start_ms": 1764773820000
+  },
+  {
+   "at_ms": 1764855000000,
+   "currency": "USD",
+   "end_ms": 1764855180000,
+   "impact": "high",
+   "start_ms": 1764854820000
+  },
+  {
+   "at_ms": 1764946800000,
+   "currency": "USD",
+   "end_ms": 1764946980000,
+   "impact": "high",
+   "start_ms": 1764946620000
+  },
+  {
+   "at_ms": 1764946800000,
+   "currency": "USD",
+   "end_ms": 1764946980000,
+   "impact": "high",
+   "start_ms": 1764946620000
+  },
+  {
+   "at_ms": 1764946800000,
+   "currency": "USD",
+   "end_ms": 1764946980000,
+   "impact": "high",
+   "start_ms": 1764946620000
+  },
+  {
+   "at_ms": 1765286100000,
+   "currency": "USD",
+   "end_ms": 1765286280000,
+   "impact": "high",
+   "start_ms": 1765285920000
+  },
+  {
+   "at_ms": 1765292400000,
+   "currency": "USD",
+   "end_ms": 1765292580000,
+   "impact": "high",
+   "start_ms": 1765292220000
+  },
+  {
+   "at_ms": 1765373400000,
+   "currency": "USD",
+   "end_ms": 1765373580000,
+   "impact": "high",
+   "start_ms": 1765373220000
+  },
+  {
+   "at_ms": 1765393200000,
+   "currency": "USD",
+   "end_ms": 1765393380000,
+   "impact": "high",
+   "start_ms": 1765393020000
+  },
+  {
+   "at_ms": 1765393200000,
+   "currency": "USD",
+   "end_ms": 1765393380000,
+   "impact": "high",
+   "start_ms": 1765393020000
+  },
+  {
+   "at_ms": 1765393200000,
+   "currency": "USD",
+   "end_ms": 1765393380000,
+   "impact": "high",
+   "start_ms": 1765393020000
+  },
+  {
+   "at_ms": 1765395000000,
+   "currency": "USD",
+   "end_ms": 1765395180000,
+   "impact": "high",
+   "start_ms": 1765394820000
+  },
+  {
+   "at_ms": 1765459800000,
+   "currency": "USD",
+   "end_ms": 1765459980000,
+   "impact": "high",
+   "start_ms": 1765459620000
+  },
+  {
+   "at_ms": 1765873800000,
+   "currency": "EUR",
+   "end_ms": 1765873980000,
+   "impact": "high",
+   "start_ms": 1765873620000
+  },
+  {
+   "at_ms": 1765873800000,
+   "currency": "EUR",
+   "end_ms": 1765873980000,
+   "impact": "high",
+   "start_ms": 1765873620000
+  },
+  {
+   "at_ms": 1765890900000,
+   "currency": "USD",
+   "end_ms": 1765891080000,
+   "impact": "high",
+   "start_ms": 1765890720000
+  },
+  {
+   "at_ms": 1765891800000,
+   "currency": "USD",
+   "end_ms": 1765891980000,
+   "impact": "high",
+   "start_ms": 1765891620000
+  },
+  {
+   "at_ms": 1765891800000,
+   "currency": "USD",
+   "end_ms": 1765891980000,
+   "impact": "high",
+   "start_ms": 1765891620000
+  },
+  {
+   "at_ms": 1765891800000,
+   "currency": "USD",
+   "end_ms": 1765891980000,
+   "impact": "high",
+   "start_ms": 1765891620000
+  },
+  {
+   "at_ms": 1765891800000,
+   "currency": "USD",
+   "end_ms": 1765891980000,
+   "impact": "high",
+   "start_ms": 1765891620000
+  },
+  {
+   "at_ms": 1765891800000,
+   "currency": "USD",
+   "end_ms": 1765891980000,
+   "impact": "high",
+   "start_ms": 1765891620000
+  },
+  {
+   "at_ms": 1765896300000,
+   "currency": "USD",
+   "end_ms": 1765896480000,
+   "impact": "high",
+   "start_ms": 1765896120000
+  },
+  {
+   "at_ms": 1765896300000,
+   "currency": "USD",
+   "end_ms": 1765896480000,
+   "impact": "high",
+   "start_ms": 1765896120000
+  },
+  {
+   "at_ms": 1766063700000,
+   "currency": "EUR",
+   "end_ms": 1766063880000,
+   "impact": "high",
+   "start_ms": 1766063520000
+  },
+  {
+   "at_ms": 1766063700000,
+   "currency": "EUR",
+   "end_ms": 1766063880000,
+   "impact": "high",
+   "start_ms": 1766063520000
+  },
+  {
+   "at_ms": 1766064600000,
+   "currency": "USD",
+   "end_ms": 1766064780000,
+   "impact": "high",
+   "start_ms": 1766064420000
+  },
+  {
+   "at_ms": 1766064600000,
+   "currency": "USD",
+   "end_ms": 1766064780000,
+   "impact": "high",
+   "start_ms": 1766064420000
+  },
+  {
+   "at_ms": 1766065500000,
+   "currency": "EUR",
+   "end_ms": 1766065680000,
+   "impact": "high",
+   "start_ms": 1766065320000
+  },
+  {
+   "at_ms": 1766496600000,
+   "currency": "USD",
+   "end_ms": 1766496780000,
+   "impact": "high",
+   "start_ms": 1766496420000
+  },
+  {
+   "at_ms": 1766583000000,
+   "currency": "USD",
+   "end_ms": 1766583180000,
+   "impact": "high",
+   "start_ms": 1766582820000
+  },
+  {
+   "at_ms": 1767121200000,
+   "currency": "USD",
+   "end_ms": 1767121380000,
+   "impact": "high",
+   "start_ms": 1767121020000
+  },
+  {
+   "at_ms": 1767187800000,
+   "currency": "USD",
+   "end_ms": 1767187980000,
+   "impact": "high",
+   "start_ms": 1767187620000
+  },
+  {
+   "at_ms": 1767625200000,
+   "currency": "USD",
+   "end_ms": 1767625380000,
+   "impact": "high",
+   "start_ms": 1767625020000
+  },
+  {
+   "at_ms": 1767791700000,
+   "currency": "USD",
+   "end_ms": 1767791880000,
+   "impact": "high",
+   "start_ms": 1767791520000
+  },
+  {
+   "at_ms": 1767798000000,
+   "currency": "USD",
+   "end_ms": 1767798180000,
+   "impact": "high",
+   "start_ms": 1767797820000
+  },
+  {
+   "at_ms": 1767798000000,
+   "currency": "USD",
+   "end_ms": 1767798180000,
+   "impact": "high",
+   "start_ms": 1767797820000
+  },
+  {
+   "at_ms": 1767879000000,
+   "currency": "USD",
+   "end_ms": 1767879180000,
+   "impact": "high",
+   "start_ms": 1767878820000
+  },
+  {
+   "at_ms": 1767965400000,
+   "currency": "USD",
+   "end_ms": 1767965580000,
+   "impact": "high",
+   "start_ms": 1767965220000
+  },
+  {
+   "at_ms": 1767965400000,
+   "currency": "USD",
+   "end_ms": 1767965580000,
+   "impact": "high",
+   "start_ms": 1767965220000
+  },
+  {
+   "at_ms": 1767965400000,
+   "currency": "USD",
+   "end_ms": 1767965580000,
+   "impact": "high",
+   "start_ms": 1767965220000
+  },
+  {
+   "at_ms": 1767970800000,
+   "currency": "USD",
+   "end_ms": 1767970980000,
+   "impact": "high",
+   "start_ms": 1767970620000
+  },
+  {
+   "at_ms": 1767970800000,
+   "currency": "USD",
+   "end_ms": 1767970980000,
+   "impact": "high",
+   "start_ms": 1767970620000
+  },
+  {
+   "at_ms": 1768311000000,
+   "currency": "USD",
+   "end_ms": 1768311180000,
+   "impact": "high",
+   "start_ms": 1768310820000
+  },
+  {
+   "at_ms": 1768311000000,
+   "currency": "USD",
+   "end_ms": 1768311180000,
+   "impact": "high",
+   "start_ms": 1768310820000
+  },
+  {
+   "at_ms": 1768311000000,
+   "currency": "USD",
+   "end_ms": 1768311180000,
+   "impact": "high",
+   "start_ms": 1768310820000
+  },
+  {
+   "at_ms": 1768397400000,
+   "currency": "USD",
+   "end_ms": 1768397580000,
+   "impact": "high",
+   "start_ms": 1768397220000
+  },
+  {
+   "at_ms": 1768397400000,
+   "currency": "USD",
+   "end_ms": 1768397580000,
+   "impact": "high",
+   "start_ms": 1768397220000
+  },
+  {
+   "at_ms": 1768397400000,
+   "currency": "USD",
+   "end_ms": 1768397580000,
+   "impact": "high",
+   "start_ms": 1768397220000
+  },
+  {
+   "at_ms": 1768397400000,
+   "currency": "USD",
+   "end_ms": 1768397580000,
+   "impact": "high",
+   "start_ms": 1768397220000
+  },
+  {
+   "at_ms": 1768483800000,
+   "currency": "USD",
+   "end_ms": 1768483980000,
+   "impact": "high",
+   "start_ms": 1768483620000
+  },
+  {
+   "at_ms": 1769002200000,
+   "currency": "USD",
+   "end_ms": 1769002380000,
+   "impact": "high",
+   "start_ms": 1769002020000
+  },
+  {
+   "at_ms": 1769088600000,
+   "currency": "USD",
+   "end_ms": 1769088780000,
+   "impact": "high",
+   "start_ms": 1769088420000
+  },
+  {
+   "at_ms": 1769088600000,
+   "currency": "USD",
+   "end_ms": 1769088780000,
+   "impact": "high",
+   "start_ms": 1769088420000
+  },
+  {
+   "at_ms": 1769094000000,
+   "currency": "USD",
+   "end_ms": 1769094180000,
+   "impact": "high",
+   "start_ms": 1769093820000
+  },
+  {
+   "at_ms": 1769157000000,
+   "currency": "EUR",
+   "end_ms": 1769157180000,
+   "impact": "high",
+   "start_ms": 1769156820000
+  },
+  {
+   "at_ms": 1769157000000,
+   "currency": "EUR",
+   "end_ms": 1769157180000,
+   "impact": "high",
+   "start_ms": 1769156820000
+  },
+  {
+   "at_ms": 1769179500000,
+   "currency": "USD",
+   "end_ms": 1769179680000,
+   "impact": "high",
+   "start_ms": 1769179320000
+  },
+  {
+   "at_ms": 1769179500000,
+   "currency": "USD",
+   "end_ms": 1769179680000,
+   "impact": "high",
+   "start_ms": 1769179320000
+  },
+  {
+   "at_ms": 1769626800000,
+   "currency": "USD",
+   "end_ms": 1769626980000,
+   "impact": "high",
+   "start_ms": 1769626620000
+  },
+  {
+   "at_ms": 1769626800000,
+   "currency": "USD",
+   "end_ms": 1769626980000,
+   "impact": "high",
+   "start_ms": 1769626620000
+  },
+  {
+   "at_ms": 1769628600000,
+   "currency": "USD",
+   "end_ms": 1769628780000,
+   "impact": "high",
+   "start_ms": 1769628420000
+  },
+  {
+   "at_ms": 1769693400000,
+   "currency": "USD",
+   "end_ms": 1769693580000,
+   "impact": "high",
+   "start_ms": 1769693220000
+  },
+  {
+   "at_ms": 1769779800000,
+   "currency": "USD",
+   "end_ms": 1769779980000,
+   "impact": "high",
+   "start_ms": 1769779620000
+  },
+  {
+   "at_ms": 1769779800000,
+   "currency": "USD",
+   "end_ms": 1769779980000,
+   "impact": "high",
+   "start_ms": 1769779620000
+  },
+  {
+   "at_ms": 1770044400000,
+   "currency": "USD",
+   "end_ms": 1770044580000,
+   "impact": "high",
+   "start_ms": 1770044220000
+  },
+  {
+   "at_ms": 1770210900000,
+   "currency": "USD",
+   "end_ms": 1770211080000,
+   "impact": "high",
+   "start_ms": 1770210720000
+  },
+  {
+   "at_ms": 1770217200000,
+   "currency": "USD",
+   "end_ms": 1770217380000,
+   "impact": "high",
+   "start_ms": 1770217020000
+  },
+  {
+   "at_ms": 1770297300000,
+   "currency": "EUR",
+   "end_ms": 1770297480000,
+   "impact": "high",
+   "start_ms": 1770297120000
+  },
+  {
+   "at_ms": 1770297300000,
+   "currency": "EUR",
+   "end_ms": 1770297480000,
+   "impact": "high",
+   "start_ms": 1770297120000
+  },
+  {
+   "at_ms": 1770298200000,
+   "currency": "USD",
+   "end_ms": 1770298380000,
+   "impact": "high",
+   "start_ms": 1770298020000
+  },
+  {
+   "at_ms": 1770299100000,
+   "currency": "EUR",
+   "end_ms": 1770299280000,
+   "impact": "high",
+   "start_ms": 1770298920000
+  },
+  {
+   "at_ms": 1770303600000,
+   "currency": "USD",
+   "end_ms": 1770303780000,
+   "impact": "high",
+   "start_ms": 1770303420000
+  },
+  {
+   "at_ms": 1770390000000,
+   "currency": "USD",
+   "end_ms": 1770390180000,
+   "impact": "high",
+   "start_ms": 1770389820000
+  },
+  {
+   "at_ms": 1770390000000,
+   "currency": "USD",
+   "end_ms": 1770390180000,
+   "impact": "high",
+   "start_ms": 1770389820000
+  },
+  {
+   "at_ms": 1770730200000,
+   "currency": "USD",
+   "end_ms": 1770730380000,
+   "impact": "high",
+   "start_ms": 1770730020000
+  },
+  {
+   "at_ms": 1770730200000,
+   "currency": "USD",
+   "end_ms": 1770730380000,
+   "impact": "high",
+   "start_ms": 1770730020000
+  },
+  {
+   "at_ms": 1770816600000,
+   "currency": "USD",
+   "end_ms": 1770816780000,
+   "impact": "high",
+   "start_ms": 1770816420000
+  },
+  {
+   "at_ms": 1770816600000,
+   "currency": "USD",
+   "end_ms": 1770816780000,
+   "impact": "high",
+   "start_ms": 1770816420000
+  },
+  {
+   "at_ms": 1770816600000,
+   "currency": "USD",
+   "end_ms": 1770816780000,
+   "impact": "high",
+   "start_ms": 1770816420000
+  },
+  {
+   "at_ms": 1770903000000,
+   "currency": "USD",
+   "end_ms": 1770903180000,
+   "impact": "high",
+   "start_ms": 1770902820000
+  },
+  {
+   "at_ms": 1770989400000,
+   "currency": "USD",
+   "end_ms": 1770989580000,
+   "impact": "high",
+   "start_ms": 1770989220000
+  },
+  {
+   "at_ms": 1770989400000,
+   "currency": "USD",
+   "end_ms": 1770989580000,
+   "impact": "high",
+   "start_ms": 1770989220000
+  },
+  {
+   "at_ms": 1770989400000,
+   "currency": "USD",
+   "end_ms": 1770989580000,
+   "impact": "high",
+   "start_ms": 1770989220000
+  },
+  {
+   "at_ms": 1771441200000,
+   "currency": "USD",
+   "end_ms": 1771441380000,
+   "impact": "high",
+   "start_ms": 1771441020000
+  },
+  {
+   "at_ms": 1771507800000,
+   "currency": "USD",
+   "end_ms": 1771507980000,
+   "impact": "high",
+   "start_ms": 1771507620000
+  },
+  {
+   "at_ms": 1771576200000,
+   "currency": "EUR",
+   "end_ms": 1771576380000,
+   "impact": "high",
+   "start_ms": 1771576020000
+  },
+  {
+   "at_ms": 1771576200000,
+   "currency": "EUR",
+   "end_ms": 1771576380000,
+   "impact": "high",
+   "start_ms": 1771576020000
+  },
+  {
+   "at_ms": 1771594200000,
+   "currency": "USD",
+   "end_ms": 1771594380000,
+   "impact": "high",
+   "start_ms": 1771594020000
+  },
+  {
+   "at_ms": 1771594200000,
+   "currency": "USD",
+   "end_ms": 1771594380000,
+   "impact": "high",
+   "start_ms": 1771594020000
+  },
+  {
+   "at_ms": 1771598700000,
+   "currency": "USD",
+   "end_ms": 1771598880000,
+   "impact": "high",
+   "start_ms": 1771598520000
+  },
+  {
+   "at_ms": 1771598700000,
+   "currency": "USD",
+   "end_ms": 1771598880000,
+   "impact": "high",
+   "start_ms": 1771598520000
+  },
+  {
+   "at_ms": 1771609500000,
+   "currency": "USD",
+   "end_ms": 1771609680000,
+   "impact": "high",
+   "start_ms": 1771609320000
+  },
+  {
+   "at_ms": 1771984800000,
+   "currency": "USD",
+   "end_ms": 1771984980000,
+   "impact": "high",
+   "start_ms": 1771984620000
+  },
+  {
+   "at_ms": 1772112600000,
+   "currency": "USD",
+   "end_ms": 1772112780000,
+   "impact": "high",
+   "start_ms": 1772112420000
+  },
+  {
+   "at_ms": 1772199000000,
+   "currency": "USD",
+   "end_ms": 1772199180000,
+   "impact": "high",
+   "start_ms": 1772198820000
+  },
+  {
+   "at_ms": 1772199000000,
+   "currency": "USD",
+   "end_ms": 1772199180000,
+   "impact": "high",
+   "start_ms": 1772198820000
+  },
+  {
+   "at_ms": 1772463600000,
+   "currency": "USD",
+   "end_ms": 1772463780000,
+   "impact": "high",
+   "start_ms": 1772463420000
+  },
+  {
+   "at_ms": 1772630100000,
+   "currency": "USD",
+   "end_ms": 1772630280000,
+   "impact": "high",
+   "start_ms": 1772629920000
+  },
+  {
+   "at_ms": 1772636400000,
+   "currency": "USD",
+   "end_ms": 1772636580000,
+   "impact": "high",
+   "start_ms": 1772636220000
+  },
+  {
+   "at_ms": 1772717400000,
+   "currency": "USD",
+   "end_ms": 1772717580000,
+   "impact": "high",
+   "start_ms": 1772717220000
+  },
+  {
+   "at_ms": 1772803800000,
+   "currency": "USD",
+   "end_ms": 1772803980000,
+   "impact": "high",
+   "start_ms": 1772803620000
+  },
+  {
+   "at_ms": 1772803800000,
+   "currency": "USD",
+   "end_ms": 1772803980000,
+   "impact": "high",
+   "start_ms": 1772803620000
+  },
+  {
+   "at_ms": 1772803800000,
+   "currency": "USD",
+   "end_ms": 1772803980000,
+   "impact": "high",
+   "start_ms": 1772803620000
+  },
+  {
+   "at_ms": 1772803800000,
+   "currency": "USD",
+   "end_ms": 1772803980000,
+   "impact": "high",
+   "start_ms": 1772803620000
+  },
+  {
+   "at_ms": 1772803800000,
+   "currency": "USD",
+   "end_ms": 1772803980000,
+   "impact": "high",
+   "start_ms": 1772803620000
+  },
+  {
+   "at_ms": 1773232200000,
+   "currency": "USD",
+   "end_ms": 1773232380000,
+   "impact": "high",
+   "start_ms": 1773232020000
+  },
+  {
+   "at_ms": 1773232200000,
+   "currency": "USD",
+   "end_ms": 1773232380000,
+   "impact": "high",
+   "start_ms": 1773232020000
+  },
+  {
+   "at_ms": 1773232200000,
+   "currency": "USD",
+   "end_ms": 1773232380000,
+   "impact": "high",
+   "start_ms": 1773232020000
+  },
+  {
+   "at_ms": 1773318600000,
+   "currency": "USD",
+   "end_ms": 1773318780000,
+   "impact": "high",
+   "start_ms": 1773318420000
+  },
+  {
+   "at_ms": 1773405000000,
+   "currency": "USD",
+   "end_ms": 1773405180000,
+   "impact": "high",
+   "start_ms": 1773404820000
+  },
+  {
+   "at_ms": 1773405000000,
+   "currency": "USD",
+   "end_ms": 1773405180000,
+   "impact": "high",
+   "start_ms": 1773404820000
+  },
+  {
+   "at_ms": 1773410400000,
+   "currency": "USD",
+   "end_ms": 1773410580000,
+   "impact": "high",
+   "start_ms": 1773410220000
+  },
+  {
+   "at_ms": 1773837000000,
+   "currency": "USD",
+   "end_ms": 1773837180000,
+   "impact": "high",
+   "start_ms": 1773836820000
+  },
+  {
+   "at_ms": 1773837000000,
+   "currency": "USD",
+   "end_ms": 1773837180000,
+   "impact": "high",
+   "start_ms": 1773836820000
+  },
+  {
+   "at_ms": 1773856800000,
+   "currency": "USD",
+   "end_ms": 1773856980000,
+   "impact": "high",
+   "start_ms": 1773856620000
+  },
+  {
+   "at_ms": 1773856800000,
+   "currency": "USD",
+   "end_ms": 1773856980000,
+   "impact": "high",
+   "start_ms": 1773856620000
+  },
+  {
+   "at_ms": 1773856800000,
+   "currency": "USD",
+   "end_ms": 1773856980000,
+   "impact": "high",
+   "start_ms": 1773856620000
+  },
+  {
+   "at_ms": 1773858600000,
+   "currency": "USD",
+   "end_ms": 1773858780000,
+   "impact": "high",
+   "start_ms": 1773858420000
+  },
+  {
+   "at_ms": 1773923400000,
+   "currency": "USD",
+   "end_ms": 1773923580000,
+   "impact": "high",
+   "start_ms": 1773923220000
+  },
+  {
+   "at_ms": 1773926100000,
+   "currency": "EUR",
+   "end_ms": 1773926280000,
+   "impact": "high",
+   "start_ms": 1773925920000
+  },
+  {
+   "at_ms": 1773926100000,
+   "currency": "EUR",
+   "end_ms": 1773926280000,
+   "impact": "high",
+   "start_ms": 1773925920000
+  },
+  {
+   "at_ms": 1773927900000,
+   "currency": "EUR",
+   "end_ms": 1773928080000,
+   "impact": "high",
+   "start_ms": 1773927720000
+  },
+  {
+   "at_ms": 1774341000000,
+   "currency": "EUR",
+   "end_ms": 1774341180000,
+   "impact": "high",
+   "start_ms": 1774340820000
+  },
+  {
+   "at_ms": 1774341000000,
+   "currency": "EUR",
+   "end_ms": 1774341180000,
+   "impact": "high",
+   "start_ms": 1774340820000
+  },
+  {
+   "at_ms": 1774359900000,
+   "currency": "USD",
+   "end_ms": 1774360080000,
+   "impact": "high",
+   "start_ms": 1774359720000
+  },
+  {
+   "at_ms": 1774359900000,
+   "currency": "USD",
+   "end_ms": 1774360080000,
+   "impact": "high",
+   "start_ms": 1774359720000
+  },
+  {
+   "at_ms": 1774528200000,
+   "currency": "USD",
+   "end_ms": 1774528380000,
+   "impact": "high",
+   "start_ms": 1774528020000
+  },
+  {
+   "at_ms": 1774881000000,
+   "currency": "USD",
+   "end_ms": 1774881180000,
+   "impact": "high",
+   "start_ms": 1774880820000
+  },
+  {
+   "at_ms": 1774965600000,
+   "currency": "USD",
+   "end_ms": 1774965780000,
+   "impact": "high",
+   "start_ms": 1774965420000
+  },
+  {
+   "at_ms": 1775045700000,
+   "currency": "USD",
+   "end_ms": 1775045880000,
+   "impact": "high",
+   "start_ms": 1775045520000
+  },
+  {
+   "at_ms": 1775046600000,
+   "currency": "USD",
+   "end_ms": 1775046780000,
+   "impact": "high",
+   "start_ms": 1775046420000
+  },
+  {
+   "at_ms": 1775046600000,
+   "currency": "USD",
+   "end_ms": 1775046780000,
+   "impact": "high",
+   "start_ms": 1775046420000
+  },
+  {
+   "at_ms": 1775052000000,
+   "currency": "USD",
+   "end_ms": 1775052180000,
+   "impact": "high",
+   "start_ms": 1775051820000
+  },
+  {
+   "at_ms": 1775091600000,
+   "currency": "USD",
+   "end_ms": 1775091780000,
+   "impact": "high",
+   "start_ms": 1775091420000
+  },
+  {
+   "at_ms": 1775133000000,
+   "currency": "USD",
+   "end_ms": 1775133180000,
+   "impact": "high",
+   "start_ms": 1775132820000
+  },
+  {
+   "at_ms": 1775219400000,
+   "currency": "USD",
+   "end_ms": 1775219580000,
+   "impact": "high",
+   "start_ms": 1775219220000
+  },
+  {
+   "at_ms": 1775219400000,
+   "currency": "USD",
+   "end_ms": 1775219580000,
+   "impact": "high",
+   "start_ms": 1775219220000
+  },
+  {
+   "at_ms": 1775219400000,
+   "currency": "USD",
+   "end_ms": 1775219580000,
+   "impact": "high",
+   "start_ms": 1775219220000
+  },
+  {
+   "at_ms": 1775484000000,
+   "currency": "USD",
+   "end_ms": 1775484180000,
+   "impact": "high",
+   "start_ms": 1775483820000
+  },
+  {
+   "at_ms": 1775494800000,
+   "currency": "USD",
+   "end_ms": 1775494980000,
+   "impact": "high",
+   "start_ms": 1775494620000
+  },
+  {
+   "at_ms": 1775671200000,
+   "currency": "USD",
+   "end_ms": 1775671380000,
+   "impact": "high",
+   "start_ms": 1775671020000
+  },
+  {
+   "at_ms": 1775737800000,
+   "currency": "USD",
+   "end_ms": 1775737980000,
+   "impact": "high",
+   "start_ms": 1775737620000
+  },
+  {
+   "at_ms": 1775737800000,
+   "currency": "USD",
+   "end_ms": 1775737980000,
+   "impact": "high",
+   "start_ms": 1775737620000
+  },
+  {
+   "at_ms": 1775824200000,
+   "currency": "USD",
+   "end_ms": 1775824380000,
+   "impact": "high",
+   "start_ms": 1775824020000
+  },
+  {
+   "at_ms": 1775824200000,
+   "currency": "USD",
+   "end_ms": 1775824380000,
+   "impact": "high",
+   "start_ms": 1775824020000
+  },
+  {
+   "at_ms": 1775824200000,
+   "currency": "USD",
+   "end_ms": 1775824380000,
+   "impact": "high",
+   "start_ms": 1775824020000
+  },
+  {
+   "at_ms": 1776169800000,
+   "currency": "USD",
+   "end_ms": 1776169980000,
+   "impact": "high",
+   "start_ms": 1776169620000
+  },
+  {
+   "at_ms": 1776169800000,
+   "currency": "USD",
+   "end_ms": 1776169980000,
+   "impact": "high",
+   "start_ms": 1776169620000
+  },
+  {
+   "at_ms": 1776774600000,
+   "currency": "USD",
+   "end_ms": 1776774780000,
+   "impact": "high",
+   "start_ms": 1776774420000
+  },
+  {
+   "at_ms": 1776774600000,
+   "currency": "USD",
+   "end_ms": 1776774780000,
+   "impact": "high",
+   "start_ms": 1776774420000
+  },
+  {
+   "at_ms": 1776780000000,
+   "currency": "USD",
+   "end_ms": 1776780180000,
+   "impact": "high",
+   "start_ms": 1776779820000
+  },
+  {
+   "at_ms": 1776929400000,
+   "currency": "EUR",
+   "end_ms": 1776929580000,
+   "impact": "high",
+   "start_ms": 1776929220000
+  },
+  {
+   "at_ms": 1776929400000,
+   "currency": "EUR",
+   "end_ms": 1776929580000,
+   "impact": "high",
+   "start_ms": 1776929220000
+  },
+  {
+   "at_ms": 1777485600000,
+   "currency": "USD",
+   "end_ms": 1777485780000,
+   "impact": "high",
+   "start_ms": 1777485420000
+  },
+  {
+   "at_ms": 1777485600000,
+   "currency": "USD",
+   "end_ms": 1777485780000,
+   "impact": "high",
+   "start_ms": 1777485420000
+  },
+  {
+   "at_ms": 1777487400000,
+   "currency": "USD",
+   "end_ms": 1777487580000,
+   "impact": "high",
+   "start_ms": 1777487220000
+  },
+  {
+   "at_ms": 1777551300000,
+   "currency": "EUR",
+   "end_ms": 1777551480000,
+   "impact": "high",
+   "start_ms": 1777551120000
+  },
+  {
+   "at_ms": 1777551300000,
+   "currency": "EUR",
+   "end_ms": 1777551480000,
+   "impact": "high",
+   "start_ms": 1777551120000
+  },
+  {
+   "at_ms": 1777552200000,
+   "currency": "USD",
+   "end_ms": 1777552380000,
+   "impact": "high",
+   "start_ms": 1777552020000
+  },
+  {
+   "at_ms": 1777552200000,
+   "currency": "USD",
+   "end_ms": 1777552380000,
+   "impact": "high",
+   "start_ms": 1777552020000
+  },
+  {
+   "at_ms": 1777552200000,
+   "currency": "USD",
+   "end_ms": 1777552380000,
+   "impact": "high",
+   "start_ms": 1777552020000
+  },
+  {
+   "at_ms": 1777553100000,
+   "currency": "EUR",
+   "end_ms": 1777553280000,
+   "impact": "high",
+   "start_ms": 1777552920000
+  },
+  {
+   "at_ms": 1777989600000,
+   "currency": "USD",
+   "end_ms": 1777989780000,
+   "impact": "high",
+   "start_ms": 1777989420000
+  },
+  {
+   "at_ms": 1777989600000,
+   "currency": "USD",
+   "end_ms": 1777989780000,
+   "impact": "high",
+   "start_ms": 1777989420000
+  },
+  {
+   "at_ms": 1778243400000,
+   "currency": "USD",
+   "end_ms": 1778243580000,
+   "impact": "high",
+   "start_ms": 1778243220000
+  },
+  {
+   "at_ms": 1778243400000,
+   "currency": "USD",
+   "end_ms": 1778243580000,
+   "impact": "high",
+   "start_ms": 1778243220000
+  },
+  {
+   "at_ms": 1778243400000,
+   "currency": "USD",
+   "end_ms": 1778243580000,
+   "impact": "high",
+   "start_ms": 1778243220000
+  },
+  {
+   "at_ms": 1778589000000,
+   "currency": "USD",
+   "end_ms": 1778589180000,
+   "impact": "high",
+   "start_ms": 1778588820000
+  },
+  {
+   "at_ms": 1778589000000,
+   "currency": "USD",
+   "end_ms": 1778589180000,
+   "impact": "high",
+   "start_ms": 1778588820000
+  },
+  {
+   "at_ms": 1778589000000,
+   "currency": "USD",
+   "end_ms": 1778589180000,
+   "impact": "high",
+   "start_ms": 1778588820000
+  },
+  {
+   "at_ms": 1778675400000,
+   "currency": "USD",
+   "end_ms": 1778675580000,
+   "impact": "high",
+   "start_ms": 1778675220000
+  },
+  {
+   "at_ms": 1778675400000,
+   "currency": "USD",
+   "end_ms": 1778675580000,
+   "impact": "high",
+   "start_ms": 1778675220000
+  },
+  {
+   "at_ms": 1778697600000,
+   "currency": "USD",
+   "end_ms": 1778697780000,
+   "impact": "high",
+   "start_ms": 1778697420000
+  },
+  {
+   "at_ms": 1778761800000,
+   "currency": "USD",
+   "end_ms": 1778761980000,
+   "impact": "high",
+   "start_ms": 1778761620000
+  },
+  {
+   "at_ms": 1778761800000,
+   "currency": "USD",
+   "end_ms": 1778761980000,
+   "impact": "high",
+   "start_ms": 1778761620000
+  },
+  {
+   "at_ms": 1779300000000,
+   "currency": "USD",
+   "end_ms": 1779300180000,
+   "impact": "high",
+   "start_ms": 1779299820000
+  }
+ ]
+}

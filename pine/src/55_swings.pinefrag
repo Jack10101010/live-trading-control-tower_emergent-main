@@ -1,0 +1,80 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// 55 — STAGE S3: LIVE-PATH SWING LOOP
+//
+// Mirrors the loop INLINED inside strategy_core/order_blocks.py::detect_order_blocks
+// (lines 144-171). It does NOT mirror strategy_core/swings.py::detect_swings,
+// which is DEAD on the live path — the golden pipeline never calls it. The two
+// differ in what they retain: detect_swings records every pivot into columns;
+// the live loop keeps only the MOST RECENT UNCROSSED swing per side.
+//
+// Production, verbatim:
+//     for index in range(swing_length, len(candles)):
+//         pivot_index = index - swing_length
+//         right_highs = candles.loc[pivot_index+1 : index, "high"]   # INCLUSIVE
+//         new_leg_high = candles.at[pivot_index,"high"] > right_highs.max()
+//         new_leg_low  = candles.at[pivot_index,"low"]  < right_lows.min()
+//         next_leg = BEARISH_LEG if new_leg_high else (BULLISH_LEG if new_leg_low else current)
+//         leg_change = next_leg - current_leg
+//         if leg_change == 1:  swing_low  = {...}
+//         elif leg_change == -1: swing_high = {...}
+//
+// Load-bearing details:
+//   * RAW high/low. Never parsed prices — those are Stage S5.
+//   * `.loc[a:b]` is INCLUSIVE of b, so the right window is exactly
+//     `swing_length` bars: offsets 0 … swing_length-1 from the current bar. That
+//     is precisely what `ta.highest(high, SWING_LENGTH)` covers.
+//   * STRICT `>` and `<`. A pivot equal to anything in its right window is NOT a
+//     swing — equal highs produce nothing.
+//   * `elif`, not a second `if`: if both fire on one bar, the HIGH wins.
+//   * a swing is recorded ONLY on a leg TRANSITION, never on a repeat.
+//   * cold start: current_leg = 0, and BEARISH_LEG is also 0, so the first
+//     `new_leg_high` yields leg_change == 0 and records NOTHING, while the first
+//     `new_leg_low` yields +1 and records a swing low. That asymmetry is real.
+//   * confirmation lag is exactly swing_length bars: the pivot sits that far back.
+// ─────────────────────────────────────────────────────────────────────────────
+
+s3_ready = bar_index >= SWING_LENGTH
+
+// Right window: offsets 0 … SWING_LENGTH-1 (current bar included) — the exact
+// span of production's inclusive .loc slice.
+s3_max_right_high = s3_ready ? ta.highest(high, SWING_LENGTH) : na
+s3_min_right_low  = s3_ready ? ta.lowest(low,  SWING_LENGTH)  : na
+
+s3_pivot_high = s3_ready ? high[SWING_LENGTH] : na
+s3_pivot_low  = s3_ready ? low[SWING_LENGTH]  : na
+
+s3_new_leg_high = s3_ready and s3_pivot_high > s3_max_right_high
+s3_new_leg_low  = s3_ready and s3_pivot_low  < s3_min_right_low
+
+var int s3_current_leg = 0
+s3_next_leg = s3_new_leg_high ? LEG_BEARISH : s3_new_leg_low ? LEG_BULLISH : s3_current_leg
+s3_leg_change = s3_ready ? s3_next_leg - s3_current_leg : 0
+
+// The single most-recent uncrossed swing per side — production keeps one dict
+// each, not a list.
+var float s3_swing_high_level = na
+var int   s3_swing_high_bar   = na
+var bool  s3_swing_high_crossed = false
+var int   s3_swing_high_seq   = 0
+
+var float s3_swing_low_level  = na
+var int   s3_swing_low_bar    = na
+var bool  s3_swing_low_crossed = false
+var int   s3_swing_low_seq    = 0
+
+s3_created = 0          // 0 none · 1 swing_high · 2 swing_low
+
+if s3_ready
+    if s3_leg_change == 1
+        s3_swing_low_level   := low[SWING_LENGTH]
+        s3_swing_low_bar     := bar_index - SWING_LENGTH
+        s3_swing_low_crossed := false
+        s3_swing_low_seq     := s3_swing_low_seq + 1
+        s3_created := 2
+    else if s3_leg_change == -1
+        s3_swing_high_level   := high[SWING_LENGTH]
+        s3_swing_high_bar     := bar_index - SWING_LENGTH
+        s3_swing_high_crossed := false
+        s3_swing_high_seq     := s3_swing_high_seq + 1
+        s3_created := 1
+    s3_current_leg := s3_next_leg

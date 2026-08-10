@@ -1,0 +1,84 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// 70 — SESSION LEGEND
+//
+// Replaces the per-transition labels as the default way of reading the shading.
+// Those labels were correct but produced ~6 objects a day forever, which buried
+// the price action and hit the retention cap; the colour mapping they conveyed is
+// static, so a legend states it once instead of re-stating it on every bar.
+//
+// The swatch colours come from the SAME generated array the background shading
+// indexes (fragment 05 SESSION_SHADE / SESSION_SWATCH, positional with
+// SESSION_KEY). A legend that carried its own copy of the palette could claim a
+// colour the chart does not paint — the one failure mode a legend must not have.
+//
+// The ACTIVE session is marked, so the legend doubles as a read-out of where the
+// current bar sits without hovering anything.
+// ─────────────────────────────────────────────────────────────────────────────
+
+f_legendPosition() =>
+    i_legendPos == "Bottom right" ? position.bottom_right :
+     i_legendPos == "Top left"    ? position.top_left :
+     i_legendPos == "Top right"   ? position.top_right :
+     i_legendPos == "Middle left" ? position.middle_left :
+     position.bottom_left
+
+// WHY THIS IS BUILT THE WAY IT IS
+//
+// The previous version gated EVERY cell write behind `CTX_OK`, and created the
+// table with a row count derived from `array.size(SESSION_KEY)`. Two ways for a
+// legend that is switched ON in the settings to render nothing at all:
+//
+//   * on an unsupported chart (wrong symbol or timeframe) `CTX_OK` is false, so
+//     not one cell was ever written and the table stayed empty — indistinguishable
+//     from "the toggle is broken";
+//   * `table.clear()` ran before the writes on every last-bar pass, so any early
+//     return between the two left an emptied table on screen.
+//
+// So: fixed row count, no `clear`, cells written whenever the legend is enabled,
+// and the context problem stated IN the legend rather than by erasing it.
+
+// LEGEND_ROWS is GENERATED (fragment 05) from the session schedule — one header,
+// one row per scheduled session, one fallback. A literal here would silently
+// truncate the legend the day production adds a session.
+var table legend = table.new(position.bottom_left, 3, LEGEND_ROWS,
+     border_width = 1, border_color = color.new(color.gray, 40),
+     frame_width  = 1, frame_color  = color.new(color.gray, 20))
+
+f_legendRow(int r, color swatch, string name, string window, string code, bool active) =>
+    table.cell(legend, 0, r, "", bgcolor = swatch, width = 1)
+    table.cell(legend, 1, r, (active ? "▶ " : "  ") + name,
+         text_size = size.tiny, text_halign = text.align_left,
+         text_color = active ? color.white : color.new(color.silver, 20),
+         bgcolor = active ? color.new(#1A2340, 5) : BG_HUD)
+    table.cell(legend, 2, r, window + "  " + code,
+         text_size = size.tiny, text_halign = text.align_left,
+         text_color = active ? color.white : color.new(color.silver, 35),
+         bgcolor = active ? color.new(#1A2340, 5) : BG_HUD)
+
+if barstate.islast and i_showLegend
+    table.set_position(legend, f_legendPosition())
+
+    table.cell(legend, 0, 0, "", bgcolor = color.new(#1A2340, 5))
+    table.cell(legend, 1, 0, "SESSION", text_size = size.tiny,
+         text_halign = text.align_left, text_color = color.white,
+         bgcolor = color.new(#1A2340, 5))
+    table.cell(legend, 2, 0, CTX_OK ? "UTC  code" : "UNSUPPORTED CHART",
+         text_size = size.tiny, text_halign = text.align_left,
+         text_color = CTX_OK ? color.white : color.orange,
+         bgcolor = color.new(#1A2340, 5))
+
+    _n = math.min(array.size(SESSION_KEY), LEGEND_ROWS - 2)
+    for i = 0 to _n - 1
+        f_legendRow(i + 1,
+             array.get(SESSION_SWATCH, i),
+             array.get(SESSION_LABEL, i),
+             str.tostring(array.get(SESSION_START_HOUR, i)) + "-" +
+                 str.tostring(array.get(SESSION_END_HOUR, i)),
+             str.tostring(array.get(SESSION_CODE, i)),
+             CTX_OK and sessCode == array.get(SESSION_CODE, i))
+
+    // Fallback row — a real session key, not an absence of one.
+    f_legendRow(_n + 1,
+         array.get(SESSION_SWATCH, array.size(SESSION_SWATCH) - 1),
+         SESSION_FALLBACK_LABEL, "else", str.tostring(SESSION_FALLBACK_CODE),
+         CTX_OK and sessIsFall)

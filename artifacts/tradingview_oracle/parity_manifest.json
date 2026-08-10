@@ -1,0 +1,1143 @@
+{
+ "enum_coverage": {
+  "_note": "S1 renders only session/transition/data-context vocabularies; the remaining enums are carried by the contract but not yet referenced by any Pine fragment.",
+  "checked_enums": 26,
+  "oracle_extensions_used": [],
+  "unmapped": {}
+ },
+ "feed_measurement": {
+  "export_sha256": "eb418af3fd1f0d9f8cc141a2a554f94db12df4738f73c8721f41c0187e4b00fb",
+  "fields": {
+   "close": {
+    "bit_exact_fraction": 0.11301369863013698,
+    "max_abs_diff": 0.0011700000000001154,
+    "mean_signed_diff": 2.4906804401527598e-05,
+    "median_signed_diff": 1.999999999990898e-05
+   },
+   "high": {
+    "bit_exact_fraction": 0.09330788232652144,
+    "max_abs_diff": 0.0009500000000000064,
+    "mean_signed_diff": 2.20564787783475e-05,
+    "median_signed_diff": 1.999999999990898e-05
+   },
+   "low": {
+    "bit_exact_fraction": 0.11312598248371884,
+    "max_abs_diff": 0.0012399999999999078,
+    "mean_signed_diff": 2.556310352571669e-05,
+    "median_signed_diff": 1.999999999990898e-05
+   },
+   "open": {
+    "bit_exact_fraction": 0.13457219851785313,
+    "max_abs_diff": 0.0011099999999999444,
+    "mean_signed_diff": 2.363575117897928e-05,
+    "median_signed_diff": 1.999999999990898e-05
+   }
+  },
+  "note": "mean signed difference +2.404e-05 (+0.240 pip); mean bar range 6.036 pip production vs 6.001 pip chart (ratio 0.9942). A shift with an unchanged range is a quoting-basis difference, not a different market; the quote bases above are INFERRED from the sign, not read from either provider.",
+  "production_feed": "LUX_ROOT/data/candles/EURUSD_1m_extended_2015_2026.csv",
+  "production_quote_basis": "bid",
+  "python_only_bars": 120,
+  "shared_bars": 17812,
+  "tradingview_feed": "OANDA:EURUSD",
+  "tradingview_only_bars": 3193,
+  "tradingview_quote_basis": "mid",
+  "window": [
+   "2025-09-30 21:00",
+   "2026-06-19 09:45"
+  ]
+ },
+ "fingerprint": {
+  "inputs": {
+   "contract_schema_version": "1.0.0",
+   "detection_timeframe": "15min",
+   "engine_manifest_id": "6cb6cbcd2ef572b558cb518e0ebdb69dd69802356a743ba520df13b329f9854b",
+   "engine_version": "5bb6372c092cc65ae0d30c4a40bed26ed5e074aef2459de9e199b902849305be",
+   "execution_timeframe": "1min",
+   "generator_version": "0.5.1",
+   "policy_content_sha256": "d1dfc11b8b44b78311251a0dcda8818a1c17ee918a20c965959075d6a26d3337",
+   "policy_version": "2026-07-09.te-v1.2-surgical-disable",
+   "resolved_config_hash": "a4cb908e94eee3726e826e0c2234cb384cf407acf8807a9fa1bb299fc9f4fda0",
+   "symbol": "EURUSD",
+   "trace_schema_version": "1.4.0"
+  },
+  "oracle_engine_hash": "f9f6cf7e8d731176b58e08860e77a86896c496feb260e644fa48a0f788749ceb",
+  "oracle_engine_id": "lux-6cb6cbc_cfg-a4cb908_pol-d1dfc11_c1.0.0_t1.4.0_g0.5.1"
+ },
+ "generated_at": null,
+ "global_status": "PARTIAL",
+ "golden_fixtures": [
+  {
+   "fixture_id": "F-S1-DAY",
+   "path": "golden/tradingview_oracle/s1/F-S1-DAY.csv",
+   "rows": 1438,
+   "sha256": "3dfe00894e763e87e9d5e281a11ca0f6c95284efc6ecc2ec49489421ca1ddf6a",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S1-BOUNDARIES",
+   "path": "golden/tradingview_oracle/s1/F-S1-BOUNDARIES.csv",
+   "rows": 18,
+   "sha256": "1835fb975373ec4ec877799fe49e4108481e2b9a35dd84bf1362b91a93c2531f",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S1-MIDNIGHT",
+   "path": "golden/tradingview_oracle/s1/F-S1-MIDNIGHT.csv",
+   "rows": 119,
+   "sha256": "e1035793fa3b9fdba89aa9aa948271836dca461321317b590b469bdc3a7b6d6a",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S1-WEEKEND",
+   "path": "golden/tradingview_oracle/s1/F-S1-WEEKEND.csv",
+   "rows": 956,
+   "sha256": "7fadd50fb76f64b0131721124a53c757fb1457de264b8f60b98d3767986b985a",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S1-DST-US",
+   "path": "golden/tradingview_oracle/s1/F-S1-DST-US.csv",
+   "rows": 300,
+   "sha256": "b14bba63771d4257d27ac7dbc925df87ba48028738405a4b68124cf03469b51c",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S1-DST-EU",
+   "path": "golden/tradingview_oracle/s1/F-S1-DST-EU.csv",
+   "rows": 286,
+   "sha256": "4c9b24c2d6746c5afcbe332d0673ce5dd2c7030b1fc6b29a3127874a5f5044d1",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S1-DST-END-US",
+   "path": "golden/tradingview_oracle/s1/F-S1-DST-END-US.csv",
+   "rows": 240,
+   "sha256": "efba7390aa00bea8e43ab8a00242025ae7616898b3914bff47a1ce251f2a3220",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S1-DST-END-EU",
+   "path": "golden/tradingview_oracle/s1/F-S1-DST-END-EU.csv",
+   "rows": 296,
+   "sha256": "b2880fcfb2d86af4bc6ba6066fa0cee8520b6c5ae1d4d5b4f367c7102ec00b2d",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S1-GAP",
+   "path": "golden/tradingview_oracle/s1/F-S1-GAP.csv",
+   "rows": 1348,
+   "sha256": "2b5c6ab63f9223bcc6bcecf468437d45b56e113bfda9394bee31d1393ff5ac76",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S1-DUPLICATE",
+   "path": "golden/tradingview_oracle/s1/F-S1-DUPLICATE.csv",
+   "rows": 61,
+   "sha256": "5f48b89e2f9950cd51ef46138286e338d5c04005f60ee95ee72b3fb019af8dba",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S1-OUTOFORDER",
+   "path": "golden/tradingview_oracle/s1/F-S1-OUTOFORDER.csv",
+   "rows": 60,
+   "sha256": "5acf46021b087ad0c47577fbf2fd4bddcadab7ef96f8295af15b8f47ea5e1778",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S2-WARMUP",
+   "path": "golden/tradingview_oracle/s1/F-S2-WARMUP.csv",
+   "rows": 5877,
+   "sha256": "99032b959db015453de0546f5de825ad96c35f5b6a234740daf03bb6368d38cc",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S2-RMASEED",
+   "path": "golden/tradingview_oracle/s1/F-S2-RMASEED.csv",
+   "rows": 30230,
+   "sha256": "68b3a63cb69931f7caeacc5ef5c6842d9e4a90e7010559dd23397b6aaacc7b46",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S2-FLIP",
+   "path": "golden/tradingview_oracle/s1/F-S2-FLIP.csv",
+   "rows": 31825,
+   "sha256": "71d995909a2fb3ebf1d8351752726f73231605b896cf670a2719b7db3f5cfaa1",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S3-SWINGS",
+   "path": "golden/tradingview_oracle/s1/F-S3-SWINGS.csv",
+   "rows": 90689,
+   "sha256": "2407614747c8c1c49cbf690369c3070e9ace2f616a7581c79b2e3b7e864181b2",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S3-WARMUP",
+   "path": "golden/tradingview_oracle/s1/F-S3-WARMUP.csv",
+   "rows": 1439,
+   "sha256": "e31ad69320e5da252ad56cc88a7d0d3064f13525816ad6ea0e60ea767e43312c",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S4-STRUCTURE",
+   "path": "golden/tradingview_oracle/s1/F-S4-STRUCTURE.csv",
+   "rows": 184107,
+   "sha256": "9d2d608b2909b57b2b1eb6c01ab482e9b649dd720cd1c2a1c055fd4873074a91",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S4-SEED",
+   "path": "golden/tradingview_oracle/s1/F-S4-SEED.csv",
+   "rows": 92953,
+   "sha256": "1e03612934137d71ad9b0804f05024347df82e3ec77804ccb78bce8b8854099f",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S4-VOLATILE",
+   "path": "golden/tradingview_oracle/s1/F-S4-VOLATILE.csv",
+   "rows": 77812,
+   "sha256": "8a2a2163a9207a696d76961d12f3e51179d57885c8b6ed7dbfa3e3f3764b0117",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S5-INVERTED",
+   "path": "golden/tradingview_oracle/s1/F-S5-INVERTED.csv",
+   "rows": 8445,
+   "sha256": "b5b051e66f4a0a05d41c329d5fefd1b35a57d4c1a27c7b7a9f479fbcc2238129",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S5-ORIGIN-TIE",
+   "path": "golden/tradingview_oracle/s1/F-S5-ORIGIN-TIE.csv",
+   "rows": 7178,
+   "sha256": "4485e53e979ed48ba2b2ac535003dc21923950cef6db532b66638aafc5edee32",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S5-OPPOSITE-BREAKS",
+   "path": "golden/tradingview_oracle/s1/F-S5-OPPOSITE-BREAKS.csv",
+   "rows": 4427,
+   "sha256": "47f149e72dbe0ecc504aefb649ce88c7a60c34b8562353664e41869c1f58c8e7",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S6-WARMUP",
+   "path": "golden/tradingview_oracle/s1/F-S6-WARMUP.csv",
+   "rows": 58984,
+   "sha256": "c08b6201d11f6ad3981a9ac23081b5bb27602e2cd972a4d98951e1242e9fe1bc",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S6-STATES",
+   "path": "golden/tradingview_oracle/s1/F-S6-STATES.csv",
+   "rows": 373466,
+   "sha256": "ec2b9d89053716de227cef87ddd31ef88a093d7b9757c3ddad4b9ae564f11f8f",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S6-TRANSITIONS",
+   "path": "golden/tradingview_oracle/s1/F-S6-TRANSITIONS.csv",
+   "rows": 122309,
+   "sha256": "8a6591865347853f96f849e88d35cf26704b708830842394c8b6a94bb6b62c7b",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-TV-S1S5",
+   "path": "golden/tradingview_oracle/s1/F-TV-S1S5.csv",
+   "rows": 267648,
+   "sha256": "f4b0e8b676b90fa6b5c15e10c6250bf8447f5b4fc8837ee10f7147c48bc6afd3",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-TV-S1S4",
+   "path": "golden/tradingview_oracle/s1/F-TV-S1S4.csv",
+   "rows": 94705,
+   "sha256": "6aa0fde13ca19b38520293cc89d6d8c60b38da93c078ed5291a7c8b1bccb60fc",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S5-SIZE-UNDER",
+   "path": "golden/tradingview_oracle/s1/F-S5-SIZE-UNDER.csv",
+   "rows": 2685,
+   "sha256": "a01399b91c2f408813c46143f9a1a3d7cdc34a5be480e3acf4d3d5a49af9f5c7",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S5-SIZE-AT-LIMIT",
+   "path": "golden/tradingview_oracle/s1/F-S5-SIZE-AT-LIMIT.csv",
+   "rows": 2685,
+   "sha256": "8d515e92674633b7c6e04b81186728b9db632ea858eae436a1d00e99c9d0c14a",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S5-SIZE-OVER",
+   "path": "golden/tradingview_oracle/s1/F-S5-SIZE-OVER.csv",
+   "rows": 2685,
+   "sha256": "5fbfcdc2ad3a9380ea388a7a2b32705fac18b28d2d5f903dc180fe5075d0bc56",
+   "trace_schema_version": "1.4.0"
+  },
+  {
+   "fixture_id": "F-S5-ID-DENSITY",
+   "path": "golden/tradingview_oracle/s1/F-S5-ID-DENSITY.csv",
+   "rows": 5970,
+   "sha256": "a1662b2f3227f48a6c2a1eda7a9a2465cf04d3a48ecd11b0ef8e08aed2142327",
+   "trace_schema_version": "1.4.0"
+  }
+ ],
+ "known_limitations": [
+  {
+   "approximation_label": "FEED-DEPENDENT",
+   "expected_divergence": "TradingView builds its own bars from its own feed; bar counts may differ from a pandas resample of the frozen+live M1 series",
+   "id": "L-02",
+   "measured_divergence": null
+  },
+  {
+   "approximation_label": "UTC-DAY RECONSTRUCTED",
+   "expected_divergence": "none, provided the UTC day is computed from the bar timestamp rather than a daily security() call",
+   "id": "L-06",
+   "measured_divergence": null
+  },
+  {
+   "approximation_label": "INDEX-LOCAL",
+   "expected_divergence": "bar_index diverges wherever the feeds disagree about missing bars; compare index DELTAS only",
+   "id": "L-09",
+   "measured_divergence": null
+  },
+  {
+   "approximation_label": "EXECUTION-STATE UNKNOWN",
+   "expected_divergence": "unbounded — Pine has no broker, ledger or account state",
+   "id": "L-12",
+   "measured_divergence": null
+  },
+  {
+   "approximation_label": "SHADOW MODE",
+   "expected_divergence": "n/a — informational banner",
+   "id": "L-15",
+   "measured_divergence": null
+  },
+  {
+   "approximation_label": "BUILD-TIME IDENTITY",
+   "expected_divergence": "Pine cannot query the repository, so the HUD reports what the build MIRRORS, never whether the deployed engine still matches; freshness is a repo-side answer",
+   "id": "L-19",
+   "measured_divergence": null
+  },
+  {
+   "approximation_label": "INTRABAR-EXECUTION-PATH",
+   "expected_divergence": "unbounded for S7 and later. `simulate_trades` runs on the 1-MINUTE candle file; only order-block detection uses the 15-minute resample. The arm test, the 3-candle delay and the containment touch are minute-by-minute, and a 15-minute bar carries four numbers — it cannot order events inside itself",
+   "id": "L-21",
+   "measured_divergence": "109/109 setups reproduced against production over the chart window; 33 of 58 resolved setups (56.9%) arm and finish inside ONE 15m bar — see artifacts/tradingview_oracle/s7_selfcheck_chart_window.json"
+  },
+  {
+   "approximation_label": "NEWS-CALENDAR UNAVAILABLE",
+   "expected_divergence": "Pine cannot read production's economic calendar. The blackout branch precedes the arm logic, so it affects S7 as well as S8; affected bars are classified INPUT_UNAVAILABLE, never scored as Pine failures and never scored as matches",
+   "id": "L-22",
+   "measured_divergence": "218 events, 1,308 blackout minutes, 255 of ~17,800 15m bars (1.43%) over the chart window"
+  },
+  {
+   "approximation_label": "MANUAL-COMPARISON",
+   "expected_divergence": "TradingView cannot be driven headlessly from this VPS, so S1 parity requires an operator to read Data Window values; until then S1 stays UNVERIFIED",
+   "id": "L-20",
+   "measured_divergence": null
+  }
+ ],
+ "oracle_version": "0.1.0",
+ "pine_source": {
+  "line_count": 2115,
+  "module_sources": [
+   {
+    "generated": true,
+    "path": "<generated>/00_generated_header.pinefrag",
+    "sha256": "1ccfa7dc2417608fe5e1352b394ea0cb32574c46e76b2381a538e7d3aab87019"
+   },
+   {
+    "generated": true,
+    "path": "<generated>/05_generated_contract.pinefrag",
+    "sha256": "8686b31f9126d94e1e7e4a91c74bd3dc8ac9857ff5276f15fbdde52c0161a0b3"
+   },
+   {
+    "generated": false,
+    "path": "pine/src/10_inputs.pinefrag",
+    "sha256": "20e11a4830e2d763fa39ad3668934eb062b8f53d3cb99981747998cd33dc70d0"
+   },
+   {
+    "generated": false,
+    "path": "pine/src/20_data_context.pinefrag",
+    "sha256": "618eda69fdebfd18332364c2256a870dea56df458b9324bd156c9a58efe421e9"
+   },
+   {
+    "generated": false,
+    "path": "pine/src/30_time.pinefrag",
+    "sha256": "0f8f11d566f03f3d78b051bc2b451a374311b05e0b8dd5138241d3a96fd85e33"
+   },
+   {
+    "generated": false,
+    "path": "pine/src/40_sessions.pinefrag",
+    "sha256": "f45a7ebeabc8fcaeda7028e0d2f28b8ac8692143bf1d504896a8b62eef740515"
+   },
+   {
+    "generated": false,
+    "path": "pine/src/45_volatility.pinefrag",
+    "sha256": "5d1378660c5a640d2904d02746fbde630ef33ab1c0fc840b154c72eea2e6d11b"
+   },
+   {
+    "generated": false,
+    "path": "pine/src/50_visuals.pinefrag",
+    "sha256": "7b95f3c5cebc8c597710cba1aa87680b4c0a464c8e5b82b576623c7fe5b481e6"
+   },
+   {
+    "generated": false,
+    "path": "pine/src/55_swings.pinefrag",
+    "sha256": "ee38a7450b28c8d4bb4ae3a0c5004b3528e3b2a1f277bd917bb85d3efb416333"
+   },
+   {
+    "generated": false,
+    "path": "pine/src/58_structure.pinefrag",
+    "sha256": "981a59b668a78251d04f023fd82dc655658cb181d93e6fe27e74605b382bfa03"
+   },
+   {
+    "generated": false,
+    "path": "pine/src/59_structure_visuals.pinefrag",
+    "sha256": "31561d2859060d9d7e12db17d3960fa5a7cc94599819012718ce05e7294ad51e"
+   },
+   {
+    "generated": false,
+    "path": "pine/src/65_order_blocks.pinefrag",
+    "sha256": "d44071ee333210003059afc337f7ad4e2ef61741349fcbfd2b2d259540242015"
+   },
+   {
+    "generated": false,
+    "path": "pine/src/66_regime.pinefrag",
+    "sha256": "404b494a46b47b8ef2657b8a22ff98aa2aa8fc909c20a96d5be4239d75ad293f"
+   },
+   {
+    "generated": false,
+    "path": "pine/src/60_parity_output.pinefrag",
+    "sha256": "5e59781b8f8543cffca43a318ee45f73fd6a18bc9be3bc9b045a843ed8f79de1"
+   },
+   {
+    "generated": false,
+    "path": "pine/src/70_legend.pinefrag",
+    "sha256": "7a69e1c168f10b9c6ec3a1d4549eda0cc508bec5db7b8c4ad1527bbace5b600e"
+   },
+   {
+    "generated": false,
+    "path": "pine/src/90_debug.pinefrag",
+    "sha256": "a19bf7b5e908394d64b0a38389085e9c8bbd8894ba3b46c7d14ace97bf6bbf08"
+   },
+   {
+    "generated": false,
+    "path": "pine/src/99_hud.pinefrag",
+    "sha256": "7aedb6561670715aa23c0083febdb55c8fc11b06713f98132ba67ec368fcb10e"
+   }
+  ],
+  "path": "pine/generated/tradingview_visual_oracle.pine",
+  "sha256": "81fff80b9ba5bc35d53101bb8ff8abf6e1668cc6d44cbfc732202f64c81c0394"
+ },
+ "production": {
+  "control_tower_branch": "hardening/m3-p1-production-fixes",
+  "control_tower_commit": "cca0120a842ee10e2af5f52ce14887ca55f3242b",
+  "engine_branch": "golden-run-001-engine",
+  "engine_commit": "d978074a2ee938fb4803e50d419788c584d6ef57",
+  "environment_provenance": {
+   "machine": "AMD64",
+   "numpy": "2.5.1",
+   "pandas": "3.0.3",
+   "platform": "Windows-2022Server-10.0.20348-SP0",
+   "python": "3.12.10"
+  },
+  "golden_config_relpath": "generated_configs/d6cdae589b1e4c37a67763253c466067.json"
+ },
+ "schema": "tradingview-oracle-parity-manifest-v3",
+ "stages": {
+  "S1": {
+   "feed_parity": {
+    "production_feed": "LUX_ROOT/data/candles/EURUSD_1m_extended_2015_2026.csv",
+    "report_path": "C:/Users/Administrator/Projects/live-trading-control-tower_emergent-main/artifacts/tradingview_oracle/feed_measurement.json",
+    "report_sha256": "4e79dc5b043aea999d1622b5e2da6e9784a466b41c11d59a81d3874cb9c1209b",
+    "status": "FEED_DIFFERENT",
+    "tradingview_feed": "OANDA:EURUSD"
+   },
+   "implementation_status": "IMPLEMENTED",
+   "input_availability": {
+    "affected_setups": null,
+    "affected_transitions": null,
+    "coverage_pct": null,
+    "reason": null,
+    "report_path": null,
+    "report_sha256": null,
+    "scored_bars": null,
+    "status": "INPUT_AVAILABLE",
+    "total_bars": null,
+    "unavailable_bars": null
+   },
+   "logic_parity": {
+    "bootstrap_bars": 0,
+    "bootstrap_window": null,
+    "build_fingerprint": "f9f6cf7e8d731176b58e08860e77a86896c496feb260e644fa48a0f788749ceb",
+    "compared_bars": 17812,
+    "input_basis": "chart_bars",
+    "post_bootstrap_divergences": 0,
+    "report_path": "artifacts/tradingview_oracle/s1_s6_strict.json",
+    "report_sha256": "f07580600f01ff26de7ced5c95bd31b5d102b82f9d371b28415a7459a73c51c8",
+    "status": "LOGIC_UNVERIFIED",
+    "superseded": {
+     "export_schema": null,
+     "note": "the chart's exported columns or their packed encoding changed; re-export and re-compare to restore the claim",
+     "reason": "export schema",
+     "report_sha256": "f07580600f01ff26de7ced5c95bd31b5d102b82f9d371b28415a7459a73c51c8",
+     "status": "LOGIC_MATCHED"
+    }
+   },
+   "migrated_from": {
+    "legacy_status": "UNVERIFIED",
+    "note": "legacy status did not distinguish logic / feed / replay parity, so it was not carried into any dimension; re-verify to restore a claim",
+    "schema": "tradingview-oracle-parity-manifest-v1"
+   },
+   "production_replay_parity": {
+    "reason": "INSUFFICIENT_DAILY_HISTORY_FOR_EMA200_SEED",
+    "report_path": null,
+    "report_sha256": null,
+    "status": "REPLAY_UNATTAINABLE_IN_CURRENT_CONTEXT"
+   }
+  },
+  "S10": {
+   "feed_parity": {
+    "production_feed": "LUX_ROOT/data/candles/EURUSD_1m_extended_2015_2026.csv",
+    "report_path": "C:/Users/Administrator/Projects/live-trading-control-tower_emergent-main/artifacts/tradingview_oracle/feed_measurement.json",
+    "report_sha256": "4e79dc5b043aea999d1622b5e2da6e9784a466b41c11d59a81d3874cb9c1209b",
+    "status": "FEED_DIFFERENT",
+    "tradingview_feed": "OANDA:EURUSD"
+   },
+   "implementation_status": "UNIMPLEMENTED",
+   "input_availability": {
+    "affected_setups": null,
+    "affected_transitions": null,
+    "coverage_pct": null,
+    "reason": null,
+    "report_path": null,
+    "report_sha256": null,
+    "scored_bars": null,
+    "status": "INPUT_AVAILABLE",
+    "total_bars": null,
+    "unavailable_bars": null
+   },
+   "logic_parity": {
+    "bootstrap_bars": 0,
+    "bootstrap_window": null,
+    "build_fingerprint": null,
+    "compared_bars": 0,
+    "input_basis": null,
+    "report_path": null,
+    "report_sha256": null,
+    "status": "LOGIC_UNIMPLEMENTED"
+   },
+   "production_replay_parity": {
+    "reason": "INSUFFICIENT_DAILY_HISTORY_FOR_EMA200_SEED",
+    "report_path": null,
+    "report_sha256": null,
+    "status": "REPLAY_UNATTAINABLE_IN_CURRENT_CONTEXT"
+   }
+  },
+  "S11": {
+   "feed_parity": {
+    "production_feed": "LUX_ROOT/data/candles/EURUSD_1m_extended_2015_2026.csv",
+    "report_path": "C:/Users/Administrator/Projects/live-trading-control-tower_emergent-main/artifacts/tradingview_oracle/feed_measurement.json",
+    "report_sha256": "4e79dc5b043aea999d1622b5e2da6e9784a466b41c11d59a81d3874cb9c1209b",
+    "status": "FEED_DIFFERENT",
+    "tradingview_feed": "OANDA:EURUSD"
+   },
+   "implementation_status": "UNIMPLEMENTED",
+   "input_availability": {
+    "affected_setups": null,
+    "affected_transitions": null,
+    "coverage_pct": null,
+    "reason": null,
+    "report_path": null,
+    "report_sha256": null,
+    "scored_bars": null,
+    "status": "INPUT_AVAILABLE",
+    "total_bars": null,
+    "unavailable_bars": null
+   },
+   "logic_parity": {
+    "bootstrap_bars": 0,
+    "bootstrap_window": null,
+    "build_fingerprint": null,
+    "compared_bars": 0,
+    "input_basis": null,
+    "report_path": null,
+    "report_sha256": null,
+    "status": "LOGIC_UNIMPLEMENTED"
+   },
+   "production_replay_parity": {
+    "reason": "INSUFFICIENT_DAILY_HISTORY_FOR_EMA200_SEED",
+    "report_path": null,
+    "report_sha256": null,
+    "status": "REPLAY_UNATTAINABLE_IN_CURRENT_CONTEXT"
+   }
+  },
+  "S12": {
+   "feed_parity": {
+    "production_feed": "LUX_ROOT/data/candles/EURUSD_1m_extended_2015_2026.csv",
+    "report_path": "C:/Users/Administrator/Projects/live-trading-control-tower_emergent-main/artifacts/tradingview_oracle/feed_measurement.json",
+    "report_sha256": "4e79dc5b043aea999d1622b5e2da6e9784a466b41c11d59a81d3874cb9c1209b",
+    "status": "FEED_DIFFERENT",
+    "tradingview_feed": "OANDA:EURUSD"
+   },
+   "implementation_status": "UNIMPLEMENTED",
+   "input_availability": {
+    "affected_setups": null,
+    "affected_transitions": null,
+    "coverage_pct": null,
+    "reason": null,
+    "report_path": null,
+    "report_sha256": null,
+    "scored_bars": null,
+    "status": "INPUT_AVAILABLE",
+    "total_bars": null,
+    "unavailable_bars": null
+   },
+   "logic_parity": {
+    "bootstrap_bars": 0,
+    "bootstrap_window": null,
+    "build_fingerprint": null,
+    "compared_bars": 0,
+    "input_basis": null,
+    "report_path": null,
+    "report_sha256": null,
+    "status": "LOGIC_UNIMPLEMENTED"
+   },
+   "production_replay_parity": {
+    "reason": "INSUFFICIENT_DAILY_HISTORY_FOR_EMA200_SEED",
+    "report_path": null,
+    "report_sha256": null,
+    "status": "REPLAY_UNATTAINABLE_IN_CURRENT_CONTEXT"
+   }
+  },
+  "S13": {
+   "feed_parity": {
+    "production_feed": "LUX_ROOT/data/candles/EURUSD_1m_extended_2015_2026.csv",
+    "report_path": "C:/Users/Administrator/Projects/live-trading-control-tower_emergent-main/artifacts/tradingview_oracle/feed_measurement.json",
+    "report_sha256": "4e79dc5b043aea999d1622b5e2da6e9784a466b41c11d59a81d3874cb9c1209b",
+    "status": "FEED_DIFFERENT",
+    "tradingview_feed": "OANDA:EURUSD"
+   },
+   "implementation_status": "UNIMPLEMENTED",
+   "input_availability": {
+    "affected_setups": null,
+    "affected_transitions": null,
+    "coverage_pct": null,
+    "reason": null,
+    "report_path": null,
+    "report_sha256": null,
+    "scored_bars": null,
+    "status": "INPUT_AVAILABLE",
+    "total_bars": null,
+    "unavailable_bars": null
+   },
+   "logic_parity": {
+    "bootstrap_bars": 0,
+    "bootstrap_window": null,
+    "build_fingerprint": null,
+    "compared_bars": 0,
+    "input_basis": null,
+    "report_path": null,
+    "report_sha256": null,
+    "status": "LOGIC_UNIMPLEMENTED"
+   },
+   "production_replay_parity": {
+    "reason": "INSUFFICIENT_DAILY_HISTORY_FOR_EMA200_SEED",
+    "report_path": null,
+    "report_sha256": null,
+    "status": "REPLAY_UNATTAINABLE_IN_CURRENT_CONTEXT"
+   }
+  },
+  "S14": {
+   "feed_parity": {
+    "production_feed": "LUX_ROOT/data/candles/EURUSD_1m_extended_2015_2026.csv",
+    "report_path": "C:/Users/Administrator/Projects/live-trading-control-tower_emergent-main/artifacts/tradingview_oracle/feed_measurement.json",
+    "report_sha256": "4e79dc5b043aea999d1622b5e2da6e9784a466b41c11d59a81d3874cb9c1209b",
+    "status": "FEED_DIFFERENT",
+    "tradingview_feed": "OANDA:EURUSD"
+   },
+   "implementation_status": "UNIMPLEMENTED",
+   "input_availability": {
+    "affected_setups": null,
+    "affected_transitions": null,
+    "coverage_pct": null,
+    "reason": null,
+    "report_path": null,
+    "report_sha256": null,
+    "scored_bars": null,
+    "status": "INPUT_AVAILABLE",
+    "total_bars": null,
+    "unavailable_bars": null
+   },
+   "logic_parity": {
+    "bootstrap_bars": 0,
+    "bootstrap_window": null,
+    "build_fingerprint": null,
+    "compared_bars": 0,
+    "input_basis": null,
+    "report_path": null,
+    "report_sha256": null,
+    "status": "LOGIC_UNIMPLEMENTED"
+   },
+   "production_replay_parity": {
+    "reason": "INSUFFICIENT_DAILY_HISTORY_FOR_EMA200_SEED",
+    "report_path": null,
+    "report_sha256": null,
+    "status": "REPLAY_UNATTAINABLE_IN_CURRENT_CONTEXT"
+   }
+  },
+  "S2": {
+   "feed_parity": {
+    "production_feed": "LUX_ROOT/data/candles/EURUSD_1m_extended_2015_2026.csv",
+    "report_path": "C:/Users/Administrator/Projects/live-trading-control-tower_emergent-main/artifacts/tradingview_oracle/feed_measurement.json",
+    "report_sha256": "4e79dc5b043aea999d1622b5e2da6e9784a466b41c11d59a81d3874cb9c1209b",
+    "status": "FEED_DIFFERENT",
+    "tradingview_feed": "OANDA:EURUSD"
+   },
+   "implementation_status": "IMPLEMENTED",
+   "input_availability": {
+    "affected_setups": null,
+    "affected_transitions": null,
+    "coverage_pct": null,
+    "reason": null,
+    "report_path": null,
+    "report_sha256": null,
+    "scored_bars": null,
+    "status": "INPUT_AVAILABLE",
+    "total_bars": null,
+    "unavailable_bars": null
+   },
+   "logic_parity": {
+    "bootstrap_bars": 0,
+    "bootstrap_window": null,
+    "build_fingerprint": "f9f6cf7e8d731176b58e08860e77a86896c496feb260e644fa48a0f788749ceb",
+    "compared_bars": 17812,
+    "input_basis": "chart_bars",
+    "post_bootstrap_divergences": 0,
+    "report_path": "artifacts/tradingview_oracle/s1_s6_strict.json",
+    "report_sha256": "f07580600f01ff26de7ced5c95bd31b5d102b82f9d371b28415a7459a73c51c8",
+    "status": "LOGIC_UNVERIFIED",
+    "superseded": {
+     "export_schema": null,
+     "note": "the chart's exported columns or their packed encoding changed; re-export and re-compare to restore the claim",
+     "reason": "export schema",
+     "report_sha256": "f07580600f01ff26de7ced5c95bd31b5d102b82f9d371b28415a7459a73c51c8",
+     "status": "LOGIC_MATCHED"
+    }
+   },
+   "migrated_from": {
+    "legacy_status": "IMPLEMENTED_UNVERIFIED",
+    "note": "legacy status did not distinguish logic / feed / replay parity, so it was not carried into any dimension; re-verify to restore a claim",
+    "schema": "tradingview-oracle-parity-manifest-v1"
+   },
+   "production_replay_parity": {
+    "reason": "INSUFFICIENT_DAILY_HISTORY_FOR_EMA200_SEED",
+    "report_path": null,
+    "report_sha256": null,
+    "status": "REPLAY_UNATTAINABLE_IN_CURRENT_CONTEXT"
+   }
+  },
+  "S3": {
+   "feed_parity": {
+    "production_feed": "LUX_ROOT/data/candles/EURUSD_1m_extended_2015_2026.csv",
+    "report_path": "C:/Users/Administrator/Projects/live-trading-control-tower_emergent-main/artifacts/tradingview_oracle/feed_measurement.json",
+    "report_sha256": "4e79dc5b043aea999d1622b5e2da6e9784a466b41c11d59a81d3874cb9c1209b",
+    "status": "FEED_DIFFERENT",
+    "tradingview_feed": "OANDA:EURUSD"
+   },
+   "implementation_status": "IMPLEMENTED",
+   "input_availability": {
+    "affected_setups": null,
+    "affected_transitions": null,
+    "coverage_pct": null,
+    "reason": null,
+    "report_path": null,
+    "report_sha256": null,
+    "scored_bars": null,
+    "status": "INPUT_AVAILABLE",
+    "total_bars": null,
+    "unavailable_bars": null
+   },
+   "logic_parity": {
+    "bootstrap_bars": 206,
+    "bootstrap_window": [
+     "2025-09-30 21:00",
+     "2025-10-03 00:15"
+    ],
+    "build_fingerprint": "f9f6cf7e8d731176b58e08860e77a86896c496feb260e644fa48a0f788749ceb",
+    "compared_bars": 17606,
+    "input_basis": "chart_bars",
+    "post_bootstrap_divergences": 0,
+    "report_path": "artifacts/tradingview_oracle/s1_s6_boot206.json",
+    "report_sha256": "2234a3207213e6fbc04ab087f60673e7652f6dcde7a85b015dd35c7c8300e8f8",
+    "status": "LOGIC_UNVERIFIED",
+    "superseded": {
+     "export_schema": null,
+     "note": "the chart's exported columns or their packed encoding changed; re-export and re-compare to restore the claim",
+     "reason": "export schema",
+     "report_sha256": "2234a3207213e6fbc04ab087f60673e7652f6dcde7a85b015dd35c7c8300e8f8",
+     "status": "LOGIC_MATCHED_WITH_DECLARED_BOOTSTRAP"
+    }
+   },
+   "migrated_from": {
+    "legacy_status": "IMPLEMENTED_UNVERIFIED",
+    "note": "legacy status did not distinguish logic / feed / replay parity, so it was not carried into any dimension; re-verify to restore a claim",
+    "schema": "tradingview-oracle-parity-manifest-v1"
+   },
+   "production_replay_parity": {
+    "reason": "INSUFFICIENT_DAILY_HISTORY_FOR_EMA200_SEED",
+    "report_path": null,
+    "report_sha256": null,
+    "status": "REPLAY_UNATTAINABLE_IN_CURRENT_CONTEXT"
+   }
+  },
+  "S4": {
+   "feed_parity": {
+    "production_feed": "LUX_ROOT/data/candles/EURUSD_1m_extended_2015_2026.csv",
+    "report_path": "C:/Users/Administrator/Projects/live-trading-control-tower_emergent-main/artifacts/tradingview_oracle/feed_measurement.json",
+    "report_sha256": "4e79dc5b043aea999d1622b5e2da6e9784a466b41c11d59a81d3874cb9c1209b",
+    "status": "FEED_DIFFERENT",
+    "tradingview_feed": "OANDA:EURUSD"
+   },
+   "implementation_status": "IMPLEMENTED",
+   "input_availability": {
+    "affected_setups": null,
+    "affected_transitions": null,
+    "coverage_pct": null,
+    "reason": null,
+    "report_path": null,
+    "report_sha256": null,
+    "scored_bars": null,
+    "status": "INPUT_AVAILABLE",
+    "total_bars": null,
+    "unavailable_bars": null
+   },
+   "logic_parity": {
+    "bootstrap_bars": 206,
+    "bootstrap_window": [
+     "2025-09-30 21:00",
+     "2025-10-03 00:15"
+    ],
+    "build_fingerprint": "f9f6cf7e8d731176b58e08860e77a86896c496feb260e644fa48a0f788749ceb",
+    "compared_bars": 17606,
+    "input_basis": "chart_bars",
+    "post_bootstrap_divergences": 0,
+    "report_path": "artifacts/tradingview_oracle/s1_s6_boot206.json",
+    "report_sha256": "2234a3207213e6fbc04ab087f60673e7652f6dcde7a85b015dd35c7c8300e8f8",
+    "status": "LOGIC_UNVERIFIED",
+    "superseded": {
+     "export_schema": null,
+     "note": "the chart's exported columns or their packed encoding changed; re-export and re-compare to restore the claim",
+     "reason": "export schema",
+     "report_sha256": "2234a3207213e6fbc04ab087f60673e7652f6dcde7a85b015dd35c7c8300e8f8",
+     "status": "LOGIC_MATCHED_WITH_DECLARED_BOOTSTRAP"
+    }
+   },
+   "migrated_from": {
+    "legacy_status": "IMPLEMENTED_UNVERIFIED",
+    "note": "legacy status did not distinguish logic / feed / replay parity, so it was not carried into any dimension; re-verify to restore a claim",
+    "schema": "tradingview-oracle-parity-manifest-v1"
+   },
+   "production_replay_parity": {
+    "reason": "INSUFFICIENT_DAILY_HISTORY_FOR_EMA200_SEED",
+    "report_path": null,
+    "report_sha256": null,
+    "status": "REPLAY_UNATTAINABLE_IN_CURRENT_CONTEXT"
+   }
+  },
+  "S5": {
+   "feed_parity": {
+    "production_feed": "LUX_ROOT/data/candles/EURUSD_1m_extended_2015_2026.csv",
+    "report_path": "C:/Users/Administrator/Projects/live-trading-control-tower_emergent-main/artifacts/tradingview_oracle/feed_measurement.json",
+    "report_sha256": "4e79dc5b043aea999d1622b5e2da6e9784a466b41c11d59a81d3874cb9c1209b",
+    "status": "FEED_DIFFERENT",
+    "tradingview_feed": "OANDA:EURUSD"
+   },
+   "implementation_status": "IMPLEMENTED",
+   "input_availability": {
+    "affected_setups": null,
+    "affected_transitions": null,
+    "coverage_pct": null,
+    "reason": null,
+    "report_path": null,
+    "report_sha256": null,
+    "scored_bars": null,
+    "status": "INPUT_AVAILABLE",
+    "total_bars": null,
+    "unavailable_bars": null
+   },
+   "logic_parity": {
+    "bootstrap_bars": 206,
+    "bootstrap_window": [
+     "2025-09-30 21:00",
+     "2025-10-03 00:15"
+    ],
+    "build_fingerprint": "f9f6cf7e8d731176b58e08860e77a86896c496feb260e644fa48a0f788749ceb",
+    "compared_bars": 17606,
+    "input_basis": "chart_bars",
+    "post_bootstrap_divergences": 0,
+    "report_path": "artifacts/tradingview_oracle/s1_s6_boot206.json",
+    "report_sha256": "2234a3207213e6fbc04ab087f60673e7652f6dcde7a85b015dd35c7c8300e8f8",
+    "status": "LOGIC_UNVERIFIED",
+    "superseded": {
+     "export_schema": null,
+     "note": "the chart's exported columns or their packed encoding changed; re-export and re-compare to restore the claim",
+     "reason": "export schema",
+     "report_sha256": "2234a3207213e6fbc04ab087f60673e7652f6dcde7a85b015dd35c7c8300e8f8",
+     "status": "LOGIC_MATCHED_WITH_DECLARED_BOOTSTRAP"
+    }
+   },
+   "production_replay_parity": {
+    "reason": "INSUFFICIENT_DAILY_HISTORY_FOR_EMA200_SEED",
+    "report_path": null,
+    "report_sha256": null,
+    "status": "REPLAY_UNATTAINABLE_IN_CURRENT_CONTEXT"
+   }
+  },
+  "S6": {
+   "feed_parity": {
+    "production_feed": "LUX_ROOT/data/candles/EURUSD_1m_extended_2015_2026.csv",
+    "report_path": "C:/Users/Administrator/Projects/live-trading-control-tower_emergent-main/artifacts/tradingview_oracle/feed_measurement.json",
+    "report_sha256": "4e79dc5b043aea999d1622b5e2da6e9784a466b41c11d59a81d3874cb9c1209b",
+    "status": "FEED_DIFFERENT",
+    "tradingview_feed": "OANDA:EURUSD"
+   },
+   "implementation_status": "IMPLEMENTED",
+   "input_availability": {
+    "affected_setups": null,
+    "affected_transitions": null,
+    "coverage_pct": null,
+    "reason": null,
+    "report_path": null,
+    "report_sha256": null,
+    "scored_bars": null,
+    "status": "INPUT_AVAILABLE",
+    "total_bars": null,
+    "unavailable_bars": null
+   },
+   "logic_parity": {
+    "bootstrap_bars": 1632,
+    "bootstrap_window": [
+     "2025-09-30 21:00",
+     "2025-10-23 20:45"
+    ],
+    "build_fingerprint": "f9f6cf7e8d731176b58e08860e77a86896c496feb260e644fa48a0f788749ceb",
+    "compared_bars": 16180,
+    "input_basis": "chart_bars",
+    "post_bootstrap_divergences": 0,
+    "report_path": "artifacts/tradingview_oracle/s1_s6_boot1632.json",
+    "report_sha256": "f78e15f4e42b74761a9ddf32bb00ab6e043676275c727649f5a63ee7eb9abb33",
+    "status": "LOGIC_UNVERIFIED",
+    "superseded": {
+     "export_schema": null,
+     "note": "the chart's exported columns or their packed encoding changed; re-export and re-compare to restore the claim",
+     "reason": "export schema",
+     "report_sha256": "f78e15f4e42b74761a9ddf32bb00ab6e043676275c727649f5a63ee7eb9abb33",
+     "status": "LOGIC_MATCHED_WITH_DECLARED_BOOTSTRAP"
+    }
+   },
+   "production_replay_parity": {
+    "reason": "INSUFFICIENT_DAILY_HISTORY_FOR_EMA200_SEED",
+    "report_path": null,
+    "report_sha256": null,
+    "status": "REPLAY_UNATTAINABLE_IN_CURRENT_CONTEXT"
+   }
+  },
+  "S7": {
+   "feed_parity": {
+    "production_feed": "LUX_ROOT/data/candles/EURUSD_1m_extended_2015_2026.csv",
+    "report_path": "C:/Users/Administrator/Projects/live-trading-control-tower_emergent-main/artifacts/tradingview_oracle/feed_measurement.json",
+    "report_sha256": "4e79dc5b043aea999d1622b5e2da6e9784a466b41c11d59a81d3874cb9c1209b",
+    "status": "FEED_DIFFERENT",
+    "tradingview_feed": "OANDA:EURUSD"
+   },
+   "implementation_status": "UNIMPLEMENTED",
+   "input_availability": {
+    "affected_setups": null,
+    "affected_transitions": null,
+    "coverage_pct": null,
+    "reason": "INTRABAR_EXECUTION_PATH_UNAVAILABLE",
+    "report_path": "artifacts/tradingview_oracle/s7_input_availability.json",
+    "report_sha256": "ff85b83dba1d496cc53f70eddc97cfeef88f31fc9483ceaf53c7538a6cbeb93f",
+    "scored_bars": null,
+    "status": "INPUT_UNAVAILABLE",
+    "total_bars": null,
+    "unavailable_bars": null
+   },
+   "logic_parity": {
+    "bootstrap_bars": 0,
+    "bootstrap_window": null,
+    "build_fingerprint": "f9f6cf7e8d731176b58e08860e77a86896c496feb260e644fa48a0f788749ceb",
+    "compared_bars": 0,
+    "evidence": {
+     "_note": "Two independent inputs the chart does not have. The intrabar one is total and is what makes S7 unattainable; the news one is partial and would have been survivable on its own.",
+     "_schema": "tradingview-oracle-s7-input-availability-v1",
+     "intrabar_execution_path": {
+      "_why": "simulate_trades is handed `candles` (the raw candle file), not the detection resample. Arming, the 3-candle delay and the containment touch are minute-by-minute. A 15-minute bar carries four numbers and cannot order events inside itself.",
+      "admitted": 109,
+      "arm_and_outcome_in_one_chart_bar": 33,
+      "armed": 97,
+      "chart_frame_minutes": 15,
+      "delay_candles": 3,
+      "delay_minutes": 3,
+      "detection_frame_minutes": 15,
+      "execution_candles": 267648,
+      "measured_window": "2025-09-30 .. 2026-06-20",
+      "production_execution_frame": "data/candles/EURUSD_1m_extended_2015_2026.csv",
+      "production_execution_minutes": 1,
+      "production_selfcheck_compared": 109,
+      "production_selfcheck_mismatches": 0,
+      "reason": "INTRABAR_EXECUTION_PATH_UNAVAILABLE",
+      "report_path": "artifacts/tradingview_oracle/s7_selfcheck_chart_window.json",
+      "resolved_setups": 58,
+      "setups": 110,
+      "share_undecidable": 0.5689655172413793
+     },
+     "news_calendar": {
+      "_why": "The blackout branch sits at execution.py:2493, BEFORE the arm logic, so it gates S7 and not only S8. Pine cannot read a file.",
+      "blackout_minutes": 1308,
+      "calendar_rows": 28148,
+      "chart_window": "2025-09-30 .. 2026-06-20",
+      "coverage_pct": 98.5674157303371,
+      "currencies": [],
+      "events_in_window": 218,
+      "impacts": [
+       "high"
+      ],
+      "minutes_after": 3,
+      "minutes_before": 3,
+      "production_file": "data/news/master_economic_calendar_2020_present.csv",
+      "reason": "NEWS_CALENDAR_UNAVAILABLE",
+      "rows_after_production_filter": 2353,
+      "scored_bars": 17545,
+      "total_bars": 17800,
+      "unavailable_bars": 255
+     }
+    },
+    "export_schema": "94b26657e45642272bd8aab94e7e5c16f578e47af656c9a2b42713f04d10e174",
+    "input_basis": null,
+    "report_path": null,
+    "report_sha256": null,
+    "status": "LOGIC_UNATTAINABLE_IN_CURRENT_CONTEXT",
+    "unattainable_reason": "INTRABAR_EXECUTION_PATH_UNAVAILABLE"
+   },
+   "production_replay_parity": {
+    "reason": "INSUFFICIENT_DAILY_HISTORY_FOR_EMA200_SEED",
+    "report_path": null,
+    "report_sha256": null,
+    "status": "REPLAY_UNATTAINABLE_IN_CURRENT_CONTEXT"
+   }
+  },
+  "S8": {
+   "feed_parity": {
+    "production_feed": "LUX_ROOT/data/candles/EURUSD_1m_extended_2015_2026.csv",
+    "report_path": "C:/Users/Administrator/Projects/live-trading-control-tower_emergent-main/artifacts/tradingview_oracle/feed_measurement.json",
+    "report_sha256": "4e79dc5b043aea999d1622b5e2da6e9784a466b41c11d59a81d3874cb9c1209b",
+    "status": "FEED_DIFFERENT",
+    "tradingview_feed": "OANDA:EURUSD"
+   },
+   "implementation_status": "UNIMPLEMENTED",
+   "input_availability": {
+    "affected_setups": null,
+    "affected_transitions": null,
+    "coverage_pct": null,
+    "reason": null,
+    "report_path": null,
+    "report_sha256": null,
+    "scored_bars": null,
+    "status": "INPUT_AVAILABLE",
+    "total_bars": null,
+    "unavailable_bars": null
+   },
+   "logic_parity": {
+    "bootstrap_bars": 0,
+    "bootstrap_window": null,
+    "build_fingerprint": null,
+    "compared_bars": 0,
+    "input_basis": null,
+    "report_path": null,
+    "report_sha256": null,
+    "status": "LOGIC_UNIMPLEMENTED"
+   },
+   "production_replay_parity": {
+    "reason": "INSUFFICIENT_DAILY_HISTORY_FOR_EMA200_SEED",
+    "report_path": null,
+    "report_sha256": null,
+    "status": "REPLAY_UNATTAINABLE_IN_CURRENT_CONTEXT"
+   }
+  },
+  "S9": {
+   "feed_parity": {
+    "production_feed": "LUX_ROOT/data/candles/EURUSD_1m_extended_2015_2026.csv",
+    "report_path": "C:/Users/Administrator/Projects/live-trading-control-tower_emergent-main/artifacts/tradingview_oracle/feed_measurement.json",
+    "report_sha256": "4e79dc5b043aea999d1622b5e2da6e9784a466b41c11d59a81d3874cb9c1209b",
+    "status": "FEED_DIFFERENT",
+    "tradingview_feed": "OANDA:EURUSD"
+   },
+   "implementation_status": "UNIMPLEMENTED",
+   "input_availability": {
+    "affected_setups": null,
+    "affected_transitions": null,
+    "coverage_pct": null,
+    "reason": null,
+    "report_path": null,
+    "report_sha256": null,
+    "scored_bars": null,
+    "status": "INPUT_AVAILABLE",
+    "total_bars": null,
+    "unavailable_bars": null
+   },
+   "logic_parity": {
+    "bootstrap_bars": 0,
+    "bootstrap_window": null,
+    "build_fingerprint": null,
+    "compared_bars": 0,
+    "input_basis": null,
+    "report_path": null,
+    "report_sha256": null,
+    "status": "LOGIC_UNIMPLEMENTED"
+   },
+   "production_replay_parity": {
+    "reason": "INSUFFICIENT_DAILY_HISTORY_FOR_EMA200_SEED",
+    "report_path": null,
+    "report_sha256": null,
+    "status": "REPLAY_UNATTAINABLE_IN_CURRENT_CONTEXT"
+   }
+  }
+ },
+ "supported_context": {
+  "_note": "S1 has no history-seeded values, so no warm-up is required. S2 (ATR seed) and S6 (regime panel) will raise these.",
+  "chart_timezone": "UTC",
+  "detection_timeframes": [
+   "15min"
+  ],
+  "execution_timeframes": [
+   "1min"
+  ],
+  "minimum_history_bars": {
+   "daily": 0,
+   "detection": 0
+  },
+  "symbols": [
+   "EURUSD"
+  ]
+ },
+ "tested_windows": [],
+ "unsupported_active_features": [],
+ "validation": {
+  "command": "python -m tools.oracle.verify_s1",
+  "exact_match_failures": 0,
+  "feed_attributed_divergences": 0,
+  "news_excluded_rows": 0,
+  "report_path": null,
+  "result": "NOT_RUN",
+  "stages_run": [],
+  "tolerance_failures": 0,
+  "validated_at": null,
+  "warmup_excluded_rows": 0
+ }
+}

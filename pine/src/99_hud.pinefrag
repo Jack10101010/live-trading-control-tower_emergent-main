@@ -1,0 +1,320 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// 99 — HUD
+//
+// The warning block is NOT suppressible by any input. Phase 0 established why:
+// the chart can legitimately show a fill that never reached the broker, the node
+// runs in dry-run, and news filtering cannot exist in Pine at all. A user who has
+// switched the HUD off must still see those three facts.
+//
+// The build's identity is BAKED IN at generation. Pine cannot query the
+// repository, so this HUD states what the build MIRRORS. Whether the deployed
+// engine still matches is answered by `python -m tools.oracle.check_freshness`,
+// never by the chart — see limitation L-19.
+//
+// LEGIBILITY (fixed after the first on-chart run):
+//   * backgrounds are near-OPAQUE. They were 75% transparent, so candles bled
+//     through and the text was unreadable over price.
+//   * the identity row shows ORACLE_ENGINE_ID_COMPACT. The full 56-char
+//     fingerprint forced the table wide enough to cover the price action; it now
+//     lives in the debug panel.
+//   * the warning is split across two rows so it no longer stretches column 0.
+//
+// A table is pinned to the PANE, not to bars — it deliberately does not scroll
+// with the chart. `i_hudPos` moves it if it covers something.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Row capacity is a CONSTANT with headroom, not a number kept in sync by hand.
+// v0.5.0 added nine rows to a table still declared with 24 and produced
+// RE10040 "Row 24 is out of table bounds" on a live chart. Pine reports that at
+// RUNTIME, not compile time, so neither the compiler nor static syntax checking
+// caught it. tools/oracle/lint_pine.py now counts row-writing calls per table
+// and fails when they exceed the declared capacity.
+HUD_ROWS = 56
+
+var table hud = table.new(position.top_right, 2, HUD_ROWS,
+     border_width = 1, border_color = color.new(color.gray, 40),
+     frame_width  = 1, frame_color  = color.new(color.gray, 20))
+
+// BG_HUD / BG_WARN / BG_STAT / BG_HEAD are declared in fragment 10, because the
+// legend (70) needs them too and Pine resolves top-to-bottom.
+
+// Both helpers GUARD the row index. A table overflow is a RUNTIME error that
+// kills the whole indicator — the chart goes blank and every stage stops
+// rendering. Degrading to "this row is not drawn" keeps the oracle usable and
+// still visible, which matters more than the missing line.
+f_row(int r, string k, string v, color vc) =>
+    if r < HUD_ROWS
+        table.cell(hud, 0, r, k, text_size = f_textSize(),
+             text_halign = text.align_left,
+             text_color = color.new(color.silver, 10), bgcolor = BG_HUD)
+        table.cell(hud, 1, r, v, text_size = f_textSize(),
+             text_halign = text.align_left, text_color = vc, bgcolor = BG_HUD)
+
+f_span(int r, string v, color vc, color bg) =>
+    if r < HUD_ROWS
+        table.cell(hud, 0, r, v, text_size = f_textSize(),
+             text_halign = text.align_left, text_color = vc, bgcolor = bg)
+        table.cell(hud, 1, r, "", bgcolor = bg)
+
+// Colour for a LOGIC-parity value. A declared bootstrap is still a pass — the
+// interval is bounded, recorded and proven to contain every divergence — so it
+// is green, not amber. Amber is "nobody has checked", red is "checked and wrong".
+f_logicColour(string s) =>
+    s == "MATCHED" or s == "MATCHED+BOOT" ? color.lime :
+         s == "FAILED" or s == "INCOMPATIBLE" ? #EF476F : color.orange
+
+if barstate.islast
+    table.set_position(hud, f_hudPosition())
+
+// NORMAL vs DEBUG.
+//
+// The first on-chart build rendered ~30 rows unconditionally and took up half the
+// pane — build hashes, schema versions and six per-stage parity lines, all of
+// which matter when verifying a build and none of which matter when reading a
+// chart. Engineering metadata now lives behind `i_debug`.
+//
+// What stays in NORMAL mode: where we are (session), what the market is doing
+// (state / regime / bias), what the engine last did (order block, structure),
+// where the setups came from, and the limitations a reader would be misled
+// without. The unsuppressible warning is last, as before.
+if barstate.islast and i_showHud
+    table.clear(hud, 0, 0, 1, HUD_ROWS - 1)
+    int r = 0
+
+    f_span(r, "TV ORACLE " + ORACLE_BUILD_VERSION +
+              (i_debug ? "   DEBUG" : ""), color.white, BG_HEAD)
+    r := r + 1
+
+    // ── identity and schema — DEBUG ONLY ────────────────────────────────────
+    if i_debug
+        f_row(r, "build",   ORACLE_ENGINE_ID_COMPACT, color.aqua)
+        r := r + 1
+        f_row(r, "config",  ORACLE_CONFIG_HASH_SHORT, color.aqua)
+        r := r + 1
+        f_row(r, "schema",  "c" + ORACLE_CONTRACT_SCHEMA + " t" + ORACLE_TRACE_SCHEMA +
+                            " g" + ORACLE_GENERATOR_VERSION, color.silver)
+        r := r + 1
+        f_row(r, "expects", ORACLE_SYMBOL + " " + ORACLE_TF_LABEL, color.silver)
+        r := r + 1
+        f_row(r, "chart",   CTX_TICKER_RAW + " " + timeframe.period, color.silver)
+        r := r + 1
+
+    // A BROKEN context is never hidden — the whole chart is meaningless without
+    // it — but a working one needs no row in normal mode.
+    if not CTX_OK
+        f_row(r, "context", CTX_STATUS, color.red)
+        r := r + 1
+        f_row(r, "reason",  CTX_REASON, color.red)
+        r := r + 1
+    else if i_debug
+        f_row(r, "context", CTX_STATUS, color.lime)
+        r := r + 1
+
+    // ── where we are ────────────────────────────────────────────────────────
+    // The window hours are LONDON LOCAL, not UTC (M-SESSION-DST-1), so the row
+    // shows the London clock and the derived offset. Labelling these "z" was
+    // wrong for the seven months a year the UK is on BST, and wrong silently.
+    f_row(r, "session", sessLabel + (sessIsFall ? "" :
+              "  " + str.tostring(sessStartH) + "-" + str.tostring(sessEndH) +
+              " London") + "   (" + str.tostring(londonHour, "00") + ":" +
+              str.tostring(utcMin, "00") + " London / " +
+              str.tostring(utcHour, "00") + ":" + str.tostring(utcMin, "00") +
+              " UTC, " + (londonOffsetH == 0 ? "GMT" :
+                  "UTC+" + str.tostring(londonOffsetH)) + ")",
+          color.white)
+    r := r + 1
+    if i_debug
+        f_row(r, "utc",      str.format_time(time, "yyyy-MM-dd HH:mm", "UTC"), color.white)
+        r := r + 1
+        f_row(r, "day key",  str.tostring(dayKey), color.white)
+        r := r + 1
+        f_row(r, "since tr", str.tostring(barsSinceTransition), color.silver)
+        r := r + 1
+
+    // ── what the market is doing ────────────────────────────────────────────
+    f_row(r, "state", s6_stateCode == 0 ? "(warming up)" :
+              array.get(REGIME_STATE_NAME, s6_stateCode - 1),
+          s6_stateCode == 0 ? color.orange : color.white)
+    r := r + 1
+    f_row(r, "regime", (s6_trendCode == 0 ? "-" :
+              s6_trendCode == CODE_TREND_BULL ? "Bull" : "Bear") + " / " +
+              (s6_volCode == 0 ? "-" :
+                   s6_volCode == CODE_VOL_EXPAND ? "Expand" : "Compress") +
+              (s6_chopCode == CODE_CHOP_CHOP ? " / Chop" : ""),
+          s6_trendCode == 0 ? color.orange : color.silver)
+    r := r + 1
+    f_row(r, "bias", s4_bias == BIAS_BULLISH ? "BULLISH" :
+                     s4_bias == BIAS_BEARISH ? "BEARISH" : "NEUTRAL (unseeded)",
+          s4_bias == BIAS_BULLISH ? color.lime :
+          s4_bias == BIAS_BEARISH ? color.red : color.orange)
+    r := r + 1
+
+    // ── what the engine last did ────────────────────────────────────────────
+    f_row(r, "last OB", na(s5_last_ob_id) ? "none yet" :
+              "OB#" + str.tostring(s5_last_ob_id) + "  " +
+              (s5_last_side == 1 ? "bull" : s5_last_side == 2 ? "bear" : "-") +
+              (s5_last_tag == 2 ? " CHoCH" : s5_last_tag == 1 ? " BOS" : "") +
+              "  " + str.tostring(s5_active_count) + " created",
+          na(s5_last_ob_id) ? color.gray : color.white)
+    r := r + 1
+    f_row(r, "structure", s4_last_event_code == 0 ? "none" :
+                          f_eventText(s4_last_event_code) +
+                          (f_eventIsBull(s4_last_event_code) ? " bull" : " bear"),
+          color.silver)
+    r := r + 1
+
+    // ── the target production would use, for the last live setup ────────────
+    // Which cell fired, what it resolved to, and whether a LOCAL override is
+    // changing what is drawn. Without the override line a chart in experiment
+    // mode looks exactly like a chart showing production's own numbers.
+    f_row(r, "cfg cell", not TGT_PRESENT ? "NO TABLE - run update_detection_visual" :
+              ls_lastKey == "" ? "(no setup yet)  " + TGT_CONFIG_HASH :
+              ls_lastKey,
+          not TGT_PRESENT ? color.red : color.silver)
+    r := r + 1
+    // "IF TRIGGERED NOW", not "will trade at". Production resolves the cell at
+    // the FILL candle, which may be days away in a different session and state,
+    // so this row is a preview of the CURRENT context and says so.
+    f_row(r, "if now", not TGT_PRESENT ? "-" :
+              not ls_lastOk ? "BLOCK" + (ls_lastWhy != "" ? " (" + ls_lastWhy + ")" : "") :
+              na(ls_lastRr) ? "none resolved" :
+              "TRADE " + str.tostring(ls_lastRr, "0.00") + "R  " +
+              (ls_lastOvSrc == LS_OV_PROD ? "(" + f_srcName(ls_lastSrc) + ")"
+                                          : f_ovName(ls_lastOvSrc)),
+          ls_lastOvSrc != LS_OV_PROD ? color.yellow :
+              not ls_lastOk ? color.orange : color.lime)
+    r := r + 1
+    // ── news, for THIS bar ──────────────────────────────────────────────────
+    // The other half of production's gate. This row reports the bar under the
+    // cursor, not the last setup, because "would production be allowed to fill
+    // right now" is the question a live reader is asking.
+    int hudNews = f_newsState(time, time_close)
+    f_row(r, "news", not NEWS_PRESENT ? "NO SCHEDULE - run export_news" :
+              not NEWS_ENABLED ? "blackout disabled in production" :
+              hudNews == LS_NEWS_BLOCKED ? "BLOCKED - production halts fills" :
+              hudNews == LS_NEWS_UNKNOWN ? "UNKNOWN - past " + NEWS_LAST_TXT :
+              "permits (" + str.tostring(NEWS_COUNT) + " windows loaded)",
+          not NEWS_PRESENT ? color.red :
+              hudNews == LS_NEWS_OK ? color.lime : color.orange)
+    r := r + 1
+    if i_ovMode == "Local overrides"
+        f_span(r, "LOCAL OVERRIDES ACTIVE - targets are NOT production's",
+               color.white, BG_STAT)
+        r := r + 1
+
+    // ── where the setups came from ──────────────────────────────────────────
+    // PRODUCTION's decisions, recorded at build time — not computed from the
+    // bars on screen — and that distinction belongs on the chart.
+    f_row(r, "setups", RP_STALE ? "DROPPED - another engine" :
+                       RP_COUNT == 0 ? "none (run export_replay)" :
+                       i_replayCount + " of " + str.tostring(RP_COUNT) +
+                       " from Python",
+          RP_STALE ? color.red : RP_COUNT == 0 ? color.orange : color.lime)
+    r := r + 1
+    // WHERE the recording ends. Without this row an empty chart is ambiguous —
+    // production had no setups here, or the view is simply past the end of the
+    // recorded data? The first on-chart build showed nothing at all for exactly
+    // that reason: the newest setup was six weeks behind the visible bars.
+    // THE RECORDING IS NOT ONE FEED once it passes the frozen file's end. Rows
+    // after the seam were simulated on the live MT5 1-minute segment, so a
+    // setup drawn from them carries that provenance and the chart states it.
+    if RP_COUNT > 0 and not RP_STALE and RP_SEAM_MS > 0
+        f_row(r, "feed seam", "frozen to " + RP_SEAM_TXT +
+                  ", live MT5 after", color.orange)
+        r := r + 1
+    if RP_COUNT > 0 and not RP_STALE
+        f_row(r, "recorded to", str.format_time(RP_LAST_MS, "yyyy-MM-dd", "UTC") +
+                  (time > RP_LAST_MS + RP_BAR_MS ?
+                       "   ← VIEW IS PAST THIS" : ""),
+              time > RP_LAST_MS + RP_BAR_MS ? color.orange : color.silver)
+        r := r + 1
+
+    // ── deep state — DEBUG ONLY ─────────────────────────────────────────────
+    if i_debug
+        f_row(r, "atr", (s2_atr_warm ? "WARM " : "") +
+                        str.tostring(s2_atr, format.mintick) +
+                        (s2_high_vol ? "  FLIP" : ""),
+              s2_atr_warm ? color.orange : color.white)
+        r := r + 1
+        f_row(r, "swing hi", na(s3_swing_high_level) ? "none" :
+                             str.tostring(s3_swing_high_level, format.mintick) +
+                             (s3_swing_high_crossed ? "  crossed" : "  active"),
+              s3_swing_high_crossed ? color.gray : color.white)
+        r := r + 1
+        f_row(r, "swing lo", na(s3_swing_low_level) ? "none" :
+                             str.tostring(s3_swing_low_level, format.mintick) +
+                             (s3_swing_low_crossed ? "  crossed" : "  active"),
+              s3_swing_low_crossed ? color.gray : color.white)
+        r := r + 1
+        f_row(r, "daily", str.tostring(s6_dayIndex) + " UTC days" +
+                  (na(s6_fEma) ? " EMA-" : " EMA+") +
+                  (na(s6_fBbw) ? " BBW-" : " BBW+") +
+                  (na(s6_fAdx) ? " ADX-" : " ADX+"), color.silver)
+        r := r + 1
+        if s4_history_warn
+            f_span(r, "LOADED HISTORY SHALLOW - BIAS SEED MAY DIFFER (L-04)",
+                   color.white, BG_WARN)
+            r := r + 1
+
+        f_span(r, "LOGIC PARITY (Pine vs Python, IDENTICAL bars)", color.silver,
+               BG_HEAD)
+        r := r + 1
+        f_row(r, "S1", ORACLE_S1_LOGIC, f_logicColour(ORACLE_S1_LOGIC))
+        r := r + 1
+        f_row(r, "S2", ORACLE_S2_LOGIC, f_logicColour(ORACLE_S2_LOGIC))
+        r := r + 1
+        f_row(r, "S3", ORACLE_S3_LOGIC, f_logicColour(ORACLE_S3_LOGIC))
+        r := r + 1
+        f_row(r, "S4", ORACLE_S4_LOGIC, f_logicColour(ORACLE_S4_LOGIC))
+        r := r + 1
+        f_row(r, "S5", ORACLE_S5_LOGIC, f_logicColour(ORACLE_S5_LOGIC))
+        r := r + 1
+        f_row(r, "S6", ORACLE_S6_LOGIC, f_logicColour(ORACLE_S6_LOGIC))
+        r := r + 1
+        if ORACLE_LOGIC_BOOTSTRAP > 0
+            f_span(r, "STRUCTURE BOOTSTRAP: " +
+                      str.tostring(ORACLE_LOGIC_BOOTSTRAP) +
+                      " BARS - EARLIER BARS NOT VERIFIED", color.white, BG_WARN)
+            r := r + 1
+        f_span(r, "FEED BASIS " + ORACLE_FEED_STATUS + ": PROD " +
+                  ORACLE_FEED_PROD_BASIS + " / CHART " + ORACLE_FEED_CHART_BASIS,
+               color.white, ORACLE_FEED_STATUS == "MATCHED" ? BG_STAT : BG_WARN)
+        r := r + 1
+        f_span(r, "FULL-HISTORY PRODUCTION REPLAY: " + ORACLE_REPLAY_STATUS,
+               color.white, ORACLE_REPLAY_STATUS == "MATCHED" ? BG_STAT : BG_WARN)
+        r := r + 1
+        f_span(r, "GLOBAL: " + ORACLE_GLOBAL_STATUS, color.white, BG_STAT)
+        r := r + 1
+
+    // ── the news coverage edge, never suppressible ──────────────────────────
+    // Past the last embedded window the chart's news answer is UNKNOWN, and an
+    // exhausted calendar reads exactly like a quiet one. This row names the
+    // date so the reader knows the schedule ran out rather than assuming a
+    // clear diary.
+    if NEWS_PRESENT and NEWS_ENABLED and time > NEWS_LAST_MS
+        f_span(r, "NEWS UNKNOWN - DATA ENDS " + NEWS_LAST_TXT,
+               color.white, BG_WARN)
+        r := r + 1
+
+    // ── COMPACT limitations, never suppressible ─────────────────────────────
+    // Two facts a reader would be misled without: the market state is seeded
+    // from chart history only, and the feed is not production's. News is no
+    // longer on this list — it has its own row above, from production's own
+    // schedule — but it is decided per MINUTE and this bar is fifteen (L-21).
+    f_span(r, "state seeded from chart history - feed " + ORACLE_FEED_STATUS +
+              " - news verdict is per-bar, production is per-minute",
+           color.white, BG_STAT)
+    r := r + 1
+    f_span(r, "SHADOW MODE - EXECUTION STATE UNKNOWN", color.white, BG_WARN)
+
+// …and the SAME warning as a standalone label whenever the HUD is hidden, so no
+// cosmetic setting can remove it from the chart entirely.
+var label warnLabel = na
+if barstate.islast and not i_showHud
+    label.delete(warnLabel)
+    warnLabel := label.new(bar_index, high,
+         "SHADOW MODE · EXECUTION STATE UNKNOWN · NEWS UNAVAILABLE" +
+         "\nGLOBAL: " + ORACLE_GLOBAL_STATUS +
+         "\n" + ORACLE_ENGINE_ID_COMPACT,
+         style = label.style_label_left, size = size.small,
+         color = color.new(#B00020, 5), textcolor = color.white)

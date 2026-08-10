@@ -1,0 +1,112 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// 40 — SESSION ASSIGNMENT
+//
+// Mirrors strategy_core/sessions.py EXACTLY:
+//
+//     _LONDON = ZoneInfo("Europe/London")
+//     hour = ts.tz_convert(_LONDON).hour          # _london_hour
+//     for start, end, label, key in _SESSION_SCHEDULE:
+//         if start <= hour < end:
+//             return label, key
+//     return _SESSION_OUTSIDE
+//
+// Load-bearing properties, all verified by execution against the pinned engine:
+//   * THE INPUT IS THE LONDON WALL-CLOCK HOUR, not the UTC hour. This changed in
+//     M-SESSION-DST-1 (e76fa92, branch golden-run-001-engine) and this fragment
+//     classified on `utcHour` until M-TV-FILL-TIME-SEMANTICS-1. The schedule
+//     numbers are London local; their UTC projection moves with the UK clock, so
+//     during BST every boundary fires an hour earlier in UTC. Classifying on UTC
+//     put roughly seven months a year into the wrong cohort — silently, because
+//     both answers are valid session keys.
+//   * the window test is  start <= hour  AND  hour < end   — inclusive start,
+//     EXCLUSIVE end. 07:00 London is London; 06:59 London is Asia; 17:00 is
+//     Outside.
+//   * FIRST match wins. The production windows do not overlap, but the
+//     first-match rule is what the code does, so it is what is reproduced.
+//   * anything unmatched falls back to Outside — a real session key, not "none".
+//   * the labels are phases of a LONDON trading day. `newYork` and `ny_pm` are
+//     NOT America/New_York — production says so explicitly, and reinterpreting
+//     them against their nominal zones would be a different strategy.
+//
+// The schedule arrays are GENERATED from the contract (fragment 05). Editing
+// them here would be a second authority, which the design forbids.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Index into the generated schedule, or -1 meaning "fallback".
+f_sessionIndexForHour(int h) =>
+    int found = -1
+    for i = 0 to array.size(SESSION_START_HOUR) - 1
+        if found == -1
+            int s = array.get(SESSION_START_HOUR, i)
+            int e = array.get(SESSION_END_HOUR, i)
+            if s <= h and h < e          // [start, end) — exactly production
+                found := i
+    found
+
+// LONDON hour, not UTC. See the header — this one argument is the DST fix.
+sessIdx = f_sessionIndexForHour(londonHour)
+
+sessKey    = sessIdx == -1 ? SESSION_FALLBACK_KEY   : array.get(SESSION_KEY,   sessIdx)
+sessLabel  = sessIdx == -1 ? SESSION_FALLBACK_LABEL : array.get(SESSION_LABEL, sessIdx)
+sessCode   = sessIdx == -1 ? SESSION_FALLBACK_CODE  : array.get(SESSION_CODE,  sessIdx)
+sessIsFall = sessIdx == -1
+sessStartH = sessIdx == -1 ? na : array.get(SESSION_START_HOUR, sessIdx)
+sessEndH   = sessIdx == -1 ? na : array.get(SESSION_END_HOUR,   sessIdx)
+
+// ── transition detection ─────────────────────────────────────────────────────
+// Mirrors the trace's session.transition / transition_reason. `gap_resync` marks
+// a change across a data gap: the previous bar was more than one timeframe step
+// earlier, so unobserved sessions may sit between the two — the change is real
+// but the oracle cannot claim it saw the open.
+var int    prevSessCode = na
+var string prevSessKey  = na
+var int    prevBarTime  = na
+var int    barsSinceTransition = 0
+
+tfMs      = timeframe.in_seconds() * 1000
+isGap     = not na(prevBarTime) and (time - prevBarTime) > tfMs
+isFirst   = na(prevSessCode)
+changed   = not isFirst and sessCode != prevSessCode
+
+sessTransition = isFirst or changed
+
+sessTransitionReason =
+     isFirst   ? "first_bar" :
+     not changed ? "" :
+     isGap     ? "gap_resync" :
+     sessCode == SESSION_FALLBACK_CODE ? "session_close_to_fallback" :
+     prevSessCode == SESSION_FALLBACK_CODE ? "fallback_to_session" :
+     "session_open"
+
+sessTransitionCode =
+     sessTransitionReason == "session_open"              ? CODE_TR_SESSION_OPEN :
+     sessTransitionReason == "session_close_to_fallback" ? CODE_TR_CLOSE_TO_FALLBACK :
+     sessTransitionReason == "fallback_to_session"       ? CODE_TR_FALLBACK_TO_SESSION :
+     sessTransitionReason == "first_bar"                 ? CODE_TR_FIRST_BAR :
+     sessTransitionReason == "gap_resync"                ? CODE_TR_GAP_RESYNC :
+     CODE_NONE
+
+barsSinceTransition := sessTransition ? 0 : barsSinceTransition + 1
+
+// A session OPEN is a transition into a real session; a session CLOSE is a
+// transition out of one. Production has no explicit close event — the close of
+// London IS the open of Lull — so "close" here means only the fall to Outside.
+isSessionOpen  = sessTransition and not isFirst and not sessIsFall
+isSessionClose = sessTransition and not isFirst and sessIsFall
+
+// SNAPSHOT the previous-bar values BEFORE the state carry below overwrites them.
+// Later fragments (visuals, HUD, parity plots) run after this one, so reading
+// `prevSessKey` directly there would return the CURRENT bar's key — the values
+// would look self-consistent and be silently wrong.
+dispPrevSessKey  = prevSessKey
+dispPrevSessCode = prevSessCode
+dispPrevDayKey   = prevDayKey
+
+// State carry — last thing this fragment does, so every read above and every
+// snapshot here sees the PREVIOUS bar's value, matching the trace's prev_key
+// semantics.
+if barClosed or barstate.islast
+    prevSessCode := sessCode
+    prevSessKey  := sessKey
+    prevBarTime  := time
+    prevDayKey   := dayKey

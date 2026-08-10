@@ -1,0 +1,105 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// x99 — HUD (execution oracle)
+//
+// The single most important thing this panel does is refuse to look finished.
+// S7 is NOT implemented in this build, and a clean-looking chart with a derived
+// 15-minute frame drawn on it could easily read as "the execution oracle works".
+// The S7 row is therefore rendered unconditionally, in warning colours, and
+// there is no input that turns it off.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── the banner NO INPUT CAN HIDE ─────────────────────────────────────────────
+// Its own table, rendered unconditionally. The first version of this fragment
+// put every row inside `if barstate.islast and i_showHud`, which meant turning
+// the HUD off hid the "S7 NOT IMPLEMENTED" notice and left a chart that looked
+// like a working execution oracle. The lint rule caught it.
+var table xwarn = table.new(position.bottom_right, 1, 3,
+     border_width = 1, border_color = color.new(color.black, 60))
+
+if barstate.islast
+    table.cell(xwarn, 0, 0,
+         "SHADOW MODE · EXECUTION STATE UNKNOWN · NEWS UNAVAILABLE",
+         text_size = size.tiny, text_color = color.white, bgcolor = BG_WARN)
+    table.cell(xwarn, 0, 1,
+         "S7 NOT IMPLEMENTED — this build claims NO parity",
+         text_size = size.tiny, text_color = color.white, bgcolor = BG_WARN)
+    table.cell(xwarn, 0, 2,
+         CTX_OK ? "context SUPPORTED · " + ORACLE_BUILD_TARGET
+                : "UNSUPPORTED CONTEXT — " + xc_ctxReason,
+         text_size = size.tiny, text_color = CTX_OK ? color.silver : color.white,
+         bgcolor = CTX_OK ? BG_HUD : BG_WARN)
+
+// Capacity is the number of rows REACHABLE, not the number usually written.
+// Pine raises RE10040 at RUNTIME when a write lands past the declared bound and
+// the whole indicator stops rendering — a defect an operator finds, not CI.
+var table xhud = table.new(position.top_right, 2, 16,
+     border_width = 1, border_color = color.new(color.black, 60))
+
+f_xrow(int r, string k, string v, color c) =>
+    table.cell(xhud, 0, r, k, text_size = f_textSize(), text_color = color.silver,
+         text_halign = text.align_left, bgcolor = BG_HUD)
+    table.cell(xhud, 1, r, v, text_size = f_textSize(), text_color = c,
+         text_halign = text.align_left, bgcolor = BG_HUD)
+
+if barstate.islast and i_showHud
+    table.set_position(xhud, f_hudPosition())
+    r = 0
+    table.cell(xhud, 0, r, "EXECUTION ORACLE", text_size = f_textSize(),
+         text_color = color.white, text_halign = text.align_left, bgcolor = BG_HEAD)
+    table.cell(xhud, 1, r, ORACLE_BUILD_TARGET, text_size = f_textSize(),
+         text_color = color.white, text_halign = text.align_left, bgcolor = BG_HEAD)
+    r += 1
+
+    // ── the notice that must never be suppressible ──────────────────────────
+    // Repeated from the always-on banner above deliberately: the rule is that
+    // it renders on the HUD-ON path AND the HUD-OFF path, so both carry it.
+    f_xrow(r, "mode", "SHADOW MODE · EXECUTION STATE UNKNOWN · NEWS UNAVAILABLE",
+          color.orange)
+    r += 1
+    f_xrow(r, "S7", "NOT IMPLEMENTED — this build claims NO parity", color.orange)
+    r += 1
+    f_xrow(r, "owns", ORACLE_OWNED_STAGES, color.silver)
+    r += 1
+
+    // ── data context ────────────────────────────────────────────────────────
+    f_xrow(r, "context", CTX_OK ? "SUPPORTED" : "UNSUPPORTED — " + xc_ctxReason,
+          CTX_OK ? color.lime : color.red)
+    r += 1
+    f_xrow(r, "chart", syminfo.ticker + "  " + timeframe.period +
+                       "  (needs " + ORACLE_TF_LABEL + ")",
+          CTX_OK ? color.silver : color.red)
+    r += 1
+    f_xrow(r, "history", str.tostring(xc_barsLoaded) + " bars  ~" +
+                         str.tostring(math.round(xc_daysLoaded)) + "d",
+          color.silver)
+    r += 1
+
+    // ── the derived detection frame ─────────────────────────────────────────
+    f_xrow(r, "15m frame", str.tostring(xf_detCount) + " bars  " +
+                           str.tostring(xf_detGaps) + " empty dropped",
+          xf_frameWarm ? color.orange : color.lime)
+    r += 1
+    f_xrow(r, "last 15m", na(xf_detBucket) ? "—" :
+                          str.format_time(xf_detBucket, "yyyy-MM-dd HH:mm", "UTC") +
+                          "  (" + str.tostring(xf_detBars) + " × 1m)",
+          color.silver)
+    r += 1
+    f_xrow(r, "frame warm", xf_frameWarm ?
+                            "WARMING " + str.tostring(xf_detCount) + "/" +
+                            str.tostring(XF_MIN_DETECTION_BARS) : "ready",
+          xf_frameWarm ? color.orange : color.lime)
+    r += 1
+
+    // ── shared, unmovable limitations ───────────────────────────────────────
+    f_xrow(r, "feed", ORACLE_FEED_STATUS + "  (prod " + ORACLE_FEED_PROD_BASIS +
+                      " / chart " + ORACLE_FEED_CHART_BASIS + ")", color.orange)
+    r += 1
+    f_xrow(r, "news", "CALENDAR UNAVAILABLE — Pine cannot read production's " +
+                      "economic calendar", color.orange)
+    r += 1
+    // Production admits an order block at the 15-minute bucket's LEFT edge, i.e.
+    // up to 14 minutes before that bucket closes. This build cannot: it is
+    // causal. Measured effect over the chart window: 1 of 97 armed setups had
+    // any decisive event inside that window, 0 of 97 outcomes changed.
+    f_xrow(r, "L-23", "production admits at the bucket LABEL; this build waits " +
+                      "for the bucket to close", color.orange)

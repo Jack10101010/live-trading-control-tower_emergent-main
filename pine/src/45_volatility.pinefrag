@@ -1,0 +1,58 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// 45 — STAGE S2: TRUE RANGE, SEEDED RMA, PARSED PRICES
+//
+// Mirrors strategy_core/order_blocks.py::_true_range, ::_pine_rma and
+// ::_add_parsed_prices.
+//
+// `ta.atr` AND `ta.rma` ARE FORBIDDEN HERE, and this is measured, not stylistic.
+// Production seeds its RMA with the FIRST value; Pine's builtins seed with an SMA
+// of the first `length` values. Over the F-S2-RMASEED fixture (1818 comparable
+// 15m bars) the two agree on ZERO bars, peak at 27.4% relative difference, and
+// are still not equal at the final bar. Since the parsed-price flip is decided by
+// `(H-L) >= 2*measure`, any bar near that threshold can flip the other way and
+// move an order block. tools/oracle/lint_pine.py rejects the builtins outright.
+//
+// WHAT THIS FEEDS: parsed_high/parsed_low are consumed ONLY by
+// `_make_order_block` — they set the order-block BOX (Stage S5). They do NOT feed
+// the swing loop or the break test, both of which read RAW prices. So an S2
+// divergence cannot move a swing or a BOS; it can only move an order block.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── true range ───────────────────────────────────────────────────────────────
+// Bar 0 has no previous close. Production builds three columns and takes a
+// row-wise max; pandas SKIPS NaN, so bar 0 resolves to high-low rather than NaN.
+s2_hl = high - low
+s2_hc = barstate.isfirst ? na : math.abs(high - close[1])
+s2_lc = barstate.isfirst ? na : math.abs(low  - close[1])
+s2_tr = barstate.isfirst ? s2_hl : math.max(s2_hl, s2_hc, s2_lc)
+
+// ── first-value-seeded RMA (NOT ta.rma) ──────────────────────────────────────
+// previous = value            on the first bar
+// previous = (previous*(n-1) + value) / n   thereafter
+var float s2_atr      = na
+var float s2_atr_prev = na
+s2_atr_prev := s2_atr
+s2_atr := na(s2_atr) ? s2_tr : (s2_atr * (ATR_PERIOD - 1) + s2_tr) / ATR_PERIOD
+
+// ── cumulative mean range (the ob_filter != "Atr" branch) ────────────────────
+// Divisor is max(index, 1), so index 0 AND index 1 both divide by 1 — a genuine
+// production quirk, reproduced rather than tidied.
+var float s2_tr_sum = 0.0
+s2_tr_sum := s2_tr_sum + s2_tr
+s2_cmr = s2_tr_sum / math.max(bar_index, 1)
+
+s2_measure   = OB_FILTER == "Atr" ? s2_atr : s2_cmr
+s2_threshold = VOL_MULTIPLE * s2_measure
+s2_range     = high - low
+
+// ── parsed prices ────────────────────────────────────────────────────────────
+// `>=`, not `>`. On a high-volatility bar the high and low are SWAPPED, so
+// parsed_high < parsed_low and the resulting OB box has negative depth. That is
+// production behaviour; do not "correct" it.
+s2_high_vol    = s2_range >= s2_threshold
+s2_parsed_high = s2_high_vol ? low  : high
+s2_parsed_low  = s2_high_vol ? high : low
+
+// True until 200 bars have been seen. The seed only fully decays after that, and
+// the whole series depends on where the loaded chart BEGINS (limitation L-03).
+s2_atr_warm = bar_index + 1 < ATR_PERIOD

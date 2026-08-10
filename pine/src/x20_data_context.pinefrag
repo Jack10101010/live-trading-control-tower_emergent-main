@@ -1,0 +1,51 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// x20 — DATA CONTEXT (execution oracle)
+//
+// This build owns the 1-MINUTE domain and is refused anywhere else. That is not
+// caution: the detection oracle's parameters (ATR over 200 bars, a 50-bar swing
+// window, a 20-day regime panel) were measured at 15 minutes, and running either
+// build on the other's timeframe would render numbers whose meaning nobody has
+// checked.
+//
+// The check is UNSUPPRESSIBLE. There is no input that hides it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+f_normTicker(string raw) =>
+    s = str.upper(raw)
+    s := str.replace_all(s, ":", "")
+    s := str.replace_all(s, "/", "")
+    s := str.replace_all(s, "_", "")
+    s := str.replace_all(s, "-", "")
+    s := str.replace_all(s, ".", "")
+    s
+
+xc_ticker = f_normTicker(syminfo.ticker)
+xc_symbolOk = false
+for i = 0 to array.size(ORACLE_SYMBOL_ALIASES) - 1
+    if xc_ticker == f_normTicker(array.get(ORACLE_SYMBOL_ALIASES, i))
+        xc_symbolOk := true
+
+// The chart's timeframe in seconds, against THIS TARGET's accepted list. The
+// detection build accepts 900 and this one accepts 60; neither accepts both.
+xc_tfSeconds = timeframe.in_seconds(timeframe.period)
+xc_tfOk = false
+for i = 0 to array.size(ORACLE_TF_SECONDS) - 1
+    if xc_tfSeconds == array.get(ORACLE_TF_SECONDS, i)
+        xc_tfOk := true
+
+CTX_OK   = xc_symbolOk and xc_tfOk
+CTX_CODE = CTX_OK ? CODE_CTX_SUPPORTED : CODE_CTX_UNSUPPORTED
+
+xc_ctxReason = not xc_symbolOk ? "symbol " + syminfo.ticker + " is not " + ORACLE_SYMBOL :
+     not xc_tfOk ? "timeframe " + timeframe.period + " is not " + ORACLE_TF_LABEL :
+     ""
+
+// ── history sufficiency ──────────────────────────────────────────────────────
+// A 1-minute chart loads far fewer calendar days than a 15-minute one for the
+// same bar budget, and the detection frame this build derives needs 15x as many
+// 1-minute bars as it produces 15-minute ones. Reporting the actual loaded depth
+// is the only way an operator can tell whether a quiet chart is quiet because
+// nothing happened or because the history ran out.
+xc_barsLoaded = bar_index + 1
+xc_firstBarTime = ta.valuewhen(bar_index == 0, time, 0)
+xc_daysLoaded = (time - xc_firstBarTime) / 86400000.0

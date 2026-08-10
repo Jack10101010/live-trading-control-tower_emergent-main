@@ -1,0 +1,474 @@
+{
+ "base_cells": 24,
+ "global_rr": 2,
+ "market_states": [
+  "Bull/Expand",
+  "Bull/Compress",
+  "Bull/Chop",
+  "Bear/Expand",
+  "Bear/Compress",
+  "Bear/Chop"
+ ],
+ "rows": [
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "elig_states": {
+    "Bear/Chop": "block",
+    "Bear/Compress": "block",
+    "Bull/Chop": "block",
+    "Bull/Compress": "block"
+   },
+   "enabled": true,
+   "session": "asia",
+   "state_overrides": {
+    "Bear/Expand": 1.25,
+    "Bull/Expand": 0.6
+   },
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "elig_states": {
+    "Bull/Chop": "block"
+   },
+   "enabled": true,
+   "session": "asia",
+   "state_overrides": {
+    "Bear/Chop": 1.75,
+    "Bear/Compress": 0.7,
+    "Bear/Expand": 0.8,
+    "Bull/Compress": 1.5,
+    "Bull/Expand": 0.9
+   },
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "elig_states": {
+    "Bear/Expand": "block"
+   },
+   "enabled": true,
+   "session": "asia",
+   "state_overrides": {
+    "Bear/Chop": 0.6,
+    "Bear/Compress": 0.8,
+    "Bull/Chop": 0.5,
+    "Bull/Compress": 0.7,
+    "Bull/Expand": 0.6
+   },
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "elig_states": {
+    "Bull/Chop": "block",
+    "Bull/Compress": "block"
+   },
+   "enabled": true,
+   "session": "asia",
+   "state_overrides": {
+    "Bear/Chop": 0.8,
+    "Bear/Compress": 0.9,
+    "Bear/Expand": 0.6,
+    "Bull/Expand": 1.25
+   },
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "elig_states": {
+    "Bull/Chop": "block"
+   },
+   "enabled": true,
+   "session": "london",
+   "state_overrides": {
+    "Bear/Chop": 0.9,
+    "Bear/Compress": 1.75,
+    "Bear/Expand": 2.75,
+    "Bull/Compress": 1.0,
+    "Bull/Expand": 2.25
+   },
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "elig_states": {
+    "Bear/Chop": "block",
+    "Bear/Compress": "block",
+    "Bear/Expand": "block",
+    "Bull/Expand": "block"
+   },
+   "enabled": true,
+   "session": "london",
+   "state_overrides": {
+    "Bull/Chop": 0.9,
+    "Bull/Compress": 1.75
+   },
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "elig_states": {
+    "Bear/Chop": "block",
+    "Bear/Expand": "block",
+    "Bull/Chop": "block",
+    "Bull/Compress": "block",
+    "Bull/Expand": "block"
+   },
+   "enabled": true,
+   "session": "london",
+   "state_overrides": {
+    "Bear/Compress": 0.6
+   },
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "elig_states": {
+    "Bull/Expand": "block"
+   },
+   "enabled": true,
+   "session": "london",
+   "state_overrides": {
+    "Bear/Chop": 2.75,
+    "Bear/Compress": 0.5,
+    "Bear/Expand": 1.5,
+    "Bull/Chop": 1.75,
+    "Bull/Compress": 1.75,
+    "Bull/Expand": 2.0
+   },
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "elig_states": {
+    "Bear/Chop": "block",
+    "Bear/Compress": "block",
+    "Bull/Chop": "block",
+    "Bull/Expand": "block"
+   },
+   "enabled": true,
+   "session": "lull",
+   "state_overrides": {
+    "Bear/Expand": 0.5,
+    "Bull/Compress": 0.8
+   },
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "elig_states": {
+    "Bull/Chop": "block"
+   },
+   "enabled": true,
+   "session": "lull",
+   "state_overrides": {
+    "Bear/Chop": 0.5,
+    "Bear/Compress": 2.75,
+    "Bear/Expand": 3.0,
+    "Bull/Compress": 1.0,
+    "Bull/Expand": 1.5
+   },
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "elig_states": {
+    "Bear/Chop": "block",
+    "Bear/Expand": "block",
+    "Bull/Chop": "block",
+    "Bull/Expand": "block"
+   },
+   "enabled": true,
+   "session": "lull",
+   "state_overrides": {
+    "Bear/Compress": 0.9,
+    "Bull/Compress": 0.6
+   },
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "elig_states": {
+    "Bull/Chop": "block"
+   },
+   "enabled": true,
+   "session": "lull",
+   "state_overrides": {
+    "Bear/Chop": 1.0,
+    "Bear/Compress": 2.75,
+    "Bear/Expand": 1.0,
+    "Bull/Compress": 1.0,
+    "Bull/Expand": 4.5
+   },
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "elig_states": {
+    "Bear/Chop": "block",
+    "Bear/Expand": "block",
+    "Bull/Chop": "block",
+    "Bull/Expand": "block"
+   },
+   "enabled": true,
+   "session": "newYork",
+   "state_overrides": {
+    "Bear/Compress": 0.7,
+    "Bull/Compress": 0.5
+   },
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "elig_states": {},
+   "enabled": true,
+   "session": "newYork",
+   "state_overrides": {
+    "Bear/Chop": 1.0,
+    "Bear/Compress": 0.9,
+    "Bear/Expand": 0.7,
+    "Bull/Chop": 2.5,
+    "Bull/Compress": 2.0,
+    "Bull/Expand": 1.25
+   },
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "elig_states": {
+    "Bear/Compress": "block",
+    "Bear/Expand": "block",
+    "Bull/Compress": "block",
+    "Bull/Expand": "block"
+   },
+   "enabled": true,
+   "session": "newYork",
+   "state_overrides": {
+    "Bear/Chop": 2.0,
+    "Bull/Chop": 1.75
+   },
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "elig_states": {
+    "Bull/Chop": "block"
+   },
+   "enabled": true,
+   "session": "newYork",
+   "state_overrides": {
+    "Bear/Chop": 2.75,
+    "Bear/Compress": 3.0,
+    "Bear/Expand": 2.0
+   },
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "elig_states": {
+    "Bear/Chop": "block",
+    "Bear/Compress": "block",
+    "Bear/Expand": "block"
+   },
+   "enabled": true,
+   "session": "ny_pm",
+   "state_overrides": {
+    "Bull/Chop": 0.9,
+    "Bull/Compress": 0.5,
+    "Bull/Expand": 0.6
+   },
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "elig_states": {
+    "Bear/Chop": "block",
+    "Bear/Compress": "block",
+    "Bear/Expand": "block",
+    "Bull/Chop": "block",
+    "Bull/Compress": "block"
+   },
+   "enabled": true,
+   "session": "ny_pm",
+   "state_overrides": {
+    "Bull/Expand": 0.5
+   },
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "elig_states": {
+    "Bull/Chop": "block"
+   },
+   "enabled": true,
+   "session": "ny_pm",
+   "state_overrides": {
+    "Bear/Chop": 1.5,
+    "Bear/Compress": 0.8,
+    "Bear/Expand": 1.25,
+    "Bull/Compress": 0.5,
+    "Bull/Expand": 0.5
+   },
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "elig_states": {
+    "Bull/Chop": "block"
+   },
+   "enabled": true,
+   "session": "ny_pm",
+   "state_overrides": {
+    "Bear/Chop": 1.25,
+    "Bear/Compress": 1.0
+   },
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "elig_states": {
+    "Bear/Compress": "block",
+    "Bear/Expand": "block",
+    "Bull/Chop": "block",
+    "Bull/Compress": "block"
+   },
+   "enabled": true,
+   "session": "outside",
+   "state_overrides": {
+    "Bear/Chop": 1.25,
+    "Bull/Expand": 0.7
+   },
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "elig_states": {
+    "Bear/Chop": "block",
+    "Bear/Expand": "block",
+    "Bull/Chop": "block",
+    "Bull/Compress": "block",
+    "Bull/Expand": "block"
+   },
+   "enabled": true,
+   "session": "outside",
+   "state_overrides": {
+    "Bear/Compress": 1.5
+   },
+   "structure": "BOS",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Long",
+   "elig_states": {
+    "Bear/Chop": "block",
+    "Bull/Chop": "block"
+   },
+   "enabled": true,
+   "session": "outside",
+   "state_overrides": {
+    "Bear/Compress": 0.6,
+    "Bear/Expand": 0.9,
+    "Bull/Compress": 0.5,
+    "Bull/Expand": 0.5
+   },
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  },
+  {
+   "be_arm_r": null,
+   "be_trigger": null,
+   "direction": "Short",
+   "elig_states": {
+    "Bull/Chop": "block",
+    "Bull/Compress": "block",
+    "Bull/Expand": "block"
+   },
+   "enabled": true,
+   "session": "outside",
+   "state_overrides": {
+    "Bear/Chop": 1.0,
+    "Bear/Compress": 1.25,
+    "Bear/Expand": 1.5
+   },
+   "structure": "CHoCH",
+   "target_rr": 2.0
+  }
+ ],
+ "sessions": [
+  "asia",
+  "london",
+  "lull",
+  "newYork",
+  "ny_pm",
+  "outside"
+ ],
+ "state_cells": 78
+}

@@ -1,0 +1,198 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// 65 — S5 · ORDER-BLOCK CREATION
+//
+// Mirrors `_make_order_block`, `_ob_width_pips` and `_passes_size_filter` in
+// strategy_core/order_blocks.py. CREATION ONLY — production assigns no lifecycle
+// state at creation, so mitigation / invalidation / expiry are NOT here.
+//
+// THE FOUR THINGS A "REASONABLE" IMPLEMENTATION GETS WRONG
+//   1. The box is built from PARSED prices, not raw candle extremes. On a
+//      high-volatility bar the parsed high/low are SWAPPED, so `top` can be
+//      BELOW `bottom`. That inverted box is production behaviour and must not be
+//      normalised.
+//   2. The origin bar is the extreme parsed price over [pivot, break-1] with the
+//      EARLIEST bar winning a tie. `ta.lowest` cannot express it: the window
+//      starts at a pivot an unbounded number of bars back, so it is accumulated.
+//   3. The size gate uses STRICT comparisons, making it INCLUSIVE at both ends —
+//      a width of exactly `OB_MAX_PIPS` PASSES.
+//   4. `ob_id` is assigned only on APPEND. A rejected block consumes no id, and
+//      the next accepted block reuses the integer. But the swing is still burned
+//      and the bias still flipped (in fragment 58, before this runs), so a
+//      rejection is not a no-op.
+//
+// LIMITATION L-05: this counter starts at the first bar of LOADED history, while
+// production's starts in 2015. The ids will NOT match. Match an order block on
+// (detection_time, direction, top, bottom) instead.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── origin accumulators ─────────────────────────────────────────────────────
+// One per side, anchored at that side's swing PIVOT and folded forward one bar
+// at a time. `s5_bull_*` tracks the minimum parsed_low (a bullish OB comes from
+// a swing-HIGH break); `s5_bear_*` the maximum parsed_high.
+//
+// The window a break at bar b needs is [pivot, b-1] — the current bar is NOT in
+// it — so each bar folds in `[1]`, the PREVIOUS bar, never `[0]`.
+var float s5_bull_min = na
+var int   s5_bull_idx = na
+var float s5_bear_max = na
+var int   s5_bear_idx = na
+
+// Seed on the bar a swing is created: the pivot is SWING_LENGTH bars back, so
+// the window [pivot, bar-1] is offsets SWING_LENGTH..1. Walked OLDEST FIRST with
+// a strict comparison, so the earliest extreme wins a tie exactly as
+// `search[search == search.min()].index[0]` does in production.
+if s3_created == 1
+    float m = na
+    int mi = na
+    for k = SWING_LENGTH to 1
+        v = s2_parsed_low[k]
+        if na(m) or v < m
+            m := v
+            mi := bar_index - k
+    s5_bull_min := m
+    s5_bull_idx := mi
+else if not na(s5_bull_min)
+    if s2_parsed_low[1] < s5_bull_min
+        s5_bull_min := s2_parsed_low[1]
+        s5_bull_idx := bar_index - 1
+
+if s3_created == 2
+    float m2 = na
+    int mi2 = na
+    for k = SWING_LENGTH to 1
+        v = s2_parsed_high[k]
+        if na(m2) or v > m2
+            m2 := v
+            mi2 := bar_index - k
+    s5_bear_max := m2
+    s5_bear_idx := mi2
+else if not na(s5_bear_max)
+    if s2_parsed_high[1] > s5_bear_max
+        s5_bear_max := s2_parsed_high[1]
+        s5_bear_idx := bar_index - 1
+
+// ── this bar's candidates ───────────────────────────────────────────────────
+var int   s5_next_ob_id     = 1
+var int   s5_created_count  = 0
+var int   s5_candidate_count = 0
+var int   s5_last_ob_id     = na
+var float s5_last_top       = na
+var float s5_last_bottom    = na
+var float s5_last_width     = na
+var int   s5_last_reject    = 0     // 0 none · 1 size_filter · 2 empty_window
+var int   s5_active_count   = 0
+var int   s5_last_side      = 0     // 0 none · 1 bullish · 2 bearish
+var int   s5_last_tag       = 0     // 0 none · 1 BOS · 2 CHoCH
+var int   s5_last_origin_back = na  // bars from the break bar back to the origin
+var int   s5_last_pivot_back  = na  // …and back to the swing pivot
+var float s5_last_break_level = na
+// A bounded, exactly-reproducible summary of the whole accepted inventory.
+// Comparing box drawings is not evidence; comparing a running total of every
+// accepted bound is. Integers scaled by 1e5 stay exact in a float64 well past
+// the ~2,000 blocks eleven years of history produces.
+var float s5_checksum       = 0.0
+
+s5_candidate_count := 0
+s5_created_count   := 0
+s5_last_reject     := 0
+s5_last_side       := 0
+s5_last_tag        := 0
+
+// Boxes are retained under the same budget as every other drawing object; the
+// oldest is deleted rather than letting Pine silently drop the newest.
+var box[] s5_boxes = array.new_box()
+var label[] s5_obLabels = array.new_label()
+
+// ── bullish candidate (evaluated FIRST, as in production) ───────────────────
+// `s4_bull_break` / `s4_bear_break` are set in fragment 58, which has already
+// burned the swing and flipped the bias by the time this runs.
+if s4_bull_break
+    s5_candidate_count := s5_candidate_count + 1
+    if na(s5_bull_idx)
+        s5_last_reject := 2
+    else
+        float t = s2_parsed_high[bar_index - s5_bull_idx]
+        float b = s2_parsed_low[bar_index - s5_bull_idx]
+        float w = math.abs(t - b) / OB_PIP_SIZE
+        s5_last_top := t
+        s5_last_bottom := b
+        s5_last_width := w
+        s5_last_side := 1
+        s5_last_tag := s4_bull_code == CODE_EV_CHOCH_BULL ? 2 : 1
+        s5_last_origin_back := bar_index - s5_bull_idx
+        s5_last_pivot_back := bar_index - s3_swing_high_bar
+        s5_last_break_level := s3_swing_high_level
+        // STRICT both ways: exactly OB_MAX_PIPS passes.
+        if w < OB_MIN_PIPS or w > OB_MAX_PIPS
+            s5_last_reject := 1
+            if i_debug
+                f_pushLabel(label.new(bar_index, high, "OB REJECT " +
+                     str.tostring(w, "#.#") + "p", style = label.style_label_down,
+                     size = size.tiny, color = color.new(#EF476F, 20),
+                     textcolor = color.white))
+        else
+            s5_last_ob_id := s5_next_ob_id
+            s5_next_ob_id := s5_next_ob_id + 1
+            s5_created_count := s5_created_count + 1
+            s5_active_count := s5_active_count + 1
+            s5_checksum := s5_checksum + math.round(t * 100000) +
+                 math.round(b * 100000)
+            if i_showOrderBlocks and f_drawChartObs()
+                array.push(s5_boxes, box.new(s5_bull_idx, t, bar_index, b,
+                     border_color = COL_OB_BULL, border_width = 1,
+                     bgcolor = color.new(COL_OB_BULL, 85),
+                     extend = extend.none))
+                array.push(s5_obLabels, label.new(s5_bull_idx,
+                     math.max(t, b), "OB#" + str.tostring(s5_last_ob_id) + " " +
+                     (s4_bull_code == CODE_EV_CHOCH_BULL ? "CHoCH" : "BOS"),
+                     style = label.style_label_down, size = size.tiny,
+                     color = color.new(COL_OB_BULL, 30), textcolor = color.white))
+
+// ── bearish candidate (NOT `else` — both can fire on one bar) ───────────────
+if s4_bear_break
+    s5_candidate_count := s5_candidate_count + 1
+    if na(s5_bear_idx)
+        s5_last_reject := 2
+    else
+        float t2 = s2_parsed_high[bar_index - s5_bear_idx]
+        float b2 = s2_parsed_low[bar_index - s5_bear_idx]
+        float w2 = math.abs(t2 - b2) / OB_PIP_SIZE
+        s5_last_top := t2
+        s5_last_bottom := b2
+        s5_last_width := w2
+        s5_last_side := 2
+        s5_last_tag := s4_bear_code_out == CODE_EV_CHOCH_BEAR ? 2 : 1
+        s5_last_origin_back := bar_index - s5_bear_idx
+        s5_last_pivot_back := bar_index - s3_swing_low_bar
+        s5_last_break_level := s3_swing_low_level
+        if w2 < OB_MIN_PIPS or w2 > OB_MAX_PIPS
+            s5_last_reject := 1
+            if i_debug
+                f_pushLabel(label.new(bar_index, low, "OB REJECT " +
+                     str.tostring(w2, "#.#") + "p", style = label.style_label_up,
+                     size = size.tiny, color = color.new(#EF476F, 20),
+                     textcolor = color.white))
+        else
+            s5_last_ob_id := s5_next_ob_id
+            s5_next_ob_id := s5_next_ob_id + 1
+            s5_created_count := s5_created_count + 1
+            s5_active_count := s5_active_count + 1
+            s5_checksum := s5_checksum + math.round(t2 * 100000) +
+                 math.round(b2 * 100000)
+            if i_showOrderBlocks and f_drawChartObs()
+                array.push(s5_boxes, box.new(s5_bear_idx, t2, bar_index, b2,
+                     border_color = COL_OB_BEAR, border_width = 1,
+                     bgcolor = color.new(COL_OB_BEAR, 85),
+                     extend = extend.none))
+                array.push(s5_obLabels, label.new(s5_bear_idx,
+                     math.min(t2, b2), "OB#" + str.tostring(s5_last_ob_id) + " " +
+                     (s4_bear_code_out == CODE_EV_CHOCH_BEAR ? "CHoCH" : "BOS"),
+                     style = label.style_label_up, size = size.tiny,
+                     color = color.new(COL_OB_BEAR, 30), textcolor = color.white))
+
+// Retention. Deleting the OLDEST keeps the most recent structure legible; the
+// HUD reports the horizon so a reader knows the chart is not the whole history.
+while array.size(s5_boxes) > i_maxObjects
+    box.delete(array.shift(s5_boxes))
+while array.size(s5_obLabels) > i_maxObjects
+    label.delete(array.shift(s5_obLabels))

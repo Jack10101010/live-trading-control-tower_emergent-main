@@ -1,0 +1,267 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// 67 — SETUP REPLAY: ORDER-BLOCK LIFECYCLE, ENTRY/STOP/TARGET, RR, OUTCOME
+//
+// Everything here is PRODUCTION'S OWN DECISION, embedded by the generator
+// (fragment 06). Re-deriving it would mean porting the fill gate, the four-check
+// policy chain, break-even, protection and the exit precedence — and then
+// arguing about which side is right when they disagree. This draws the answer.
+//
+// WHY THE ORDER BLOCKS ARE DRAWN HERE AND NOT IN FRAGMENT 65
+// Fragment 65 draws the boxes the CHART derived. Those are the right thing to
+// verify detection against, but they cannot be coloured by outcome: Pine's
+// `ob_id` counts from the first loaded bar and production's counts from 2015
+// (limitation L-05), so the two cannot be joined by id. The replay carries
+// production's OWN bounds and id, so the lifecycle box is drawn from that — no
+// join, no inference.
+//
+// EVERYTHING IS KEYED BY TIME, NEVER BY BAR INDEX
+// `xloc.bar_time` throughout, so a feed that disagrees about which bars exist
+// (L-02/L-09) cannot shift a drawing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── lifecycle palette ────────────────────────────────────────────────────────
+// BLUE   live and untouched      ORANGE in progress
+// GREEN  completed win           RED    completed loss
+// PURPLE invalidated before the entry could fill
+// GREY   ended without a trade (blocked, never triggered)
+COL_LC_LIVE    = #2E86DE
+COL_LC_ACTIVE  = #E67E22
+COL_LC_WIN     = #2ECC71
+COL_LC_LOSS    = #E74C3C
+COL_LC_NONE    = #7F8C8D
+// PURPLE — price went clean through the far edge before the entry could fill.
+// Its own colour rather than another shade of grey because it is production's
+// single most common non-outcome (`invalidated_before_edge_entry`, 39 of the
+// 109 recorded setups), and "the block was never viable" is a different thing
+// to know from "the policy said no".
+COL_LC_INVALID = #9B59B6
+// CYAN — the setup ARMED and the chart cannot prove, from 15-minute bars alone,
+// whether production's fill was legal inside the bar. Production fills on the
+// first 1-minute candle at or after `arm + triggered_edge_candle_delays` whose
+// range straddles the entry; a 15-minute bar that both arms and straddles hides
+// the ordering of its own minutes. That is not a verdict, so it does not get a
+// verdict colour.
+COL_LC_UNDECIDED = #00BCD4
+
+COL_ENTRY   = #E8E8E8
+COL_STOP    = #E74C3C
+COL_TARGET  = #2ECC71
+// The ARM / TRIGGER level is a DIFFERENT thing from the entry and gets its own
+// colour so the two can never be read as one. Entry is where production fills;
+// arm is only how far price must penetrate before the order becomes fillable.
+COL_ARM     = #F1C40F
+
+// The REASON is a parameter because the biggest bucket in the recording is a
+// cancellation reason, not a status: 39 of 109 setups end
+// `invalidated_before_edge_entry`. Folding those into the same grey as a
+// policy block threw away the distinction that matters most on the chart.
+f_lcColor(int st, int outc, string reason) =>
+    reason == "invalidated_before_edge_entry" ? COL_LC_INVALID :
+     st == RP_ST_COMPLETED ? (outc == RP_OUT_LOSS ? COL_LC_LOSS :
+                             outc == RP_OUT_WIN  ? COL_LC_WIN : COL_LC_ACTIVE) :
+     st == RP_ST_FILLED    ? COL_LC_ACTIVE :
+     st == RP_ST_ALLOWED   ? COL_LC_ACTIVE :
+     st == RP_ST_PENDING   ? COL_LC_LIVE :
+     COL_LC_NONE
+
+// Compact by design. The detail lives in the tooltip — a chart covered in
+// sentences is how the previous version became unreadable.
+f_statusChip(int st, int outc, string reason) =>
+    reason == "invalidated_before_edge_entry" ? "INVALIDATED" :
+     st == RP_ST_COMPLETED ? (outc == RP_OUT_WIN ? "WIN" :
+                             outc == RP_OUT_LOSS ? "LOSS" : "BE") :
+     st == RP_ST_BLOCKED   ? "BLOCKED" :
+     st == RP_ST_CANCELLED ? "CANCELLED" :
+     st == RP_ST_FILLED    ? "OPEN" :
+     st == RP_ST_ALLOWED   ? "NO FILL" :
+     st == RP_ST_PENDING   ? "PENDING" : "—"
+
+f_statusLong(int st) =>
+    st == RP_ST_PENDING   ? "PENDING · never triggered" :
+     st == RP_ST_ALLOWED  ? "ALLOWED · armed, never filled" :
+     st == RP_ST_BLOCKED  ? "BLOCKED by policy" :
+     st == RP_ST_FILLED   ? "FILLED · still open" :
+     st == RP_ST_CANCELLED ? "CANCELLED before fill" :
+     st == RP_ST_COMPLETED ? "COMPLETED" : "unknown"
+
+// ── bounded object retention ────────────────────────────────────────────────
+// Pine hard-limits boxes, lines and labels to 500 EACH and evicts beyond that
+// UNPREDICTABLY. Everything created here is tracked so the eviction is
+// deterministic and ours (limitation L-08).
+var array<line>  rp_lines  = array.new<line>()
+var array<box>   rp_boxes  = array.new<box>()
+var array<label> rp_labels = array.new<label>()
+
+f_keepLine(line l) =>
+    array.push(rp_lines, l)
+    if array.size(rp_lines) > RP_MAX_LINES
+        line.delete(array.shift(rp_lines))
+
+f_keepBox(box b) =>
+    array.push(rp_boxes, b)
+    if array.size(rp_boxes) > RP_MAX_BOXES
+        box.delete(array.shift(rp_boxes))
+
+f_keepLabel(label l) =>
+    array.push(rp_labels, l)
+    if array.size(rp_labels) > RP_MAX_LABELS
+        label.delete(array.shift(rp_labels))
+
+// ── how many of the recording to draw ────────────────────────────────────────
+// The recording holds up to RP_COUNT setups; the input picks how many of the
+// MOST RECENT to draw. Skipping the older ones costs nothing — they are simply
+// never created, so the object budget is bounded before Pine ever sees it.
+rp_wanted = str.tonumber(i_replayCount)
+rp_first  = math.max(0, RP_COUNT - int(na(rp_wanted) ? 50 : rp_wanted))
+
+// ── the cursor ───────────────────────────────────────────────────────────────
+// The generated arrays are sorted by detection time, so one forward-only cursor
+// draws each setup exactly once, on the bar its order block was detected.
+var int rp_cursor = 0
+
+if CTX_OK and barstate.isconfirmed and i_showReplay and RP_COUNT > 0
+    while rp_cursor < RP_COUNT and array.get(RP_DETECTED, rp_cursor) <= time
+        i = rp_cursor
+        rp_cursor += 1
+
+        if i >= rp_first
+            t0     = array.get(RP_DETECTED, i)
+            status = array.get(RP_STATUS, i)
+            outc   = array.get(RP_OUTCOME, i)
+            entry  = array.get(RP_ENTRY, i)
+            stop   = array.get(RP_STOP, i)
+            target = array.get(RP_TARGET, i)
+            fill   = array.get(RP_FILL, i)
+            exitT  = array.get(RP_EXIT, i)
+            obTop  = array.get(RP_OBTOP, i)
+            obBot  = array.get(RP_OBBOT, i)
+            bull   = array.get(RP_DIRECTION, i) == 1
+            reason = array.get(RP_REASON, i)
+            col    = f_lcColor(status, outc, reason)
+
+            // Where the setup actually ENDED. A fixed width would imply a
+            // duration production never had.
+            tEnd = exitT > 0 ? exitT : fill > 0 ? fill : t0 + RP_IDLE_MS
+            // …plus a short tail, so the box does not stop dead on the candle
+            // that ended it and the terminal event stays readable.
+            tTail = tEnd + i_replayTailBars * RP_BAR_MS
+
+            drawn = status != RP_ST_PENDING or i_showPending
+
+            if drawn
+                // ── the order block, coloured by what became of it ──────────
+                if obTop > 0 and i_obSource != "Chart-derived"
+                    f_keepBox(box.new(t0, obTop, tTail, obBot,
+                         xloc = xloc.bar_time,
+                         border_color = color.new(col, 25), border_width = 1,
+                         bgcolor = color.new(col, 88)))
+                    // Terminal tick: where it finished, inside the tail.
+                    f_keepLine(line.new(tEnd, obTop, tEnd, obBot,
+                         xloc = xloc.bar_time, color = color.new(col, 30),
+                         width = 1, style = line.style_dotted))
+
+                if entry > 0
+                    // ── risk and reward as AREAS, SPANNING THE TRADE ────────
+                    //
+                    // THE AREA IS THE TRADE. It starts at the FILL, not at
+                    // detection, and it is only drawn when a fill happened.
+                    //
+                    // Anchoring it at `t0` was the same detection-time mistake
+                    // this whole milestone is about, in its most visible form.
+                    // Measured over the current recording: detection-to-exit is
+                    // a MEDIAN OF 313 BARS and reaches 9,935, while the trade
+                    // itself lasts a median of THREE. So the areas were
+                    // translucent slabs a hundred times wider than the thing
+                    // they described, laid over price action during which no
+                    // position existed. And 71 of the 109 setups never filled
+                    // at all, so theirs described a trade that never happened —
+                    // exactly the invented outcome this layer must not draw.
+                    //
+                    // The entry/stop/target LINES still span the full life
+                    // below: they are the PLAN, they are thin, and seeing where
+                    // an unfilled candidate's levels sat is the point of
+                    // scrolling back. Only the AREAS are the trade.
+                    rrEnd = exitT > 0 ? exitT : tTail
+                    if fill > 0
+                        if stop > 0
+                            f_keepBox(box.new(fill, math.max(entry, stop), rrEnd,
+                                 math.min(entry, stop), xloc = xloc.bar_time,
+                                 bgcolor = color.new(COL_STOP, i_rrFill),
+                                 border_width = 1,
+                                 border_color = color.new(COL_STOP, 60)))
+                        if target > 0
+                            f_keepBox(box.new(fill, math.max(entry, target),
+                                 rrEnd, math.min(entry, target),
+                                 xloc = xloc.bar_time,
+                                 bgcolor = color.new(COL_TARGET,
+                                      math.min(100, i_rrFill + 2)),
+                                 border_width = 1,
+                                 border_color = color.new(COL_TARGET, 60)))
+
+                    f_keepLine(line.new(t0, entry, tEnd, entry,
+                         xloc = xloc.bar_time, color = color.new(COL_ENTRY, 25)))
+                    if stop > 0
+                        // SOLID. Broken edges read as uncertainty about the
+                        // level, which is the opposite of what these are.
+                        f_keepLine(line.new(t0, stop, tEnd, stop,
+                             xloc = xloc.bar_time,
+                             color = color.new(COL_STOP, 30)))
+                    if target > 0
+                        f_keepLine(line.new(t0, target, tEnd, target,
+                             xloc = xloc.bar_time,
+                             color = color.new(COL_TARGET, 30)))
+
+                    // Fill and terminal markers. On a 15-minute chart the exact
+                    // minute is not resolvable (L-21), so these mark the BAR.
+                    if fill > 0
+                        f_keepLabel(label.new(fill, entry, "",
+                             xloc = xloc.bar_time, yloc = yloc.price,
+                             style = label.style_triangleup,
+                             color = color.new(COL_ENTRY, 30), size = size.tiny))
+                    if exitT > 0
+                        f_keepLabel(label.new(exitT,
+                             outc == RP_OUT_WIN ? target : stop, "",
+                             xloc = xloc.bar_time, yloc = yloc.price,
+                             style = label.style_xcross,
+                             color = color.new(col, 20), size = size.tiny))
+
+                // ── the compact marker, with everything in the tooltip ──────
+                // Pine has no click handler on a box, so the tooltip IS the
+                // detail view. The visible text stays at "OB 34 · WIN".
+                f_keepLabel(label.new(t0, bull ? math.max(obTop, entry)
+                                              : math.min(obBot, entry),
+                     "OB " + str.tostring(array.get(RP_OBID, i)) + " · " +
+                         f_statusChip(status, outc, reason),
+                     xloc = xloc.bar_time, yloc = yloc.price,
+                     style = bull ? label.style_label_down : label.style_label_up,
+                     color = color.new(col, 20), textcolor = color.white,
+                     size = size.tiny,
+                     tooltip =
+                         "OB " + str.tostring(array.get(RP_OBID, i)) + "  " +
+                         (bull ? "bullish" : "bearish") + "  " +
+                         array.get(RP_STRUCT, i) +
+                         "\ndetected  " + str.format_time(t0,
+                             "yyyy-MM-dd HH:mm", "UTC") +
+                         "\nstate     " + array.get(RP_STATE, i) +
+                         "\nsession   " + array.get(RP_SESSION, i) +
+                         "\ncohort    " + array.get(RP_COHORT, i) +
+                         "\n\nentry     " + str.tostring(entry) +
+                         "\nstop      " + str.tostring(stop) +
+                         "\ntarget    " + str.tostring(target) +
+                         "\nplanned   " + str.tostring(array.get(RP_RR, i)) + "R" +
+                         "\n\nstatus    " + f_statusLong(status) +
+                         (reason != "" ? "\nreason    " + reason : "") +
+                         "\narmed     " + (array.get(RP_ARMED, i) > 0 ?
+                             str.format_time(array.get(RP_ARMED, i),
+                                 "yyyy-MM-dd HH:mm", "UTC") : "—") +
+                         "\nfilled    " + (fill > 0 ? str.format_time(fill,
+                             "yyyy-MM-dd HH:mm", "UTC") : "—") +
+                         "\nexited    " + (exitT > 0 ? str.format_time(exitT,
+                             "yyyy-MM-dd HH:mm", "UTC") : "—") +
+                         "\ngross R   " + str.tostring(array.get(RP_GROSSR, i),
+                             "0.0000") +
+                         "\nnet R     " + str.tostring(array.get(RP_NETR, i),
+                             "0.0000") +
+                         "\n\nPRODUCTION's decision, replayed. Prices are " +
+                         "production's feed (bid); this chart is mid, so a " +
+                         "level can sit a fraction of a pip off."))
