@@ -56,7 +56,21 @@ export const PROVENANCE_TONE: Record<CardProvenance, ProvenanceTone> = {
   placeholder: 'neutral',
   // Red: the card genuinely displays non-operational data.
   fixture: 'red',
-  synthetic: 'red',
+  // M-CT-RED-STATE-AUDIT-1 — synthetic is NEUTRAL, and only synthetic.
+  //
+  // Red must mean "an operator has to do something". The local mock adapter
+  // requires no action: it is the expected development posture, it is already
+  // labelled NON-LIVE on the card, and the node it sits beside is live. Two
+  // large permanently-red cards (Live Runtime, Trade Ledger) taught the eye to
+  // ignore red on this page — which is the real cost, because the states that
+  // DO need action (frozen, identity mismatch, reconciliation fault) are red
+  // too and were being read as more of the same.
+  //
+  // `fixture` stays red: it is the demonstration universe wearing operational
+  // clothes, and that IS misleading. `mixed` and `unknown` stay red because
+  // neither can be shown to be safe. Only the honestly-labelled deterministic
+  // local surface moves.
+  synthetic: 'neutral',
   replay: 'red',
   mixed: 'red',
   unknown: 'red',

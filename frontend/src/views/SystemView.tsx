@@ -55,6 +55,29 @@ export function SystemView() {
   // active they render mock-synthetic values and must not claim LIVE.
   const adapterProvenance =
     rt?.broker?.kind && rt.broker.kind !== 'mock' ? ('live' as const) : ('synthetic' as const);
+  // M-CT-RED-STATE-AUDIT-1 — the operational dashboard is NOT adapter-fed.
+  //
+  // `adapterProvenance` describes the LOCAL broker adapter, and framing the
+  // operational projection with it was correct when that projection's content
+  // came from the adapter. It no longer does: the node and account blocks are
+  // relayed node telemetry (`provenance: "node-telemetry"` / `"node_mt5"`),
+  // which is genuine broker truth observed on the execution node. Framing that
+  // NON-LIVE red told the operator the live node's own account balance was
+  // synthetic — the single most misleading thing on the page, and it fired
+  // while the node was live, armed and reporting.
+  //
+  // Red is reserved for cards that DISPLAY non-operational data. This card
+  // displays node truth, so it is `derived-live` when a genuine node is
+  // reporting. It is NOT promoted to `live`: the orders/positions sub-blocks
+  // are still adapter-derived (and already carry their own DERIVED marks), so
+  // the frame claims a projection over live telemetry, not direct liveness.
+  //
+  // PROVENANCE IS NOT FRESHNESS. A node reporting `stale` or `degraded` is still
+  // reporting NODE TRUTH — the card's own STALE badge says how old it is. Only
+  // `absent` (no genuine node at all) falls back to the adapter's verdict, so
+  // this fails closed.
+  const operationalProvenance =
+    nodeStatus !== 'absent' ? ('derived-live' as const) : adapterProvenance;
   const componentVersions: Array<[string, unknown]> = Object.entries(
     (activePackage?.componentVersions ?? {}) as Record<string, unknown>
   );
@@ -124,7 +147,7 @@ export function SystemView() {
       {/* LIVE-4A — the operational dashboard. ONE projection query feeds every
           card; no card re-derives operational truth. Placed first: it is the
           canonical operational view of the system. */}
-      <ProvenanceFrame provenance={adapterProvenance}>
+      <ProvenanceFrame provenance={operationalProvenance}>
         <OperationalDashboard />
       </ProvenanceFrame>
 
@@ -641,9 +664,20 @@ export function SystemView() {
               <span className="ml-auto mono text-2xs" style={{ color: 'var(--positive)' }}>
                 {runtime.risk.allowed} allow
                 <span className="text-text-muted"> · </span>
-                <span style={{ color: 'var(--warning)' }}>{runtime.risk.warnings} warn</span>
+                {/* M-CT-RED-STATE-AUDIT-1 — a count of ZERO is not the thing it
+                    counts. `0 warn` in amber and `0 deny` in red said something
+                    had gone wrong when nothing had; the severity colour belongs
+                    to the OCCURRENCE, so it applies only when the count is
+                    non-zero. */}
+                <span style={runtime.risk.warnings > 0 ? { color: 'var(--warning)' } : undefined}
+                      className={runtime.risk.warnings > 0 ? undefined : 'text-text-muted'}>
+                  {runtime.risk.warnings} warn
+                </span>
                 <span className="text-text-muted"> · </span>
-                <span style={{ color: 'var(--negative)' }}>{runtime.risk.denials} deny</span>
+                <span style={runtime.risk.denials > 0 ? { color: 'var(--negative)' } : undefined}
+                      className={runtime.risk.denials > 0 ? undefined : 'text-text-muted'}>
+                  {runtime.risk.denials} deny
+                </span>
               </span>
             </div>
             <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-2xs">
@@ -691,7 +725,11 @@ export function SystemView() {
                 <span className="text-text-muted"> · </span>
                 <span style={{ color: 'var(--warning)' }}>{runtime.portfolio.deferred} defer</span>
                 <span className="text-text-muted"> · </span>
-                <span style={{ color: 'var(--negative)' }}>{runtime.portfolio.rejected} reject</span>
+                {/* zero is not the thing it counts — see the deny/warn note above */}
+                <span style={runtime.portfolio.rejected > 0 ? { color: 'var(--negative)' } : undefined}
+                      className={runtime.portfolio.rejected > 0 ? undefined : 'text-text-muted'}>
+                  {runtime.portfolio.rejected} reject
+                </span>
               </span>
             </div>
             <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-2xs">

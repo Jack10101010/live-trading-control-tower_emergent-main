@@ -1175,8 +1175,18 @@ def _node_accounts(sources: ProjectionSources, *, now: str,
         admissible, admission_reasons = activation_policy.account_admissible(
             entry, expected_account=expected_account, expected_server=expected_server)
         # Liveness on the tower's clock; the envelope's verdict can only tighten it.
+        #
+        # M-CT-RED-STATE-AUDIT-1 — the account is RELAYED BY THE NODE, so it is
+        # exactly as fresh as the node's own publication and must be judged on
+        # the same phase-aware budget. Judging it on the flat 120 s left the
+        # account card reading STALE beside a node card reading FRESH, from one
+        # arrival, for the same reason the node card was wrong.
+        acct_budget = entry.get("stale_after_seconds")
+        if not isinstance(acct_budget, (int, float)) or isinstance(acct_budget, bool):
+            acct_budget = stale_after_s
+        acct_budget = max(float(stale_after_s), float(acct_budget))
         fresh = freshness(now=now, source_at=entry.get("received_at"),
-                          available=True, stale_after_s=stale_after_s,
+                          available=True, stale_after_s=acct_budget,
                           detail=f"relayed by execution node {node_id}")
         if entry.get("stale") is not False and fresh.available:
             fresh = Freshness(projection_at=fresh.projection_at,
@@ -1665,10 +1675,34 @@ def build_nodes(sources: ProjectionSources, *, now: str,
         # projection asked to describe an instant must judge freshness at that
         # instant, or a test pinning `now` gets a verdict from the real clock —
         # and every fixed-timestamp fixture reads stale.
+        #
+        # M-CT-RED-STATE-AUDIT-1 — THE NODE'S PHASE BUDGET IS THE NODE'S.
+        #
+        # `stale_after_s` defaults to 120 s, and taking `min(envelope, 120)` made
+        # the projection contradict the tower's own connection view for any
+        # arrival aged 120-900 s. Measured live at 807 s during a legitimate
+        # recompute: `/api/live/connection` said FRESH (phase-aware 900 s) while
+        # this projection said STALE, on ONE snapshot whose own decomposition
+        # read `liveness_stale=False, data_stale=False`. That is precisely the
+        # defect M-TEL-1 fixed in connection_state.py, re-entering by the back
+        # door — "a healthy node was marked stale ~2 minutes into a legitimate
+        # recompute".
+        #
+        # The envelope's budget is PHASE-AWARE and node-advertised: 120 s idle,
+        # one bar interval otherwise, because a recomputing node legitimately
+        # publishes nothing while it works. Honouring it is not a weakening —
+        # the two-witness pessimism is intact (the reported flag is still ORed,
+        # the arrival clock is still recomputed against, an undated arrival is
+        # still stale). Only the BUDGET now matches the contract the node is
+        # actually operating under, so exceeding it still reads stale.
+        node_budget = entry.get("stale_after_seconds")
+        if not isinstance(node_budget, (int, float)) or isinstance(node_budget, bool):
+            node_budget = stale_after_s
+        budget = max(float(stale_after_s), float(node_budget))
         stale = activation_policy.recomputed_stale(
-            entry, now=_parse(now), projection_budget_s=stale_after_s)
+            entry, now=_parse(now), projection_budget_s=budget)
         fresh = freshness(now=now, source_at=entry.get("received_at") or entry.get("published_at"),
-                          available=True, stale_after_s=stale_after_s,
+                          available=True, stale_after_s=budget,
                           detail=f"node telemetry received from {node_id}")
         if stale and fresh.available and not fresh.stale:
             fresh = Freshness(projection_at=fresh.projection_at, source_at=fresh.source_at,
