@@ -8,6 +8,7 @@ import { BrokerReadPanel } from '@/components/domain/BrokerReadPanel';
 import { MarketOrderPanel } from '@/components/domain/MarketOrderPanel';
 import { ManualExecutionPanel } from '@/components/domain/ManualExecutionPanel';
 import { OperationalDashboard } from '@/components/domain/OperationalDashboard';
+import { RuntimeCompletePanel } from '@/components/domain/RuntimeCompletePanel';
 import { ScenarioPanel } from '@/components/domain/ScenarioPanel';
 import { TradeLedgerPanel } from '@/components/domain/TradeLedgerPanel';
 import { LiveRuntimePanel } from '@/components/domain/LiveRuntimePanel';
@@ -147,6 +148,12 @@ export function SystemView() {
       {/* LIVE-4A — the operational dashboard. ONE projection query feeds every
           card; no card re-derives operational truth. Placed first: it is the
           canonical operational view of the system. */}
+      {/* M-CT-RUNTIME-COMPLETE-UX-1 — placed immediately above the operational
+          dashboard: the two-status header is the frame through which every card
+          below should be read (runtime -> lifecycle/account, last complete ->
+          news/decisions). */}
+      {nodes[0]?.nodeId && <RuntimeCompletePanel instanceId={nodes[0].nodeId} />}
+
       <ProvenanceFrame provenance={operationalProvenance}>
         <OperationalDashboard />
       </ProvenanceFrame>

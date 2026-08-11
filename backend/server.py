@@ -646,6 +646,94 @@ def _put_live_snapshot(instance_id: str, record: dict) -> bool:
         return False
 
 
+def _is_seq(value) -> bool:
+    """A usable monotonic sequence: an int, not a bool, not None.
+
+    `bool` is an `int` in Python, so `isinstance(True, int)` is True — without
+    the explicit exclusion a payload carrying `sequence: true` would order as 1.
+    """
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+#: M-CT-NEWS-DECISIONS-UI-1 — the LAST COMPLETE strategy blocks, kept separately.
+_LIVE_STRATEGY_KIND = "live_strategy_last_complete"
+
+#: Top-level blocks the node publishes ONLY at cycle end. During a recompute the
+#: payload carries 16 keys; a cycle-end payload carries 18, and these are the two.
+_STRATEGY_BLOCKS = ("news", "decisions")
+
+#: Delivery is degraded once the tower has heard nothing for longer than the
+#: node's own recompute budget plus a publish interval — i.e. beyond the point a
+#: legitimate quiet recompute explains the silence. Deliberately NOT the same
+#: number as cycle freshness: this is about the transport, not the strategy.
+_DELIVERY_DEGRADED_AFTER_S = 960.0
+
+
+def _put_live_strategy(instance_id: str, snapshot: dict, received_at: str) -> None:
+    """Retain the last COMPLETE `news` + `decisions` blocks for an instance.
+
+    WHY THIS EXISTS, MEASURED RATHER THAN ASSUMED.
+
+    `_put_live_snapshot` keeps exactly ONE record per instance — the latest. The
+    node publishes `news`/`decisions` only at cycle end, and the very next
+    transition publication overwrites that record: observed live, a cycle-end
+    payload at 13:05:23Z was gone by 13:06:41Z, a 78-SECOND window. Recomputes
+    run long (12:40:28Z -> 13:05:23Z, ~25 min), so for most of the wall clock
+    the current snapshot contains no strategy blocks at all.
+
+    A frontend-only cache cannot cover that: it starts empty on reload, tab
+    close or backend restart — precisely when an operator opens the tower to
+    check what the strategy last decided. So the retention belongs here.
+
+    This is ADDITIVE OBSERVABILITY. The node contract is unchanged, the latest
+    snapshot remains the only source of CURRENT state, and this record is never
+    presented as current — it carries its own `published_at` so the reader can
+    age it. A payload WITHOUT the blocks never overwrites one that has them,
+    which is the entire point; and going backwards in time is refused, matching
+    the snapshot rule.
+    """
+    if not any(k in snapshot for k in _STRATEGY_BLOCKS):
+        return                              # a transition payload never overwrites
+    cycle = snapshot.get("cycle") if isinstance(snapshot.get("cycle"), dict) else {}
+    record = {
+        "instance_id": instance_id,
+        "published_at": snapshot.get("published_at"),
+        "received_at": received_at,
+        "cycle_status": cycle.get("status"),
+        "sequence": snapshot.get("sequence"),
+        "boundary": cycle.get("last_boundary"),
+        **{k: snapshot[k] for k in _STRATEGY_BLOCKS if k in snapshot},
+    }
+    try:
+        prior = _RUNTIME_OVERLAY.get(_LIVE_STRATEGY_KIND, instance_id)
+    except Exception:
+        prior = None
+    if isinstance(prior, dict):
+        # Same ordering authority as the runtime slot: sequence when both sides
+        # have one, else the publication timestamp. A delayed re-delivery of an
+        # OLDER complete cycle must never displace a newer one.
+        prev_seq, new_seq = prior.get("sequence"), record.get("sequence")
+        if _is_seq(prev_seq) and _is_seq(new_seq) and int(new_seq) < int(prev_seq):
+            return
+        prev_at, new_at = prior.get("published_at"), record.get("published_at")
+        if isinstance(prev_at, str) and isinstance(new_at, str) and new_at < prev_at:
+            return                          # never replace newer complete blocks with older
+    try:
+        _RUNTIME_OVERLAY.put(_LIVE_STRATEGY_KIND, instance_id, record)
+    except Exception:
+        logger.exception("live strategy blocks persist failed for %s", instance_id)
+
+
+def _load_live_strategy() -> dict[str, dict]:
+    """Last-complete strategy blocks per instance. Missing is missing."""
+    try:
+        rows = _load_overlays(_LIVE_STRATEGY_KIND)
+    except Exception:
+        logger.exception("live strategy blocks load failed")
+        return {}
+    return {k: v for k, v in rows.items() if isinstance(v, dict)}
+
+
 def _load_live_snapshots() -> dict[str, dict]:
     """Every persisted snapshot record, keyed by instance id. Unreadable or
     non-conforming rows are skipped rather than surfaced as fake state."""
@@ -5255,8 +5343,26 @@ def _snapshot_is_stale(instance_id: str, incoming: dict) -> bool:
     held = _held_snapshot(instance_id)
     if held is None:
         return False
+    held_snap = held.get("snapshot") or {}
+    # M-CT-RUNTIME-COMPLETE-UX-1 — SEQUENCE FIRST, when both sides carry one.
+    #
+    # `sequence` is a monotonic counter the node assigns per publication, so it
+    # orders two snapshots even when their clocks do not: a retried delivery
+    # stamped in the same second, or a publisher whose clock steps, are both
+    # ordered correctly by it and ambiguously by `published_at`.
+    #
+    # ADDITIVE, NOT REQUIRED. It is absent from legacy payloads and from every
+    # snapshot stored before it existed, so a missing sequence on EITHER side
+    # falls through to the timestamp rule rather than rejecting the payload —
+    # requiring it would strand instances whose stored snapshot predates it.
+    new_seq, old_seq = incoming.get("sequence"), held_snap.get("sequence")
+    if _is_seq(new_seq) and _is_seq(old_seq):
+        if int(new_seq) != int(old_seq):
+            return int(new_seq) < int(old_seq)
+        # Equal sequence: an idempotent retry. Fall through so the timestamp
+        # rule still admits it (equal timestamps DO replace).
     new_at = live_telemetry.parse_iso(incoming.get("published_at"))
-    old_at = live_telemetry.parse_iso((held.get("snapshot") or {}).get("published_at"))
+    old_at = live_telemetry.parse_iso(held_snap.get("published_at"))
     if new_at is None or old_at is None:
         return False
     return new_at < old_at
@@ -5335,6 +5441,10 @@ async def live_ingest(request: Request):
         # of narration — a narration failure never prevents or rolls back this.
         _LIVE_STATUS[instance_id] = record
         persisted = _put_live_snapshot(instance_id, record)
+        # Retain cycle-end strategy blocks BEFORE anything can fail below: they
+        # exist for ~78s before the next transition publication overwrites the
+        # snapshot, so this must not sit behind narration or event bookkeeping.
+        _put_live_strategy(instance_id, snapshot, received_at)
 
     incoming = _live_signature(snapshot)
     payload_at = snapshot.get("published_at")
@@ -5500,6 +5610,107 @@ def _live_status_entry(instance_id: str, record: dict, now: datetime) -> dict:
     entry["received_at"] = record.get("received_at")
     entry["source"] = "node"
     return entry
+
+
+@api_router.get("/live/strategy")
+def live_strategy(instance_id: str | None = None):
+    """M-CT-NEWS-DECISIONS-UI-1 — CURRENT phase + LAST COMPLETE strategy blocks.
+
+    Two facts, never conflated:
+
+      * `current` — what the node is doing NOW (its cycle status). During a
+        recompute this is the whole truth available: the payload carries no
+        `news`/`decisions` at all.
+      * `lastComplete` — the `news` + `decisions` from the most recent CYCLE-END
+        payload, with its own `published_at` and an age in seconds.
+
+    The caller can therefore render "REFRESHING - last complete cycle 11m ago"
+    without ever presenting retained values as current, and without inventing a
+    healthy state out of absent data. `available: false` means no complete cycle
+    has been observed since this store was created — which is UNKNOWN, not
+    healthy and not a fault.
+    """
+    now = datetime.now(timezone.utc)
+    snapshots = _load_live_snapshots()
+    snapshots.update({k: v for k, v in _LIVE_STATUS.items()
+                      if isinstance(v, dict) and isinstance(v.get("snapshot"), dict)})
+    retained = _load_live_strategy()
+
+    def entry(iid: str) -> dict:
+        snap = (snapshots.get(iid) or {}).get("snapshot") or {}
+        cycle = snap.get("cycle") if isinstance(snap.get("cycle"), dict) else {}
+        status = cycle.get("status")
+        # A payload that CARRIES the blocks is itself the complete one; prefer it
+        # over the store so `current` and `lastComplete` cannot disagree.
+        live_blocks = {k: snap[k] for k in _STRATEGY_BLOCKS if k in snap}
+        rec = dict(retained.get(iid) or {})
+        if live_blocks:
+            # Rebuild from the LIVE payload — and carry the same identity fields
+            # the stored record holds. Omitting them here blanked `sequence` and
+            # `boundary` exactly at cycle end, i.e. at the one moment they are
+            # authoritative rather than retained.
+            rec = {"instance_id": iid, "published_at": snap.get("published_at"),
+                   "cycle_status": status,
+                   "sequence": snap.get("sequence"),
+                   "boundary": cycle.get("last_boundary"),
+                   **live_blocks}
+        age = None
+        pub = rec.get("published_at")
+        if isinstance(pub, str):
+            parsed = live_telemetry.parse_iso(pub)
+            if parsed is not None:
+                age = round(abs((now - parsed).total_seconds()), 3)
+        # Arrival age drives DELIVERY health only — never cycle freshness.
+        arrival_age = None
+        arrived = (snapshots.get(iid) or {}).get("received_at")
+        if isinstance(arrived, str):
+            parsed_arr = live_telemetry.parse_iso(arrived)
+            if parsed_arr is not None:
+                arrival_age = round(abs((now - parsed_arr).total_seconds()), 3)
+        return {
+            "instanceId": iid,
+            "current": {
+                "cycleStatus": status,
+                "cycleNote": cycle.get("note"),
+                # The node omits the blocks mid-recompute; say so explicitly
+                # rather than letting a consumer infer it from absence.
+                "strategyBlocksPresent": bool(live_blocks),
+                "publishedAt": snap.get("published_at"),
+            },
+            "lastComplete": {
+                "available": bool(rec.get("news") or rec.get("decisions")),
+                "publishedAt": rec.get("published_at"),
+                "cycleStatus": rec.get("cycle_status"),
+                "sequence": rec.get("sequence"),
+                "boundary": rec.get("boundary"),
+                "ageSeconds": age,
+                "isCurrent": bool(live_blocks),
+                "news": rec.get("news"),
+                "decisions": rec.get("decisions"),
+            },
+            # CT DELIVERY — the tower's own transport view, deliberately SEPARATE
+            # from execution health. It answers "is telemetry still arriving?",
+            # never "is the node trading correctly?": a delivery gap says the Mac
+            # stopped hearing, which is not the same as the node stopping. The
+            # node publishes no delivery block, so this is derived from the
+            # tower's own arrival clock — the only clock it can honestly claim.
+            "delivery": {
+                "lastDeliveryAt": (snapshots.get(iid) or {}).get("received_at"),
+                "ageSeconds": arrival_age,
+                "healthy": (arrival_age is not None
+                            and arrival_age <= _DELIVERY_DEGRADED_AFTER_S),
+                "degradedAfterSeconds": _DELIVERY_DEGRADED_AFTER_S,
+                "source": "control-tower arrival clock",
+            },
+        }
+
+    ids = sorted(set(snapshots) | set(retained))
+    if instance_id:
+        if instance_id not in ids:
+            raise HTTPException(status_code=404, detail="unknown instance")
+        return entry(instance_id)
+    return {"instances": {i: entry(i) for i in ids},
+            "observedAt": now.isoformat().replace("+00:00", "Z")}
 
 
 @api_router.get("/live/status")

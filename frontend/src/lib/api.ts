@@ -1625,6 +1625,10 @@ export const api = {
   securityConfig: () => apiFetch<SecurityConfigStatus>('/security/config'),
   liveConnection: () => apiFetch<ConnectionState>('/live/connection'),
   liveStatus: () => apiFetch<LiveStatus>('/live/status'),
+  /** M-CT-RUNTIME-COMPLETE-UX-1 — CURRENT RUNTIME + LAST COMPLETE, kept apart. */
+  liveStrategy: (instanceId: string) =>
+    apiFetch<import('@/lib/runtimeComplete').StrategyView>(
+      `/live/strategy?instance_id=${encodeURIComponent(instanceId)}`),
   liveRemote: () => apiFetch<RemoteNodeStatus>('/live/remote'),
   /* UI-17 — submit ONE permitted read-only operator command. A FRESH idempotency
    * key is generated per call (i.e. per intentional operator action), so a retry of
@@ -1802,6 +1806,7 @@ export const api = {
 
 export const QK = {
   health: ['health'] as const,
+  liveStrategy: (id: string) => ['live-strategy', id] as const,
   world: ['world'] as const,
   /** M-FLEET-2: DEVELOPMENT FIXTURE ONLY. Ordinary hooks must not use this. */
   fixtureFleetPreview: ['fixture-fleet-preview'] as const,
