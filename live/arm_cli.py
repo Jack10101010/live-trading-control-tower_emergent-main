@@ -1,8 +1,9 @@
 """Operator CLI for the arm token — the deliberate out-of-band action.
 
     python -m live.arm_cli status
-    python -m live.arm_cli create --ttl-minutes 240 --max-opens 3
-    python -m live.arm_cli disarm
+    python -m live.arm_cli authorize                 # persistent DEMO, no expiry
+    python -m live.arm_cli revoke                    # immediate, durable
+    python -m live.arm_cli create --ttl-minutes 240 --max-opens 3   # commissioning
 
 `create` binds the token to the account the TERMINAL currently reports, not to
 configuration: config is what an operator can get wrong, the terminal is ground
@@ -36,8 +37,12 @@ def _observed(cfg) -> tuple[bool, dict | str]:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("action", choices=("status", "create", "disarm"))
-    ap.add_argument("--ttl-minutes", type=int, default=240)
+    ap.add_argument("action", choices=("status", "create", "authorize", "revoke", "disarm"))
+    ap.add_argument("--ttl-minutes", type=int, default=240,
+                    help="commissioning tokens only; ignored by `authorize`")
+    ap.add_argument("--daily-open-cap", type=int, default=None,
+                    help="persistent authorization: max OPENs per UTC day "
+                         "(runaway circuit breaker, not a lifetime ceiling)")
     ap.add_argument("--max-opens", type=int, default=3)
     ap.add_argument("--allow-live-account", action="store_true",
                     help="required to arm anything that is not a DEMO account")
@@ -52,9 +57,13 @@ def main(argv=None) -> int:
         if arm is None:
             print("UNARMED (no token)")
             return 0
+        may, note = arm.elevation_verdict()
         print(json.dumps({
+            "type": arm.type, "expires": arm.type != "persistent_demo",
+            "demo_only": arm.demo_only, "daily_open_cap": arm.daily_open_cap,
+            "may_elevate": may, "note": note,
             "malformed": arm.malformed, "disarmed": arm.disarmed,
-            "expires_at": arm.context.request_expires_at,
+            "expires_at": arm.context.request_expires_at or None,
             "remaining_open_attempts": arm.remaining_attempts,
             "probation_max_opens": arm.context.probation_max_opens,
             "bound_server": arm.context.fingerprint.server,
@@ -64,13 +73,15 @@ def main(argv=None) -> int:
         }, indent=1))
         return 0
 
-    if args.action == "disarm":
+    if args.action in ("disarm", "revoke"):
         arm = ArmRuntime.load(cfg.state_dir)
         if arm is None:
             print("already unarmed")
             return 0
-        arm.disarm("operator")
-        print("DISARMED")
+        arm.revoke("operator")
+        print("REVOKED - all NEW OPENs refuse immediately; CLOSE, MODIFY and "
+              "reconciliation remain available. Re-authorize with: "
+              "python -m live.arm_cli authorize")
         return 0
 
     ok, snap = _observed(cfg)
@@ -79,10 +90,18 @@ def main(argv=None) -> int:
         return 2
     acct = (snap or {}).get("account") or {}
     login, server = acct.get("login"), acct.get("server")
-    if acct.get("trade_mode") != 0 and not args.allow_live_account:
-        print(f"REFUSED: trade_mode={acct.get('trade_mode')} is not DEMO. "
-              "Pass --allow-live-account only with deliberate authorisation.")
-        return 2
+    persistent = args.action == "authorize"
+    if acct.get("trade_mode") != 0:
+        if persistent:
+            # No override exists, deliberately: `persistent_demo` means demo.
+            print(f"REFUSED: trade_mode={acct.get('trade_mode')} is not DEMO. "
+                  "Persistent authorization is DEMO-only by definition and has "
+                  "no override flag.")
+            return 2
+        if not args.allow_live_account:
+            print(f"REFUSED: trade_mode={acct.get('trade_mode')} is not DEMO. "
+                  "Pass --allow-live-account only with deliberate authorisation.")
+            return 2
     positions = (snap or {}).get("positions_total")
     if positions:
         print(f"REFUSED: broker is not flat ({positions} positions). Arm from a "
@@ -118,6 +137,23 @@ def main(argv=None) -> int:
         print(f"WARNING: arming with UNPROVABLE news protection "
               f"({health.reason}): {health.detail}. The safety rail will still "
               "refuse every OPEN until the calendar recovers.")
+
+    if persistent:
+        from live.arming import DEFAULT_DAILY_OPEN_CAP
+        cap = args.daily_open_cap or DEFAULT_DAILY_OPEN_CAP
+        arm = ArmRuntime.create_persistent(cfg.state_dir, login=login, server=server,
+                                           mode="live", daily_open_cap=cap)
+        print(json.dumps({
+            "AUTHORIZED": True, "type": arm.type, "expires_at": None,
+            "expires": False, "demo_only": True,
+            "daily_open_cap": cap, "opens_today": 0,
+            "bound_server": server, "mode": "live",
+            "created_at": arm.context.created_at,
+            "note": ("Valid until revoked. Every OPEN still re-proves account, "
+                     "server, DEMO status, engine identity, news health and "
+                     "every safety rail. Revoke with: python -m live.arm_cli revoke"),
+        }, indent=1))
+        return 0
 
     arm = ArmRuntime.create(cfg.state_dir, login=login, server=server,
                             mode="live", ttl_minutes=args.ttl_minutes,

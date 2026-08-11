@@ -63,29 +63,16 @@ def resolve_execution_posture(config) -> str:
     # is not killed on expiry — that would cost telemetry, identity-guard
     # extension and data collection exactly when attention is needed. The state
     # is made loud instead: `arming.status`/`reason` publish every cycle.
-    from live.arming import ArmRuntime, _now, _parse
+    # The elevation rules live on the token (live/arming.py), not here. They
+    # were duplicated in this function until M-DEMO-PERSISTENT-ARM-1, and the
+    # copies drifted the moment a token type without an expiry existed.
+    from live.arming import ArmRuntime
     arm = ArmRuntime.load(config.state_dir)
-    arm_note = "no arm token"
     if arm is None:
-        pass
-    elif arm.malformed:
-        arm_note = "arm token MALFORMED - staying dry_run"
-    elif arm.disarmed:
-        arm_note = "arm token DISARMED - staying dry_run"
-    else:
-        exp = _parse(arm.context.request_expires_at)
-        if exp is None:
-            arm_note = "arm token has no readable expiry - staying dry_run"
-        elif _now() >= exp:
-            arm_note = f"arm token EXPIRED at {arm.context.request_expires_at} - staying dry_run"
-        elif str(arm.context.mode) != "live":
-            arm_note = f"arm token is for mode {arm.context.mode!r} - staying dry_run"
-        elif not isinstance(arm.remaining_attempts, int) or arm.remaining_attempts <= 0:
-            arm_note = "arm token EXHAUSTED - staying dry_run"
-        else:
-            config.mode = "live"
-            arm_note = (f"ARMED: elevated to live until {arm.context.request_expires_at} "
-                        f"with {arm.remaining_attempts} OPEN attempt(s) remaining")
+        return "no arm token"
+    may_elevate, arm_note = arm.elevation_verdict()
+    if may_elevate:
+        config.mode = "live"
     return arm_note
 
 
@@ -114,7 +101,11 @@ def build(lifecycle=None) -> tuple:
         ok, snap = gateway.read_account_state()
         if ok and isinstance(snap, dict):
             acct = snap.get("account") or {}
-            observed_account = {"login": acct.get("login"), "server": acct.get("server")}
+            observed_account = {"login": acct.get("login"), "server": acct.get("server"),
+                                # trade_mode 0 == DEMO. Carried so the arm rail
+                                # can re-prove demo status per OPEN rather than
+                                # trusting the creation-time check alone.
+                                "trade_mode": acct.get("trade_mode")}
     except Exception:                      # never let arming binding break boot
         observed_account = None
     # M-LIVE-NEWS-1. One calendar per process. Refreshed once per cycle on its

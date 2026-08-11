@@ -256,21 +256,43 @@ def safe_arming(arm_runtime, mode: str, now: datetime | None = None) -> dict:
     remaining = getattr(arm_runtime, "remaining_attempts", None)
     disarmed = bool(getattr(arm_runtime, "disarmed", False))
     expires_at = _clip(getattr(ctx, "request_expires_at", None), 40)
+    # M-DEMO-PERSISTENT-ARM-1. A persistent authorization has NO expiry, so an
+    # expiry check must not run against it and no countdown may be published:
+    # `expires_at` is null and stays null. Rendering "expires in ..." for an
+    # authorization that cannot expire is exactly the misleading state this
+    # block exists to prevent, in the opposite direction from the original bug.
+    auth_type = str(getattr(arm_runtime, "type", "") or "commissioning")
+    persistent = auth_type == "persistent_demo"
+    if persistent:
+        expires_at = None
     # Order mirrors authorize_open's own precedence: disarmed, then expiry, then
     # allowance. Without the expiry check a visibly-elapsed session would publish
     # `armed: true` — a fabricated safety state.
     if disarmed:
         status, reason = ARM_DISARMED, R_ARM_DISARMED
-    elif _wall_clock_expired(expires_at, now):
+    elif (not persistent) and _wall_clock_expired(expires_at, now):
         status, reason = ARM_EXPIRED, R_ARM_EXPIRED
     elif isinstance(remaining, int) and remaining <= 0:
-        status, reason = ARM_EXHAUSTED, R_PROBATION_EXHAUSTED
+        # For a persistent token this is today's cap, not a lifetime ceiling.
+        status, reason = ARM_EXHAUSTED, ("arm_daily_open_cap" if persistent
+                                         else R_PROBATION_EXHAUSTED)
     else:
         status, reason = ARM_ARMED, None
     return {
         "status": status,
         "armed": status == ARM_ARMED,
         "expires_at": expires_at,
+        # Authorization shape, so the UI never has to infer it from a null.
+        "authorization_type": auth_type,
+        "expires": not persistent,
+        "demo_only": bool(getattr(arm_runtime, "demo_only", False)),
+        "daily_open_cap": getattr(arm_runtime, "daily_open_cap", None) if persistent else None,
+        "opens_today": (
+            (int(getattr(arm_runtime, "daily_open_cap", 0)) - remaining)
+            if persistent and isinstance(remaining, int) else None),
+        "revoked_at": _clip(getattr(arm_runtime, "_data", {}).get("disarmed_at"), 40),
+        "revocation_reason": _clip(getattr(arm_runtime, "_data", {}).get("disarmed_reason"), 40),
+        "created_at": _clip(getattr(ctx, "created_at", None), 40),
         "probation_max_opens": getattr(ctx, "probation_max_opens", None),
         "attempts_remaining": remaining if isinstance(remaining, int) else None,
         # The bound account, as a fingerprint only (never the login).

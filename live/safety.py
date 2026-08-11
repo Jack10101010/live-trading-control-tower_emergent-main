@@ -51,7 +51,10 @@ class SafetyRails:
             login=self.observed_account.get("login"),
             server=self.observed_account.get("server"),
             mode=self.config.mode,
-            engine_version=getattr(self.config, "engine_version_actual", None))
+            engine_version=getattr(self.config, "engine_version_actual", None),
+            # OBSERVED demo status, re-proved on every OPEN. Absent reads as
+            # unknown and therefore refuses under a demo_only authorization.
+            trade_mode=self.observed_account.get("trade_mode"))
         if not ok:
             return RailVerdict(False, reason,
                                f"arm refused: {reason}")
