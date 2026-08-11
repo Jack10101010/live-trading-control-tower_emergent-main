@@ -226,11 +226,17 @@ def test_lifecycle_colours_cover_every_status():
         "a completed setup must be coloured by its OUTCOME, not merely completed"
 
 
-def test_order_blocks_extend_past_their_terminal_event():
+def test_order_blocks_extend_past_the_event_that_consumed_them():
+    """The tail is still there — a box that stops dead on the candle that ended
+    it is unreadable. What changed is WHICH event it runs to: a block is
+    consumed at the FILL, and everything after that belongs to the trade, not
+    to the block."""
     body = _frag("67_replay_visuals")
     assert "i_replayTailBars * RP_BAR_MS" in body
-    assert re.search(r"box\.new\(t0, obTop, tTail", body), \
-        "the lifecycle box must run to the tail, not stop on the terminal bar"
+    assert "blockEnd = tBlockEnd + i_replayTailBars * RP_BAR_MS" in body
+    assert "tBlockEnd = fill > 0 ? fill : tEnd" in body
+    assert re.search(r"box\.new\(t0, obTop, boxEnd, obBot", body), \
+        "the lifecycle box runs to the consumed-plus-tail instant, capped"
 
 
 def test_the_setup_marker_stays_compact_and_puts_detail_in_the_tooltip():

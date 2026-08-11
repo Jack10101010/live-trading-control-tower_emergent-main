@@ -311,3 +311,68 @@ def test_the_generated_build_has_no_broken_continuations():
     bad = [f for f in lint(gen.read_text(encoding="utf-8"))
            if f["rule"] == "line_continuation"]
     assert not bad, bad[:3]
+
+
+# ══ the order-block BOX: what it spans, and what it never hides ══════════════
+#
+# A block is a level that lasts until price comes back to it. The FILL is where
+# price came back; everything after belongs to the trade, not the block. Running
+# the box to the trade's EXIT drew a level that had already been spent, and
+# disagreed with the live layer, which stops its box at the trigger.
+#
+# Separately: a block can outlive its own legibility. 44% of the current
+# recording lasts over 200 bars and the longest is 4,052 — six weeks of a 9-pip
+# level, which renders as a hairline across the screen. The box is capped. The
+# cap is a DRAWING limit and never a claim, so the dotted terminal tick is still
+# drawn at the block's true end.
+
+def test_the_box_ends_where_the_block_was_consumed_not_where_the_trade_exited():
+    body = _frag("67_replay_visuals")
+    assert "tBlockEnd = fill > 0 ? fill : tEnd" in body
+    assert "blockEnd = tBlockEnd + i_replayTailBars * RP_BAR_MS" in body
+    assert "box.new(t0, obTop, boxEnd, obBot," in body
+    assert "box.new(t0, obTop, tTail, obBot," not in body, \
+        "the box must not run to the trade's exit"
+
+
+def test_a_capped_box_still_marks_its_true_end():
+    """Truncating without the mark would be the silent kind."""
+    body = _frag("67_replay_visuals")
+    assert "boxEnd = math.min(blockEnd, capEnd)" in body
+    assert "line.new(tBlockEnd, obTop, tBlockEnd, obBot," in body, \
+        "the terminal tick must sit at the TRUE end, not at the cap"
+    tick = body.index("line.new(tBlockEnd, obTop")
+    cap = body.index("boxEnd = math.min(blockEnd, capEnd)")
+    assert tick > cap, "the tick is drawn after the capped box, at the real end"
+
+
+def test_the_cap_is_an_operator_setting_with_a_sane_floor():
+    body = _frag("10_inputs")
+    assert 'i_obMaxBars       = input.int(120, "Order-block box length (bars)"' \
+        in body
+    assert "minval = 20, maxval = 2000" in body
+    assert "not a claim" in body, "the tooltip must say the cap is a draw limit"
+
+
+def test_the_cap_actually_bounds_the_drawn_width():
+    """Modelled on the real recording rather than asserted: without the cap the
+    widest drawn box is 4,052 bars; with it, none exceeds the setting."""
+    import json
+    path = CT_ROOT / "artifacts" / "tradingview_oracle" / "replay_setups.json"
+    if not path.is_file():
+        pytest.skip("no recording")
+    setups = json.loads(path.read_text(encoding="utf-8"))["setups"]
+    bar, cap, tail = 15 * 60 * 1000, 120, 6
+    drawn = [x for x in sorted(setups, key=lambda y: y["detected_ms"])[-50:]
+             if x["status"] != "PENDING"]
+    widest_before = widest_after = 0
+    for x in drawn:
+        t0 = x["detected_ms"]
+        fill, ex = x.get("fill_ms", 0), x.get("exit_ms", 0)
+        before = (ex or fill or t0 + 12 * bar) - t0
+        blk = fill or ex or t0 + 12 * bar
+        after = min(blk + tail * bar, t0 + cap * bar) - t0
+        widest_before = max(widest_before, before / bar)
+        widest_after = max(widest_after, after / bar)
+    assert widest_before > 1000, widest_before
+    assert widest_after <= cap, widest_after

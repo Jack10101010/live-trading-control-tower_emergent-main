@@ -102,6 +102,16 @@ i_replayTailBars  = input.int(6, "Tail beyond the terminal event (bars)",
                "the box does not stop dead on the candle and you can see where " +
                "it finished.",
      group = grpReplay)
+i_obMaxBars       = input.int(120, "Order-block box length (bars)",
+     minval = 20, maxval = 2000,
+     tooltip = "How far a recorded block's BOX is drawn. It is a drawing " +
+               "limit, not a claim: a block that outlived the cap still shows " +
+               "its dotted terminal tick at the instant it really ended, so " +
+               "nothing is truncated silently. Measured on the current " +
+               "recording, 44% of blocks last more than 200 bars and the " +
+               "longest is 4,052 — at full length fifty of those overlap into " +
+               "a solid band.",
+     group = grpReplay)
 i_obSource        = input.string("Both", "Order-block boxes",
      options = ["Both", "Production lifecycle", "Chart-derived"],
      tooltip = "Which HISTORICAL boxes are drawn. BOTH (default) and " +

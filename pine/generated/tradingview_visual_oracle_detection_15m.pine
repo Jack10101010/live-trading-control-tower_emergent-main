@@ -11,7 +11,7 @@
 // Engine manifest   : 196acb79847f6d8bdab045b868d1b53ade7bb5a4493ffc298f7eef20e113dedf
 // Resolved config   : 998c82c6fc9d1eab18fda1409efb20dcdaa176a7dc610b6efb15c8ba3c9cfe83
 // Policy version    : 2026-07-09.te-v1.2-surgical-disable
-// Source hash       : cefcc44acf5e7781
+// Source hash       : ea12423c9fad8d75
 //
 // Build target      : detection_15m  (Detection oracle (15m))
 // Chart timeframe   : 15min  — this build is REFUSED on any other
@@ -52,7 +52,7 @@ indicator("TV Visual Oracle S1 — EURUSD", "TVO-S1",
 // The assembled-source identifier, as a CONSTANT (the debug panel renders it).
 // It lives in this fragment rather than 05 because it is the one value that
 // depends on the assembled body, and the two-pass assembly resolves it here.
-ORACLE_SOURCE_HASH_SHORT     = "cefcc44acf5e7781"
+ORACLE_SOURCE_HASH_SHORT     = "ea12423c9fad8d75"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 05 — GENERATED CONTRACT CONSTANTS. DO NOT EDIT.
@@ -598,6 +598,16 @@ i_replayTailBars  = input.int(6, "Tail beyond the terminal event (bars)",
      tooltip = "How far an order block extends PAST the event that ended it, so " +
                "the box does not stop dead on the candle and you can see where " +
                "it finished.",
+     group = grpReplay)
+i_obMaxBars       = input.int(120, "Order-block box length (bars)",
+     minval = 20, maxval = 2000,
+     tooltip = "How far a recorded block's BOX is drawn. It is a drawing " +
+               "limit, not a claim: a block that outlived the cap still shows " +
+               "its dotted terminal tick at the instant it really ended, so " +
+               "nothing is truncated silently. Measured on the current " +
+               "recording, 44% of blocks last more than 200 bars and the " +
+               "longest is 4,052 — at full length fifty of those overlap into " +
+               "a solid band.",
      group = grpReplay)
 i_obSource        = input.string("Both", "Order-block boxes",
      options = ["Both", "Production lifecycle", "Chart-derived"],
@@ -2114,9 +2124,17 @@ if CTX_OK and barstate.isconfirmed and i_showReplay and RP_COUNT > 0
             reason = array.get(RP_REASON, i)
             col    = f_lcColor(status, outc, reason)
 
-            // Where the setup actually ENDED. A fixed width would imply a
-            // duration production never had.
+            // WHERE THE SETUP ENDED — for the trade — and separately WHERE
+            // THE BLOCK WAS CONSUMED, which is not the same instant.
+            //
+            // A block is a level that lasts until price comes back to it. The
+            // FILL is where price came back; everything after that belongs to
+            // the trade, not to the block. Running the block box to the EXIT
+            // drew a level that had already been spent — median 3 bars of it,
+            // up to 58 — and it disagreed with the live layer, which correctly
+            // stops its box at the trigger.
             tEnd = exitT > 0 ? exitT : fill > 0 ? fill : t0 + RP_IDLE_MS
+            tBlockEnd = fill > 0 ? fill : tEnd
             // …plus a short tail, so the box does not stop dead on the candle
             // that ended it and the terminal event stays readable.
             tTail = tEnd + i_replayTailBars * RP_BAR_MS
@@ -2126,12 +2144,27 @@ if CTX_OK and barstate.isconfirmed and i_showReplay and RP_COUNT > 0
             if drawn
                 // ── the order block, coloured by what became of it ──────────
                 if obTop > 0 and i_obSource != "Chart-derived"
-                    f_keepBox(box.new(t0, obTop, tTail, obBot,
+                    // A BLOCK CAN OUTLIVE ITS OWN LEGIBILITY. Measured on the
+                    // current recording: 44% of blocks last more than 200 bars
+                    // and the longest is 4,052 — six weeks of a 9-pip level,
+                    // which renders as a hairline across the whole screen.
+                    // Fifty of those stacked is not a chart.
+                    //
+                    // So the BOX is capped. The cap is a drawing limit, never a
+                    // claim about the block: the dotted terminal tick below is
+                    // still drawn at the TRUE end, so a capped box always shows
+                    // where it really finished. Truncating without that mark
+                    // would be the silent kind, which is not allowed here.
+                    blockEnd = tBlockEnd + i_replayTailBars * RP_BAR_MS
+                    capEnd = t0 + i_obMaxBars * RP_BAR_MS
+                    boxEnd = math.min(blockEnd, capEnd)
+                    f_keepBox(box.new(t0, obTop, boxEnd, obBot,
                          xloc = xloc.bar_time,
                          border_color = color.new(col, 25), border_width = 1,
                          bgcolor = color.new(col, 88)))
-                    // Terminal tick: where it finished, inside the tail.
-                    f_keepLine(line.new(tEnd, obTop, tEnd, obBot,
+                    // Terminal tick: where the BLOCK finished, at its true
+                    // instant even when the box stopped short of it.
+                    f_keepLine(line.new(tBlockEnd, obTop, tBlockEnd, obBot,
                          xloc = xloc.bar_time, color = color.new(col, 30),
                          width = 1, style = line.style_dotted))
 
