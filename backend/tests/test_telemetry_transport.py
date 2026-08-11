@@ -361,13 +361,19 @@ def test_delivery_health_is_not_an_execution_health_field(tmp_path):
 # ── 18. no secrets in the new artefacts ─────────────────────────────────────
 
 def test_no_login_or_secret_is_written_into_the_outbox(tmp_path):
+    """The real account number is sourced from the environment, never written
+    into a committed file -- a literal here would BE the leak this guards."""
+    import os
     s = Sender(up=False); w = worker(tmp_path, s)
     w.outbox.stage(complete_payload())
     w.deliver_once()
     blob = "".join(p.read_text(encoding="utf-8", errors="replace")
                    for p in w.outbox.dir.iterdir())
-    for banned in ("password", "MT5_PASSWORD", "1514217330", "1514126969"):
+    for banned in ("password", "secret", "MT5_PASSWORD", "login"):
         assert banned not in blob, banned
+    real = os.environ.get("MT5_LOGIN", "").strip()
+    if real and real.isdigit():
+        assert real not in blob, "the real account number reached the outbox"
 
 
 def test_the_outbox_only_writes_inside_its_own_directory(tmp_path):
