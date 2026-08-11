@@ -24,9 +24,13 @@ from live import telemetry
 
 
 class CTPublisher:
-    def __init__(self, config):
+    def __init__(self, config, outbox=None):
         self.config = config
         self.fallback = Path(config.state_dir) / "publish_last.json"
+        #: M-CT-TRANSPORT-DURABILITY-1. When present, the trading cycle HANDS
+        #: OFF to this instead of performing HTTP inline. `publish()` is kept
+        #: for tests and for any caller that genuinely wants a synchronous send.
+        self.outbox = outbox
 
     def build_payload(self, runner_result: dict, executor_result: dict | None,
                       engine_version: str, mode: str,
@@ -68,6 +72,28 @@ class CTPublisher:
             news=news,
             sequence=sequence,
         )
+
+    def hand_off(self, payload: dict) -> dict:
+        """Persist the snapshot and return immediately. NO network.
+
+        This is what the trading cycle calls. Delivery is the worker's problem,
+        so an unreachable Mac costs the cycle nothing and can never delay a
+        boundary advance or an execution decision.
+
+        `publish_last.json` is still written so every existing reader
+        (live.status, deploy_check, the operator) keeps working unchanged.
+        """
+        self.fallback.parent.mkdir(parents=True, exist_ok=True)
+        if self.outbox is None:
+            self.fallback.write_text(json.dumps(payload, indent=1, default=str))
+            return {"staged": False, "delivered": None, "reason": "no outbox"}
+        staged = self.outbox.stage(payload)
+        try:
+            self.fallback.write_text(
+                self.outbox.runtime_path.read_text(encoding="utf-8"))
+        except OSError:
+            pass
+        return staged
 
     def publish(self, payload: dict, timeout: float = 5.0) -> dict:
         self.fallback.parent.mkdir(parents=True, exist_ok=True)

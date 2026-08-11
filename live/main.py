@@ -124,7 +124,17 @@ def build(lifecycle=None) -> tuple:
     executor = Executor(config, runner.state, gateway, lifecycle=lifecycle,
                         arm_runtime=arm_runtime, observed_account=observed_account,
                         news_gate=news_gate)
-    publisher = CTPublisher(config)
+    # M-CT-TRANSPORT-DURABILITY-1. Delivery is decoupled from the trading
+    # cycle: the cycle stages snapshots locally (microseconds) and a daemon
+    # worker delivers them with bounded backoff. Measured cause: the Mac is a
+    # laptop and sleeps -- 2.2% delivery 00:00-07:00 vs 95.4% 09:00-12:00 --
+    # so a synchronous send was paying a timeout for an absent peer.
+    from live.telemetry_outbox import DeliveryWorker, TelemetryOutbox
+    outbox = TelemetryOutbox(config.state_dir)
+    publisher = CTPublisher(config, outbox=outbox)
+    delivery_worker = DeliveryWorker(outbox, config.ct_base_url.rstrip("/") + "/live/ingest")
+    delivery_worker.start()
+    print(f"telemetry delivery worker started -> {delivery_worker.url}")
     # ONE observer for the process, sharing the governed gateway. It owns its own
     # bounded cadence, so calling it every cycle does not mean a terminal read
     # every cycle.
@@ -220,7 +230,7 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops,
                     # publish a stale account for the whole of it.
                     observed=_observe(observer),
                     bridge=bridge_result)
-                publisher.publish(early)
+                publisher.hand_off(early)
             except Exception as exc:
                 print(f"transition publish failed (continuing): {exc}")
 
@@ -260,7 +270,9 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops,
             observed=_observe(observer),
             bridge=bridge_result,
             news=_news_block(news_gate))
-        delivery = publisher.publish(payload)
+        # Local, atomic, non-blocking. The Mac being asleep can no longer
+        # delay a boundary advance or an execution decision.
+        delivery = publisher.hand_off(payload)
     except Exception as exc:  # logged, loop continues; supervisor handles repeats
         error = f"{type(exc).__name__}: {exc}"
     ex = executor_result or {}
