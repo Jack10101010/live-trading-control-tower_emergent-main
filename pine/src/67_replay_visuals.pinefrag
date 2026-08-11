@@ -43,13 +43,24 @@ COL_LC_INVALID = #9B59B6
 // verdict colour.
 COL_LC_UNDECIDED = #00BCD4
 
-COL_ENTRY   = #E8E8E8
+// MID-TONE ON PURPOSE. This was #E8E8E8 — luminance 232, chosen to read as
+// neutral-bright on a dark chart and effectively INVISIBLE on a white one. The
+// entry is the single most important level here (it is where production
+// actually fills), so it cannot be a colour that disappears on half of all
+// chart themes. #546E7A sits at luminance 104: dark enough to read on white,
+// light enough to read on black, and neutral so it is never confused with the
+// red stop or the green target.
+COL_ENTRY   = #546E7A
 COL_STOP    = #E74C3C
 COL_TARGET  = #2ECC71
 // The ARM / TRIGGER level is a DIFFERENT thing from the entry and gets its own
 // colour so the two can never be read as one. Entry is where production fills;
 // arm is only how far price must penetrate before the order becomes fillable.
-COL_ARM     = #F1C40F
+// DARKENED for the same reason as COL_ENTRY. #F1C40F measured 1.7:1 against a
+// white chart — a dotted line at that contrast is not a line, it is a rumour.
+// #A67C00 is 3.8:1 on white and 5.5:1 on black: the worst case across both
+// themes is better than the old colour's best case on either.
+COL_ARM     = #A67C00
 
 // The REASON is a parameter because the biggest bucket in the recording is a
 // cancellation reason, not a status: 39 of 109 setups end

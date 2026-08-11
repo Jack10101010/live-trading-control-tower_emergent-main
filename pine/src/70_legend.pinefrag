@@ -45,6 +45,12 @@ var table legend = table.new(position.bottom_left, 3, LEGEND_ROWS,
      frame_width  = 1, frame_color  = color.new(color.gray, 20))
 
 f_legendRow(int r, color swatch, string name, string window, string code, bool active) =>
+    // The swatch is a solid block of the session's own colour, and two of the
+    // six sit above luminance 200 — on a WHITE chart those read as an empty
+    // cell on their own. They stay legible because the table above already
+    // draws a 1px grey frame on every cell, so the block has an outline
+    // whatever colour fills it. The session palette itself is left alone: it is
+    // generated from the contract and shared with the background shading.
     table.cell(legend, 0, r, "", bgcolor = swatch, width = 1)
     table.cell(legend, 1, r, (active ? "▶ " : "  ") + name,
          text_size = size.tiny, text_halign = text.align_left,

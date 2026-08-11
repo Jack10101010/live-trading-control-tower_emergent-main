@@ -11,7 +11,7 @@
 // Engine manifest   : 196acb79847f6d8bdab045b868d1b53ade7bb5a4493ffc298f7eef20e113dedf
 // Resolved config   : 998c82c6fc9d1eab18fda1409efb20dcdaa176a7dc610b6efb15c8ba3c9cfe83
 // Policy version    : 2026-07-09.te-v1.2-surgical-disable
-// Source hash       : 12b0225b2f28c5d7
+// Source hash       : cefcc44acf5e7781
 //
 // Build target      : detection_15m  (Detection oracle (15m))
 // Chart timeframe   : 15min  — this build is REFUSED on any other
@@ -52,7 +52,7 @@ indicator("TV Visual Oracle S1 — EURUSD", "TVO-S1",
 // The assembled-source identifier, as a CONSTANT (the debug panel renders it).
 // It lives in this fragment rather than 05 because it is the one value that
 // depends on the assembled body, and the two-pass assembly resolves it here.
-ORACLE_SOURCE_HASH_SHORT     = "12b0225b2f28c5d7"
+ORACLE_SOURCE_HASH_SHORT     = "cefcc44acf5e7781"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 05 — GENERATED CONTRACT CONSTANTS. DO NOT EDIT.
@@ -2007,13 +2007,24 @@ COL_LC_INVALID = #9B59B6
 // verdict colour.
 COL_LC_UNDECIDED = #00BCD4
 
-COL_ENTRY   = #E8E8E8
+// MID-TONE ON PURPOSE. This was #E8E8E8 — luminance 232, chosen to read as
+// neutral-bright on a dark chart and effectively INVISIBLE on a white one. The
+// entry is the single most important level here (it is where production
+// actually fills), so it cannot be a colour that disappears on half of all
+// chart themes. #546E7A sits at luminance 104: dark enough to read on white,
+// light enough to read on black, and neutral so it is never confused with the
+// red stop or the green target.
+COL_ENTRY   = #546E7A
 COL_STOP    = #E74C3C
 COL_TARGET  = #2ECC71
 // The ARM / TRIGGER level is a DIFFERENT thing from the entry and gets its own
 // colour so the two can never be read as one. Entry is where production fills;
 // arm is only how far price must penetrate before the order becomes fillable.
-COL_ARM     = #F1C40F
+// DARKENED for the same reason as COL_ENTRY. #F1C40F measured 1.7:1 against a
+// white chart — a dotted line at that contrast is not a line, it is a rumour.
+// #A67C00 is 3.8:1 on white and 5.5:1 on black: the worst case across both
+// themes is better than the old colour's best case on either.
+COL_ARM     = #A67C00
 
 // The REASON is a parameter because the biggest bucket in the recording is a
 // cancellation reason, not a status: 39 of 109 setups end
@@ -3410,6 +3421,12 @@ var table legend = table.new(position.bottom_left, 3, LEGEND_ROWS,
      frame_width  = 1, frame_color  = color.new(color.gray, 20))
 
 f_legendRow(int r, color swatch, string name, string window, string code, bool active) =>
+    // The swatch is a solid block of the session's own colour, and two of the
+    // six sit above luminance 200 — on a WHITE chart those read as an empty
+    // cell on their own. They stay legible because the table above already
+    // draws a 1px grey frame on every cell, so the block has an outline
+    // whatever colour fills it. The session palette itself is left alone: it is
+    // generated from the contract and shared with the background shading.
     table.cell(legend, 0, r, "", bgcolor = swatch, width = 1)
     table.cell(legend, 1, r, (active ? "▶ " : "  ") + name,
          text_size = size.tiny, text_halign = text.align_left,
