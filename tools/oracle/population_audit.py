@@ -214,7 +214,30 @@ def build(engine, cfg, start: str, end: str) -> dict:
         row["verdict"], row["cls"] = classify(row, label_to_key)
         rows.append(row)
 
+    # ── METRIC A: what the chart ACTUALLY RENDERS ──────────────────────────
+    #
+    # Inside the replay's draw window production owns the lifecycle, and its
+    # answer is by construction its own — so parity there is exact and the only
+    # question is whether the detection matched. Beyond it the live layer owns
+    # the lifecycle and Metric B applies.
+    #
+    # ── METRIC B: COUNTERFACTUAL M15 DECIDABILITY ──────────────────────────
+    #
+    # What the live layer WOULD infer if the recording did not exist. This is a
+    # DIAGNOSTIC — a measurement of the information lost reproducing a 1-minute
+    # execution model from 15-minute bars — and it does NOT describe what the
+    # chart draws wherever replay authority is active. Reported separately for
+    # exactly that reason.
+    detected_ms = sorted(s["detected_ms"] for s in rec["setups"])
+    draw_first = detected_ms[max(0, len(detected_ms) - 50)] if detected_ms else 0
+    for r in rows:
+        d = int(pd.Timestamp(r["detected"], tz="UTC").value // 1_000_000)
+        r["rendered_by"] = ("REPLAY" if (rec["setups"] and d >= draw_first
+                                         and r["py"] != "PENDING")
+                            else "LIVE")
+
     by_py = Counter(r["py"] for r in rows)
+    replay_owned = sum(1 for r in rows if r["rendered_by"] == "REPLAY")
     return {
         "schema": "tradingview-oracle-population-audit-v1",
         "window": {"start": start, "end": end},
@@ -243,6 +266,29 @@ def build(engine, cfg, start: str, end: str) -> dict:
                 for k, n in by_py.items()},
             "mismatch_by_class": dict(Counter(
                 r["cls"] for r in rows if r["verdict"] == "MISMATCH")),
+        },
+        "metric_a_rendered_authority": {
+            "_what": "What the chart ACTUALLY draws. Inside the replay draw "
+                     "window production owns the lifecycle and its answer is "
+                     "authoritative by construction.",
+            "replay_owned": replay_owned,
+            "live_owned": len(rows) - replay_owned,
+            "detections_matched": sum(1 for r in rows if r["py"] != "MISSING"),
+            "detections_total": len(rows),
+            "contradictions": sum(1 for r in rows
+                                  if r["verdict"] == "MISMATCH"),
+        },
+        "metric_b_counterfactual_m15_decidability": {
+            "_what": "DIAGNOSTIC ONLY. What the live layer WOULD infer with no "
+                     "recording — a measurement of the information lost "
+                     "reproducing a 1-minute execution model from 15-minute "
+                     "bars. It does NOT describe what the chart renders "
+                     "wherever replay authority is active.",
+            "exact_from_m15": sum(1 for r in rows if r["verdict"] == "MATCH"),
+            "undecidable_from_m15": sum(1 for r in rows
+                                        if r["verdict"] == "UNDECIDABLE"),
+            "contradictions": sum(1 for r in rows
+                                  if r["verdict"] == "MISMATCH"),
         },
     }
 
@@ -285,6 +331,18 @@ def main(argv=None) -> int:
               f"undecidable {v['undecidable']:3d}  mismatch {v['mismatch']:3d}")
     for k, n in sorted(t["mismatch_by_class"].items()):
         print(f"  class {k} ({CLASSES.get(k, '?')}): {n}")
+
+    a = out["metric_a_rendered_authority"]
+    b = out["metric_b_counterfactual_m15_decidability"]
+    print("\nMETRIC A — what the chart RENDERS")
+    print(f"  replay-owned {a['replay_owned']}   live-owned {a['live_owned']}"
+          f"   detections {a['detections_matched']}/{a['detections_total']}"
+          f"   contradictions {a['contradictions']}")
+    print(f"METRIC B — counterfactual M15 decidability (DIAGNOSTIC)")
+    print(f"  exact {b['exact_from_m15']}   undecidable "
+          f"{b['undecidable_from_m15']}   contradictions {b['contradictions']}")
+    print("  This is what the live layer WOULD infer with no recording. It does")
+    print("  NOT describe what the chart draws where replay authority is active.")
 
     if args.write:
         args.out.parent.mkdir(parents=True, exist_ok=True)

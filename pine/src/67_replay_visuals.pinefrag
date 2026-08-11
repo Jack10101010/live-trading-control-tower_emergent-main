@@ -237,6 +237,7 @@ if CTX_OK and barstate.isconfirmed and i_showReplay and RP_COUNT > 0
                      color = color.new(col, 20), textcolor = color.white,
                      size = size.tiny,
                      tooltip =
+                         "source: REPLAY · M1 authority\n\n" +
                          "OB " + str.tostring(array.get(RP_OBID, i)) + "  " +
                          (bull ? "bullish" : "bearish") + "  " +
                          array.get(RP_STRUCT, i) +

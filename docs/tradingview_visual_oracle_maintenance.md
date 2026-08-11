@@ -768,6 +768,66 @@ A recording that spans two feeds must say so.
 Recovered on the first run: **109 -> 135 setups**, 26 detected past the frozen
 end, 8 of them COMPLETED.
 
+## 21. Two authorities, one owner per setup
+
+REPLAY carries production's own decision, resolved on 1-MINUTE data: it knows
+the fill minute, the exit and the realised R. LIVE infers from 15-minute bars
+and cannot order the minutes inside one.
+
+They were deliberately decoupled, and once the seam fix pushed the recording to
+the present that meant **100% overlap** — every live block on screen was also a
+replay setup, drawn twice from different data and coloured by different logic.
+
+Ownership is now decided per SETUP by three clauses, all required:
+
+```
+RP_COUNT > 0  AND  not RP_STALE  AND  i_showReplay
+  AND rp_first <= RP_COUNT - 1        (Pine iterates DOWNWARD when from > to)
+  AND a DRAWN setup within +/-RP_BAR_MS of the detection
+      where drawn = status != PENDING or i_showPending
+```
+
+**The third clause is the one that is easy to miss.** The recording can CONTAIN
+a setup the chart is not DRAWING: `i_replayCount` shows the most recent N, and
+PENDING setups are hidden unless asked for. Ceding on coverage alone makes those
+blocks vanish from both layers — measured on the June-July window, that is
+exactly the 2 PENDING setups of 24.
+
+When replay owns, the live layer **creates nothing**. Suppressing after creation
+would leave an orphan and a window in which both had drawn.
+
+A STALE recording returns ownership to LIVE. That is the safety property the old
+blanket ban existed to protect, and it is test-pinned
+(`backend/tests/test_oracle_ownership.py`).
+
+**Known limitation.** Ownership is evaluated at CREATION. Changing
+`i_replayCount` mid-session does not retroactively re-assign already-created
+live blocks; re-add the indicator to re-arbitrate. Making it dynamic would mean
+re-evaluating every block on every bar, which is the per-bar cost §17 removed.
+
+## 22. The population audit reports TWO metrics, and they are not the same thing
+
+```bash
+python -m tools.oracle.population_audit --start 2026-06-23 --end 2026-08-01 --write
+```
+
+**METRIC A — what the chart RENDERS.** Inside the replay draw window production
+owns the lifecycle and its answer is authoritative by construction. June-July
+2026: `replay-owned 22 · live-owned 2 · detections 24/24 · contradictions 0`.
+
+**METRIC B — counterfactual M15 decidability. DIAGNOSTIC ONLY.** What the live
+layer WOULD infer if the recording did not exist: `exact 12 · undecidable 12 ·
+contradictions 0`. It does **not** describe what the chart draws wherever replay
+authority is active.
+
+Metric B is not a failed parity result. It is a measurement of the information
+lost reproducing a 1-minute execution model from 15-minute OHLC. Half the
+window's blocks resolve on a bar that holds both a possible fill and a possible
+invalidation, and OHLC cannot order the minutes inside a bar — so the live layer
+says UNDECIDABLE rather than pick a side. The wording is
+`M15 cannot order fill vs invalidation`, never "assumed": nothing is assumed,
+the ordering is unknown at this resolution.
+
 ## 10. Quick reference
 
 ```bash

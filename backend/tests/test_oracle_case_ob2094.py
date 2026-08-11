@@ -224,7 +224,7 @@ def test_a_disagreement_between_the_candidate_bars_reports_UNDECIDABLE():
               states={0: "Bear/Chop"})
     o = run(Block(TOP, BOTTOM, False, stop_buffer=0.0001), bars, ctx)
     assert o.phase == 7, f"expected UNDECIDABLE, got phase {o.phase}"
-    assert o.final["why"] == "fill bar undecidable on 15m"
+    assert o.final["why"] == "M15 cannot prove which bar filled"
 
 
 def test_an_arm_bar_that_cannot_have_filled_is_fully_decidable():
@@ -328,3 +328,52 @@ def test_the_run_local_ob_id_confirms_the_renumbering(recorded):
     production's full frame predicts for that start date — so the identifier is
     a function of the run window, not of the trade."""
     assert recorded["ob_id"] == 124
+
+
+# ══ the 2026-07-02 class-D case ══════════════════════════════════════════════
+#
+# Production (ob_id 115, Long CHoCH, detected 2026-07-02 08:00):
+#     armed 2026-07-23 12:48 · FILLED 13:06 · stopped 13:11 · LOSS, net -1.1333R
+#
+# The 15-minute bar at 13:00 holds BOTH events. Its 1-minute detail:
+#     13:06  L 1.13752  straddles the entry 1.13771   <- production fills
+#     13:11  L 1.13723  below the far edge 1.13736    <- and then stops out
+#
+# OHLC cannot carry that ordering. Preferring `through` reported INVALIDATED,
+# which is the chart claiming an ordering it cannot see — the same defect as
+# the arm-bar case, and it gets the same answer: UNDECIDABLE.
+
+D_TOP, D_BOTTOM = 1.13771, 1.13736
+D_ENTRY, D_STOP = 1.13771, 1.13726
+D_BARS = [
+    ("2026-07-23 12:30", 1.13856, 1.13769),   # straddles, does not arm
+    ("2026-07-23 12:45", 1.13859, 1.13756),   # ARMS
+    ("2026-07-23 13:00", 1.13862, 1.13679),   # straddle AND through
+]
+
+
+def test_the_0702_bar_holds_both_the_fill_and_the_breach():
+    """Stated from the numbers, so the premise cannot rot."""
+    hi, lo = D_BARS[2][1], D_BARS[2][2]
+    assert lo <= D_ENTRY <= hi, "the bar's range contains the entry"
+    assert lo < D_BOTTOM, "…and it breaches the far edge"
+
+
+def test_the_0702_case_is_UNDECIDABLE_not_INVALIDATED():
+    o = run(Block(D_TOP, D_BOTTOM, True, stop_buffer=0.0001),
+            [(hi, lo) for _t, hi, lo in D_BARS],
+            Ctx({0: (2.0, True, NEWS_UNKNOWN)},
+                sessions={0: "newYork"}, states={0: "Bull/Expand"}))
+    assert o.phase == 7, f"expected UNDECIDABLE, got phase {o.phase}"
+    assert o.final["why"] == "M15 cannot order fill vs invalidation"
+    assert o.armed_bar == 1, "it armed on the 12:45 bar"
+    assert o.resolved_bar == 2, "and ended on the 13:00 bar"
+
+
+def test_the_0702_case_is_not_read_as_a_LOSS_either():
+    """Production's answer was LOSS. Inferring it would be just as unproven as
+    inferring the invalidation — the chart must decline, not guess right."""
+    o = run(Block(D_TOP, D_BOTTOM, True, stop_buffer=0.0001),
+            [(hi, lo) for _t, hi, lo in D_BARS],
+            Ctx({0: (2.0, True, NEWS_UNKNOWN)}))
+    assert o.phase not in (4, 5, 6), "no WIN, LOSS or INVALIDATED may be claimed"

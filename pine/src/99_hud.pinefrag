@@ -215,6 +215,17 @@ if barstate.islast and i_showHud
     // production had no setups here, or the view is simply past the end of the
     // recorded data? The first on-chart build showed nothing at all for exactly
     // that reason: the newest setup was six weeks behind the visible bars.
+    // WHICH LAYER OWNS WHAT. Two authorities on one chart is a defect unless
+    // the split is stated, so it is stated. Ceding happens per SETUP, not per
+    // date — the recording can cover a setup the chart is not drawing.
+    f_row(r, "authority", not i_showReplay ? "LIVE · M15 inference (replay off)" :
+              RP_STALE ? "LIVE · M15 inference (recording STALE)" :
+              RP_COUNT == 0 ? "LIVE · M15 inference (no recording)" :
+              "REPLAY · M1 authority where drawn, else LIVE · M15",
+          not i_showReplay or RP_STALE or RP_COUNT == 0
+              ? color.orange : color.silver)
+    r := r + 1
+
     // THE RECORDING IS NOT ONE FEED once it passes the frozen file's end. Rows
     // after the seam were simulated on the live MT5 1-minute segment, so a
     // setup drawn from them carries that provenance and the chart states it.

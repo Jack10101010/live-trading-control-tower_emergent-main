@@ -11,7 +11,7 @@
 // Engine manifest   : 196acb79847f6d8bdab045b868d1b53ade7bb5a4493ffc298f7eef20e113dedf
 // Resolved config   : 998c82c6fc9d1eab18fda1409efb20dcdaa176a7dc610b6efb15c8ba3c9cfe83
 // Policy version    : 2026-07-09.te-v1.2-surgical-disable
-// Source hash       : 1527436946d26318
+// Source hash       : 8f048c3fdfb9f4c1
 //
 // Build target      : detection_15m  (Detection oracle (15m))
 // Chart timeframe   : 15min  — this build is REFUSED on any other
@@ -52,7 +52,7 @@ indicator("TV Visual Oracle S1 — EURUSD", "TVO-S1",
 // The assembled-source identifier, as a CONSTANT (the debug panel renders it).
 // It lives in this fragment rather than 05 because it is the one value that
 // depends on the assembled body, and the two-pass assembly resolves it here.
-ORACLE_SOURCE_HASH_SHORT     = "1527436946d26318"
+ORACLE_SOURCE_HASH_SHORT     = "8f048c3fdfb9f4c1"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 05 — GENERATED CONTRACT CONSTANTS. DO NOT EDIT.
@@ -2201,6 +2201,7 @@ if CTX_OK and barstate.isconfirmed and i_showReplay and RP_COUNT > 0
                      color = color.new(col, 20), textcolor = color.white,
                      size = size.tiny,
                      tooltip =
+                         "source: REPLAY · M1 authority\n\n" +
                          "OB " + str.tostring(array.get(RP_OBID, i)) + "  " +
                          (bull ? "bullish" : "bearish") + "  " +
                          array.get(RP_STRUCT, i) +
@@ -2498,6 +2499,48 @@ f_entryLevel(bool isLong, float obTop, float obBottom) =>
 ls_nowSessIdx = f_cohortSessionIdx()
 ls_nowNews    = CTX_OK ? f_newsState(time, time_close) : LS_NEWS_UNKNOWN
 
+// ── WHO OWNS THIS SETUP'S LIFECYCLE ──────────────────────────────────────────
+//
+// There are two authorities on this chart and they must never both render the
+// same order block.
+//
+//   REPLAY  production's own recorded decision, resolved on 1-MINUTE data.
+//           It knows the fill minute, the exit and the realised R.
+//   LIVE    this layer, inferring from 15-minute bars. It cannot order the
+//           minutes inside a bar, so some lifecycles are simply not provable
+//           from what it can see.
+//
+// Where the recording covers a setup, production's answer is strictly better
+// and the live layer stands down. Where it does not, the live layer is all
+// there is.
+//
+// THREE CLAUSES, ALL REQUIRED — and the third is the one that is easy to miss.
+// The recording may CONTAIN a setup that the chart is not currently DRAWING:
+// `i_replayCount` shows the most recent N, and PENDING setups are hidden unless
+// asked for. Ceding ownership on coverage alone would make those blocks vanish
+// from both layers, which is a worse failure than drawing one twice.
+//
+// A STALE recording draws nothing (the generator empties it), so ownership
+// falls back to LIVE automatically — but the clause is written explicitly
+// because the fallback is the safety property, not an accident of the encoding.
+f_replayOwns(int detMs) =>
+    bool owns = false
+    if RP_COUNT > 0 and not RP_STALE and i_showReplay
+         and rp_first <= RP_COUNT - 1
+        // Pine iterates DOWNWARD when `from > to`, so the bound above is a
+        // guard, not decoration.
+        for i = rp_first to RP_COUNT - 1
+            if not owns
+                st = array.get(RP_STATUS, i)
+                shown = st != RP_ST_PENDING or i_showPending
+                // One bar of tolerance: the chart and production can disagree
+                // by a bar about which candle a block was detected on (L-02),
+                // and an exact match would hand ownership to nobody.
+                near = math.abs(array.get(RP_DETECTED, i) - detMs) <= RP_BAR_MS
+                if shown and near
+                    owns := true
+    owns
+
 // ── lifecycle phases ─────────────────────────────────────────────────────────
 // BOX COLOUR IS THIS AND NOTHING ELSE. Eligibility lives on the label.
 LS_PH_RESTING = 0   // BLUE   structural opportunity, no trade exists
@@ -2713,8 +2756,7 @@ f_liveText(LiveOb o, float rr, bool ok, int news, string sess, string state) =>
         // The news qualification is a SUFFIX, never the verdict. It says the
         // chart could not check that gate — not what production did.
         string q = o.finalNews == LS_NEWS_UNKNOWN ? " · unconfirmed" : ""
-        body := o.phase == LS_PH_UNDECID ?
-                     "UNDECIDABLE · fill bar not provable on 15m" :
+        body := o.phase == LS_PH_UNDECID ? "UNDECIDABLE · " + o.finalWhy :
              o.phase == LS_PH_WIN ? "WIN (chart) +" +
                      str.tostring(o.finalRr, "0.00") + "R" + q :
              o.phase == LS_PH_LOSS ? "LOSS (chart) -1.00R" + q :
@@ -2729,6 +2771,10 @@ f_liveText(LiveOb o, float rr, bool ok, int news, string sess, string state) =>
 f_liveTip(LiveOb o, float prodRr, float rr, int src, int ovSrc, bool ok,
      string why, int news, string sess, string state, string cellKey) =>
     resting = f_phLive(o.phase)
+    // PROVENANCE FIRST. Nothing below is production's answer — it is this
+    // layer's reading of 15-minute bars, and the reader is told so before they
+    // read any of it.
+    "source: LIVE · M15 inference\n\n" +
     (o.phase == LS_PH_ARMED
          ? "ARMED, NOT FILLED. Production's order is armed — price penetrated " +
            str.tostring(TGT_TRIGGER_PCT, "0.#") + "% into the block — but no " +
@@ -2744,11 +2790,18 @@ f_liveTip(LiveOb o, float prodRr, float rr, int src, int ovSrc, bool ok,
            "market state and target only at the FILL candle, which may be days " +
            "away and in a different session and state.\n"
      : o.phase == LS_PH_UNDECID
-         ? "UNDECIDABLE. The bar that armed this setup could itself have " +
-           "contained the fill, and it disagrees with the first provable fill " +
-           "bar about the session, the state or the target — so the chart " +
-           "cannot say which cell production used. 15-minute bars cannot order " +
-           "their own minutes (L-21) and nothing here will guess.\n"
+         ? "UNDECIDABLE — " + o.finalWhy + ".\n\n" +
+           (o.finalWhy == "M15 cannot order fill vs invalidation"
+                ? "This bar's range BOTH contains the entry and breaches the " +
+                  "far edge, so it holds production's fill and production's " +
+                  "INVALIDATED_BEFORE_EDGE_ENTRY at once. Which came first is " +
+                  "a property of the minutes inside it."
+                : "The bar that armed this setup could itself have contained " +
+                  "the fill, and it disagrees with the first provable fill bar " +
+                  "about the session, the state or the target — so the chart " +
+                  "cannot say which cell production used.") +
+           " 15-minute bars cannot order their own minutes (L-21) and nothing " +
+           "here will guess.\n"
          : "FINAL — the context read at the bar the fill was PROVEN, which is " +
            "what production reads at the fill candle.\n") +
      "\nOB " + str.tostring(o.obId) + "  " +
@@ -2841,8 +2894,12 @@ f_lsOriginBar() =>
 
 if CTX_OK and barClosed and i_showLive and s5_created_count > 0
      and (s5_last_side == 1 or s5_last_side == 2)
-    f_liveCreate(s5_last_side == 1, s5_last_tag == 2, s5_last_top,
-         s5_last_bottom, f_lsOriginBar(), s5_last_ob_id)
+    // Nothing is created at all when the replay owns this setup. Suppressing
+    // later would leave an orphan box to clean up and a window in which both
+    // layers had drawn; not creating it is the only form with no such window.
+    if not f_replayOwns(time)
+        f_liveCreate(s5_last_side == 1, s5_last_tag == 2, s5_last_top,
+             s5_last_bottom, f_lsOriginBar(), s5_last_ob_id)
 
 // ── the per-bar pass: refresh previews, resolve triggers, settle outcomes ────
 //
@@ -2908,6 +2965,7 @@ if CTX_OK and barClosed and i_showLive and array.size(lo_all) > 0
         wasLive = f_phLive(o.phase)
         justArmed = false
         justFilled = false
+        justAmbiguous = false
         justResolved = false
         if wasLive
             if bar_index > o.bornBar
@@ -2919,8 +2977,33 @@ if CTX_OK and barClosed and i_showLive and array.size(lo_all) > 0
                 if through
                     justResolved := true
                     o.resolvedBar := bar_index
-                    o.phase := LS_PH_INVALID
-                    o.finalWhy := "invalidated"
+                    // THE SAME BAR CANNOT BE BOTH, AND CANNOT BE ORDERED.
+                    //
+                    // A bar whose range contains the entry AND breaches the far
+                    // edge holds both of production's outcomes: the fill that
+                    // makes it a trade, and the INVALIDATED_BEFORE_EDGE_ENTRY
+                    // that makes it a non-trade. Which happened first is a
+                    // property of the MINUTES inside the bar, and OHLC does not
+                    // carry it.
+                    //
+                    // Measured on 2026-07-02 08:00 (Long CHoCH): the 13:00 bar
+                    // holds both, and the 1-minute detail shows the fill at
+                    // 13:06 and the breach at 13:11 — production took the LOSS.
+                    // Preferring `through` called that INVALIDATED, which is the
+                    // chart claiming an ordering it cannot see.
+                    //
+                    // Same principle as the arm-bar case: when 15-minute bars
+                    // cannot prove the 1-minute order, say so.
+                    if straddle
+                        justAmbiguous := true
+                        o.phase := LS_PH_UNDECID
+                        o.finalWhy := "M15 cannot order fill vs invalidation"
+                    else
+                        // No fill was possible in this bar — the range never
+                        // reached the entry — so the breach is the only thing
+                        // that happened and it is provable.
+                        o.phase := LS_PH_INVALID
+                        o.finalWhy := "invalidated"
                 else if o.phase == LS_PH_RESTING
                     if armed
                         justArmed := true
@@ -2991,6 +3074,15 @@ if CTX_OK and barClosed and i_showLive and array.size(lo_all) > 0
                 o.armRr := eRr
                 o.armOk := cOk
 
+            if justAmbiguous
+                // No verdict, but the context is still worth carrying: it is
+                // the bar the setup ended on, and the tooltip names it.
+                o.finalSess := nowSess
+                o.finalState := nowState
+                o.finalRr := eRr
+                o.finalNews := ls_nowNews
+                o.finalOk := cOk
+
             if justFilled
                 // THE FILL BAR IS THE AUTHORITY. Session, market state, cohort
                 // eligibility and the target are all read HERE, which is what
@@ -3028,7 +3120,7 @@ if CTX_OK and barClosed and i_showLive and array.size(lo_all) > 0
                 o.phase := not sameCell ? LS_PH_UNDECID :
                      tradeable ? LS_PH_TRADE : LS_PH_NOTRADE
                 if not sameCell
-                    o.finalWhy := "fill bar undecidable on 15m"
+                    o.finalWhy := "M15 cannot prove which bar filled"
         else if not wasLive
             useRr := o.finalRr
             useOk := o.finalOk
@@ -3707,6 +3799,17 @@ if barstate.islast and i_showHud
     // production had no setups here, or the view is simply past the end of the
     // recorded data? The first on-chart build showed nothing at all for exactly
     // that reason: the newest setup was six weeks behind the visible bars.
+    // WHICH LAYER OWNS WHAT. Two authorities on one chart is a defect unless
+    // the split is stated, so it is stated. Ceding happens per SETUP, not per
+    // date — the recording can cover a setup the chart is not drawing.
+    f_row(r, "authority", not i_showReplay ? "LIVE · M15 inference (replay off)" :
+              RP_STALE ? "LIVE · M15 inference (recording STALE)" :
+              RP_COUNT == 0 ? "LIVE · M15 inference (no recording)" :
+              "REPLAY · M1 authority where drawn, else LIVE · M15",
+          not i_showReplay or RP_STALE or RP_COUNT == 0
+              ? color.orange : color.silver)
+    r := r + 1
+
     // THE RECORDING IS NOT ONE FEED once it passes the frozen file's end. Rows
     // after the seam were simulated on the live MT5 1-minute segment, so a
     // setup drawn from them carries that provenance and the chart states it.

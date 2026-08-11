@@ -377,12 +377,12 @@
  ],
  "oracle_version": "0.1.0",
  "pine_source": {
-  "line_count": 3813,
+  "line_count": 3916,
   "module_sources": [
    {
     "generated": true,
     "path": "<generated>/00_generated_header.pinefrag",
-    "sha256": "01a99232512479cdd4847ad011c3cfaf6a48fc7e74d07548c4894b1ce8c414f0"
+    "sha256": "057065cadb6af358b97a3480ebe9eead318b9295191fdfd2bf961366096240cb"
    },
    {
     "generated": true,
@@ -462,12 +462,12 @@
    {
     "generated": false,
     "path": "pine/src/67_replay_visuals.pinefrag",
-    "sha256": "b35aec2d591506823cfbe496a1c2268e695111aaa674634b529e685232718e09"
+    "sha256": "8970b951b472b44c98dbab7de816352f7f5883f9790f61a7e97ff94d4333a093"
    },
    {
     "generated": false,
     "path": "pine/src/68_live_setups.pinefrag",
-    "sha256": "0f95b6c5bba1c7e71a063effc0fac6577eb6a9a45fed7b72effcb867a812434d"
+    "sha256": "acfdcee9ca90d172828f716df2075afa29f91361d14959bfa5c369a9d7782a50"
    },
    {
     "generated": false,
@@ -487,15 +487,15 @@
    {
     "generated": false,
     "path": "pine/src/99_hud.pinefrag",
-    "sha256": "da09e75be03df2c50a6026d7cd3d035f4288b7bb53a113f253d62428e770b96f"
+    "sha256": "ea37ad854a6afd9f65570fa3967b92897b4c6fd027a17a6bd5788d23f5aa58b1"
    }
   ],
   "path": "pine/generated/tradingview_visual_oracle_detection_15m.pine",
-  "sha256": "ddc35d5f1274dc29f2fdb210a98d9d269db53789bb7d11a251046edbd236a202"
+  "sha256": "1c5f7143020e26f00f963244ec70a8ac147acf47329fe6d8d860e270eb0332e7"
  },
  "production": {
   "control_tower_branch": "hardening/m3-p1-production-fixes",
-  "control_tower_commit": "7ba66cf5e269fe182389172f15310c4d1cdfa19b",
+  "control_tower_commit": "b30aa776d03fd006fd2d628848db32b19745ad4a",
   "engine_branch": "golden-run-001-engine",
   "engine_commit": "b276f15f874d051012f24e06208293bf18a44fd1",
   "environment_provenance": {

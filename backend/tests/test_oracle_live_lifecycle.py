@@ -89,7 +89,7 @@ def run(block, bars, ctx, tail=4, last_bar=None):
 
         # 1. LIFECYCLE — resting -> ARM -> (proven fill | invalidated)
         was_live = o.phase in LIVE_PHASES
-        just_armed = just_filled = just_resolved = False
+        just_armed = just_filled = just_ambiguous = just_resolved = False
         if was_live:
             if i > o.born:
                 armed = lo <= o.arm if o.is_long else hi >= o.arm
@@ -98,8 +98,16 @@ def run(block, bars, ctx, tail=4, last_bar=None):
                 if through:
                     just_resolved = True
                     o.resolved_bar = i
-                    o.phase = INVALID
-                    o.final = dict(o.final, why="invalidated")
+                    # A bar holding BOTH the fill and the breach cannot be
+                    # ordered from OHLC. Same principle as the arm bar.
+                    if straddle:
+                        just_ambiguous = True
+                        o.phase = UNDECID
+                        o.final = dict(o.final,
+                                       why="M15 cannot order fill vs invalidation")
+                    else:
+                        o.phase = INVALID
+                        o.final = dict(o.final, why="invalidated")
                 elif o.phase == RESTING:
                     if armed:
                         just_armed = True
@@ -123,6 +131,9 @@ def run(block, bars, ctx, tail=4, last_bar=None):
             cell = (ctx.sess(i), ctx.state(i), ok, rr)
             if just_armed:
                 o.arm_cell = cell
+            if just_ambiguous:
+                o.final = dict(o.final, rr=rr, ok=ok, news=news,
+                               sess=ctx.sess(i), state=ctx.state(i))
             if just_filled:
                 # THE FILL BAR IS THE AUTHORITY — execution.py 2882/2950/2965.
                 o.final = {"rr": rr, "ok": ok, "news": news, "why": "",
@@ -132,7 +143,7 @@ def run(block, bars, ctx, tail=4, last_bar=None):
                 o.phase = (UNDECID if not same_cell
                            else TRADE if tradeable else NOTRADE)
                 if not same_cell:
-                    o.final["why"] = "fill bar undecidable on 15m"
+                    o.final["why"] = "M15 cannot prove which bar filled"
         elif not was_live:
             use = (o.final["rr"], o.final["ok"], o.final["news"])
         else:
@@ -205,6 +216,9 @@ def test_the_transcription_still_matches_the_pine_source():
             "o.armBarStraddled := straddle",
             "justFilled := true",
             "o.phase := not sameCell ? LS_PH_UNDECID :",
+            "justAmbiguous := true",
+            'o.finalWhy := "M15 cannot order fill vs invalidation"',
+            "if straddle",
             "tradeable ? LS_PH_TRADE : LS_PH_NOTRADE",
             "o.phase := hitStop ? LS_PH_LOSS : LS_PH_WIN",
             "hitStop = o.isLong ? low <= o.stop : high >= o.stop",
@@ -244,13 +258,20 @@ ARM_STRADDLE_LONG = (1.1050, 1.0970)
 ARM_ONLY_LONG = (1.0990, 1.0970)
 #: A later bar whose range contains the entry: production's fill condition.
 FILL_LONG = (1.1010, 1.0995)
-#: Clean through the far edge — production's INVALIDATED_BEFORE_EDGE_ENTRY.
-THROUGH_LONG = (1.1100, 1.0850)
+#: Clean through the far edge WITHOUT ever containing the entry, so no fill
+#: could have happened in this bar and the breach is the only thing that did:
+#: production's INVALIDATED_BEFORE_EDGE_ENTRY, provably.
+THROUGH_LONG = (1.0990, 1.0850)
+#: BOTH in one bar — the range contains the entry AND breaches the far edge.
+#: Which came first is a property of the minutes inside it, so this is the
+#: ambiguity that must report UNDECIDABLE rather than pick a side.
+BOTH_LONG = (1.1100, 1.0850)
 
 ARM_STRADDLE_SHORT = (1.0930, 1.0850)
 ARM_ONLY_SHORT = (1.0930, 1.0910)
 FILL_SHORT = (1.0905, 1.0895)
-THROUGH_SHORT = (1.1150, 1.0850)
+THROUGH_SHORT = (1.1150, 1.0910)
+BOTH_SHORT = (1.1150, 1.0850)
 
 
 def _quiet(n, bar=QUIET_LONG):
@@ -414,6 +435,38 @@ def test_invalidation_after_arming_is_still_purple():
     bars[12] = THROUGH_LONG
     o = run(Block(1.10, 1.09, True), bars, Ctx({0: (2.0, True, NEWS_OK)}))
     assert o.phase == INVALID and o.resolved_bar == 12
+
+
+def test_a_bar_holding_BOTH_the_fill_and_the_breach_is_UNDECIDABLE():
+    """THE 2026-07-02 CASE, in miniature. The bar's range contains the entry and
+    breaches the far edge, so it holds production's fill and production's
+    INVALIDATED_BEFORE_EDGE_ENTRY at once. On that real block the 1-minute
+    detail showed the fill at 13:06 and the breach at 13:11 — production took
+    the LOSS — but OHLC cannot carry that ordering, so the chart must not
+    prefer either."""
+    bars = _quiet(3) + [BOTH_LONG] + _quiet(20)
+    o = run(Block(1.10, 1.09, True), bars, Ctx({0: (2.0, True, NEWS_OK)}))
+    assert o.phase == UNDECID and PHASE_COLOUR[o.phase] == CYAN
+    assert o.final["why"] == "M15 cannot order fill vs invalidation"
+    assert not o.rr_area, "no trade was proven, so no risk/reward area"
+
+
+def test_the_ambiguous_bar_is_not_read_as_a_loss_either():
+    """Inferring the LOSS would be just as unproven as inferring the
+    invalidation — production's stop is below the far edge, so a bar that
+    breaches also reaches it."""
+    bars = _quiet(3) + [BOTH_LONG] + _quiet(20)
+    o = run(Block(1.10, 1.09, True), bars, Ctx({0: (2.0, True, NEWS_OK)}))
+    assert o.phase not in (LOSS, WIN, INVALID, TRADE)
+
+
+def test_a_breach_that_could_not_have_filled_is_still_INVALIDATED():
+    """The contrast that keeps the rule honest: when the bar's range never
+    reaches the entry, no fill was possible in it and the breach IS provable."""
+    bars = _quiet(3) + [THROUGH_LONG] + _quiet(20)
+    o = run(Block(1.10, 1.09, True), bars, Ctx({0: (2.0, True, NEWS_OK)}))
+    assert o.phase == INVALID and PHASE_COLOUR[o.phase] == PURPLE
+    assert o.final["why"] == "invalidated"
 
 
 def test_a_policy_block_is_grey_not_purple():

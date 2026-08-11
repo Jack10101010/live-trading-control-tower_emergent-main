@@ -525,12 +525,28 @@ def test_no_function_assigns_a_global_scalar():
         "the loop, at global scope, is where the assignment belongs"
 
 
-def test_the_live_and_replay_layers_are_independently_toggled():
+def test_the_live_layer_consults_the_replay_only_for_AUTHORITY():
+    """INVERTED. The old rule was "live must not depend on the recording in any
+    way", which existed so a STALE recording could not silence live setups. That
+    property is still worth having, but the blanket ban made a second problem
+    unfixable: both layers drew the same block, from different data, coloured by
+    different logic — 100% overlap once the recording reached the present.
+
+    So the live layer may now read the recording, but ONLY to decide who
+    renders. It must never take a lifecycle, an outcome or a target from it."""
     inputs = _frag("10_inputs")
     assert "i_showLive" in inputs and "i_showReplay" in inputs
     live = _frag("68_live_setups")
-    assert "RP_COUNT" not in live, \
-        "live setups must not depend on the replay recording in any way"
+    own = live[live.index("f_replayOwns(int detMs)"):
+               live.index("// ── lifecycle phases")]
+    # What it MAY read: coverage, currentness, and the actual draw window.
+    for allowed in ("RP_COUNT", "RP_STALE", "i_showReplay", "rp_first",
+                    "RP_STATUS", "RP_DETECTED", "i_showPending", "RP_BAR_MS"):
+        assert allowed in own, allowed
+    # What it may NOT read ANYWHERE: production's answers.
+    for banned in ("RP_OUTCOME", "RP_RR", "RP_ENTRY", "RP_STOP", "RP_TARGET",
+                   "RP_NETR", "RP_GROSSR", "RP_SESSION", "RP_STATE"):
+        assert banned not in live, f"{banned} — that is production's ANSWER"
 
 
 def test_the_committed_table_matches_the_deployed_engine(table):
