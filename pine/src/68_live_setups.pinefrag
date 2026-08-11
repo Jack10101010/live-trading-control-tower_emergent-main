@@ -541,8 +541,11 @@ f_liveTip(LiveOb o, float prodRr, float rr, int src, int ovSrc, bool ok,
     // PROVENANCE FIRST. Nothing below is production's answer — it is this
     // layer's reading of 15-minute bars, and the reader is told so before they
     // read any of it.
-    "source: LIVE · M15 inference\n\n" +
-    (o.phase == LS_PH_ARMED
+    // The provenance sits ON the opening line of the return expression, not
+    // above it. Pine ends a statement where the next line is indented the SAME
+    // amount, so a trailing `+` followed by a same-indent line is CE10156 —
+    // "end of line without line continuation". It reads as two statements.
+    "source: LIVE · M15 inference\n\n" + (o.phase == LS_PH_ARMED
          ? "ARMED, NOT FILLED. Production's order is armed — price penetrated " +
            str.tostring(TGT_TRIGGER_PCT, "0.#") + "% into the block — but no " +
            "fill has been proven yet. Production fills on the first 1-minute " +

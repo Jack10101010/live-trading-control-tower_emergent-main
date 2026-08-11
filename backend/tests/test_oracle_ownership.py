@@ -260,3 +260,54 @@ def test_the_undecidable_wording_states_what_is_unknown():
     for text in (label, tip):
         quoted = " ".join(text.split('"')[1::2])
         assert "assumed" not in quoted.lower(), quoted[:200]
+
+
+# ══ CE10156, the fourth Pine parse error this project has hit ════════════════
+#
+# Pine continues a statement onto the next line only while that line is indented
+# MORE THAN THE LINE THAT STARTED THE STATEMENT. A trailing `+` followed by a
+# same-indent line is two statements, the first of which ends in an operator.
+# It looks completely reasonable in the source, which is why the linter has to
+# know about it — the previous three (CE10088, CE10172, CE10272) each cost a
+# paste-and-fail round trip before getting a rule.
+
+from tools.oracle.lint_pine import lint  # noqa: E402
+
+HDR = '//@version=6\nindicator("x")\n'
+
+
+@pytest.mark.parametrize("name,src", [
+    ("same indent in a function body",
+     HDR + 'f_x() =>\n    a = 1\n    "lead" +\n    (a > 0 ? "y" : "n")\n'),
+    ("same indent at top level", HDR + "x = 1 +\n2\n"),
+])
+def test_the_linter_catches_a_broken_continuation(name, src):
+    assert [f for f in lint(src) if f["rule"] == "line_continuation"], name
+
+
+@pytest.mark.parametrize("name,src", [
+    ("continuation indented deeper",
+     HDR + 'f_x() =>\n    a = 1\n    "lead" +\n     (a > 0 ? "y" : "n")\n'),
+    # An expression may indent 9 then 5 and still continue a statement that
+    # began at 4. Comparing against the PRECEDING line flags sixteen healthy
+    # continuations in this build; the comparison is against the STATEMENT.
+    ("9 then 5, both continuing a statement that began at 4",
+     HDR + 'f_x() =>\n    a = 1\n    (a > 0\n         ? "y"\n     : "n") +\n'
+           '     "tail" +\n         "more" +\n     "end"\n'),
+    ("inside brackets, where Pine allows free newlines",
+     HDR + 'plot(close, title =\n     "a" +\n     "b")\n'),
+    ("a nested block body", HDR + "f_x() =>\n    if close > 0\n"
+                                  "        a = 1 +\n             2\n        a\n"),
+])
+def test_the_continuation_rule_has_no_false_positives(name, src):
+    assert not [f for f in lint(src) if f["rule"] == "line_continuation"], name
+
+
+def test_the_generated_build_has_no_broken_continuations():
+    gen = (CT_ROOT / "pine" / "generated"
+           / "tradingview_visual_oracle_detection_15m.pine")
+    if not gen.is_file():
+        pytest.skip("not generated")
+    bad = [f for f in lint(gen.read_text(encoding="utf-8"))
+           if f["rule"] == "line_continuation"]
+    assert not bad, bad[:3]

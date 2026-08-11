@@ -91,6 +91,62 @@ def lint(src: str) -> list[dict]:
     def add(sev, rule, lineno, detail):
         findings.append({"severity": sev, "rule": rule, "line": lineno, "detail": detail})
 
+    # ── CE10156: end of line without line continuation ───────────────────────
+    #
+    # Pine continues a statement onto the next line only while that line is
+    # indented MORE THAN THE LINE THAT STARTED THE STATEMENT. So a line ending
+    # in a binary operator, followed by a line at the SAME indent as the
+    # statement's first line, is two statements — the first trailing an
+    # operator. The editor says "end of line without line continuation"; from
+    # the source it looks entirely reasonable, which is why it needs a rule.
+    #
+    # Relative to the STATEMENT START, not to the preceding line. A first
+    # attempt compared against the preceding line and flagged sixteen healthy
+    # continuations — an expression may indent 9 then 5 and both continue a
+    # statement that began at 4.
+    #
+    # Skipped inside brackets, where Pine allows newlines freely: the identical
+    # shape is fatal in a function body and fine in a `tooltip = …` argument.
+    CONT_OPS = ("+", "-", "*", "/", "?", ":", "%", ":=", "==", "!=", ">=",
+                "<=", ">", "<", "and", "or")
+    BLOCK_END = ("=>",)
+    depth = 0
+    stmt_start = None
+    prev = None               # (lineno, indent) of the last line, if it trails an op
+    for n, l in code:
+        body = l.strip()
+        if not body:
+            continue
+        indent = len(l) - len(l.lstrip())
+        if depth == 0:
+            if stmt_start is None or indent <= stmt_start:
+                if prev is not None:
+                    add("error", "line_continuation", prev[0],
+                        f"line ends with an operator but line {n} is indented "
+                        f"{indent}, not deeper than the statement that began at "
+                        f"column {stmt_start} — Pine reads them as two "
+                        "statements (CE10156). Indent the continuation, or move "
+                        "the right-hand side onto the same line.")
+                stmt_start = indent
+        opened = depth
+        depth += l.count("(") + l.count("[") - l.count(")") - l.count("]")
+        prev = None
+        if opened == 0 and depth == 0:
+            # A header (`… =>`, `if …`) opens a BLOCK, not a continuation, so
+            # its body gets its own statement start.
+            if body.endswith(BLOCK_END) or re.match(
+                    r"(if|else|for|while|switch)", body):
+                # A block header does not START a statement at its own indent —
+                # its BODY does, one level in. Leaving it at the header's indent
+                # made every body line look like a continuation and the rule
+                # caught nothing at all.
+                stmt_start = None
+            else:
+                for op in CONT_OPS:
+                    if body.endswith(op):
+                        prev = (n, indent)
+                        break
+
     # ── structure ────────────────────────────────────────────────────────────
     if not re.search(r"^//@version=6\s*$", src, re.M):
         add("error", "version", 0, "missing `//@version=6`")

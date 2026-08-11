@@ -11,7 +11,7 @@
 // Engine manifest   : 196acb79847f6d8bdab045b868d1b53ade7bb5a4493ffc298f7eef20e113dedf
 // Resolved config   : 998c82c6fc9d1eab18fda1409efb20dcdaa176a7dc610b6efb15c8ba3c9cfe83
 // Policy version    : 2026-07-09.te-v1.2-surgical-disable
-// Source hash       : 8f048c3fdfb9f4c1
+// Source hash       : 12b0225b2f28c5d7
 //
 // Build target      : detection_15m  (Detection oracle (15m))
 // Chart timeframe   : 15min  — this build is REFUSED on any other
@@ -52,7 +52,7 @@ indicator("TV Visual Oracle S1 — EURUSD", "TVO-S1",
 // The assembled-source identifier, as a CONSTANT (the debug panel renders it).
 // It lives in this fragment rather than 05 because it is the one value that
 // depends on the assembled body, and the two-pass assembly resolves it here.
-ORACLE_SOURCE_HASH_SHORT     = "8f048c3fdfb9f4c1"
+ORACLE_SOURCE_HASH_SHORT     = "12b0225b2f28c5d7"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 05 — GENERATED CONTRACT CONSTANTS. DO NOT EDIT.
@@ -2774,8 +2774,11 @@ f_liveTip(LiveOb o, float prodRr, float rr, int src, int ovSrc, bool ok,
     // PROVENANCE FIRST. Nothing below is production's answer — it is this
     // layer's reading of 15-minute bars, and the reader is told so before they
     // read any of it.
-    "source: LIVE · M15 inference\n\n" +
-    (o.phase == LS_PH_ARMED
+    // The provenance sits ON the opening line of the return expression, not
+    // above it. Pine ends a statement where the next line is indented the SAME
+    // amount, so a trailing `+` followed by a same-indent line is CE10156 —
+    // "end of line without line continuation". It reads as two statements.
+    "source: LIVE · M15 inference\n\n" + (o.phase == LS_PH_ARMED
          ? "ARMED, NOT FILLED. Production's order is armed — price penetrated " +
            str.tostring(TGT_TRIGGER_PCT, "0.#") + "% into the block — but no " +
            "fill has been proven yet. Production fills on the first 1-minute " +
