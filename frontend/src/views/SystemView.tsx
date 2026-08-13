@@ -148,10 +148,18 @@ export function SystemView() {
       {/* LIVE-4A — the operational dashboard. ONE projection query feeds every
           card; no card re-derives operational truth. Placed first: it is the
           canonical operational view of the system. */}
-      {/* M-CT-RUNTIME-COMPLETE-UX-1 — placed immediately above the operational
-          dashboard: the two-status header is the frame through which every card
-          below should be read (runtime -> lifecycle/account, last complete ->
-          news/decisions). */}
+      {/* M-CT-FLEET-DASHBOARD-2 — the OPERATOR SUMMARY of node/cycle/news/
+          decisions now lives on Fleet Overview, which is the command surface.
+          What remains here is the deep evidence behind it: the full decision
+          table, the raw news block and the cycle internals an engineer needs
+          when Fleet says something is wrong. Duplication removed at the summary
+          level only — no forensic evidence was deleted. */}
+      <div className="text-2xs text-text-muted mono mb-2" data-testid="system-scope-note">
+        Operational summaries live on{' '}
+        <a href="/fleet" className="underline">Fleet Overview</a>. This page is the
+        engineering/diagnostic surface: process internals, engine components, raw
+        telemetry and reconciliation evidence.
+      </div>
       {nodes[0]?.nodeId && <RuntimeCompletePanel instanceId={nodes[0].nodeId} />}
 
       <ProvenanceFrame provenance={operationalProvenance}>

@@ -347,6 +347,84 @@ def normalize_legacy(payload: dict) -> dict:
     }
 
 
+#: M-CT-HEARTBEAT-INGEST-1 — the beat contract, read from the canonical producer
+#: (`live/telemetry_outbox.py`, VPS commit 02060a9), not inferred from traffic.
+HEARTBEAT_SCHEMA_VERSION = "ct.node-heartbeat.v1"
+
+#: The node beats every HEARTBEAT_INTERVAL_S = 20.0s. Liveness budgets are
+#: multiples of that cadence and have NOTHING to do with the 900s strategy
+#: recompute budget — a 20s beat must not get a 15-minute allowance.
+HEARTBEAT_FRESH_AFTER_S = 60.0      # 3 missed beats
+HEARTBEAT_DEGRADED_AFTER_S = 180.0  # 9 missed beats -> treat as offline
+
+#: Required inside the `heartbeat` block. Everything else the producer sends
+#: (pid, uptime_s, process_started_at, boundary, last_complete_boundary) is
+#: optional and preserved as-is.
+_HEARTBEAT_REQUIRED = ("schema_version", "emitted_at", "instance_id")
+
+
+def is_heartbeat_envelope(payload: Any) -> bool:
+    """Does this canonical envelope carry a BEAT rather than a full snapshot?
+
+    The producer wraps the beat in a `ct.node-telemetry.v1` envelope on purpose
+    — a bare heartbeat payload was already measured returning HTTP 400 — so the
+    OUTER schema_version cannot discriminate: it is identical for both. The
+    discriminator is the `heartbeat` block's own inner version.
+    """
+    if not isinstance(payload, dict):
+        return False
+    hb = payload.get("heartbeat")
+    return (isinstance(hb, dict)
+            and hb.get("schema_version") == HEARTBEAT_SCHEMA_VERSION)
+
+
+def validate_heartbeat(payload: Any) -> dict:
+    """Validate a heartbeat envelope. Returns it unchanged, or raises.
+
+    A beat is DELIBERATELY LIGHT: it proves the process is alive and nothing
+    else. Requiring the thirteen blocks a cycle snapshot carries is exactly the
+    defect this fixes — it rejected 170 of the last 500 ingests and pinned the
+    node's own delivery health at `degraded` with
+    `heartbeat: HTTP 400 (rejected; will not retry this snapshot)`.
+
+    It carries `runtime_snapshot_at` and `last_complete_at` UNCHANGED from their
+    own slots, so a fresh beat can never make stale strategy data look current.
+    Those values are read here but never written over either stored slot.
+    """
+    if not isinstance(payload, dict):
+        raise TelemetryError("payload_not_object")
+    version = payload.get("schema_version")
+    if not isinstance(version, str) or not version:
+        raise TelemetryError("schema_version_missing")
+    if version not in SUPPORTED_SCHEMA_VERSIONS:
+        raise TelemetryError("schema_version_unsupported", version[:64])
+
+    instance_id = payload.get("instance_id")
+    if not isinstance(instance_id, str) or not instance_id.strip():
+        raise TelemetryError("instance_id_invalid")
+    if len(instance_id) > MAX_INSTANCE_ID:
+        raise TelemetryError("instance_id_too_long")
+
+    hb = payload.get("heartbeat")
+    if not isinstance(hb, dict):
+        raise TelemetryError("section_not_object", "heartbeat")
+    missing = [k for k in _HEARTBEAT_REQUIRED if k not in hb]
+    if missing:
+        raise TelemetryError("required_field_missing",
+                             ",".join(f"heartbeat.{k}" for k in sorted(missing))[:MAX_STR])
+    if hb.get("schema_version") != HEARTBEAT_SCHEMA_VERSION:
+        raise TelemetryError("schema_version_unsupported",
+                             str(hb.get("schema_version"))[:64])
+
+    # A beat the tower cannot DATE is not proof of life. Fails closed.
+    if parse_iso(hb.get("emitted_at")) is None:
+        raise TelemetryError("emitted_at_invalid")
+    hb_instance = hb.get("instance_id")
+    if not isinstance(hb_instance, str) or hb_instance.strip() != instance_id.strip():
+        raise TelemetryError("instance_id_mismatch")
+    return payload
+
+
 def coerce_snapshot(payload: Any) -> tuple[dict, bool]:
     """Return `(validated_v1_snapshot, was_legacy)` or raise `TelemetryError`.
 

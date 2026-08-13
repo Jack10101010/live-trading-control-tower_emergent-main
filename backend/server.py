@@ -724,6 +724,62 @@ def _put_live_strategy(instance_id: str, snapshot: dict, received_at: str) -> No
         logger.exception("live strategy blocks persist failed for %s", instance_id)
 
 
+#: M-CT-HEARTBEAT-INGEST-1 — the THIRD slot. Liveness, and only liveness.
+_LIVE_HEARTBEAT_KIND = "live_heartbeat"
+
+
+def _put_live_heartbeat(instance_id: str, payload: dict, received_at: str) -> None:
+    """Retain the latest beat. It never touches the runtime or complete slots.
+
+    A beat proves the PROCESS is alive and says nothing else. The producer
+    carries `runtime_snapshot_at` / `last_complete_at` through UNCHANGED from
+    their own slots precisely so a fresh beat cannot make stale strategy data
+    look current, and this store preserves that separation: it writes its own
+    key and reads nobody else's.
+
+    Latest-state only — an unbounded beat history at one every 20s would be
+    3 rows a minute forever and answers no question the latest beat doesn't.
+    """
+    hb = payload.get("heartbeat") or {}
+    record = {
+        "instance_id": instance_id,
+        "received_at": received_at,
+        "emitted_at": hb.get("emitted_at"),
+        "phase": hb.get("phase"),
+        "boundary": hb.get("boundary"),
+        "pid": hb.get("pid"),
+        "uptime_s": hb.get("uptime_s"),
+        "process_started_at": hb.get("process_started_at"),
+        # Carried through for display ONLY. The runtime/complete slots remain
+        # the authorities for their own ages; these are the node's view of them.
+        "runtime_snapshot_at": hb.get("runtime_snapshot_at"),
+        "last_complete_at": hb.get("last_complete_at"),
+        "last_complete_boundary": hb.get("last_complete_boundary"),
+        "schema_version": hb.get("schema_version"),
+    }
+    try:
+        prior = _RUNTIME_OVERLAY.get(_LIVE_HEARTBEAT_KIND, instance_id)
+    except Exception:
+        prior = None
+    if isinstance(prior, dict):
+        prev, new = prior.get("emitted_at"), record.get("emitted_at")
+        if isinstance(prev, str) and isinstance(new, str) and new < prev:
+            return                     # a delayed beat never rewinds liveness
+    try:
+        _RUNTIME_OVERLAY.put(_LIVE_HEARTBEAT_KIND, instance_id, record)
+    except Exception:
+        logger.exception("heartbeat persist failed for %s", instance_id)
+
+
+def _load_live_heartbeats() -> dict[str, dict]:
+    try:
+        rows = _load_overlays(_LIVE_HEARTBEAT_KIND)
+    except Exception:
+        logger.exception("heartbeat load failed")
+        return {}
+    return {k: v for k, v in rows.items() if isinstance(v, dict)}
+
+
 def _load_live_strategy() -> dict[str, dict]:
     """Last-complete strategy blocks per instance. Missing is missing."""
     try:
@@ -5407,6 +5463,31 @@ async def live_ingest(request: Request):
         payload = json.loads(raw)
     except (ValueError, UnicodeDecodeError):
         raise HTTPException(status_code=400, detail="telemetry rejected: malformed_json")
+    # M-CT-HEARTBEAT-INGEST-1 — DISPATCH BEFORE THE FULL VALIDATOR.
+    #
+    # The producer wraps a beat in a canonical `ct.node-telemetry.v1` envelope
+    # (a bare heartbeat was already measured returning 400), so the OUTER
+    # schema_version is identical for both shapes and cannot discriminate. The
+    # `heartbeat` block's own inner version is the discriminator.
+    #
+    # Routed here a beat skips the thirteen-block requirement it can never
+    # satisfy. That requirement rejected 170 of the last 500 ingests and pinned
+    # the node's delivery health at `degraded`.
+    if live_telemetry.is_heartbeat_envelope(payload):
+        try:
+            beat = live_telemetry.validate_heartbeat(payload)
+        except live_telemetry.TelemetryError as exc:
+            detail = f"heartbeat rejected: {exc.reason}"
+            if exc.detail:
+                detail = f"{detail} ({exc.detail})"
+            raise HTTPException(status_code=400, detail=detail)
+        hb_instance = beat["instance_id"]
+        hb_received = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        _put_live_heartbeat(hb_instance, beat, hb_received)
+        # Deliberately NOT touching _LIVE_STATUS, the runtime slot, the complete
+        # slot, or the transition-narration gate. A beat is not a snapshot.
+        return {"ok": True, "kind": "heartbeat", "seq": None, "deduplicated": None}
+
     try:
         snapshot, was_legacy = live_telemetry.coerce_snapshot(payload)
     except live_telemetry.TelemetryError as exc:
@@ -5694,6 +5775,37 @@ def live_strategy(instance_id: str | None = None):
             # stopped hearing, which is not the same as the node stopping. The
             # node publishes no delivery block, so this is derived from the
             # tower's own arrival clock — the only clock it can honestly claim.
+            # NODE LIVENESS — its own age, never substituted for the others.
+            "heartbeat": heartbeat_entry(iid),
+            # M-CT-FLEET-DASHBOARD-2 — node authorities passed through VERBATIM.
+            #
+            # Every one of these is the node's own verdict from its own rails.
+            # The tower re-derives none of them: it is a courier here, not an
+            # interpreter. `readinessAt` is carried so the dashboard can age the
+            # verdict rather than implying it was evaluated now, and
+            # `deliveryAt` because the delivery block rides the RUNTIME snapshot
+            # and is therefore exactly as old as it — during a recompute that is
+            # minutes, not seconds, and a card that hid this would report
+            # transport health the node last measured 25 minutes ago.
+            "node": {
+                "executionReadiness": (snap.get("runtime") or {}).get("execution_readiness"),
+                "readinessAt": ((snap.get("runtime") or {}).get("execution_readiness") or {}).get("evaluated_at"),
+                "arming": snap.get("arming"),
+                "risk": snap.get("risk"),
+                "reconciliation": snap.get("reconciliation"),
+                "market": snap.get("market"),
+                "account": snap.get("account"),
+                "engine": snap.get("engine"),
+                "cycle": cycle,
+                "positions": snap.get("positions"),
+                "runtimeMode": (snap.get("runtime") or {}).get("mode"),
+                "killSwitchActive": (snap.get("runtime") or {}).get("kill_switch_active"),
+                "submissionDisabled": (snap.get("runtime") or {}).get("submission_disabled"),
+                "nodeDelivery": snap.get("delivery"),
+                "deliveryAt": (snap.get("delivery") or {}).get("at"),
+                "snapshotPublishedAt": snap.get("published_at"),
+                "snapshotReceivedAt": (snapshots.get(iid) or {}).get("received_at"),
+            },
             "delivery": {
                 "lastDeliveryAt": (snapshots.get(iid) or {}).get("received_at"),
                 "ageSeconds": arrival_age,
@@ -5704,7 +5816,44 @@ def live_strategy(instance_id: str | None = None):
             },
         }
 
-    ids = sorted(set(snapshots) | set(retained))
+    beats = _load_live_heartbeats()
+
+    def heartbeat_entry(iid: str) -> dict:
+        """NODE LIVENESS — from the beat, and from nothing else.
+
+        Budgets are multiples of the producer's 20s cadence, NOT the 900s
+        strategy-recompute budget: a beat every 20s must not get a 15-minute
+        allowance. Age is measured on the tower's ARRIVAL clock for the same
+        reason liveness always is — a node cannot vouch for its own liveness
+        with a timestamp it wrote itself.
+        """
+        b = beats.get(iid) or {}
+        if not b:
+            return {"available": False, "status": "unknown", "ageSeconds": None,
+                    "receivedAt": None, "emittedAt": None, "phase": None,
+                    "boundary": None, "uptimeSeconds": None,
+                    "freshAfterSeconds": live_telemetry.HEARTBEAT_FRESH_AFTER_S,
+                    "degradedAfterSeconds": live_telemetry.HEARTBEAT_DEGRADED_AFTER_S}
+        age = None
+        arrived = live_telemetry.parse_iso(b.get("received_at"))
+        if arrived is not None:
+            age = round(abs((now - arrived).total_seconds()), 3)
+        if age is None:
+            status = "unknown"
+        elif age <= live_telemetry.HEARTBEAT_FRESH_AFTER_S:
+            status = "live"
+        elif age <= live_telemetry.HEARTBEAT_DEGRADED_AFTER_S:
+            status = "degraded"
+        else:
+            status = "offline"
+        return {"available": True, "status": status, "ageSeconds": age,
+                "receivedAt": b.get("received_at"), "emittedAt": b.get("emitted_at"),
+                "phase": b.get("phase"), "boundary": b.get("boundary"),
+                "uptimeSeconds": b.get("uptime_s"),
+                "freshAfterSeconds": live_telemetry.HEARTBEAT_FRESH_AFTER_S,
+                "degradedAfterSeconds": live_telemetry.HEARTBEAT_DEGRADED_AFTER_S}
+
+    ids = sorted(set(snapshots) | set(retained) | set(beats))
     if instance_id:
         if instance_id not in ids:
             raise HTTPException(status_code=404, detail="unknown instance")

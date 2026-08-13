@@ -29,8 +29,13 @@ describe('provenance → tone mapping', () => {
     // non-operational data; `placeholder` makes no claim and is neutral, so an
     // honestly-empty card no longer looks like a fabrication warning.
     const green: CardProvenance[] = ['live', 'runtime-config', 'derived-live'];
-    const neutral: CardProvenance[] = ['placeholder'];
-    const red: CardProvenance[] = ['fixture', 'synthetic', 'replay', 'mixed', 'unknown'];
+    // M-CT-RED-STATE-AUDIT-1 (approved) moved `synthetic` red -> NEUTRAL: the
+    // local mock adapter requires no operator action and already says NON-LIVE
+    // on the card. `fixture` stays red (the demonstration universe wearing
+    // operational clothes) and `mixed`/`unknown` stay red because neither can
+    // be shown to be safe.
+    const neutral: CardProvenance[] = ['placeholder', 'synthetic'];
+    const red: CardProvenance[] = ['fixture', 'replay', 'mixed', 'unknown'];
     for (const p of green) expect(PROVENANCE_TONE[p], p).toBe('green');
     for (const p of neutral) expect(PROVENANCE_TONE[p], p).toBe('neutral');
     for (const p of red) expect(PROVENANCE_TONE[p], p).toBe('red');
@@ -68,10 +73,16 @@ describe('dynamic candle-card provenance', () => {
     expect(provenanceTone(candleCardProvenance('polygon'))).toBe('green');
     expect(provenanceTone(candleCardProvenance('store'))).toBe('green');
   });
-  it('is red for every Control-Tower-generated provider', () => {
+  it('is NEVER green for a Control-Tower-generated provider', () => {
+    // M-CT-RED-STATE-AUDIT-1 split the old single "not real" tone: deterministic
+    // local sources are NEUTRAL (no action required, already labelled NON-LIVE)
+    // while fabricated/replayed content stays RED. The invariant that matters —
+    // and the one this guard exists for — is that none of them is ever green.
     for (const p of ['fixture', 'mock_live', 'synthetic', 'replay', 'replay-snapshot']) {
-      expect(provenanceTone(candleCardProvenance(p)), p).toBe('red');
+      expect(provenanceTone(candleCardProvenance(p)), p).not.toBe('green');
     }
+    expect(provenanceTone(candleCardProvenance('fixture'))).toBe('red');
+    expect(provenanceTone(candleCardProvenance('replay'))).toBe('red');
   });
   it('defaults to red for unknown/absent providers (never silently green)', () => {
     expect(provenanceTone(candleCardProvenance(undefined))).toBe('red');
@@ -118,13 +129,25 @@ describe('structural guards', () => {
     // Adapter-fed pipelines (projection, runtime loop, ledger) must be DYNAMIC:
     // mock adapter ⇒ synthetic (RED), real adapter ⇒ live (GREEN). A static
     // "live" here would put mock balances inside a GREEN frame.
-    for (const comp of ['OperationalDashboard', 'LiveRuntimePanel', 'TradeLedgerPanel']) {
+    // M-CT-RED-STATE-AUDIT-1 (approved) split these. The runtime loop and the
+    // ledger ARE adapter-fed and keep the adapter frame. The operational
+    // dashboard is NOT — its node/account content is relayed node telemetry —
+    // so it uses `operationalProvenance`, which itself falls back to the
+    // adapter's verdict when NO genuine node is reporting. Both remain dynamic;
+    // neither is ever statically "live".
+    const EXPECTED_FRAME: Record<string, string> = {
+      OperationalDashboard: '<ProvenanceFrame provenance={operationalProvenance}',
+      LiveRuntimePanel: '<ProvenanceFrame provenance={adapterProvenance}',
+      TradeLedgerPanel: '<ProvenanceFrame provenance={adapterProvenance}',
+    };
+    for (const [comp, frame] of Object.entries(EXPECTED_FRAME)) {
       const mount = s.indexOf(`<${comp}`);
       expect(mount, `${comp} must be mounted`).toBeGreaterThan(-1);
       const before = s.slice(Math.max(0, mount - 250), mount);
-      expect(before, `${comp} must use the adapter-dependent frame`)
-        .toContain('<ProvenanceFrame provenance={adapterProvenance}');
+      expect(before, `${comp} must use ${frame}`).toContain(frame);
     }
+    // The operational frame must FAIL CLOSED to the adapter when no node reports.
+    expect(s).toContain("nodeStatus !== 'absent' ? ('derived-live' as const) : adapterProvenance");
     // The adapter gate itself must be fail-closed: mock or unknown ⇒ synthetic.
     expect(s).toContain("rt?.broker?.kind && rt.broker.kind !== 'mock'");
     // Operator-owned durable stores and real config remain statically live.
@@ -225,7 +248,9 @@ describe('structural guards', () => {
     const fleet = read('views/FleetOverview.tsx');
     expect(fleet).not.toContain('confidence.signals');
     expect(fleet).not.toContain('useSystemConfidence');
-    expect(fleet).toContain('No attention model');
+    // M-CT-FLEET-DASHBOARD-2 replaced the placeholder rail with a real one. The
+    // prohibitions above still stand; the honest empty state is now this.
+    expect(fleet).toContain('No operator action required');
     // No component anywhere renders a confidence progress bar or score field.
     for (const file of allTsx(SRC)) {
       const text = readFileSync(file, 'utf8');

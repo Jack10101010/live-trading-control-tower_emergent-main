@@ -1625,6 +1625,10 @@ export const api = {
   securityConfig: () => apiFetch<SecurityConfigStatus>('/security/config'),
   liveConnection: () => apiFetch<ConnectionState>('/live/connection'),
   liveStatus: () => apiFetch<LiveStatus>('/live/status'),
+  /** The GOVERNED control surface. `enabled:false` means render no controls. */
+  operatorCommands: () => apiFetch<{ enabled: boolean; commands: any[] }>('/operator/commands'),
+  runOperatorCommand: (name: string) =>
+    apiFetch<any>('/operator/commands', { method: 'POST', body: JSON.stringify({ command: name }) }),
   /** M-CT-RUNTIME-COMPLETE-UX-1 — CURRENT RUNTIME + LAST COMPLETE, kept apart. */
   liveStrategy: (instanceId: string) =>
     apiFetch<import('@/lib/runtimeComplete').StrategyView>(

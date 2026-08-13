@@ -108,11 +108,17 @@ describe('UI-0 introduces no live-execution path', () => {
       'MT5_LOGIN',
       'LIVE_SUBMIT_DISABLED',
     ];
+    // Matched as WHOLE identifiers, not substrings. Plain `includes` flagged
+    // `risk.max_open_positions` — a read-only position CAP relayed in node
+    // telemetry — as if it were an order-submission call. Widening the match to
+    // whole tokens keeps every real prohibition (an actual `open_position(` call
+    // still matches) while letting the dashboard render the node's own limits.
     const offenders: string[] = [];
     for (const file of allSourceFiles()) {
       const text = readFileSync(file, 'utf8');
       for (const needle of forbidden) {
-        if (text.includes(needle)) offenders.push(`${path.relative(SRC, file)} → ${needle}`);
+        const whole = new RegExp(`(?<![A-Za-z0-9_])${needle}(?![A-Za-z0-9_])`);
+        if (whole.test(text)) offenders.push(`${path.relative(SRC, file)} → ${needle}`);
       }
     }
     expect(offenders).toEqual([]);

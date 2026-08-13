@@ -342,3 +342,18 @@ export const PACKAGES_UNAVAILABLE_DETAIL =
 export const RECOMMENDATIONS_UNAVAILABLE_DETAIL =
   'The durable recommendation store is not reporting. No recommendation, decision ' +
   'or evidence can be shown.';
+
+
+/**
+ * M-CT-FLEET-DASHBOARD-2 — ledger provenance, compared HERE and nowhere else.
+ *
+ * The local mock adapter writes into the same durable trade ledger as genuine
+ * broker fills, and the two are indistinguishable at the top level (both read
+ * `provenance: "durable-store"`). The distinguishing markers live one level
+ * down. They are declared here so the comparison stays in one module — the
+ * structural guard that enforces that exists because scattered provenance
+ * checks drift apart and eventually disagree.
+ */
+export const SIMULATED_MARKERS = [PROV_MOCK_FIXTURE, 'mock', 'fixture', 'replay', 'simulated'] as const;
+export const BROKER_ORIGINS = ['broker', 'live', PROV_LIVE_MT5] as const;
+export const MOCK_ACCOUNT_PREFIX = 'acc_mock';

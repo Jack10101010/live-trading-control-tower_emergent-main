@@ -1,241 +1,534 @@
-import { useOperationalFleet } from '@/hooks/useRepository';
-import { Panel, EmptyState } from '@/components/structures/Panel';
-import { nodeCardProvenance } from '@/lib/nodeProvenance';
-import type { NodeOperationalView } from '@/lib/api';
-import { AlertTriangle, Layers } from 'lucide-react';
-
 /**
- * M-NODE-READ-1 — nodes are admitted through the NODE gate, accounts through
- * the BROKER gate, and the two statuses are reported separately. Passing nodes
- * through the broker gate dropped every genuinely reporting node, so this page
- * said "No authoritative operational source" while a VPS node published valid
- * telemetry every cycle.
+ * M-CT-FLEET-DASHBOARD-2 — the operational command dashboard.
  *
- * M-FLEET-2 — Fleet Overview renders AUTHORITATIVE records only.
+ * Every statement on this page traces to ONE node authority. The dashboard is a
+ * courier: it routes, labels and ages verdicts, and derives none of them. That
+ * is the L_2106 lesson — a parallel interpretation will eventually disagree with
+ * the rails that actually execute, and the dashboard is what gets believed.
  *
- * This page was the single largest source of invented operational data in the
- * Control Tower: three fixture deployments (EUR/USD live "InTrade", a ghost
- * lane, an experimental lane), two fixture brokers, two fixture accounts, a
- * +$412 daily P/L and a 72% drawdown buffer — all authored demonstration values
- * rendered as an operator's fleet.
+ *   NODE LIVENESS      heartbeat block only              ~20s cadence
+ *   RUNTIME            runtime snapshot only             phase-aware
+ *   STRATEGY CYCLE     complete snapshot only            ~25min recomputes
+ *   EXECUTION READY    runtime.execution_readiness only  the real rails
+ *   CT DELIVERY        node delivery/outbox block only   transport, not trading
+ *   RECONCILIATION     tri-state; `clean: null` = UNKNOWN
  *
- * M-FLEET-1 labelled them. This milestone removes them. The page now reads the
- * operational projection through the single provenance gate, and only
- * `live_mt5` records survive. Under the development-default mock adapter the
- * projection's own records carry `mock-fixture` provenance and those very same
- * invented figures, so nothing survives and the page is intentionally empty.
- *
- * There is deliberately no "deployment" card. `/api/operations/nodes` projects
- * execution NODES; manufacturing deployment cards from them would recreate the
- * fabrication this milestone exists to remove.
+ * Structured for N nodes from the start: every section maps over the fleet and
+ * fleet health names the offending node rather than collapsing to one colour.
  */
-export function FleetOverview() {
-  const { nodes, accounts, status, nodeStatus, nodeDetail, rejections = [] } =
-    useOperationalFleet();
-  const noNode = nodeStatus === 'absent';
+import { useQuery, useQueryClient, useQueries } from '@tanstack/react-query';
+import { useState } from 'react';
+import { RefreshCw, AlertTriangle } from 'lucide-react';
+import { api, QK } from '@/lib/api';
+import { Panel, EmptyState } from '@/components/structures/Panel';
+import { useOperationalFleet } from '@/hooks/useRepository';
+import {
+  livenessSeverity, LIVENESS_LABEL, runtimeSeverity, cycleSeverity, readinessView,
+  deliverySeverity, pendingSlots, reconciliationView, attentionItems, fleetHealth,
+  humanAge, clean, safeAccountLabel, ageOf, SEV_TONE, splitLedger,
+  deliveryView, lifecycleOf, sortNewestFirst,
+  type Sev, type FleetNodeView,
+} from '@/lib/fleetModel';
 
+const TONE: Record<string, string> = {
+  green: 'var(--positive)', blue: 'var(--accent-secondary, #6aa9ff)',
+  amber: 'var(--warning)', red: 'var(--negative)', neutral: 'var(--text-muted)',
+};
+const colorOf = (s: Sev) => TONE[SEV_TONE[s]] ?? TONE.neutral;
+
+function Pill({ sev, children, testid }: { sev: Sev; children: React.ReactNode; testid?: string }) {
+  const c = colorOf(sev);
   return (
-    <div className="grid grid-cols-[1fr_320px] h-full min-h-0">
-      <div className="flex flex-col overflow-hidden">
-        <header className="px-6 pt-6 pb-4 shrink-0">
-          <h1 className="text-2xl font-semibold text-text tracking-tight">Fleet Overview</h1>
-          {/* Node and account counts are separate facts from separate
-              authorities, so they are stated separately. "0 nodes" is never
-              printed: with nothing observed there is nothing to count, and a
-              zero would assert an empty fleet this page cannot vouch for. */}
-          <p className="text-xs text-text-muted mt-1" data-testid="fleet-summary">
-            {noNode ? (
-              <>No execution node observed</>
-            ) : (
-              <>
-                {nodes.length} node{nodes.length === 1 ? '' : 's'} reporting
-                {nodeStatus === 'stale' ? ' · last reported, not current' : ''}
-                {nodeStatus === 'degraded' ? ' · node reports a failure' : ''}
-              </>
-            )}
-            {' · '}
-            {/* A NAMED refusal replaces the generic wording. "account source
-                unavailable" is technically true while a node is loudly
-                reporting the wrong account, and it is the wrong thing to tell
-                an operator: the two states call for opposite actions — wait,
-                versus stop and check the pinning. */}
-            {rejections.length > 0
-              ? 'account observation REFUSED'
-              : status === 'unavailable'
-                ? 'account source unavailable'
-                : status === 'empty'
-                  ? 'no accounts reported'
-                  : `${accounts.length} account${accounts.length === 1 ? '' : 's'}`}
-          </p>
-          {rejections.length > 0 && (
-            <p className="text-xs mt-2" data-testid="fleet-account-refused"
-               style={{ color: 'var(--danger)' }}>
-              {rejections.join(' ')}
-            </p>
-          )}
-        </header>
+    <span data-testid={testid} data-severity={sev}
+          className="mono text-2xs uppercase tracking-wider px-1.5 py-0.5 rounded-sm"
+          style={{ color: c, border: `1px solid ${c}`,
+                   background: `color-mix(in srgb, ${c} 12%, transparent)` }}>
+      {children}
+    </span>
+  );
+}
 
-        <div className="flex-1 overflow-auto px-6 pb-6">
-          {noNode ? (
-            <EmptyState
-              title="No execution node observed"
-              description={nodeDetail}
-              icon={<Layers size={16} />}
-            />
-          ) : (
-            <div className="grid gap-3 grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3">
-              {nodes.map((n) => (
-                <NodeCard key={n.nodeId} node={n} />
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <aside
-        className="border-l overflow-y-auto"
-        style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-elevated)' }}
-      >
-        <Panel
-          provenance="placeholder"
-          title={
-            <span className="flex items-center gap-2">
-              <AlertTriangle size={12} className="text-[color:var(--warning)]" />
-              Attention Rail
-            </span>
-          }
-          className="border-0 rounded-none h-full"
-        >
-          {/* M-CONF-1: no confidence model exists; this rail says so. */}
-          <EmptyState
-            title="No attention model"
-            description="System confidence is not computed — no confidence model exists. Attention signals will populate from genuine node telemetry when implemented."
-            icon={<AlertTriangle size={16} />}
-          />
-        </Panel>
-      </aside>
+function Line({ label, sev, state, detail, testid }: {
+  label: string; sev: Sev; state: string; detail?: string | null; testid: string;
+}) {
+  return (
+    <div className="flex items-baseline gap-3" data-testid={testid}>
+      <span className="text-[10px] font-ui uppercase tracking-wider text-text-muted w-[118px] shrink-0">{label}</span>
+      <Pill sev={sev} testid={`${testid}-pill`}>{state}</Pill>
+      {detail && <span className="mono text-2xs text-text-muted">{detail}</span>}
     </div>
   );
 }
 
-/**
- * One execution node, showing ONLY facts that node published about itself.
- *
- * M-NODE-READ-1 — WHAT THIS CARD DELIBERATELY DOES NOT SHOW.
- *
- * It previously showed Adapter, Broker, Connection, Execution mode,
- * Reconciliation and open position/order counts. Every one of those was the
- * Control Tower's own state — its local adapter kind, its adapter's connection,
- * its execution store's posture — displayed under the VPS node's name. Merely
- * restoring the card would have put a fabrication with a real node's name on it
- * back on screen, which is worse than the invisibility it replaced.
- *
- * Balance, equity, P&L, account number, order counts, risk utilisation and
- * trading posture are absent by design: they require broker authority, and a
- * node heartbeat does not grant it. When the node has not observed its terminal,
- * this card says so — it does not fall silent, and it does not show zeros.
- */
-function NodeCard({ node }: { node: NodeOperationalView }) {
-  const lifecycle = node.lifecycleState;
+function KV({ k, v, tone }: { k: string; v: React.ReactNode; tone?: string }) {
   return (
-    <Panel
-      provenance={nodeCardProvenance(node)}
-      title={<span className="mono text-sm">{node.nodeId}</span>}
-      actions={
-        <span data-testid={`node-lifecycle-${node.nodeId}`}
-              className="text-2xs uppercase tracking-widest mono"
-              style={{ color: LIFECYCLE_COLOR[lifecycle] }}>
-          {lifecycle}
-        </span>
-      }
-    >
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-        <Row label="Deployment profile" value={node.deploymentProfile} />
-        <Row label="Node mode" value={node.nodeMode} />
-        <Row label="Cycle status" value={node.cycleStatus} />
-        <Row label="Last boundary" value={node.lastBoundary} />
-        <Row label="Last bar" value={node.lastBarTime} />
-        <Row label="Engine" value={node.engineVersion} />
-        <Row label="Symbol · timeframe"
-             value={node.symbol && node.timeframe ? `${node.symbol} · ${node.timeframe}` : node.symbol} />
-        <Row label="Kill switch" value={triText(node.killSwitchActive, 'ACTIVE', 'inactive')} />
-        <Row label="Submission" value={triText(node.submissionDisabled, 'disabled', 'enabled')} />
-        {/* The node's own count of its own mirror. Never the Mac adapter's. */}
-        <Row label="Node open positions"
-             value={typeof node.openPositionCount === 'number' ? String(node.openPositionCount) : null} />
-        <Row label="Telemetry age"
-             value={typeof node.livenessAgeSeconds === 'number'
-               ? `${Math.round(node.livenessAgeSeconds)}s (by ${node.freshnessBasis ?? 'unknown basis'})`
-               : null} />
-      </dl>
-
-      {/* MT5 observation is shown ONLY when the node explicitly said something.
-          A cycle on which it did not sample the terminal is not a disconnection,
-          and reading it as one would raise a false alarm on every idle cycle. */}
-      <p className="text-2xs text-text-muted mt-2" data-testid={`node-mt5-${node.nodeId}`}>
-        {node.mt5Observation === 'observed'
-          ? 'This node read its MT5 terminal on its last sampled cycle.'
-          : node.mt5Observation === 'unreachable'
-            ? 'This node reported it could not read its broker position snapshot.'
-            : 'This node has not reported an MT5 terminal observation. Account and ' +
-              'position data remain unavailable — that is not a disconnection.'}
-      </p>
-
-      {node.legacySource && (
-        <p className="text-2xs mt-1" style={{ color: 'var(--warning)' }}
-           data-testid={`node-legacy-${node.nodeId}`}>
-          Legacy payload — this node predates the versioned telemetry contract, so
-          fields it never published are reported as unavailable rather than guessed.
-        </p>
-      )}
-
-      {node.warnings.length > 0 && (
-        <ul className="mt-2 pt-2 border-t space-y-0.5" data-testid={`node-warnings-${node.nodeId}`}
-            style={{ borderColor: 'var(--border-subtle)' }}>
-          {node.warnings.map((w) => (
-            <li key={w} className="text-2xs"
-                style={{ color: lifecycle === 'degraded' ? 'var(--negative)' : 'var(--warning)' }}>
-              ⚠ {w}
-            </li>
-          ))}
-        </ul>
-      )}
-    </Panel>
+    <div className="flex justify-between gap-4 text-2xs py-0.5">
+      <span className="text-text-muted">{k}</span>
+      <span className="mono text-text-2" style={tone ? { color: tone } : undefined}>{v ?? '—'}</span>
+    </div>
   );
 }
 
-/**
- * Lifecycle colour. A stale or degraded node stays on a LIVE card — it is real
- * data, and the red border means "not operational data", which would be a lie
- * about a node that is genuinely reporting trouble. The state is coloured; the
- * card's provenance is not downgraded.
- */
-const LIFECYCLE_COLOR: Record<string, string> = {
-  current: 'var(--positive)',
-  stale: 'var(--warning)',
-  degraded: 'var(--negative)',
-  absent: 'var(--text-muted)',
-};
+export function FleetOverview() {
+  const qc = useQueryClient();
+  const { nodes: fleetNodes } = useOperationalFleet();
+  const ids = fleetNodes.map((n) => n.nodeId).filter(Boolean) as string[];
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
 
-/** Tri-state text. `null` is "not reported" — never the negative branch. */
-function triText(value: boolean | null, whenTrue: string, whenFalse: string): string | null {
-  if (value === true) return whenTrue;
-  if (value === false) return whenFalse;
-  return null;
-}
+  // One coordinated poll for the whole dashboard. 10s: the node beats every 20s,
+  // so this sees every beat without doubling the request rate.
+  const strategyQueries = useQueries({
+    queries: ids.map((id) => ({
+      queryKey: QK.liveStrategy(id),
+      queryFn: () => api.liveStrategy(id),
+      refetchInterval: 10_000,
+      retry: false,
+    })),
+  });
+  // The governed control surface decides which controls may render AT ALL.
+  const controls = useQuery({
+    queryKey: ['operator-commands'],
+    queryFn: () => api.operatorCommands(),
+    refetchInterval: 30_000, retry: false,
+  });
+  const ledger = useQuery({
+    queryKey: ['fleet-ledger-trades'],
+    queryFn: () => api.ledgerTrades({}),
+    refetchInterval: 10_000, retry: false,
+  });
 
-/** `null`/absent renders "—". A missing field is unknown, never zero or blank. */
-function Row({ label, value }: { label: string; value: string | null | undefined }) {
+  const views: FleetNodeView[] = strategyQueries
+    .map((q) => q.data as FleetNodeView | undefined)
+    .filter(Boolean) as FleetNodeView[];
+
+  /** Manual refresh REFETCHES. It never rewrites a source timestamp — a
+   *  successful GET of an 11-minute-old snapshot still reads 11 minutes. */
+  async function refresh() {
+    setRefreshing(true); setRefreshError(null);
+    try {
+      await qc.refetchQueries({ type: 'active' });
+      setRefreshedAt(new Date());
+    } catch (e: any) {
+      // Last-known data stays on screen; only the banner changes.
+      setRefreshError(String(e?.message ?? e ?? 'refresh failed'));
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  const health = fleetHealth(views);
+  const attention = views.flatMap((v) =>
+    attentionItems(v).map((a) => ({ ...a, node: v.instanceId })));
+  const liveCount = views.filter((v) => livenessSeverity(v) === 'ok').length;
+  const openPositions = views.reduce(
+    (n, v) => n + (Array.isArray(v.node?.positions) ? v.node!.positions.length : 0), 0);
+
   return (
-    <>
-      <dt className="text-2xs uppercase tracking-widest text-text-muted">{label}</dt>
-      <dd className="text-xs font-medium mono">
-        {value ?? (
-          <span className="text-text-muted" title="Not reported by the operational source.">
-            —
-          </span>
-        )}
-      </dd>
-    </>
+    <div className="p-6 h-full min-h-0 overflow-auto">
+      <div className="flex items-start justify-between mb-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-text tracking-tight">Control Tower</h1>
+          <p className="text-xs text-text-muted mt-1">Fleet command dashboard</p>
+        </div>
+        <div className="flex flex-col items-end gap-1">
+          <button data-testid="fleet-refresh" onClick={refresh} disabled={refreshing}
+                  className="flex items-center gap-1.5 mono text-2xs uppercase tracking-wider px-2 py-1
+                             rounded-sm border border-[hsl(var(--border-mid))] hover:border-[hsl(var(--accent-secondary))]
+                             disabled:opacity-50">
+            <RefreshCw size={11} className={refreshing ? 'animate-spin' : undefined} />
+            {refreshing ? 'Refreshing…' : 'Refresh'}
+          </button>
+          {refreshError
+            ? <span data-testid="refresh-error" className="mono text-2xs" style={{ color: TONE.red }}>
+                refresh failed — showing last known state
+              </span>
+            : refreshedAt && <span className="mono text-2xs text-text-muted">
+                refreshed {refreshedAt.toISOString().slice(11, 19)}Z · source ages unchanged
+              </span>}
+        </div>
+      </div>
+
+      {/* ── fleet strip ─────────────────────────────────────────────────── */}
+      <Panel provenance="live" title="Fleet">
+        <div className="flex flex-wrap gap-x-10 gap-y-2" data-testid="fleet-strip">
+          <div><div className="text-[10px] uppercase tracking-wider text-text-muted">Nodes</div>
+            <div className="mono text-sm text-text">{liveCount} / {views.length} live</div></div>
+          <div><div className="text-[10px] uppercase tracking-wider text-text-muted">Open positions</div>
+            <div className="mono text-sm text-text">{openPositions}</div></div>
+          <div><div className="text-[10px] uppercase tracking-wider text-text-muted">Fleet health</div>
+            <div className="mt-0.5"><Pill sev={health.sev} testid="fleet-health">{health.detail}</Pill></div></div>
+          <div><div className="text-[10px] uppercase tracking-wider text-text-muted">Attention</div>
+            <div className="mt-0.5"><Pill sev={attention.length ? 'warn' : 'ok'} testid="attention-count">
+              {attention.length === 0 ? 'NONE' : String(attention.length)}</Pill></div></div>
+        </div>
+      </Panel>
+
+      <div className="grid grid-cols-12 gap-4 mt-4">
+        <div className="col-span-12 lg:col-span-9 space-y-4">
+          {views.length === 0 && (
+            <Panel provenance="live" title="Nodes">
+              <EmptyState title="No node is reporting"
+                          description="No execution node has published telemetry to this tower." />
+            </Panel>
+          )}
+
+          {views.map((v) => {
+            const rd = readinessView(v);
+            const rc = reconciliationView(v);
+            const nd = v.node ?? {};
+            const arming = nd.arming ?? {};
+            const risk = nd.risk ?? {};
+            const acct = nd.account ?? {};
+            const health = acct.health ?? {};
+            const cyc = nd.cycle ?? {};
+            const news = v.lastComplete?.news ?? {};
+            const decisions = v.lastComplete?.decisions ?? {};
+            const records: any[] = Array.isArray(decisions.decisions) ? decisions.decisions : [];
+            const positions: any[] = Array.isArray(nd.positions) ? nd.positions : [];
+            const runtimeAge = ageOf(nd.snapshotReceivedAt);
+            const deliveryAge = ageOf(nd.deliveryAt);
+            const pend = pendingSlots(v);
+
+            return (
+              <div key={v.instanceId} className="space-y-4" data-testid={`node-${v.instanceId}`}>
+                {/* three independent statuses */}
+                <Panel provenance="live" title={`Node · ${v.instanceId}`}>
+                  <div className="space-y-1.5">
+                    <Line testid="node-liveness" label="Node" sev={livenessSeverity(v)}
+                          state={LIVENESS_LABEL[v.heartbeat?.status ?? 'unknown'] ?? 'UNKNOWN'}
+                          detail={v.heartbeat?.available
+                            ? `heartbeat ${humanAge(v.heartbeat.ageSeconds)} ago · uptime ${humanAge(v.heartbeat.uptimeSeconds)}`
+                            : 'no heartbeat observed'} />
+                    <Line testid="node-runtime" label="Runtime" sev={runtimeSeverity(v)}
+                          state={runtimeSeverity(v) === 'ok' ? 'CURRENT' : 'AGING'}
+                          detail={`snapshot ${humanAge(runtimeAge)} ago`} />
+                    <Line testid="node-cycle" label="Strategy cycle" sev={cycleSeverity(v)}
+                          state={String(v.current?.cycleStatus ?? 'unknown').toUpperCase()}
+                          detail={v.lastComplete?.available
+                            ? `last complete ${humanAge(v.lastComplete.ageSeconds)} ago · boundary ${clean(cyc.last_boundary) ?? '—'}`
+                            : 'no complete cycle observed'} />
+                    {(() => { const dv = deliveryView(v); return (
+                      <Line testid="node-delivery" label="CT delivery" sev={dv.severity} state={dv.label}
+                            detail={dv.aged
+                              // Age is part of the verdict: a report this old cannot
+                              // assert the transport is degraded NOW, only what it was.
+                              ? `last report ${humanAge(dv.ageSeconds)} ago · last reported: ${dv.reported}`
+                              : `${dv.reported} · reported ${humanAge(dv.ageSeconds)} ago · transport only`} />
+                    ); })()}
+                  </div>
+                </Panel>
+
+                {/* EXECUTION READINESS — the node's own rails */}
+                <Panel provenance="live" title="Execution readiness">
+                  <div className="flex items-center gap-3 mb-2" data-testid="readiness-header">
+                    <Pill sev={rd.severity} testid="readiness-pill">{rd.label}</Pill>
+                    {rd.severity === 'ok' && (
+                      <span className="mono text-2xs text-text-muted">
+                        except candidate-specific checks
+                      </span>
+                    )}
+                    {rd.evaluatedAt && (
+                      <span className="mono text-2xs text-text-muted">
+                        · evaluated {humanAge(ageOf(rd.evaluatedAt))} ago by the node
+                      </span>
+                    )}
+                  </div>
+                  {!rd.available ? (
+                    <EmptyState title="Readiness unknown"
+                                description="The node has not published an execution-readiness verdict. This is unknown — not ready." />
+                  ) : (
+                    <>
+                      {rd.reasons.length > 0 && (
+                        <div data-testid="readiness-reasons" className="mono text-2xs mb-2"
+                             style={{ color: TONE.red }}>
+                          {rd.reasons.join(' · ')}
+                        </div>
+                      )}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8">
+                        {rd.checks.map((c) => (
+                          <KV key={c.name} k={c.name.replace(/_/g, ' ')}
+                              v={<>{c.ok ? 'PASS' : 'FAIL'}{c.detail && <span className="text-text-muted"> · {c.detail}</span>}</>}
+                              tone={c.ok ? TONE.green : TONE.red} />
+                        ))}
+                      </div>
+                      {rd.candidateNotEvaluated.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-[hsl(var(--border-mid)/0.4)]"
+                             data-testid="candidate-checks">
+                          <div className="text-[10px] uppercase tracking-wider text-text-muted mb-1">
+                            Candidate-specific — evaluated on a real OPEN
+                          </div>
+                          {rd.candidateNotEvaluated.map((c) => (
+                            <KV key={c.name} k={c.name.replace(/_/g, ' ')} v={c.why} />
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </Panel>
+
+                {/* ACCOUNT + PROTECTION */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Panel provenance="live" title="Account">
+                    <div data-testid="account-card">
+                      <KV k="Server" v={clean(acct.identity?.server)} />
+                      <KV k="Account" v={safeAccountLabel(acct)} />
+                      <KV k="Balance" v={health.balance != null ? `${health.balance} ${clean(acct.identity?.currency) ?? ''}` : null} />
+                      <KV k="Equity" v={health.equity ?? null} />
+                      <KV k="Free margin" v={health.free_margin ?? null} />
+                      <KV k="Authorization" v={clean(arming.authorization_type) ?? clean(arming.status)} />
+                      <KV k="Daily OPENs" v={`${arming.opens_today ?? 0} / ${arming.daily_open_cap ?? '—'}`} />
+                      <KV k="Fingerprint match" v={arming.fingerprint_matches === true ? 'yes' : arming.fingerprint_matches === false ? 'NO' : 'unknown'}
+                          tone={arming.fingerprint_matches === false ? TONE.red : undefined} />
+                      <KV k="AutoTrading" v={health.trade_expert === true ? 'ON' : health.trade_expert === false ? 'OFF' : 'unknown'} />
+                    </div>
+                  </Panel>
+
+                  <Panel provenance="live" title="Protection">
+                    <div data-testid="protection-card">
+                      <KV k="News gate" v={news.new_open_allowed === false ? 'BLOCKING' : news.health ? 'CLEAR' : 'unknown'}
+                          tone={news.new_open_allowed === false ? TONE.amber : undefined} />
+                      <KV k="Blackout" v={news.blackout_active ? 'ACTIVE' : news.health ? 'inactive' : 'unknown'}
+                          tone={news.blackout_active ? TONE.amber : undefined} />
+                      <KV k="Flatten open trades" v={news.flatten_active_trades === true ? 'ON' : news.health ? 'OFF' : 'unknown'}
+                          tone={news.flatten_active_trades === true ? TONE.amber : TONE.green} />
+                      <KV k="Next HIGH event" v={news.next_relevant_event
+                        ? `${news.next_relevant_event.currency} ${news.next_relevant_event.event} · ${news.next_relevant_event.time}` : null} />
+                      <KV k="Kill switch" v={nd.killSwitchActive ? 'ACTIVE' : 'CLEAR'}
+                          tone={nd.killSwitchActive ? TONE.red : TONE.green} />
+                      <KV k="Reconciliation" v={rc.label} tone={colorOf(rc.severity)} />
+                      <KV k="Daily loss" v={`${risk.daily_realized_r ?? 0} / ${risk.daily_loss_limit_r ?? '—'}R`} />
+                      <KV k="Positions" v={`${risk.open_mirror_count ?? positions.length} / ${risk.max_open_positions ?? '—'}`} />
+                      {v.lastComplete?.available && !v.lastComplete.isCurrent && (
+                        <div className="mono text-2xs text-text-muted mt-1">
+                          news from last complete cycle · {humanAge(v.lastComplete.ageSeconds)} ago
+                        </div>
+                      )}
+                    </div>
+                  </Panel>
+                </div>
+
+                {/* OPERATOR CONTROLS — only what a governed backend actually backs */}
+                <Panel provenance="live" title="Operator controls">
+                  <div data-testid="operator-controls">
+                    {(() => {
+                      const enabled = (controls.data as any)?.enabled === true;
+                      const available = ((controls.data as any)?.commands ?? []) as any[];
+                      if (!enabled || available.length === 0) {
+                        // NO FAKE BUTTONS. The command transport is NullTransport by
+                        // default and `/api/commands/{name}` is the fixture-surface
+                        // vocabulary, explicitly not wired to arming or order
+                        // machinery. Rendering KILL / REVOKE here would offer an
+                        // operator a control that silently does nothing — worse than
+                        // offering none at all, because it would be trusted in an
+                        // emergency.
+                        return (
+                          <>
+                            <div className="mono text-2xs" style={{ color: TONE.amber }}>
+                              No governed operator controls are available
+                            </div>
+                            <div className="mono text-2xs text-text-muted mt-1">
+                              The operator command channel reports
+                              {' '}<span className="text-text-2">enabled: false</span> with an empty registry,
+                              and there are no active authorization grants to revoke. KILL, CLEAR KILL and
+                              REVOKE are therefore not rendered — a control that cannot act must not look
+                              like one that can.
+                            </div>
+                            <div className="mono text-2xs text-text-muted mt-1">
+                              Kill state is still reported above (Protection → Kill switch) from node telemetry.
+                            </div>
+                          </>
+                        );
+                      }
+                      return (
+                        <div className="flex flex-wrap gap-2" data-testid="operator-control-buttons">
+                          {available.map((c: any) => (
+                            <button key={c.name ?? c.id} data-testid={`control-${c.name ?? c.id}`}
+                                    className="mono text-2xs uppercase tracking-wider px-2 py-1 rounded-sm
+                                               border border-[hsl(var(--border-mid))]"
+                                    onClick={() => {
+                                      // Destructive controls use the existing typed
+                                      // confirmation pattern; nothing fires without it.
+                                      const word = String(c.name ?? c.id).toUpperCase();
+                                      const typed = window.prompt(
+                                        `${word}\n\nThis is a governed, destructive control.\n` +
+                                        `Type ${word} to confirm.`);
+                                      if (typed !== word) return;
+                                      api.runOperatorCommand?.(c.name ?? c.id)
+                                        .then(() => qc.refetchQueries({ type: 'active' }))
+                                        .catch((e: any) => setRefreshError(String(e?.message ?? e)));
+                                    }}>
+                              {c.name ?? c.id}
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </Panel>
+
+                {/* ACTIVE MARKETS */}
+                <Panel provenance="live" title="Active markets">
+                  <div data-testid="markets-card" className="grid grid-cols-1 md:grid-cols-2 gap-x-8">
+                    <KV k="Instrument" v={`${clean(nd.engine?.symbol) ?? '—'} · ${clean(nd.engine?.timeframe) ?? '—'}`} />
+                    <KV k="Cycle" v={String(v.current?.cycleStatus ?? 'unknown').toUpperCase()} />
+                    <KV k="Last boundary" v={clean(cyc.last_boundary)} />
+                    <KV k="Last bar" v={clean(cyc.last_bar_time)} />
+                    <KV k="Bid / Ask" v={nd.market?.available ? `${nd.market.bid} / ${nd.market.ask}` : 'not sampled this cycle'} />
+                    <KV k="Open positions" v={positions.length} />
+                  </div>
+                </Panel>
+
+                {/* OPEN POSITIONS — the node's own array */}
+                <Panel provenance="live" title={`Open positions (${positions.length})`}>
+                  {positions.length === 0 ? (
+                    <div data-testid="no-positions" className="mono text-2xs text-text-muted">
+                      No open positions
+                      {nd.reconciliation?.available === true && (
+                        <> · node reports expected {nd.reconciliation.expected_position_count ?? '—'} / observed {nd.reconciliation.observed_position_count ?? '—'}</>
+                      )}
+                    </div>
+                  ) : (
+                    <table className="w-full text-2xs mono" data-testid="positions-table">
+                      <thead><tr className="text-text-muted text-left">
+                        {['Pair', 'Side', 'Entry', 'Stop', 'TP', 'Ticket'].map((h) =>
+                          <th key={h} className="font-normal py-1 pr-3">{h}</th>)}
+                      </tr></thead>
+                      <tbody>{positions.map((p, i) => (
+                        <tr key={i} className="border-t border-[hsl(var(--border-mid)/0.4)]">
+                          <td className="py-1 pr-3">{clean(p.symbol) ?? '—'}</td>
+                          <td className="py-1 pr-3">{clean(p.side) ?? '—'}</td>
+                          <td className="py-1 pr-3">{clean(p.entry) ?? '—'}</td>
+                          <td className="py-1 pr-3">{clean(p.sl) ?? '—'}</td>
+                          <td className="py-1 pr-3">{clean(p.tp) ?? '—'}</td>
+                          <td className="py-1 pr-3">{clean(p.ticket) ?? '—'}</td>
+                        </tr>))}
+                      </tbody>
+                    </table>
+                  )}
+                </Panel>
+
+                {/* RECENT EXECUTION ACTIVITY — why a trade was or wasn't taken */}
+                <Panel provenance="live" title="Recent execution activity">
+                  <div data-testid="execution-activity">
+                    {records.length === 0 ? (
+                      <div className="mono text-2xs text-text-muted">
+                        No decision records — the node publishes these only at cycle end.
+                      </div>
+                    ) : (
+                      <>
+                        <div className="mono text-2xs text-text-muted mb-2">
+                          from last complete cycle · {humanAge(v.lastComplete?.ageSeconds)} ago ·
+                          showing {Math.min(12, records.length)} of {decisions.total_candidates ?? records.length}
+                        </div>
+                        <table className="w-full text-2xs mono">
+                          <thead><tr className="text-text-muted text-left">
+                            {['Time (London)', 'Trade', 'Dir', 'Lifecycle', 'Reason'].map((h) =>
+                              <th key={h} className="font-normal py-1 pr-3">{h}</th>)}
+                          </tr></thead>
+                          <tbody>{sortNewestFirst(records).slice(0, 12).map((r, i) => {
+                            const lc = lifecycleOf(r);
+                            return (
+                              <tr key={clean(r.trade_id) ?? i} className="border-t border-[hsl(var(--border-mid)/0.4)]"
+                                  data-testid="activity-row">
+                                <td className="py-1 pr-3 whitespace-nowrap">
+                                  {clean(r.session_local)?.slice(0, 16) ?? clean(r.utc)?.slice(0, 16) ?? '—'}
+                                  <span className="text-text-muted"> {clean(r.session_tz_abbrev) ?? ''}</span>
+                                </td>
+                                <td className="py-1 pr-3">{clean(r.trade_id) ?? '—'}</td>
+                                <td className="py-1 pr-3">{clean(r.direction) === 'bullish' ? 'long' : clean(r.direction) === 'bearish' ? 'short' : '—'}</td>
+                                <td className="py-1 pr-3">
+                                  <span className="mono text-2xs px-1 rounded-sm"
+                                        data-testid="activity-lifecycle" data-terminal={lc.terminal}
+                                        style={{ color: colorOf(lc.sev),
+                                                 background: `color-mix(in srgb, ${colorOf(lc.sev)} 12%, transparent)` }}>
+                                    {lc.label}
+                                  </span></td>
+                                <td className="py-1 pr-3">
+                                  {clean(r.refusal_reason) ?? clean(r.cancel_reason) ?? clean(r.outcome) ?? '—'}</td>
+                              </tr>);
+                          })}</tbody>
+                        </table>
+                      </>
+                    )}
+                  </div>
+                </Panel>
+              </div>
+            );
+          })}
+
+          {/* BROKER TRADES — kept visually distinct from strategy/replay results */}
+          <Panel provenance="live" title="Broker trades">
+            <div data-testid="broker-trades">
+              {(() => {
+                const { broker, simulated, unverified } = splitLedger((ledger.data as any)?.trades ?? []);
+                return (
+                  <>
+                    {broker.length === 0 ? (
+                      <div className="mono text-2xs text-text-muted" data-testid="no-broker-trades">
+                        No broker-executed trades recorded.
+                      </div>
+                    ) : (
+                      <div className="mono text-2xs" data-testid="broker-trade-count">
+                        {broker.length} broker-executed
+                      </div>
+                    )}
+                    {unverified.length > 0 && (
+                      // Neither provably broker-executed nor provably simulated.
+                      // It gets its own bucket rather than a guess in either direction.
+                      <div className="mono text-2xs text-text-muted mt-2 pt-2
+                                      border-t border-[hsl(var(--border-mid)/0.4)]"
+                           data-testid="unverified-trade-count">
+                        {unverified.length} record{unverified.length === 1 ? '' : 's'} of
+                        {' '}unverified provenance — not counted as broker-executed
+                      </div>
+                    )}
+                    {simulated.length > 0 && (
+                      // Shown, but NEVER under the broker heading and never counted
+                      // as broker-executed — the local mock adapter writes into the
+                      // same durable ledger.
+                      <div className="mono text-2xs text-text-muted mt-2 pt-2
+                                      border-t border-[hsl(var(--border-mid)/0.4)]"
+                           data-testid="simulated-trade-count">
+                        {simulated.length} simulated / mock-adapter record
+                        {simulated.length === 1 ? '' : 's'} in the ledger — not broker-executed
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          </Panel>
+        </div>
+
+        {/* ── attention rail ────────────────────────────────────────────── */}
+        <div className="col-span-12 lg:col-span-3">
+          <Panel provenance="live" title="Attention">
+            <div data-testid="attention-rail">
+              {attention.length === 0 ? (
+                <div className="mono text-2xs text-text-muted" data-testid="attention-none">
+                  No operator action required
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {attention.map((a, i) => (
+                    <div key={i} data-testid="attention-item" data-severity={a.sev}>
+                      <div className="flex items-center gap-1.5">
+                        <AlertTriangle size={11} style={{ color: colorOf(a.sev) }} />
+                        <span className="mono text-2xs uppercase tracking-wider"
+                              style={{ color: colorOf(a.sev) }}>{a.title}</span>
+                      </div>
+                      <div className="mono text-2xs text-text-muted ml-4">{a.detail}</div>
+                      <div className="mono text-2xs text-text-muted ml-4 opacity-60">{a.node}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Panel>
+        </div>
+      </div>
+    </div>
   );
 }
