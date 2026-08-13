@@ -1,4 +1,4 @@
-import { useRepository } from '@/hooks/useRepository';
+import type { GhostTrade } from '@/types/domain';
 import {
   Badge,
   KeyValueGrid,
@@ -22,60 +22,20 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+/**
+ * M-TRADES-1: this inspector read the FIXTURE world directly (ghost trade records),
+ * bypassing /api/trades entirely. There is no authoritative ghost-execution source, so it
+ * states the absence rather than rendering an authored record.
+ */
 export function GhostTradeRenderer({ ghostTradeId }: { ghostTradeId: string }) {
-  const { world } = useRepository();
-  const g = world.ghostTrades.find((x) => x.ghostTradeId === ghostTradeId);
-  if (!g) return <div className="p-4 text-text-muted">Ghost trade not found</div>;
-  const { session, structure, direction, marketState, instrument } = parseScenarioKey(g.scenarioKey);
-  const pkg = world.packages.find((p) => p.packageHash === g.packageHash);
-
   return (
-    <div className="p-4 space-y-5">
-      <div className="space-y-1.5">
-        <div className="mono text-xs text-text-muted truncate">{g.ghostTradeId}</div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <Badge variant="ghost">{g.ghostModelId}</Badge>
-          <LaneChip lane={g.lane} />
-          {pkg && <PackageVersionChip version={pkg.version} hash={pkg.packageHash} />}
-        </div>
+    <div className="p-4 space-y-2" data-testid="ghost-execution-inspector-unavailable">
+      <div className="mono text-xs text-text-muted truncate">{ghostTradeId}</div>
+      <div className="text-sm text-text">No authoritative ghost trade record</div>
+      <div className="text-xs text-text-muted">
+        The Control Tower has no authoritative ghost-execution source. Nothing can be
+        reported for this identifier.
       </div>
-
-      <Section title="Scenario">
-        <div className="flex items-center gap-2 flex-wrap text-xs text-text-2">
-          <span className="text-text">{instrument}</span>
-          <span>·</span>
-          <span>{session}</span>
-          <span>·</span>
-          <span>{structure}</span>
-          <span>·</span>
-          <span style={{ color: direction === 'long' ? 'var(--positive)' : 'var(--negative)' }}>{direction}</span>
-          <span>·</span>
-          <MarketStateBadge state={marketState} />
-        </div>
-      </Section>
-
-      <Section title="Ghost Outcome">
-        <KeyValueGrid
-          items={[
-            {
-              label: 'Outcome',
-              value: (
-                <Badge variant={g.ghostOutcome === 'WIN' ? 'validation' : g.ghostOutcome === 'LOSS' ? 'live' : 'neutral'}>
-                  {g.ghostOutcome}
-                </Badge>
-              ),
-            },
-            { label: 'R', value: <RValue value={g.ghostR} />, mono: true },
-            { label: 'MAE', value: <RValue value={g.ghostMae} />, mono: true },
-            { label: 'MFE', value: <RValue value={g.ghostMfe} />, mono: true },
-            { label: 'Fill delay', value: `${g.ghostFillDelayCandles} candles`, mono: true },
-          ]}
-        />
-      </Section>
-
-      <Section title="Note">
-        <p className="text-xs text-text-2">{g.note}</p>
-      </Section>
     </div>
   );
 }

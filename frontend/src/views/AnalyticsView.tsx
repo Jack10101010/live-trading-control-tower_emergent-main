@@ -1,214 +1,170 @@
-import { useOutletContext } from 'react-router-dom';
-import { usePolicyMatrix, useTrades } from '@/hooks/useRepository';
-import { Panel } from '@/components/structures/Panel';
-import { FeatureGate } from '@/components/FeatureGate';
-import { ChartPanel } from '@/components/domain/ChartPanel';
-import { DataTable, type Column } from '@/components/structures/DataTable';
-import { RValue, MetricStat } from '@/components/primitives';
-import { fmtPercent, fmtR } from '@/lib/format';
-import { useMemo, useState } from 'react';
-import {
-  computeMetrics,
-  equityCurve,
-  groupMetrics,
-  fmtPF,
-  DIMENSIONS,
-  type Dimension,
-  type PerfMetrics,
-} from '@/lib/analytics';
+import { useLedgerAnalytics } from '@/hooks/useRepository';
+import { Panel, EmptyState } from '@/components/structures/Panel';
+import { MetricStat, PLValue } from '@/components/primitives';
+import { BarChart3 } from 'lucide-react';
 
+/**
+ * M-TRADES-2 — performance from the authoritative ledger, or nothing.
+ *
+ * This view previously ran `computeMetrics(trades.live)` over the FIXTURE
+ * trades: expectancy, win rate, equity curve and grouped breakdowns, all
+ * derived from two authored records. Worse than the fabrication itself was the
+ * empty case — `computeMetrics([])` returns 0 trades / 0% / $0, a
+ * mathematically valid report of a flat result nobody observed.
+ *
+ * Every number here is now computed by the backend from records that passed the
+ * admission policy (MT5 execution origin, settled status, fully closed, outcome
+ * and P&L evidence present). The frontend derives NOTHING — there is one set of
+ * formulas and it lives beside the ledger.
+ *
+ * Under the development mock adapter every ledger record is `mock`, so this
+ * correctly reports the empty state with an exclusion account. That is the
+ * honest outcome, not a shortfall.
+ */
 export function AnalyticsView() {
-  const { pair } = useOutletContext<{ pair: string }>();
-  const matrix = usePolicyMatrix(pair);
-  const trades = useTrades({ pair });
-  const [dim, setDim] = useState<Dimension>('marketState');
+  const a = useLedgerAnalytics();
 
-  const metrics = useMemo(() => computeMetrics(trades.live), [trades.live]);
-  const equity = useMemo(() => equityCurve(trades.live), [trades.live]);
-  const groups = useMemo(() => groupMetrics(trades.live, dim), [trades.live, dim]);
+  if (a.availability === 'unavailable') {
+    return (
+      <Shell>
+        <EmptyState
+          title="Analytics unavailable"
+          description="The trade ledger could not be read, so no performance can be reported. This is not a statement that performance was flat."
+          icon={<BarChart3 size={16} />}
+        />
+      </Shell>
+    );
+  }
 
-  const cells = Object.values(matrix.cells);
+  if (a.availability === 'empty') {
+    return (
+      <Shell>
+        <EmptyState
+          title="No admissible completed trades"
+          description="The ledger answered and holds no trades that qualify for performance measurement. Deriving a win rate or expectancy from an empty set would report a flat result that was never observed."
+          icon={<BarChart3 size={16} />}
+        />
+        {a.excludedCount > 0 && <Exclusions analytics={a} />}
+      </Shell>
+    );
+  }
 
-  // Aggregations
-  const bySession = useMemo(() => {
-    const map = new Map<string, { count: number; sumEV: number; sumWr: number; sumN: number }>();
-    cells.forEach((c) => {
-      const key = c.cohort.session;
-      const cur = map.get(key) ?? { count: 0, sumEV: 0, sumWr: 0, sumN: 0 };
-      cur.count += 1;
-      cur.sumEV += c.evidence.expectancyR;
-      cur.sumWr += c.evidence.winRate;
-      cur.sumN += c.evidence.sampleSize;
-      map.set(key, cur);
-    });
-    return Array.from(map.entries()).map(([k, v]) => ({
-      session: k,
-      count: v.count,
-      avgEV: v.sumEV / v.count,
-      avgWr: v.sumWr / v.count,
-      n: v.sumN,
-    }));
-  }, [cells]);
-
-  const byState = useMemo(() => {
-    const map = new Map<string, { count: number; sumEV: number; sumN: number; allowed: number }>();
-    cells.forEach((c) => {
-      const cur = map.get(c.marketState) ?? { count: 0, sumEV: 0, sumN: 0, allowed: 0 };
-      cur.count += 1;
-      cur.sumEV += c.evidence.expectancyR;
-      cur.sumN += c.evidence.sampleSize;
-      if (c.eligibility.resolvedAllowed) cur.allowed += 1;
-      map.set(c.marketState, cur);
-    });
-    return Array.from(map.entries()).map(([k, v]) => ({
-      state: k,
-      count: v.count,
-      avgEV: v.sumEV / v.count,
-      allowedPct: (v.allowed / v.count) * 100,
-      n: v.sumN,
-    }));
-  }, [cells]);
-
+  const small = a.admittedCount < 30;
   return (
-    // Scroll fix: `absolute inset-0` gives the scroll region a DEFINITE height
-    // (immune to percentage-height resolution quirks up the flex chain that
-    // clipped the bottom panels), `overflow-y-auto` guarantees the scrollbar,
-    // and `pb-8` keeps the last row (By Session / By Market State) clear of
-    // the viewport edge at full scroll.
-    <div className="relative h-full min-h-0">
-      <div className="absolute inset-0 overflow-y-auto">
-        <div className="grid grid-cols-12 gap-4 p-4 pb-8">
-      <Panel title="Performance Overview" className="col-span-12">
-        <div className="grid grid-cols-7 gap-6">
-          <MetricStat label="Net R" value={<RValue value={metrics.netR} />} emphasise />
-          <MetricStat label="Trades" value={metrics.count} mono emphasise />
-          <MetricStat label="Win rate" value={<span className="mono">{metrics.count ? fmtPercent(metrics.winRate * 100) : '—'}</span>} emphasise />
-          <MetricStat label="Expectancy" value={<RValue value={metrics.expectancyR} />} emphasise />
-          <MetricStat label="Avg R" value={<RValue value={metrics.avgR} />} emphasise />
-          <MetricStat label="Profit factor" value={<span className="mono">{fmtPF(metrics.profitFactor)}</span>} emphasise />
-          <MetricStat label="Max DD" value={<RValue value={metrics.maxDrawdownR} />} emphasise />
+    <Shell>
+      {/* Sample size is stated factually. No confidence score, no "healthy",
+          no significance claim — M-CONF-1 removed fabricated certainty and
+          this must not reintroduce it in statistical clothing. */}
+      <p className="text-2xs text-text-muted mb-3" data-testid="analytics-sample">
+        {a.admittedCount} completed trade{a.admittedCount === 1 ? '' : 's'} admitted
+        {a.excludedCount > 0 ? ` · ${a.excludedCount} excluded` : ''}
+        {small ? ' · small sample: rates below are arithmetic over these trades only' : ''}
+        {a.accountCurrency ? ` · ${a.accountCurrency}` : ''}
+      </p>
+
+      <Panel provenance="live" title="Realised performance (gross)">
+        <div className="grid grid-cols-4 gap-6">
+          <Stat label="Trades" value={a.admittedCount} />
+          <Stat label="Wins" value={a.wins} />
+          <Stat label="Losses" value={a.losses} />
+          <Stat label="Break-even" value={a.breakEven} />
+          <Stat label="Win rate" value={a.winRate} percent />
+          <Stat label="Gross P/L" value={a.grossRealizedPnL} money />
+          <Stat label="Gross profit" value={a.grossProfit} money />
+          <Stat label="Gross loss" value={a.grossLoss} money />
+          <Stat label="Average win" value={a.averageWin} money />
+          <Stat label="Average loss" value={a.averageLoss} money />
+          <Stat label="Profit factor" value={a.profitFactor} />
+          <Stat label="Expectancy / trade" value={a.expectancyGross} money />
+          <Stat label="Max drawdown" value={a.maxDrawdownGross} money />
         </div>
       </Panel>
 
-      <Panel title="Equity Curve (cumulative R)" className="col-span-12">
-        {equity.length >= 1 ? (
-          <FeatureGate flag="charts">
-            <ChartPanel kind="line" lineData={equity} height={220} linePrecision={2} className="w-full" />
-          </FeatureGate>
+      <Panel provenance="live" title="Net performance">
+        {a.netAvailable ? (
+          <div className="grid grid-cols-4 gap-6">
+            <Stat label="Net realised P/L" value={a.netRealizedPnL} money emphasise />
+          </div>
         ) : (
-          <div className="text-xs text-text-muted italic py-8 text-center">
-            No closed trades in scope yet — the equity curve appears once trades settle.
+          <div className="text-xs text-text-muted" data-testid="net-unavailable">
+            {a.netUnavailableReason}
           </div>
         )}
       </Panel>
 
-      <Panel
-        title={
-          <span className="flex items-center gap-2">
-            Performance by
-            <select
-              value={dim}
-              onChange={(e) => setDim(e.target.value as Dimension)}
-              className="h-6 text-2xs rounded-sm bg-[color:var(--panel-2)] border border-[color:var(--border)] text-text px-1.5 outline-none"
-              data-testid="analytics-dimension"
-            >
-              {DIMENSIONS.map((d) => (
-                <option key={d.key} value={d.key}>
-                  {d.label}
-                </option>
-              ))}
-            </select>
-          </span>
-        }
-        className="col-span-12"
-        dense
-      >
-        <DataTable columns={groupColumns} data={groups} rowKey={(g) => g.group} emptyMessage="No trades in scope" />
+      <Panel provenance="live" title="R multiples">
+        {a.rAvailable ? (
+          <div className="grid grid-cols-4 gap-6">
+            <Stat label="Average R" value={a.averageR} />
+            <Stat label="Expectancy (R)" value={a.expectancyR} />
+          </div>
+        ) : (
+          <div className="text-xs text-text-muted" data-testid="r-unavailable">
+            {a.rUnavailableReason}
+          </div>
+        )}
       </Panel>
 
-      <Panel title="By Session (policy expectancy)" className="col-span-6">
-        <div className="space-y-2">
-          {bySession.map((row) => (
-            <BarRow
-              key={row.session}
-              label={row.session}
-              value={fmtR(row.avgEV)}
-              fillPct={Math.min(100, Math.max(5, ((row.avgEV + 0.3) / 0.6) * 100))}
-              color={row.avgEV > 0 ? 'var(--positive)' : 'var(--negative)'}
-              sub={`n=${row.n}`}
-            />
-          ))}
-        </div>
-      </Panel>
+      {a.excludedCount > 0 && <Exclusions analytics={a} />}
+    </Shell>
+  );
+}
 
-      <Panel title="By Market State (expectancy · allowed %)" className="col-span-6">
-        <div className="space-y-2">
-          {byState.map((row) => (
-            <BarRow
-              key={row.state}
-              label={row.state}
-              value={fmtR(row.avgEV)}
-              fillPct={row.allowedPct}
-              color={row.avgEV > 0 ? 'var(--positive)' : 'var(--negative)'}
-              sub={`allowed ${row.allowedPct.toFixed(0)}%`}
-            />
-          ))}
-        </div>
-      </Panel>
-        </div>
+/** Exclusions are auditable: an operator can see what was refused and why. */
+function Exclusions({ analytics }: { analytics: ReturnType<typeof useLedgerAnalytics> }) {
+  const byReason = analytics.exclusions.reduce<Record<string, number>>((acc, e) => {
+    acc[e.reason] = (acc[e.reason] ?? 0) + 1;
+    return acc;
+  }, {});
+  return (
+    <Panel provenance="live" title={`Excluded records (${analytics.excludedCount})`}>
+      <ul className="text-xs mono space-y-1" data-testid="analytics-exclusions">
+        {Object.entries(byReason).map(([reason, count]) => (
+          <li key={reason}>{count} × {reason}</li>
+        ))}
+      </ul>
+    </Panel>
+  );
+}
+
+function Shell({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="p-6 h-full min-h-0 overflow-auto space-y-4" data-testid="analytics-view">
+      <div className="mb-2">
+        <h1 className="text-2xl font-semibold text-text tracking-tight">Analytics</h1>
+        <p className="text-xs text-text-muted mt-1">
+          Realised performance from admissible broker-executed trades
+        </p>
       </div>
+      {children}
     </div>
   );
 }
 
-type GroupRow = { group: string; metrics: PerfMetrics };
-
-function shortenGroup(g: string): string {
-  if (g.startsWith('sha256:')) return `${g.slice(7, 15)}…`;
-  if (g.startsWith('dpl_') || g.startsWith('mf_')) return `${g.slice(0, 12)}…`;
-  const parts = g.split(':');
-  return parts.length > 3 ? parts.slice(-3).join(':') : g;
-}
-
-const groupColumns: Column<GroupRow>[] = [
-  { key: 'group', header: 'Group', cell: (g) => <span className="mono text-xs text-text truncate" title={g.group}>{shortenGroup(g.group)}</span> },
-  { key: 'n', header: 'Trades', align: 'right', mono: true, cell: (g) => g.metrics.count },
-  { key: 'wr', header: 'Win %', align: 'right', mono: true, cell: (g) => (g.metrics.count ? `${(g.metrics.winRate * 100).toFixed(0)}%` : '—') },
-  { key: 'net', header: 'Net R', align: 'right', cell: (g) => <RValue value={g.metrics.netR} /> },
-  { key: 'exp', header: 'Expectancy', align: 'right', cell: (g) => <RValue value={g.metrics.expectancyR} /> },
-  { key: 'pf', header: 'PF', align: 'right', mono: true, cell: (g) => fmtPF(g.metrics.profitFactor) },
-  { key: 'dd', header: 'Max DD', align: 'right', cell: (g) => <RValue value={g.metrics.maxDrawdownR} /> },
-];
-
-function BarRow({
-  label,
-  value,
-  fillPct,
-  color,
-  sub,
+/** `null` renders "—". A metric that is not derivable is never shown as zero. */
+function Stat({
+  label, value, money = false, percent = false, emphasise = false,
 }: {
-  label: string;
-  value: string;
-  fillPct: number;
-  color: string;
-  sub?: string;
+  label: string; value: number | null; money?: boolean; percent?: boolean; emphasise?: boolean;
 }) {
   return (
-    <div className="grid grid-cols-[100px_1fr_80px] items-center gap-3 text-xs">
-      <span className="text-text-2">{label}</span>
-      <span
-        className="h-3 rounded-sm overflow-hidden relative"
-        style={{ background: 'var(--panel-3)' }}
-      >
-        <span
-          className="block h-full"
-          style={{ width: `${Math.max(2, Math.min(100, fillPct))}%`, background: color, opacity: 0.7 }}
-        />
-      </span>
-      <span className="mono text-right text-text">
-        {value}
-        {sub && <span className="ml-1 text-2xs text-text-muted">{sub}</span>}
-      </span>
-    </div>
+    <MetricStat
+      label={label}
+      emphasise={emphasise}
+      value={
+        value === null || value === undefined ? (
+          <span className="mono text-text-muted" data-testid="metric-not-derivable"
+                title="Not derivable from the admitted records. Unknown, not zero.">
+            —
+          </span>
+        ) : money ? (
+          <PLValue value={value} />
+        ) : percent ? (
+          <span className="mono">{(value * 100).toFixed(1)}%</span>
+        ) : (
+          <span className="mono">{value}</span>
+        )
+      }
+    />
   );
 }

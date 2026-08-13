@@ -31,12 +31,36 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+from live.account_identity import IdentityConfigError, verify_account_identity
 from live.config import ENGINE_VERSION_EXPECTED, LiveConfig
 from live.mt5_gateway import MT5Gateway
 from live.state import RunnerState
 
 EXPECTED_COMMIT = "d978074a2ee938fb4803e50d419788c584d6ef57"
 CHECKS: list[dict] = []
+
+
+def account_identity_stage(cfg: LiveConfig, gateway) -> tuple[bool, str]:
+    """Sample the connected account identity ONCE and verify it against the
+    operator policy. Never raises and never submits/mutates: a misconfigured
+    policy, a sampling error, an unavailable identity, or any mismatch all return
+    (False, bounded evidence). Evidence carries NO credentials/secrets."""
+    try:
+        policy = cfg.identity_policy()
+    except IdentityConfigError as exc:
+        return False, f"identity policy misconfigured: {str(exc)[:160]}"
+    try:
+        identity = gateway.account_identity()      # sampled exactly once
+    except Exception as exc:                        # noqa: BLE001 — accessor is non-throwing; defence-in-depth
+        return False, f"identity sampling error: {type(exc).__name__}"
+    verdict = verify_account_identity(identity, policy)
+    if identity is None:
+        return False, "identity unavailable"
+    ev = identity.to_dict()
+    detail = (f"login={ev['login']} server={ev['server']} {ev['currency']} "
+              f"{ev['trade_mode']} bal={ev['balance']} eq={ev['equity']} -> "
+              + ("OK" if verdict.allowed else "REJECT " + ",".join(verdict.reasons)))
+    return verdict.allowed, detail
 
 
 def check(name: str, ok: bool, detail: str = "") -> bool:
@@ -88,6 +112,10 @@ def preflight(cfg: LiveConfig) -> int:
         now = gateway.server_time_utc()
         check("mt5_symbol_resolves", now is not None,
               f"{cfg.broker_symbol} server time {now}")
+        # LX-1 Slice 6: account-identity binding — a mismatch/unavailable identity
+        # FAILS preflight (prerequisite for any future arming). No order is placed.
+        id_ok, id_detail = account_identity_stage(cfg, gateway)
+        check("account_identity_verified", id_ok, id_detail)
         gateway.disconnect()
     return finish()
 

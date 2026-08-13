@@ -1,3 +1,4 @@
+import type { DataProvenance } from '@/types/provenance';
 /**
  * orderBlocks — the Order Block DATA SOURCE + pure zone styling (Phase 17).
  *
@@ -26,6 +27,8 @@ export interface OrderBlock {
   /** When price returned into the block (supplied by the source; the layer only
    *  thresholds it against replay time — it computes no mitigation itself). */
   mitigatedAtISO?: string | null;
+  /** UI-0 — generated in the Control Tower, NOT detected by the Lux engine. */
+  provenance: DataProvenance;
 }
 
 const round5 = (x: number) => Math.round(x * 1e5) / 1e5;
@@ -51,7 +54,8 @@ export function deriveOrderBlocks(instrument: string, candles: Candle[]): OrderB
     // The oldest block mitigates partway through the window (deterministic).
     const mitigatedAtISO = k === 0 ? unixToISO(candles[n - 2].time) : null;
     return {
-      id: `OB-${1000 + idx}`,
+      id: `SYN-OB-${1000 + idx}`,
+      provenance: 'synthesized',
       instrument,
       direction: bullish ? 'bullish' : 'bearish',
       top,
@@ -91,6 +95,6 @@ export function orderBlockZone(
     price0: ob.bottom,
     price1: ob.top,
     color: `color-mix(in srgb, ${base} ${opacityPct}%, transparent)`,
-    label: `OB ${ob.id} · ${ob.direction} · ${mitigated ? 'mitigated' : 'active'}`,
+    label: `SYNTHETIC ${ob.id} · ${ob.direction} · ${mitigated ? 'mitigated' : 'active'}`,
   };
 }

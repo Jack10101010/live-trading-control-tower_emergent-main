@@ -1,4 +1,4 @@
-import { useRepository } from '@/hooks/useRepository';
+import type { BlockedIntent } from '@/types/domain';
 import { Badge, KeyValueGrid, LaneChip, TimestampUTC } from '@/components/primitives';
 import { parseScenarioKey } from '@/lib/utils';
 
@@ -10,60 +10,19 @@ const REASON_LABEL: Record<string, string> = {
   PROTECTION_VETO: 'Protection veto',
 };
 
+/**
+ * M-TRADES-1: this inspector read the FIXTURE world directly (blocked intent records),
+ * bypassing /api/trades entirely. There is no authoritative blocked-intent source, so it
+ * states the absence rather than rendering an authored record.
+ */
 export function BlockedIntentRenderer({ blockedIntentId }: { blockedIntentId: string }) {
-  const { world } = useRepository();
-  const b = world.blockedIntents.find((x) => x.blockedIntentId === blockedIntentId);
-  if (!b) return <div className="p-4 text-text-muted">Blocked intent not found</div>;
-  const { session, structure, direction, marketState, instrument } = parseScenarioKey(b.scenarioKey);
-
   return (
-    <div className="p-4 space-y-5">
-      <div className="space-y-1.5">
-        <div className="mono text-xs text-text-muted truncate">{b.blockedIntentId}</div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <Badge variant="live" color="var(--blocked)">
-            {REASON_LABEL[b.blockReason] ?? b.blockReason}
-          </Badge>
-          <LaneChip lane={b.lane} />
-        </div>
-      </div>
-
-      <section>
-        <h4
-          className="text-[10px] uppercase tracking-widest text-text-muted font-medium border-b pb-1 mb-2"
-          style={{ borderColor: 'var(--border-subtle)' }}
-        >
-          Rule fired
-        </h4>
-        <div className="mono text-xs text-text bg-[color:var(--panel-2)] rounded-md p-2 border" style={{ borderColor: 'var(--border-subtle)' }}>
-          {b.ruleFired}
-        </div>
-      </section>
-
-      <section>
-        <h4
-          className="text-[10px] uppercase tracking-widest text-text-muted font-medium border-b pb-1 mb-2"
-          style={{ borderColor: 'var(--border-subtle)' }}
-        >
-          Scenario
-        </h4>
-        <KeyValueGrid
-          items={[
-            { label: 'Instrument', value: instrument },
-            { label: 'Session', value: session },
-            { label: 'Structure', value: structure },
-            { label: 'Direction', value: direction },
-            { label: 'Market state', value: marketState },
-            { label: 'At', value: <TimestampUTC iso={b.at} /> },
-            { label: 'MS ref', value: b.marketStateRef, mono: true },
-          ]}
-        />
-      </section>
-
-      <div className="rounded-md border p-3 text-xs text-text-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--panel-2)' }}>
-        <strong className="text-text">Nothing ever just says "Blocked" — it explains why.</strong>{' '}
-        This intent never became a trade because the fired rule prevented it. Toggle the lens on
-        the Policy Matrix to see the cell that produced this verdict.
+    <div className="p-4 space-y-2" data-testid="blocked-intent-inspector-unavailable">
+      <div className="mono text-xs text-text-muted truncate">{blockedIntentId}</div>
+      <div className="text-sm text-text">No authoritative blocked intent record</div>
+      <div className="text-xs text-text-muted">
+        The Control Tower has no authoritative blocked-intent source. Nothing can be
+        reported for this identifier.
       </div>
     </div>
   );

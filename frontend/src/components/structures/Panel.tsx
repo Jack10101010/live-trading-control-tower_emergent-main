@@ -1,5 +1,6 @@
 import { cn } from '@/lib/utils';
 import type { ReactNode } from 'react';
+import { provenanceBadge, provenanceTone, type PanelProvenance } from '@/lib/cardProvenance';
 
 interface PanelProps {
   title?: ReactNode;
@@ -10,6 +11,48 @@ interface PanelProps {
   bodyClassName?: string;
   dense?: boolean;
   scroll?: boolean;
+  /**
+   * REQUIRED data-provenance classification (temporary migration aid).
+   * Pure chrome (nav, empty forms, decorative containers) uses 'none'.
+   * TypeScript enforces that no data card can omit its classification.
+   */
+  provenance: PanelProvenance;
+}
+
+/** Border + badge styling for the temporary GREEN/RED provenance system. */
+function provenanceStyle(tone: 'green' | 'neutral' | 'red' | 'none'): {
+  border: string; glow: string | undefined; badgeBg: string; badgeFg: string;
+} | null {
+  if (tone === 'none') return null;
+  // M-PROVENANCE-FINAL: neutral uses the ordinary subtle border — an honest
+  // "not wired" card must not look like a fabrication warning.
+  const color = tone === 'green' ? 'var(--positive)'
+    : tone === 'neutral' ? 'var(--border-subtle)' : 'var(--negative)';
+  return {
+    border: color,
+    glow: tone === 'neutral' ? 'none'
+      : `0 0 0 1px ${tone === 'green' ? 'var(--positive)' : 'var(--negative)'} inset`,
+    badgeBg: color,
+    badgeFg: 'var(--panel)',
+  };
+}
+
+/** Small LIVE / NON-LIVE badge rendered in the shared header slot. */
+export function ProvenanceBadge({ provenance }: { provenance: PanelProvenance }) {
+  const label = provenanceBadge(provenance);
+  if (!label) return null;
+  const tone = provenanceTone(provenance);
+  const s = provenanceStyle(tone)!;
+  return (
+    <span
+      data-testid="card-provenance-badge"
+      data-provenance={provenance}
+      className="text-[9px] font-bold tracking-widest px-1.5 py-0.5 rounded-sm shrink-0"
+      style={{ background: s.badgeBg, color: s.badgeFg }}
+    >
+      {label}
+    </span>
+  );
 }
 
 /**
@@ -25,16 +68,24 @@ export function Panel({
   bodyClassName,
   dense = false,
   scroll = false,
+  provenance,
 }: PanelProps) {
+  const tone = provenanceTone(provenance);
+  const pstyle = provenanceStyle(tone);
   return (
     <section
+      data-provenance={provenance}
       className={cn(
         'flex flex-col border rounded-md overflow-hidden',
         className
       )}
-      style={{ borderColor: 'var(--border-subtle)', background: 'var(--panel)' }}
+      style={{
+        borderColor: pstyle ? pstyle.border : 'var(--border-subtle)',
+        boxShadow: pstyle?.glow,
+        background: 'var(--panel)',
+      }}
     >
-      {(title || actions) && (
+      {(title || actions || pstyle) && (
         <header
           className={cn(
             'flex items-center justify-between border-b',
@@ -55,7 +106,10 @@ export function Panel({
             )}
             {subtitle && <span className="text-xs text-text-muted truncate">{subtitle}</span>}
           </div>
-          {actions && <div className="flex items-center gap-1 shrink-0">{actions}</div>}
+          <div className="flex items-center gap-2 shrink-0">
+            {actions && <div className="flex items-center gap-1 shrink-0">{actions}</div>}
+            <ProvenanceBadge provenance={provenance} />
+          </div>
         </header>
       )}
       <div
@@ -159,6 +213,39 @@ export function DiffView({
       <span className="text-text font-semibold" style={{ color: 'var(--draft)' }}>
         {after}
       </span>
+    </div>
+  );
+}
+
+/**
+ * ProvenanceFrame — provenance border/badge for components that own their own
+ * internal layout (OperationalDashboard, TradeLedgerPanel, LiveRuntimePanel…).
+ * Wrap at the mount site; the child renders unchanged inside the frame.
+ */
+export function ProvenanceFrame({
+  provenance,
+  children,
+  className,
+}: {
+  provenance: PanelProvenance;
+  children: ReactNode;
+  className?: string;
+}) {
+  const tone = provenanceTone(provenance);
+  if (tone === 'none') return <>{children}</>;
+  const color = tone === 'green' ? 'var(--positive)'
+    : tone === 'neutral' ? 'var(--border-subtle)' : 'var(--negative)';
+  return (
+    <div
+      data-provenance={provenance}
+      className={cn('relative rounded-md border', className)}
+      style={{ borderColor: color, boxShadow: `0 0 0 1px ${color} inset` }}
+    >
+      {/* straddle the frame edge so the badge never covers card content */}
+      <div className="absolute right-2 -top-2 z-10">
+        <ProvenanceBadge provenance={provenance} />
+      </div>
+      {children}
     </div>
   );
 }

@@ -1,8 +1,23 @@
-"""Backend contract tests for Control Tower API.
+"""EXTERNAL smoke tests for the Control Tower API.
 
-Tests every route defined in /app/backend/server.py against the frozen
-world.v1.json fixture. All requests go through the public REACT_APP_BACKEND_URL
-so kubernetes ingress (/api → backend:8001) is exercised end-to-end.
+Every test here talks to a DEPLOYED backend over real HTTP at
+`REACT_APP_BACKEND_URL`, exercising ingress end-to-end against the frozen
+world.v1.json fixture. It is therefore an environment-dependent smoke suite, not a
+unit suite.
+
+WHY THIS FILE SKIPS INSTEAD OF ASSERTING AT IMPORT
+    It previously ran `assert BASE_URL` at module scope. With the variable unset —
+    the normal local and CI case — that assertion fired during COLLECTION, which
+    aborted the whole run (`pytest -n 0` reported "Interrupted: 1 error during
+    collection" and executed zero tests; `-n 2` reported two worker errors and a
+    non-zero exit). The failure was silent in practice because the headline count
+    still read "N passed". A module-level `skipif` reports the situation honestly
+    and lets the rest of the suite run.
+
+    The safety-critical assertions this file used to carry — MT5 never connects, and
+    the fixture command route cannot reach a real broker — did NOT depend on a
+    deployed backend. They now live in `test_safety_invariants.py`, where they run
+    unconditionally against the in-process app.
 """
 import os
 import pytest
@@ -20,7 +35,15 @@ if not BASE_URL:
                     BASE_URL = line.split("=", 1)[1].strip()
                     break
 BASE_URL = (BASE_URL or "").rstrip("/")
-assert BASE_URL, "REACT_APP_BACKEND_URL is not set"
+
+#: Skip the whole module — clearly, and at collection time — when no deployed
+#: backend is configured. Never abort collection for the rest of the suite.
+pytestmark = pytest.mark.skipif(
+    not BASE_URL,
+    reason="REACT_APP_BACKEND_URL is not set — external smoke tests need a deployed "
+           "backend. Local unit and safety coverage runs unconditionally; the "
+           "MT5-isolation and fixture-command guards live in test_safety_invariants.py.",
+)
 
 
 @pytest.fixture(scope="session")
@@ -52,7 +75,7 @@ class TestMeta:
 
 class TestWorld:
     def test_world_contract(self, api):
-        r = api.get(f"{BASE_URL}/api/world")
+        r = api.get(f"{BASE_URL}/api/dev/fixture-world")
         assert r.status_code == 200
         d = r.json()
         assert d["meta"]["fixtureVersion"] == "world.v1"
@@ -68,7 +91,7 @@ class TestWorld:
 
 class TestFleet:
     def test_fleet_shape(self, api):
-        r = api.get(f"{BASE_URL}/api/fleet")
+        r = api.get(f"{BASE_URL}/api/dev/fixture-fleet")
         assert r.status_code == 200
         d = r.json()
         assert isinstance(d["deployments"], list)
@@ -121,7 +144,7 @@ class TestPolicy:
 
 class TestTrades:
     def test_trades_eurusd(self, api):
-        r = api.get(f"{BASE_URL}/api/trades", params={"pair": "EURUSD"})
+        r = api.get(f"{BASE_URL}/api/dev/fixture-trades", params={"pair": "EURUSD"})
         assert r.status_code == 200
         d = r.json()
         assert set(d.keys()) >= {"live", "ghost", "blocked"}
@@ -131,7 +154,7 @@ class TestTrades:
         assert len(d["blocked"]) == 5, f"expected 5 blocked, got {len(d['blocked'])}"
 
     def test_trades_no_filter(self, api):
-        r = api.get(f"{BASE_URL}/api/trades")
+        r = api.get(f"{BASE_URL}/api/dev/fixture-trades")
         assert r.status_code == 200
         d = r.json()
         assert isinstance(d["live"], list)
@@ -169,7 +192,7 @@ class TestSignals:
         assert d, "empty system-confidence payload"
 
     def test_recommendations(self, api):
-        r = api.get(f"{BASE_URL}/api/recommendations")
+        r = api.get(f"{BASE_URL}/api/dev/fixture-recommendations")
         assert r.status_code == 200
         assert isinstance(r.json(), list)
 
@@ -179,14 +202,29 @@ class TestSignals:
         assert isinstance(r.json(), list)
 
     def test_feature_flags(self, api):
+        """M-FLAGS-1: capabilities report STATE and SOURCE, never a bare bool.
+
+        A boolean cannot distinguish "switched off" from "never built" from
+        "should exist but nothing is reporting", and the old dict asserted
+        availability for surfaces that report their own absence."""
         r = api.get(f"{BASE_URL}/api/feature-flags")
         assert r.status_code == 200
         d = r.json()
+        assert d["schemaVersion"] == 1
+        caps = d["capabilities"]
+        VALID = {"available", "disabled", "unsupported", "unavailable"}
         for k in ("ghostTrading", "replay", "edgeMonitor", "commandPalette"):
-            assert k in d and isinstance(d[k], bool)
+            assert k in caps, k
+            assert not isinstance(caps[k], bool), f"{k} is still a bare boolean"
+            assert caps[k]["state"] in VALID, caps[k]
+            assert caps[k]["source"] in {"runtime", "configuration", "none"}
+        # A capability whose domain reports its own absence must not claim to be
+        # available — that disagreement was the defect this milestone removed.
+        for retired in ("edgeMonitor", "versionHistory", "packageComparison"):
+            assert caps[retired]["state"] == "unavailable", retired
 
     def test_active_package(self, api):
-        r = api.get(f"{BASE_URL}/api/packages/active")
+        r = api.get(f"{BASE_URL}/api/dev/fixture-packages/active")
         assert r.status_code == 200
         d = r.json()
         assert d.get("status") == "active"
@@ -314,7 +352,7 @@ class TestExecutionOrchestrator:
         assert d["dryRun"] is True
         assert d["events"][0]["after"]["state"] == "closed"  # simulated
         # ...but the runtime overlay is unchanged (still open)
-        live = api.get(f"{BASE_URL}/api/trades").json()["live"]
+        live = api.get(f"{BASE_URL}/api/dev/fixture-trades").json()["live"]
         t = next(x for x in live if x["tradeId"] == TRADE)
         assert t["state"] == "managing"
 
@@ -731,7 +769,7 @@ class TestPortfolio:
         d = api.get(f"{BASE_URL}/api/portfolio/status").json()
         assert d["portfolioHealthy"] is True
         # Total capital reuses account equity (sum) — not recomputed from trades.
-        accts = api.get(f"{BASE_URL}/api/world").json()["accounts"]
+        accts = api.get(f"{BASE_URL}/api/dev/fixture-world").json()["accounts"]
         expected = round(sum((a.get("equity") or a.get("balance") or 0) for a in accts), 2)
         assert d["totalCapital"] == expected
         assert d["limits"]["maxAllocationsPerPair"] >= 1

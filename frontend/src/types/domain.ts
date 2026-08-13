@@ -14,6 +14,8 @@ export type MarketState =
   | 'BearCompress'
   | 'BearChop';
 export type Lane = 'live' | 'demo' | 'ghost' | 'experimental' | 'research_forward';
+import type { DataProvenance } from './provenance';
+
 export type ValidationBadge = 'NATIVE' | 'RESCORE' | 'BASE' | 'INSUFFICIENT' | 'NOT_TESTED';
 export type EligibilityAction = 'LABEL' | 'STATE_ONLY' | 'DIRECTION_AWARE' | 'DISABLE';
 
@@ -54,6 +56,12 @@ export interface PolicyCell {
     | 'rejected'
     | 'deployed';
   provenanceRecommendationId?: string | null;
+  /**
+   * UI-0 — where this cell came from. `synthesized` cells are generated in the
+   * Control Tower for design/demo and carry NO research evidence; they must never
+   * be rendered as strategy-engine output.
+   */
+  provenance?: DataProvenance;
   draftDelta?: {
     field: 'target' | 'risk' | 'eligibility';
     before: unknown;
@@ -154,6 +162,12 @@ export interface PolicyMatrixData {
   };
   cohortBaseTargets: Record<string, number>;
   cells: Record<string, PolicyCell>;
+  /** UI-0 — worst-case provenance across the grid. */
+  provenance?: DataProvenance;
+  /** UI-0 — how many cells were generated locally rather than supplied. */
+  synthesizedCells?: number;
+  /** UI-0 — how many cells came from a real source (fixture today). */
+  sourcedCells?: number;
 }
 
 export interface LiveTrade {
@@ -277,39 +291,20 @@ export interface BrokerHealth {
   timeline: Array<{ at: string; code: string; detail: string; resolved: boolean }>;
 }
 
+/** M-EDGE-1 honest contract: edge/performance is NOT computed — no metrics. */
 export interface EdgeMonitor {
-  instrument: string;
-  asOf: string;
-  metrics: {
-    expectancyR: number;
-    winRate: number;
-    edgeDrift: string;
-    distributionDrift: string;
-    featureDrift: string;
-    policyHealth: string;
-    researchVsLive: string;
-    ghostVsLive: string;
-    forwardTestHealth: string;
-    recommendationGeneration: number;
-    operatorConfidence: string;
-    futureCandidates: string[];
-  };
+  schemaVersion: number;
+  computed: false;
+  reason: string;
+  detail: string;
 }
 
+/** M-CONF-1 honest contract: confidence is NOT computed — no score exists. */
 export interface SystemConfidence {
-  score: number;
-  band: 'healthy' | 'caution' | 'degraded' | 'critical';
-  worstSignal: string;
-  explanation: string;
-  updatedAt: string;
-  signals: Array<{
-    key: string;
-    state: 'ok' | 'warn' | 'fail' | 'unknown';
-    weight: number;
-    value: string;
-    message: string;
-    since: string;
-  }>;
+  schemaVersion: number;
+  computed: false;
+  reason: string;
+  detail: string;
 }
 
 export interface EventEntry {
@@ -319,7 +314,11 @@ export interface EventEntry {
   code: string;
   humanExplanation: string;
   scenarioKey: string | null;
-  packageHash: string;
+  // Nullable: events describing the LIVE NODE carry no package hash. The node
+  // runs the Lux strategy core, which the fixture world's package does not
+  // identify — live-ingest narration (UI-2) and the operational-transition
+  // projector both emit null rather than a package the node never ran.
+  packageHash: string | null;
   who: string;
   causedBy: string;
   before: Record<string, unknown> | null;

@@ -12,107 +12,47 @@ server internals and no MT5-specific structure leaks into the runtime.
 """
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, asdict
 from typing import Any, Callable
 
-
-# ---------------------------------------------------------------------------
-# Connection lifecycle
-# ---------------------------------------------------------------------------
-
-class ConnectionState:
-    DISCONNECTED = "Disconnected"
-    CONNECTING = "Connecting"
-    CONNECTED = "Connected"
-    DEGRADED = "Degraded"
-    RECONNECTING = "Reconnecting"
-    OFFLINE = "Offline"
-
-
-# ---------------------------------------------------------------------------
-# Canonical broker models — runtime-facing, broker-agnostic. No MT5 structures.
-# ---------------------------------------------------------------------------
-
-@dataclass
-class BrokerCapability:
-    supportsMarketExecution: bool = False
-    supportsPendingOrders: bool = False
-    supportsModify: bool = False
-    supportsPartialClose: bool = False
-    supportsHedging: bool = False
-    supportsNetting: bool = False
-    supportsReplay: bool = False
-
-
-@dataclass
-class BrokerConnection:
-    state: str = ConnectionState.DISCONNECTED
-    since: str | None = None
-    detail: str = ""
-
-
-@dataclass
-class BrokerHealth:
-    brokerId: str
-    kind: str
-    connection: str
-    latencyMs: int | None = None
-    lastSyncAt: str | None = None
-    detail: str = ""
-
-
-@dataclass
-class BrokerSymbol:
-    canonical: str
-    brokerSymbol: str
-
-
-@dataclass
-class BrokerAccount:
-    accountId: str
-    brokerId: str
-    type: str
-    baseCurrency: str
-    balance: float | None = None
-    equity: float | None = None
-
-
-@dataclass
-class BrokerOrder:
-    orderId: str
-    canonicalSymbol: str
-    brokerSymbol: str
-    side: str
-    size: float | None
-    state: str
-    deploymentId: str | None = None
-
-
-@dataclass
-class BrokerPosition:
-    positionId: str
-    canonicalSymbol: str
-    brokerSymbol: str
-    side: str
-    size: float | None
-    entry: float | None
-    sl: float | None
-    tp: float | None
-    state: str
-    deploymentId: str | None = None
-
-
-@dataclass
-class BrokerError:
-    code: str
-    message: str
-    recoverable: bool = True
-
-
-# Sentinels for unsupported operations (MT5 skeleton returns these).
-UNSUPPORTED = BrokerError(code="unsupported", message="Operation not supported by this broker", recoverable=False)
-NOT_IMPLEMENTED = BrokerError(code="not_implemented", message="Adapter is a skeleton — no implementation", recoverable=False)
+# ARCH-2: the canonical broker adapter contract lives in `broker_adapter.py` — the
+# single owner of the adapter interface, capability model, connection-state model,
+# result envelope and error model. This module holds the ADAPTER IMPLEMENTATIONS
+# (MockBroker, the inert MT5Adapter) and re-exports the contract names so existing
+# importers keep working unchanged.
+from broker_adapter import (  # noqa: F401 — re-exported contract surface
+    ACK_COMMUNICATION_FAILED,
+    ACK_FILLED,
+    ACK_NOT_SUBMITTED,
+    ACK_PARTIAL,
+    ACK_REJECTED,
+    ACK_TIMEOUT,
+    NOT_IMPLEMENTED,
+    UNSUPPORTED,
+    BrokerAccount,
+    BrokerAdapter,
+    BrokerCapability,
+    BrokerConnection,
+    BrokerContext,
+    BrokerError,
+    BrokerHealth,
+    BrokerOrder,
+    BrokerPosition,
+    BrokerResult,
+    BrokerSymbol,
+    ACK_CONFIRMED,
+    CancelPendingOrderRequest,
+    ClosePositionRequest,
+    ConnectionState,
+    MarketOrderAck,
+    MarketOrderRequest,
+    ModifyPositionProtectionRequest,
+    OperationAck,
+    RESULT_NOT_CONNECTED,
+    RESULT_UNAVAILABLE,
+    UnknownAdapterError,
+)
+import broker_adapter as _adapter_boundary
 
 
 # ---------------------------------------------------------------------------
@@ -138,80 +78,12 @@ class SymbolTranslator:
 
 
 # ---------------------------------------------------------------------------
-# Runtime → broker injection: the primitives the broker needs to execute against
-# the runtime overlay, provided by the runtime so the broker stays decoupled.
+# Broker interface — the single execution boundary. ARCH-2: the interface is the
+# canonical `BrokerAdapter` contract in `broker_adapter.py`; `Broker` is kept as a
+# back-compat alias so every existing import and isinstance check keeps working.
 # ---------------------------------------------------------------------------
 
-@dataclass
-class BrokerContext:
-    now: str
-    reason: str | None
-    payload: dict
-    operator_id: str
-    trade_current: Callable[[str], dict | None]
-    trade_by_order_id: Callable[[str], dict | None]
-    append_trade_management: Callable[..., None]
-    mgmt_entry: Callable[..., dict]
-    close_trade: Callable[[str, str, str | None], tuple]
-    snake_upper: Callable[[str], str]
-    live_trades: Callable[[], list]
-    accounts: Callable[[], list]
-    brokers: Callable[[], list]
-
-
-# ---------------------------------------------------------------------------
-# Broker interface — the single execution boundary.
-# ---------------------------------------------------------------------------
-
-class Broker(ABC):
-    kind: str = "broker"
-    broker_id: str = "brk_unknown"
-
-    @abstractmethod
-    def connect(self) -> BrokerConnection: ...
-
-    @abstractmethod
-    def disconnect(self) -> BrokerConnection: ...
-
-    @abstractmethod
-    def connection(self) -> BrokerConnection: ...
-
-    @abstractmethod
-    def health(self) -> BrokerHealth: ...
-
-    @abstractmethod
-    def capabilities(self) -> BrokerCapability: ...
-
-    @abstractmethod
-    def accounts(self, ctx: BrokerContext) -> list: ...
-
-    @abstractmethod
-    def positions(self, ctx: BrokerContext) -> list: ...
-
-    @abstractmethod
-    def orders(self, ctx: BrokerContext) -> list: ...
-
-    @abstractmethod
-    def submit_command(self, name: str, ctx: BrokerContext) -> tuple[dict | None, dict | None]:
-        """Execute a trade/order command. Returns (before, after) for the audit event."""
-
-    @abstractmethod
-    def cancel_order(self, order_id: str, ctx: BrokerContext) -> tuple[dict | None, dict | None]: ...
-
-    @abstractmethod
-    def modify_order(self, order_id: str, changes: dict, ctx: BrokerContext) -> tuple[dict | None, dict | None]: ...
-
-    @abstractmethod
-    def flatten(self, deployment_id: str, ctx: BrokerContext) -> list[str]: ...
-
-    @abstractmethod
-    def sync(self, ctx: BrokerContext) -> dict: ...
-
-    def translate_symbol(self, canonical: str) -> str:
-        return canonical
-
-    def to_canonical(self, broker_symbol: str) -> str:
-        return broker_symbol
+Broker = BrokerAdapter
 
 
 # ---------------------------------------------------------------------------
@@ -223,11 +95,11 @@ class Broker(ABC):
 
 # Trade/order commands the broker owns (execution boundary). Deployment/package
 # lifecycle stays in the runtime control-plane.
-BROKER_COMMANDS = {
-    "CloseTrade", "SLToBE", "MoveTradeSL", "MoveTradeTP", "PartialClose",
-    "ReduceTradeRisk", "SetAutoManagement",
-    "CancelOrder", "ReduceOrderRisk", "ConvertOrderToGhost",
-}
+# ARCH-1: DERIVED from the single canonical `command_registry` (the `broker_dispatched`
+# flag) rather than re-declared here, so this set can never drift from the catalogue.
+import command_registry as _registry
+
+BROKER_COMMANDS = _registry.broker_dispatched_names()
 
 
 class MockBroker(Broker):
@@ -260,7 +132,28 @@ class MockBroker(Broker):
         return BrokerCapability(
             supportsMarketExecution=True, supportsPendingOrders=True, supportsModify=True,
             supportsPartialClose=True, supportsHedging=True, supportsNetting=True, supportsReplay=True,
+            supportsCancelOrder=True, supportsClosePosition=True,
         )
+
+    def account_identity(self) -> BrokerResult:
+        # The mock's identity is fixed and explicitly labelled as the mock's own —
+        # never confusable with a real account fingerprint.
+        return BrokerResult(ok=True, code="ok", detail="mock fixture account",
+                            data={"accountId": "acc_mock", "brokerId": self.broker_id,
+                                  "provenance": "mock-fixture"})
+
+    def reconcile_snapshot(self, ctx: BrokerContext) -> BrokerResult:
+        """One coherent snapshot for the canonical reconciliation authority."""
+        return BrokerResult(ok=True, code="ok", detail="mock fixture snapshot",
+                            data={
+                                "positions": self.positions(ctx),
+                                "orders": self.orders(ctx),
+                                "accounts": self.accounts(ctx),
+                                "connection": self._conn.state,
+                                "accountIdentity": "acc_mock",
+                                "at": ctx.now,
+                                "provenance": "mock-fixture",
+                            })
 
     def translate_symbol(self, canonical: str) -> str:
         return self._symbols.to_broker(canonical)
@@ -381,6 +274,98 @@ class MockBroker(Broker):
 
         return None, None
 
+    # ── LIVE-2: deterministic fixture market-order execution ─────────────────
+    def submit_market_order(self, request: MarketOrderRequest,
+                            ctx: BrokerContext) -> BrokerResult:
+        """Deterministic FIXTURE execution: same request -> same acknowledgement.
+        The ticket derives from the intent id (no randomness, no clock); no live
+        broker is touched and no market price is invented (price stays None —
+        the mock reports what it knows, which is no market)."""
+        import hashlib
+        ticket = "mockord_" + hashlib.sha256(request.intent_id.encode()).hexdigest()[:12]
+        ack = MarketOrderAck(
+            intent_id=request.intent_id,
+            status=ACK_FILLED,
+            broker_order_ticket=ticket,
+            broker_deal_ticket="mockdeal_" + ticket[-12:],
+            requested_volume=request.quantity,
+            filled_volume=request.quantity,
+            price=None,                     # the mock invents no market price
+            provenance="mock-fixture",
+            detail="mock fixture execution — no live broker action",
+            at=ctx.now,
+        )
+        return BrokerResult(ok=True, code="ok", detail="mock fixture market order",
+                            data=ack.as_dict(), broker_ref=ticket)
+
+    # ── LIVE-3: deterministic fixture manual-management operations ───────────
+    # Each mutates the runtime overlay through ctx (like submit_command does),
+    # so the fixture world's reconcile_snapshot genuinely reflects the change
+    # and reconciliation can confirm the operation end-to-end. Deterministic
+    # tickets; no invented prices or fills.
+
+    def _op_ticket(self, intent_id: str) -> str:
+        import hashlib
+        return "mockop_" + hashlib.sha256(intent_id.encode()).hexdigest()[:12]
+
+    def _op_ack(self, request, operation: str, status: str, ctx: BrokerContext,
+                reason: str | None = None, detail: str | None = None) -> BrokerResult:
+        from broker_adapter import ACK_CONFIRMED, OperationAck
+        entity = getattr(request, "position_ref", None) or getattr(request, "order_ref", None)
+        ticket = self._op_ticket(request.intent_id)
+        ack = OperationAck(intent_id=request.intent_id, operation=operation,
+                           status=status, entity_ref=entity,
+                           broker_order_ticket=ticket if status == ACK_CONFIRMED else None,
+                           reason=reason, detail=detail,
+                           provenance="mock-fixture", at=ctx.now)
+        ok = status == ACK_CONFIRMED
+        return BrokerResult(ok=ok, code="ok" if ok else (reason or "rejected"),
+                            detail=detail or "", data=ack.as_dict(),
+                            broker_ref=ticket if ok else None)
+
+    def modify_position_protection(self, request, ctx: BrokerContext) -> BrokerResult:
+        from broker_adapter import ACK_CONFIRMED, ACK_REJECTED
+        cur = ctx.trade_current(request.position_ref)
+        if not cur:
+            return self._op_ack(request, "modify_position_protection", ACK_REJECTED,
+                                ctx, reason="rejected", detail="position not found")
+        scalars = {}
+        before = {"sl": cur.get("sl"), "tp": cur.get("tp")}
+        if request.stop_loss is not None:
+            scalars["sl"] = request.stop_loss
+        if request.take_profit is not None:
+            scalars["tp"] = request.take_profit
+        ctx.append_trade_management(
+            request.position_ref,
+            ctx.mgmt_entry("PROTECTION_MODIFIED", ctx.now, before, dict(scalars),
+                           request.reason or "manual protection modification"),
+            scalars=scalars)
+        return self._op_ack(request, "modify_position_protection", ACK_CONFIRMED, ctx)
+
+    def cancel_pending_order(self, request, ctx: BrokerContext) -> BrokerResult:
+        from broker_adapter import ACK_CONFIRMED, ACK_REJECTED
+        cur = ctx.trade_by_order_id(request.order_ref)
+        if not cur:
+            return self._op_ack(request, "cancel_pending_order", ACK_REJECTED,
+                                ctx, reason="rejected", detail="pending order not found")
+        ctx.append_trade_management(
+            cur["tradeId"],
+            ctx.mgmt_entry("ORDER_CANCELLED", ctx.now, {"state": cur.get("state")},
+                           {"state": "cancelled"},
+                           request.reason or "manual cancellation"),
+            scalars={"state": "cancelled"})
+        return self._op_ack(request, "cancel_pending_order", ACK_CONFIRMED, ctx)
+
+    def close_position(self, request, ctx: BrokerContext) -> BrokerResult:
+        from broker_adapter import ACK_CONFIRMED, ACK_REJECTED
+        cur = ctx.trade_current(request.position_ref)
+        if not cur:
+            return self._op_ack(request, "close_position", ACK_REJECTED,
+                                ctx, reason="rejected", detail="position not found")
+        ctx.close_trade(request.position_ref, ctx.now,
+                        request.reason or "manual close")
+        return self._op_ack(request, "close_position", ACK_CONFIRMED, ctx)
+
     def _order_command(self, name: str, ctx: BrokerContext) -> tuple[dict | None, dict | None]:
         payload, now, reason = ctx.payload, ctx.now, ctx.reason
         order_id = payload.get("orderId")
@@ -441,40 +426,126 @@ class MockBroker(Broker):
 # placeholders. Never connects.
 # ---------------------------------------------------------------------------
 
-def _load_live_gateway():
-    """Import the live-slice MT5 gateway (repo-root `live/` package). Returns a
-    connected-capable gateway or None. All broker-specific logic stays in the
-    gateway + this adapter; import is guarded so CT runs unchanged off-VPS."""
+def load_live_gateway_diagnostic():
+    """Import the live-slice MT5 gateway, returning `(gateway, reason)`.
+
+    LIVE-5B: the reason is the point. This function used to be a bare
+    `except Exception: return None`, which meant that on the VPS a
+    `live.config` failure, a bad LUX_ROOT or a partially-installed SDK were all
+    reported to the operator as "MetaTrader5 package unavailable on this host" —
+    a statement that was simply false and gave them nothing to act on.
+
+    `reason` is None on success and otherwise a specific, machine-readable
+    string naming the failing STEP. It never contains a credential.
+    """
+    import os
+    import sys
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if root not in sys.path:
+        sys.path.insert(0, root)
     try:
-        import os
-        import sys
-        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        if root not in sys.path:
-            sys.path.insert(0, root)
         from live.config import LiveConfig
+    except Exception as exc:                                # noqa: BLE001
+        return None, (f"live.config could not be imported "
+                      f"({type(exc).__name__}); check LUX_ROOT and the LIVE_* "
+                      f"environment variables")
+    try:
         from live.mt5_gateway import MT5Gateway
-        gateway = MT5Gateway(LiveConfig())
-        return gateway if gateway.available else None
-    except Exception:  # pragma: no cover - any import/env failure ⇒ skeleton mode
-        return None
+    except Exception as exc:                                # noqa: BLE001
+        return None, (f"live.mt5_gateway could not be imported "
+                      f"({type(exc).__name__})")
+    try:
+        config = LiveConfig()
+    except Exception as exc:                                # noqa: BLE001
+        return None, (f"LiveConfig could not be constructed "
+                      f"({type(exc).__name__}); a LIVE_* variable is malformed")
+    try:
+        gateway = MT5Gateway(config)
+    except Exception as exc:                                # noqa: BLE001
+        return None, f"MT5Gateway could not be constructed ({type(exc).__name__})"
+    if not gateway.available:
+        return None, ("the MetaTrader5 package is not importable on this host "
+                      "(it ships as a Windows wheel only)")
+    return gateway, None
+
+
+def _load_live_gateway():
+    """Back-compat shape: the gateway or None. Callers wanting the REASON should
+    use `load_live_gateway_diagnostic()`."""
+    gateway, _reason = load_live_gateway_diagnostic()
+    return gateway
 
 
 class MT5Adapter(Broker):
     """Real MT5 connectivity via the live-slice gateway when the MetaTrader5
-    package is present (Windows VPS); graceful skeleton behaviour everywhere
-    else. CT-side execution commands remain unsupported in M3 Phase 1 — the VPS
-    executor owns order operations; CT observes positions/orders/health."""
+    package is present (Windows VPS); graceful skeleton behaviour everywhere else.
+
+    CORRECTED (UES). This previously claimed "CT-side execution commands remain
+    unsupported in M3 Phase 1 — the VPS executor owns order operations; CT
+    observes positions/orders/health". That was true of the LEGACY command
+    surface (`submit_command`, `cancel_order`, `modify_order`, `flatten` — still
+    inert below) and was never updated when LIVE-2/LIVE-3 added the canonical
+    writes. It was false for two milestones, and an architecture audit that
+    trusted it would have concluded this adapter cannot trade.
+
+    PRODUCTION REALITY: four canonical writes reach the terminal —
+    `submit_market_order`, `modify_position_protection`, `cancel_pending_order`
+    and `close_position`. Each is dispatched only through the Execution
+    Orchestrator, and since UES each is judged by the SAME financial rails the
+    autonomous runner uses (kill switch, daily loss, max open, symbol
+    whitelist), with risk-REDUCING commands exempt so an operator can always
+    de-risk."""
 
     kind = "mt5"
     broker_id = "brk_mt5_live"
 
     def __init__(self):
+        # ARCH-2: construction performs NO gateway work. The gateway is loaded
+        # lazily on first use (and on this host resolves to None), so constructing
+        # the adapter — which the lazy factory only does on demand anyway — can
+        # never touch a terminal or a socket.
         self._symbols = SymbolTranslator({"EURUSD": "EURUSD.r", "GBPUSD": "GBPUSD.r", "XAUUSD": "XAUUSD.a"})
-        self._gateway = _load_live_gateway()
+        self._gateway_cache: Any = None
+        self._gateway_loaded = False
+
+    @property
+    def _gateway(self):
+        if not self._gateway_loaded:
+            # LIVE-1: the ConnectionPolicy must approve BEFORE any terminal access.
+            # A deny loads nothing, performs zero MT5 API calls, and every read
+            # reports the machine-readable policy reason.
+            import connection_policy
+            decision = connection_policy.evaluate_local_broker("mt5")
+            if not decision.allowed:
+                import logging
+                logging.getLogger("broker").warning(
+                    "AUDIT mt5_gateway_denied reason=%s profile=%s",
+                    decision.reason, decision.profile)
+                self._policy_denied_reason = decision.reason
+                self._gateway_cache = None
+            else:
+                self._policy_denied_reason = None
+                gateway, reason = load_live_gateway_diagnostic()
+                # LIVE-5B: keep the SPECIFIC reason so every read can explain
+                # itself instead of blaming the package.
+                self._gateway_unavailable_reason = reason
+                self._gateway_cache = gateway
+                if reason:
+                    import logging
+                    logging.getLogger("broker").warning(
+                        "AUDIT mt5_gateway_unavailable reason=%s", reason)
+            self._gateway_loaded = True
+        return self._gateway_cache
+
+    def _unavailable_detail(self) -> str:
+        """The most specific reason this adapter cannot reach a terminal."""
+        return (getattr(self, "_policy_denied_reason", None)
+                or getattr(self, "_gateway_unavailable_reason", None)
+                or "MetaTrader5 package unavailable on this host")
 
     def _state(self) -> tuple[str, str]:
         if self._gateway is None:
-            return ConnectionState.DISCONNECTED, "MetaTrader5 package unavailable on this host"
+            return ConnectionState.DISCONNECTED, self._unavailable_detail()
         if self._gateway.connected:
             return ConnectionState.CONNECTED, "MT5 terminal connected"
         return ConnectionState.DISCONNECTED, "gateway available; not connected"
@@ -501,10 +572,21 @@ class MT5Adapter(Broker):
         return BrokerHealth(brokerId=self.broker_id, kind=self.kind, connection=state, detail=detail)
 
     def capabilities(self) -> BrokerCapability:
-        # Realistic MT5 placeholders (netting/hedging depend on account type; replay is N/A live).
+        # LIVE-3: the MT5 adapter supports EXACTLY FOUR live writes — market-order
+        # submission, position-protection modification, pending-order cancellation
+        # and position close. Every OTHER mutation capability remains False:
+        # pending-order placement, partial close, hedging-mode changes and all
+        # other mutations are structurally unavailable (inert verbs, absent
+        # capabilities).
         return BrokerCapability(
-            supportsMarketExecution=True, supportsPendingOrders=True, supportsModify=True,
-            supportsPartialClose=True, supportsHedging=True, supportsNetting=True, supportsReplay=False,
+            supportsLiveWrite=True,
+            supportsMarketExecution=True,
+            supportsModify=True,            # LIVE-3: SL/TP protection modification
+            supportsCancelOrder=True,       # LIVE-3: pending-order cancellation
+            supportsClosePosition=True,     # LIVE-3: full position close
+            supportsPendingOrders=False,
+            supportsPartialClose=False, supportsHedging=False, supportsNetting=False,
+            supportsReplay=False,
         )
 
     def translate_symbol(self, canonical: str) -> str:
@@ -512,6 +594,370 @@ class MT5Adapter(Broker):
 
     def to_canonical(self, broker_symbol: str) -> str:
         return self._symbols.to_canonical(broker_symbol)
+
+    # ── LIVE-1 canonical read operations ─────────────────────────────────────
+    # Every read is TOTAL: any missing package/terminal/login/malformed data
+    # yields a canonical BrokerResult (machine code, redaction-safe detail),
+    # never a traceback. MT5 SDK objects never leave this class.
+
+    @staticmethod
+    def _mask_login(login) -> str:
+        s = str(login) if login is not None else ""
+        return f"mt5_****{s[-4:]}" if len(s) >= 4 else "mt5_****"
+
+    def _guarded(self, operation: str, fn):
+        """Run one read against the gateway with total failure handling."""
+        decision_gateway = self._gateway
+        if decision_gateway is None:
+            reason = getattr(self, "_policy_denied_reason", None)
+            if reason:
+                return BrokerResult(ok=False, code="connection_denied", detail=reason)
+            return BrokerResult(ok=False, code=RESULT_UNAVAILABLE,
+                                detail="MetaTrader5 package unavailable on this host")
+        if not decision_gateway.connected:
+            return BrokerResult(ok=False, code=RESULT_NOT_CONNECTED,
+                                detail="MT5 terminal not connected")
+        try:
+            return fn(decision_gateway)
+        except Exception as exc:            # malformed MT5 data / timeout / hostile object
+            import logging
+            logging.getLogger("broker").warning("AUDIT mt5_read_failed op=%s err=%s",
+                                                operation, type(exc).__name__)
+            return BrokerResult(ok=False, code="error",
+                                detail=f"{operation} failed: {type(exc).__name__}")
+
+    def account_identity(self) -> BrokerResult:
+        def read(gw):
+            ident = gw.account_identity()
+            if ident is None:
+                return BrokerResult(ok=False, code=RESULT_UNAVAILABLE,
+                                    detail="account identity unavailable")
+            fp = getattr(ident, "fingerprint", None)
+            login = getattr(ident, "login", None)
+            return BrokerResult(ok=True, code="ok", data={
+                "accountId": self._mask_login(login), "fingerprint": fp,
+                "brokerId": self.broker_id, "provenance": "live_mt5"})
+        return self._guarded("account_identity", read)
+
+    def account_snapshot(self, ctx: BrokerContext) -> BrokerResult:
+        from broker_adapter import BrokerAccountInfo
+        def read(gw):
+            acct = gw.sdk.account_info()
+            if acct is None:
+                return BrokerResult(ok=False, code=RESULT_UNAVAILABLE,
+                                    detail="account information unavailable")
+            ident = gw.account_identity()
+            server_time = gw.server_time_utc()
+            info = BrokerAccountInfo(
+                login_masked=self._mask_login(getattr(acct, "login", None)),
+                fingerprint=getattr(ident, "fingerprint", None) if ident else None,
+                broker_company=getattr(acct, "company", None),
+                server=getattr(acct, "server", None),
+                currency=getattr(acct, "currency", None),
+                balance=getattr(acct, "balance", None),
+                equity=getattr(acct, "equity", None),
+                margin=getattr(acct, "margin", None),
+                margin_free=getattr(acct, "margin_free", None),
+                margin_level=getattr(acct, "margin_level", None),
+                leverage=getattr(acct, "leverage", None),
+                at=server_time.isoformat().replace("+00:00", "Z") if server_time else None,
+                trade_mode=getattr(ident, "trade_mode", None) if ident else None,
+            )
+            return BrokerResult(ok=True, code="ok", data=info.as_dict())
+        return self._guarded("account_snapshot", read)
+
+    def recent_executions(self, ctx: BrokerContext) -> BrokerResult:
+        from datetime import datetime, timedelta, timezone
+        from broker_adapter import BrokerDeal
+        def read(gw):
+            history = getattr(gw.sdk, "history_deals_get", None)
+            if history is None:
+                # Partial capability: the SDK build offers no deal history. Explicit.
+                return BrokerResult(ok=False, code=RESULT_UNAVAILABLE,
+                                    detail="deal history not available from this terminal")
+            end = datetime.now(timezone.utc)
+            raw = history(end - timedelta(days=1), end)
+            if raw is None:
+                # `None` is how the SDK reports a FAILED read. Coercing it to an
+                # empty list reported a failure as "no executions today".
+                return BrokerResult(ok=False, code=RESULT_UNAVAILABLE,
+                                    detail="deal history read failed")
+            # `history_deals_get` is UNORDERED, so the previous `deals[:50]` kept
+            # an ARBITRARY fifty and presented them as the recent ones. Order
+            # first — most recent first — so the cap keeps what the name promises.
+            deals = sorted(raw, key=lambda d: (getattr(d, "time", 0) or 0,
+                                               str(getattr(d, "ticket", ""))),
+                           reverse=True)
+            #: A display bound, not an exhaustiveness claim. Stated in `detail`
+            #: so a truncated view can never be mistaken for the whole day.
+            cap = 50
+            out = []
+            for d in deals[:cap]:
+                out.append(BrokerDeal(
+                    deal_id=str(getattr(d, "ticket", "")),
+                    order_ref=str(getattr(d, "order", "")) or None,
+                    symbol=self.to_canonical(getattr(d, "symbol", "") or ""),
+                    side="long" if getattr(d, "type", 0) == 0 else "short",
+                    volume=getattr(d, "volume", None),
+                    price=getattr(d, "price", None),
+                    profit=getattr(d, "profit", None),
+                    at=None if getattr(d, "time", None) is None else
+                       datetime.fromtimestamp(d.time, tz=timezone.utc)
+                       .isoformat().replace("+00:00", "Z"),
+                ).as_dict())
+            return BrokerResult(
+                ok=True, code="ok", data=out,
+                detail=(f"showing {cap} most recent of {len(deals)} deals in the "
+                        "last 24h" if len(deals) > cap else ""))
+        return self._guarded("recent_executions", read)
+
+    def reconcile_snapshot(self, ctx: BrokerContext) -> BrokerResult:
+        """One coherent LIVE read for the canonical reconciliation authority."""
+        def read(gw):
+            ident = gw.account_identity()
+            server_time = gw.server_time_utc()
+            return BrokerResult(ok=True, code="ok", data={
+                "positions": self.positions(ctx),
+                "orders": self.orders(ctx),
+                "accounts": self.accounts(ctx),
+                "connection": ConnectionState.CONNECTED,
+                "accountIdentity": getattr(ident, "fingerprint", None) if ident else None,
+                "at": server_time.isoformat().replace("+00:00", "Z") if server_time
+                      else ctx.now,
+                "provenance": "live_mt5",
+            })
+        return self._guarded("reconcile_snapshot", read)
+
+    # ── LIVE-2: the ONE live write — market-order submission ─────────────────
+    def submit_market_order(self, request: MarketOrderRequest,
+                            ctx: BrokerContext) -> BrokerResult:
+        """Submit exactly one market order through the gateway's proven typed
+        write path (`open_position` -> `mt5_results` classification). Total:
+        every failure mode answers a canonical BrokerResult; the MT5 result
+        object never escapes; an exception in this path means the outcome is
+        UNKNOWABLE and maps to `communication_failed` (reconcile — never guess).
+
+        CORRECTED (UES): this previously claimed to be "the ONLY write the
+        adapter implements", with "every other mutation (pending orders, modify,
+        cancel, close, flatten) remains inert". Only the LEGACY surface is inert.
+        `modify_position_protection`, `cancel_pending_order` and `close_position`
+        are all implemented below and all reach the terminal."""
+        gw = self._gateway
+        if gw is None:
+            reason = getattr(self, "_policy_denied_reason", None)
+            if reason:
+                return BrokerResult(ok=False, code="connection_denied", detail=reason)
+            return BrokerResult(ok=False, code=RESULT_UNAVAILABLE,
+                                detail="MetaTrader5 package unavailable on this host")
+        if not gw.connected:
+            return BrokerResult(ok=False, code=RESULT_NOT_CONNECTED,
+                                detail="MT5 terminal not connected")
+        try:
+            result = gw.open_position(request.side, float(request.quantity),
+                                      request.stop_loss, request.take_profit,
+                                      request.intent_id)
+            return self._map_submit_result(request, result, ctx)
+        except Exception as exc:
+            # The gateway catches order_send exceptions itself (typed EXCEPTION
+            # disposition), so reaching here means the submission OUTCOME IS
+            # UNKNOWABLE — communication_failed, queued for reconciliation.
+            import logging
+            logging.getLogger("broker").warning(
+                "AUDIT mt5_submit_failed op=submit_market_order err=%s",
+                type(exc).__name__)
+            ack = MarketOrderAck(intent_id=request.intent_id,
+                                 status=ACK_COMMUNICATION_FAILED,
+                                 requested_volume=request.quantity,
+                                 reason="communication_failed",
+                                 detail=type(exc).__name__,
+                                 provenance="live_mt5", at=ctx.now)
+            return BrokerResult(ok=False, code="communication_failed",
+                                detail=type(exc).__name__, data=ack.as_dict())
+
+    def _map_submit_result(self, request: MarketOrderRequest, result,
+                           ctx: BrokerContext) -> BrokerResult:
+        """Map one typed MT5SubmitResult into the canonical acknowledgement.
+        Plain scalars only; the SDK evidence was already snapshotted by
+        `mt5_results` and no MT5 object crosses this boundary."""
+        from live import mt5_results as _mr
+        disp = result.disposition
+        order_ticket = (str(result.broker_order_ticket)
+                        if _mr.usable_ticket(result.broker_order_ticket) else None)
+        deal_ticket = (str(result.broker_deal_ticket)
+                       if _mr.usable_ticket(result.broker_deal_ticket) else None)
+        common = dict(intent_id=request.intent_id,
+                      broker_order_ticket=order_ticket,
+                      broker_deal_ticket=deal_ticket,
+                      requested_volume=result.requested_volume,
+                      filled_volume=result.filled_volume,
+                      price=result.price,
+                      provenance="live_mt5", at=ctx.now)
+        if disp == _mr.MT5SubmitDisposition.FILLED:
+            ack = MarketOrderAck(status=ACK_FILLED, **common)
+            return BrokerResult(ok=True, code="ok", detail="broker filled",
+                                data=ack.as_dict(), broker_ref=order_ticket or deal_ticket)
+        if disp == _mr.MT5SubmitDisposition.PARTIALLY_FILLED:
+            ack = MarketOrderAck(status=ACK_PARTIAL, **common)
+            return BrokerResult(ok=True, code="ok", detail="broker partially filled",
+                                data=ack.as_dict(), broker_ref=order_ticket or deal_ticket)
+        if disp == _mr.MT5SubmitDisposition.REJECTED:
+            ack = MarketOrderAck(status=ACK_REJECTED, reason="broker_rejected",
+                                 detail=result.diagnostic, **common)
+            return BrokerResult(ok=False, code="rejected", detail=result.diagnostic,
+                                data=ack.as_dict())
+        if disp == _mr.MT5SubmitDisposition.NOT_SUBMITTED:
+            ack = MarketOrderAck(status=ACK_NOT_SUBMITTED, reason="submission_failed",
+                                 detail=result.diagnostic, **common)
+            return BrokerResult(ok=False, code="not_submitted", detail=result.diagnostic,
+                                data=ack.as_dict())
+        if disp == _mr.MT5SubmitDisposition.EXCEPTION:
+            # The gateway's diagnostic preserves the exception MESSAGE as broker
+            # evidence; the canonical boundary carries only the exception TYPE
+            # (no message leakage past the adapter).
+            exc_type = (result.diagnostic or "").split(":", 1)[0] or "Exception"
+            ack = MarketOrderAck(status=ACK_COMMUNICATION_FAILED,
+                                 reason="communication_failed",
+                                 detail=exc_type, **common)
+            return BrokerResult(ok=False, code="communication_failed",
+                                detail=exc_type, data=ack.as_dict())
+        # AMBIGUOUS (timeout / connection / placed / unknown retcode): the order
+        # MAY exist at the broker — never guess; reconcile.
+        ack = MarketOrderAck(status=ACK_TIMEOUT, reason="timeout",
+                             detail=result.diagnostic, **common)
+        return BrokerResult(ok=False, code="timeout", detail=result.diagnostic,
+                            data=ack.as_dict(),
+                            broker_ref=order_ticket or deal_ticket)
+
+    # ── LIVE-3: the three manual-management writes (typed gateway; canonical acks) ─
+
+    def _guarded_action(self, operation: str, request, entity_ref: str, fn):
+        """Run one manual-management write with total failure handling. Every
+        failure mode answers a canonical BrokerResult carrying an OperationAck;
+        an exception in this path means the outcome is UNKNOWABLE
+        (communication_failed, type name only)."""
+        from broker_adapter import (ACK_COMMUNICATION_FAILED, ACK_NOT_SUBMITTED,
+                                    OperationAck)
+        gw = self._gateway
+        if gw is None:
+            reason = getattr(self, "_policy_denied_reason", None)
+            code = "connection_denied" if reason else RESULT_UNAVAILABLE
+            detail = reason or "MetaTrader5 package unavailable on this host"
+            ack = OperationAck(intent_id=request.intent_id, operation=operation,
+                               status=ACK_NOT_SUBMITTED, entity_ref=entity_ref,
+                               reason="submission_failed", detail=detail,
+                               provenance="live_mt5")
+            return BrokerResult(ok=False, code=code, detail=detail, data=ack.as_dict())
+        if not gw.connected:
+            ack = OperationAck(intent_id=request.intent_id, operation=operation,
+                               status=ACK_NOT_SUBMITTED, entity_ref=entity_ref,
+                               reason="submission_failed",
+                               detail="MT5 terminal not connected",
+                               provenance="live_mt5")
+            return BrokerResult(ok=False, code=RESULT_NOT_CONNECTED,
+                                detail="MT5 terminal not connected", data=ack.as_dict())
+        try:
+            return fn(gw)
+        except Exception as exc:
+            import logging
+            logging.getLogger("broker").warning(
+                "AUDIT mt5_operation_failed op=%s err=%s", operation,
+                type(exc).__name__)
+            ack = OperationAck(intent_id=request.intent_id, operation=operation,
+                               status=ACK_COMMUNICATION_FAILED, entity_ref=entity_ref,
+                               reason="communication_failed",
+                               detail=type(exc).__name__, provenance="live_mt5")
+            return BrokerResult(ok=False, code="communication_failed",
+                                detail=type(exc).__name__, data=ack.as_dict())
+
+    def _map_action_result(self, operation: str, request, entity_ref: str,
+                           result, ctx: BrokerContext) -> BrokerResult:
+        """Map one typed MT5ActionResult into the canonical OperationAck."""
+        from broker_adapter import (ACK_COMMUNICATION_FAILED, ACK_CONFIRMED,
+                                    ACK_NOT_SUBMITTED, ACK_REJECTED, ACK_TIMEOUT,
+                                    OperationAck)
+        from live import mt5_results as _mr
+        order_ticket = (str(result.broker_order_ticket)
+                        if _mr.usable_ticket(result.broker_order_ticket) else None)
+        deal_ticket = (str(result.broker_deal_ticket)
+                       if _mr.usable_ticket(result.broker_deal_ticket) else None)
+        common = dict(intent_id=request.intent_id, operation=operation,
+                      entity_ref=entity_ref, broker_order_ticket=order_ticket,
+                      broker_deal_ticket=deal_ticket, provenance="live_mt5",
+                      at=ctx.now)
+        disp = result.disposition
+        if disp == _mr.MT5ActionDisposition.DONE:
+            ack = OperationAck(status=ACK_CONFIRMED, **common)
+            return BrokerResult(ok=True, code="ok", detail="broker acknowledged",
+                                data=ack.as_dict(),
+                                broker_ref=order_ticket or deal_ticket or entity_ref)
+        if disp == _mr.MT5ActionDisposition.REJECTED:
+            ack = OperationAck(status=ACK_REJECTED, reason="broker_rejected",
+                               detail=result.diagnostic, **common)
+            return BrokerResult(ok=False, code="rejected", detail=result.diagnostic,
+                                data=ack.as_dict())
+        if disp == _mr.MT5ActionDisposition.NOT_SUBMITTED:
+            ack = OperationAck(status=ACK_NOT_SUBMITTED, reason="submission_failed",
+                               detail=result.diagnostic, **common)
+            return BrokerResult(ok=False, code="not_submitted", detail=result.diagnostic,
+                                data=ack.as_dict())
+        if disp == _mr.MT5ActionDisposition.EXCEPTION:
+            exc_type = (result.diagnostic or "").split(":", 1)[0] or "Exception"
+            ack = OperationAck(status=ACK_COMMUNICATION_FAILED,
+                               reason="communication_failed", detail=exc_type, **common)
+            return BrokerResult(ok=False, code="communication_failed", detail=exc_type,
+                                data=ack.as_dict())
+        ack = OperationAck(status=ACK_TIMEOUT, reason="timeout",
+                           detail=result.diagnostic, **common)
+        return BrokerResult(ok=False, code="timeout", detail=result.diagnostic,
+                            data=ack.as_dict(),
+                            broker_ref=order_ticket or deal_ticket)
+
+    @staticmethod
+    def _numeric_ticket(ref: str):
+        try:
+            return int(str(ref).strip())
+        except (TypeError, ValueError):
+            return None
+
+    def modify_position_protection(self, request, ctx: BrokerContext) -> BrokerResult:
+        op = "modify_position_protection"
+        def write(gw):
+            ticket = self._numeric_ticket(request.position_ref)
+            if ticket is None:
+                from live import mt5_results as _mr
+                return self._map_action_result(
+                    op, request, request.position_ref,
+                    _mr.action_not_submitted("non-numeric position reference"), ctx)
+            result = gw.modify_position_protection(ticket, request.stop_loss,
+                                                   request.take_profit)
+            return self._map_action_result(op, request, request.position_ref, result, ctx)
+        return self._guarded_action(op, request, request.position_ref, write)
+
+    def cancel_pending_order(self, request, ctx: BrokerContext) -> BrokerResult:
+        op = "cancel_pending_order"
+        def write(gw):
+            ticket = self._numeric_ticket(request.order_ref)
+            if ticket is None:
+                from live import mt5_results as _mr
+                return self._map_action_result(
+                    op, request, request.order_ref,
+                    _mr.action_not_submitted("non-numeric order reference"), ctx)
+            result = gw.cancel_pending_order(ticket)
+            return self._map_action_result(op, request, request.order_ref, result, ctx)
+        return self._guarded_action(op, request, request.order_ref, write)
+
+    def close_position(self, request, ctx: BrokerContext) -> BrokerResult:
+        op = "close_position"
+        def write(gw):
+            ticket = self._numeric_ticket(request.position_ref)
+            if ticket is None:
+                from live import mt5_results as _mr
+                return self._map_action_result(
+                    op, request, request.position_ref,
+                    _mr.action_not_submitted("non-numeric position reference"), ctx)
+            result = gw.close_position_full(ticket)
+            return self._map_action_result(op, request, request.position_ref, result, ctx)
+        return self._guarded_action(op, request, request.position_ref, write)
 
     def _snapshot(self) -> dict | None:
         if self._gateway is None or not self._gateway.connected:
@@ -575,16 +1021,26 @@ class MT5Adapter(Broker):
 # selectable by config later without touching runtime call-sites.
 # ---------------------------------------------------------------------------
 
-_REGISTRY: dict[str, Broker] = {"mock": MockBroker(), "mt5": MT5Adapter()}
-_ACTIVE = "mock"  # authoritative: the Control Tower runs entirely against MockBroker
+# ARCH-2: adapter selection and construction are CENTRALIZED in
+# `broker_adapter.get_adapter` — lazy, cached, fail-closed on unknown kinds. The
+# import-time `_REGISTRY = {"mock": MockBroker(), "mt5": MT5Adapter()}` is gone:
+# importing this module constructs no adapter and probes no gateway. `_ACTIVE`
+# remains the authoritative active-kind constant (delegating to the boundary) so
+# existing assertions and call sites keep working.
+# LIVE-1: `_ACTIVE` is the DEFAULT constant (mock). The runtime resolves the
+# selected adapter through `active_kind()` (which reads the explicit selection
+# variable), so `get_broker()` follows an operator's adapter choice.
+_ACTIVE = _adapter_boundary.ACTIVE_KIND  # "mock" — default when nothing is selected
 
 
 def get_broker(kind: str | None = None) -> Broker:
-    return _REGISTRY[kind or _ACTIVE]
+    """Back-compat entry point. Delegates to the single centralized factory, using
+    the SELECTED adapter kind (mock unless explicitly changed)."""
+    return _adapter_boundary.get_adapter(kind or _adapter_boundary.active_kind())
 
 
 def active_kind() -> str:
-    return _ACTIVE
+    return _adapter_boundary.active_kind()
 
 
 def capability_dict(cap: BrokerCapability) -> dict:

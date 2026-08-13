@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { LiveTrade, GhostTrade } from '@/types/domain';
 import { ChartPanel } from '@/components/domain/ChartPanel';
 import { type Candle } from '@/lib/chartData';
 import {
@@ -7,7 +8,7 @@ import {
   buildAnnotations,
   type LayerContext,
 } from '@/lib/chartLayers';
-import { useTrades, useMarketCandles, useOrderBlocks, useFairValueGaps, useLiquidityPools, useMarketStructure } from '@/hooks/useRepository';
+import { useMarketCandles, useOrderBlocks, useFairValueGaps, useLiquidityPools, useMarketStructure } from '@/hooks/useRepository';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { ChartDataStatusStrip } from '@/components/domain/ChartDataStatusStrip';
@@ -74,7 +75,8 @@ export function ChartWorkspace({
   endISO,
   height = 0,
   className,
-  volume = true,
+  // UI-0: synthetic range activity is OFF by default (it is not feed volume).
+  volume = false,
   controls = true,
   resizable = false,
   initialHeight = 420,
@@ -209,7 +211,12 @@ export function ChartWorkspace({
   useEffect(() => setInspect(null), [instrument, effectiveTf, mode]);
 
   // Shared data from the existing hooks (React Query dedupes — no duplicate fetch/state).
-  const { live, ghost } = useTrades({ pair: instrument });
+  // M-TRADES-1: the chart drew entry/SL/TP markers from FIXTURE trades, so an
+  // operator saw invented executions plotted on real price data — the most
+  // convincing fabrication in the app. No authoritative per-instrument trade
+  // overlay source exists yet, so no markers are drawn.
+  const live: LiveTrade[] = [];
+  const ghost: GhostTrade[] = [];
   const orderBlocks = useOrderBlocks(instrument, candles);
   const fairValueGaps = useFairValueGaps(instrument, candles);
   const liquidityPools = useLiquidityPools(instrument, candles);

@@ -214,6 +214,11 @@ function sourceInfo(feed: MarketCandles | undefined, mode: WorkspaceMode): { kin
   if (src === 'polygon') return { kind: 'polygon', label: 'Polygon' };
   if (src === 'store') return { kind: 'store', label: 'Historical Store' };
   if (provider === 'fixture') return { kind: 'fixture', label: 'Fixture' };
+  // Data governance: synthetic candles must say so — previously they fell
+  // through to the ambiguous '—' badge, indistinguishable from "unknown".
+  if (provider === 'synthetic' || src === 'synthetic') {
+    return { kind: 'synthetic', label: 'Synthetic' };
+  }
   return { kind: 'unknown', label: '—' };
 }
 

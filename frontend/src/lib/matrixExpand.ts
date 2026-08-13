@@ -95,28 +95,20 @@ function synthCell(
       ? Math.round((0.5 + seed * 0.75) * 100) / 100
       : 0.5;
 
-  const badges: ValidationBadge[] = ['NATIVE', 'NATIVE', 'RESCORE', 'BASE', 'INSUFFICIENT', 'NOT_TESTED'];
-  const badge = badges[Math.floor(seed * badges.length)];
-  const sampleSize = badge === 'NOT_TESTED' ? 0 : Math.floor(15 + seed * 70);
-  const expectancy = eligibility.resolvedAllowed
-    ? Math.round((seed * 0.6 - 0.05) * 100) / 100
-    : Math.round(seed * -0.3 * 100) / 100;
-  const winRate = 0.24 + seed * 0.24;
-  const profitFactor = 0.8 + seed * 1.2;
-  const confidence =
-    badge === 'NATIVE' ? 0.85 + seed * 0.14 : badge === 'RESCORE' ? 0.6 + seed * 0.2 : 0.4 + seed * 0.3;
-
-  const recStatuses: PolicyCell['recommendationStatus'][] = [
-    'none',
-    'none',
-    'none',
-    'none',
-    'validating',
-    'new',
-    'deployed',
-    'accepted',
-  ];
-  const recStatus = recStatuses[Math.floor(seed * recStatuses.length)];
+  // UI-0: a synthesized cell has NO research evidence, so it must not invent any.
+  // Previously this fabricated a validation badge (including `NATIVE`), a sample
+  // size, win rate, expectancy, profit factor and a recommendation status — all
+  // indistinguishable from genuine Lux research output. Those are now zeroed and
+  // the cell is badged `NOT_TESTED`; the eligibility/target/risk values remain
+  // (they are policy configuration, not research findings) but the cell carries
+  // `provenance: 'synthesized'` so every consumer can mark it.
+  const badge: ValidationBadge = 'NOT_TESTED';
+  const sampleSize = 0;
+  const expectancy = 0;
+  const winRate = 0;
+  const profitFactor = 0;
+  const confidence = 0;
+  const recStatus: PolicyCell['recommendationStatus'] = 'none';
 
   return {
     policyCellKey: key,
@@ -129,13 +121,14 @@ function synthCell(
       badge,
       sampleSize,
       expectancyR: expectancy,
-      winRate: Math.round(winRate * 100) / 100,
-      profitFactor: Math.round(profitFactor * 100) / 100,
-      confidence: Math.round(confidence * 100) / 100,
-      inSampleCaveat: sampleSize < 25 ? 'thin sample' : '',
+      winRate,
+      profitFactor,
+      confidence,
+      inSampleCaveat: 'synthesized — no research evidence',
     },
     recommendationStatus: recStatus,
     provenanceRecommendationId: null,
+    provenance: 'synthesized',
   };
 }
 
@@ -156,7 +149,8 @@ export function expandMatrix(instrument: string, sourceMatrix: PolicyMatrixData 
       direction: (direction.charAt(0).toUpperCase() + direction.slice(1)) as Direction,
       instrument,
     };
-    overrides.set(key, { ...cell, cohort });
+    // Cells the backend actually supplied come from the fixture world today.
+    overrides.set(key, { ...cell, cohort, provenance: cell.provenance ?? 'fixture' });
   });
 
   const baseTargets: Record<string, number> = { ...source.cohortBaseTargets };
@@ -188,11 +182,18 @@ export function expandMatrix(instrument: string, sourceMatrix: PolicyMatrixData 
     });
   });
 
+  // UI-0: machine-readable provenance summary so aggregates can inherit it.
+  const cellList = Object.values(cells);
+  const synthesizedCells = cellList.filter((c) => c.provenance === 'synthesized').length;
+  const sourcedCells = cellList.length - synthesizedCells;
   return {
     instrument,
     cohortAxis: { sessions: SESSIONS, structures: STRUCTURES, directions: DIRECTIONS },
     cohortBaseTargets: baseTargets,
     cells,
+    provenance: synthesizedCells === 0 ? 'fixture' : 'synthesized',
+    synthesizedCells,
+    sourcedCells,
   };
 }
 // NOTE (Phase 16): `synthCandles` was removed — chart OHLC now comes exclusively from

@@ -1,3 +1,4 @@
+import type { DataProvenance } from '@/types/provenance';
 /**
  * liquidity — the Liquidity Pool DATA SOURCE + pure annotation styling (Phase 19).
  *
@@ -28,6 +29,8 @@ export interface LiquidityPool {
   formedAtISO: string;
   sweptAtISO?: string | null;
   active: boolean; // provider flag; true when the pool is not (yet) swept
+  /** UI-0 — generated in the Control Tower, NOT detected by the Lux engine. */
+  provenance: DataProvenance;
 }
 
 const round5 = (x: number) => Math.round(x * 1e5) / 1e5;
@@ -50,7 +53,8 @@ export function deriveLiquidityPools(instrument: string, candles: Candle[]): Liq
     const price = round5(buySide ? bar.high + 0.0002 : bar.low - 0.0002);
     const swept = k === 0; // the oldest pool gets swept partway through the window
     return {
-      id: `LQ-${3000 + idx}`,
+      id: `SYN-LQ-${3000 + idx}`,
+      provenance: 'synthesized',
       instrument,
       direction: buySide ? 'buy-side' : 'sell-side',
       price,

@@ -1,0 +1,359 @@
+/**
+ * M-FLEET-2 — the single provenance gate for ordinary operator surfaces.
+ *
+ * THE DEFECT THIS EXISTS TO PREVENT
+ *   `/api/operations/*` looks authoritative and is not, by itself. The
+ *   projection stamps every record with the provenance of the adapter that
+ *   produced it, and under the development-default MOCK adapter that is
+ *   `mock-fixture` — carrying the SAME invented balance (100000 / 100412) and
+ *   the same fixture account fingerprint that `/api/fleet` serves.
+ *
+ *   So "switch the UI from /api/fleet to /api/operations/accounts" would not
+ *   remove the fabricated figures. It would launder them: identical numbers,
+ *   now stripped of the FIXTURE badge and wrapped in a `freshness: ok`
+ *   envelope that makes them look MORE trustworthy. Endpoint identity is not
+ *   provenance.
+ *
+ * THE RULE
+ *   An ordinary operator surface renders a record only if that record's own
+ *   provenance is authoritative. Today exactly one value qualifies: `live_mt5`.
+ *   Everything else — mock-fixture, absent, or anything unrecognised — is
+ *   DROPPED. Unknown fails closed: a provenance value this file has never heard
+ *   of is treated as untrusted, not waved through.
+ *
+ * WHY ONE MODULE
+ *   Thirteen components consumed fleet data. Thirteen ad-hoc string comparisons
+ *   would be thirteen chances to get it wrong, and one missed check is one
+ *   invented balance on an operator's screen. The comparison happens here, once.
+ */
+
+/** Values the backend's `broker_provenance` policy seam can stamp. Keep in sync
+ *  with that module — it is the single definition on the Python side. */
+export const PROV_LIVE_MT5 = 'live_mt5';
+export const PROV_NODE_MT5 = 'node_mt5';
+export const PROV_MOCK_FIXTURE = 'mock-fixture';
+export const PROV_ABSENT = 'absent';
+
+/**
+ * The ONLY provenance values an ordinary operator surface may render.
+ *
+ * M-MT5-READ-1 added `node_mt5`. That is a widening of this gate, so it deserves
+ * to be justified rather than just done:
+ *
+ *   `node_mt5` means an execution NODE read an MT5 terminal and relayed what it
+ *   saw through `ct.node-telemetry.v1`. It is genuine broker truth, and in this
+ *   deployment it is the ONLY genuine broker truth available: the terminal runs
+ *   on the Windows VPS, and the broker client library speaks local-terminal IPC,
+ *   so a Control Tower on another machine can never produce `live_mt5` at all.
+ *
+ *   Crucially, the backend stamps `node_mt5` only when the node's OWN
+ *   `account.health.available` / `account.identity.available` is true — not when
+ *   a snapshot merely arrived. So this value is issued on evidence of an
+ *   observation, which is strictly stronger than what `live_mt5` used to
+ *   require: before this milestone `live_mt5` was issued from the adapter KIND
+ *   alone, meaning an environment variable and no terminal at all was enough to
+ *   get a green LIVE account past this gate. Widening the set while tightening
+ *   what earns membership makes the gate stricter, not looser.
+ *
+ * The two values stay SEPARATE rather than merging into one `mt5`. They differ
+ * in who observed, how far the reading travelled and which clock judges it, and
+ * that difference is the only thing distinguishing a first-hand reading from a
+ * relayed one.
+ */
+export const AUTHORITATIVE_PROVENANCE = new Set<string>([PROV_LIVE_MT5, PROV_NODE_MT5]);
+
+/**
+ * Four distinct outcomes that must never collapse into one another:
+ *   available   — authoritative records exist and are being rendered
+ *   empty       — the authoritative source answered, and has nothing (a FACT)
+ *   unavailable — no authoritative source answered (NOT a fact about the fleet)
+ *   stale       — authoritative records exist but are older than their budget
+ */
+export type OperationalStatus = 'available' | 'empty' | 'unavailable' | 'stale';
+
+export interface Freshness {
+  available?: boolean;
+  stale?: boolean;
+  ageSeconds?: number | null;
+  status?: string;
+  sourceAt?: string | null;
+}
+
+export interface ProvenancedRecord {
+  provenance?: string;
+  freshness?: Freshness | null;
+  /**
+   * M-ACTIVATE-READINESS-1 — admission, which is NOT provenance.
+   *
+   * Provenance answers "who observed this?" and is earned by evidence.
+   * Admission answers "is this the account this deployment is pinned to?" and
+   * is a question about configuration. A genuine `node_mt5` reading of the
+   * WRONG account has impeccable provenance and must still not be rendered as
+   * this deployment's money.
+   *
+   * Absent means admitted: an unpinned deployment cannot perform the check, and
+   * treating "not checked" as "failed" would blank a correct activation.
+   */
+  admitted?: boolean;
+  admissionReasons?: string[];
+}
+
+/**
+ * Whether an `admitted` value permits rendering.
+ *
+ * FAILS CLOSED ON ANYTHING THAT IS NOT A BOOLEAN. The first version read
+ * `record.admitted === false`, which meant `"false"`, `0`, `{}` and every other
+ * non-boolean sailed through — a JSON contract violation admitted precisely
+ * because it was malformed. Absent and null still mean admitted, because an
+ * unpinned deployment (or a payload from before this field existed) has nothing
+ * to say and "not checked" is not "failed".
+ */
+function admissionPermits(admitted: unknown): boolean {
+  if (admitted === undefined || admitted === null) return true;
+  return admitted === true;
+}
+
+/** True only for a record this application is willing to call operational. */
+export function isAuthoritative(record: ProvenancedRecord | null | undefined): boolean {
+  if (!record || typeof record.provenance !== 'string') return false;   // fail closed
+  if (!admissionPermits(record.admitted)) return false;   // right source, wrong account
+  return AUTHORITATIVE_PROVENANCE.has(record.provenance);
+}
+
+/** Named refusal codes, in sync with `activation_policy`. */
+export const R_ACCOUNT_IDENTITY_MISMATCH = 'account_identity_mismatch';
+export const R_ACCOUNT_SERVER_MISMATCH = 'account_server_mismatch';
+export const R_NUMERIC_INVALID = 'numeric_invalid';
+export const R_CONTRADICTORY_SOURCES = 'contradictory_account_sources';
+export const R_ACCOUNT_IDENTITY_UNVERIFIABLE = 'account_identity_unverifiable';
+export const R_ACCOUNT_NOT_OBSERVED = 'account_not_observed';
+export const R_UNUSABLE_PAYLOAD = 'unusable_payload';
+
+const REJECTION_COPY: Record<string, string> = {
+  [R_ACCOUNT_IDENTITY_MISMATCH]:
+    'An execution node is reporting a genuine MT5 account that is NOT the account ' +
+    'this deployment is pinned to. The reading is real; it is the wrong account. ' +
+    'Nothing is shown, because showing it would attribute another account’s money ' +
+    'to this deployment.',
+  [R_ACCOUNT_SERVER_MISMATCH]:
+    'An execution node is reporting an account on a different broker server from ' +
+    'the one this deployment expects. The reading is real; the destination is not ' +
+    'the expected one.',
+  [R_NUMERIC_INVALID]:
+    'An account observation contained a value that is not a measurement — NaN, ' +
+    'infinity, a number sent as text. The record is refused rather than ' +
+    'partially believed. (A NEGATIVE balance is not this: negatives are real ' +
+    'and are shown, with a warning.)',
+  [R_ACCOUNT_IDENTITY_UNVERIFIABLE]:
+    'An execution node is reporting account figures with NO identity attached, ' +
+    'and this deployment is pinned to a specific account. There is nothing to ' +
+    'check the figures against, so they are refused. Cannot-be-checked is not ' +
+    'passed-the-check.',
+  [R_ACCOUNT_NOT_OBSERVED]:
+    'The node published a heartbeat without sampling its account this cycle. ' +
+    'This is the ordinary state of a healthy node, not a fault.',
+  [R_UNUSABLE_PAYLOAD]:
+    'The stored observation is not a payload this Control Tower understands — ' +
+    'an unknown schema version, or a malformed body.',
+};
+
+/**
+ * Precise operator copy for records the gate refused, in a stable order.
+ *
+ * A refused record must not vanish silently. "No authoritative account source"
+ * is true but misleading when the truth is "a source is reporting loudly and it
+ * is the wrong account" — the two states need an operator to do opposite
+ * things.
+ */
+export function admissionRejectionCopy(
+  records: readonly ProvenancedRecord[] | null | undefined
+): string[] {
+  if (!Array.isArray(records)) return [];
+  const seen = new Set<string>();
+  for (const record of records) {
+    if (admissionPermits(record?.admitted)) continue;
+    // ONLY GENUINE SOURCES SPEAK HERE.
+    //
+    // The mock adapter's record is also refused once a pin is set — its
+    // fingerprint is not the pinned one — and without this filter the ordinary
+    // development screen announced "an execution node is reporting a genuine
+    // MT5 account that is NOT the account this deployment is pinned to" when
+    // no node was reporting anything at all. A false alarm on the resting
+    // state is how an operator learns to dismiss the real one.
+    if (!AUTHORITATIVE_PROVENANCE.has(record?.provenance ?? '')) continue;
+    for (const reason of record.admissionReasons ?? []) {
+      // An UNMAPPED code must not vanish. A refused record that produces no
+      // copy leaves the generic "no authoritative account source" on screen,
+      // which tells the operator to wait when it should tell them to stop.
+      seen.add(REJECTION_COPY[reason]
+        ?? `An account observation was refused: ${reason}.`);
+    }
+  }
+  return [...seen].sort();
+}
+
+/**
+ * Keep authoritative records; drop everything else.
+ *
+ * Note what this deliberately does NOT do: it never *merges* authoritative and
+ * non-authoritative records, and it never rewrites a dropped record into a
+ * placeholder with zeroed fields. A dropped record leaves no trace, because a
+ * trace shaped like a record is how invented data gets back onto a screen.
+ */
+export function authoritativeOnly<T extends ProvenancedRecord>(
+  records: readonly T[] | null | undefined
+): T[] {
+  if (!Array.isArray(records)) return [];
+  return records.filter(isAuthoritative);
+}
+
+/**
+ * Classify a filtered result.
+ *
+ * `sourceAnswered` is the crux. When the endpoint failed, or every record was
+ * rejected as non-authoritative, the honest answer is `unavailable` — this
+ * application has no operational view. Reporting `empty` there would assert
+ * "there are no accounts", which is a claim about the world we cannot support.
+ */
+export function classify<T extends ProvenancedRecord>(
+  authoritative: readonly T[],
+  { sourceAnswered, rejectedCount = 0 }: { sourceAnswered: boolean; rejectedCount?: number }
+): OperationalStatus {
+  if (!sourceAnswered) return 'unavailable';
+  if (authoritative.length === 0) {
+    // The source answered but nothing survived the gate: we have no operational
+    // view, and saying "none exist" would be a fabrication of a different kind.
+    return rejectedCount > 0 ? 'unavailable' : 'empty';
+  }
+  return authoritative.every((r) => r.freshness?.stale === true) ? 'stale' : 'available';
+}
+
+/**
+ * A numeric field that may legitimately be absent.
+ *
+ * The projection already uses `null` to mean "not derivable from the evidence"
+ * (see `realizedPnLToday`, `openRisk`). That distinction must survive all the
+ * way to the pixel: `0` is a measurement, `null` is the absence of one, and a
+ * renderer that coerces the second into the first invents a fact.
+ */
+export function numericOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * A STABLE identity for an account row.
+ *
+ * THE DEFECT THIS PREVENTS
+ *   React keys of the form `account-${index}` are positional. Two execution
+ *   nodes may legitimately report two different accounts, and the projection
+ *   sorts by node — so the moment one node goes quiet, every row below it shifts
+ *   up and inherits the key, the DOM node and the component state of the row
+ *   that used to be there. One account's balance would be shown under another
+ *   account's identity, with no error anywhere.
+ *
+ * The key is the OBSERVER plus the OBSERVED — a fingerprint alone is not enough,
+ * because the same account genuinely can be reported by two nodes, and those are
+ * two different observations that must not collapse into one row.
+ *
+ * When neither part is present the caller must NOT fall back to an index. It
+ * should render nothing rather than invent an identity; `null` here says so.
+ */
+export function accountIdentityKey(
+  record: { nodeId?: string | null; accountFingerprint?: string | null } | null | undefined
+): string | null {
+  if (!record) return null;
+  const node = typeof record.nodeId === 'string' && record.nodeId ? record.nodeId : null;
+  const fp = typeof record.accountFingerprint === 'string' && record.accountFingerprint
+    ? record.accountFingerprint : null;
+  if (!node && !fp) return null;
+  return `${node ?? 'local'}::${fp ?? 'unidentified'}`;
+}
+
+/** Human-readable reason for an unavailable state — names the missing source. */
+export const UNAVAILABLE_DETAIL =
+  'No authoritative operational source is reporting. This Control Tower has no ' +
+  'local MT5 terminal, and no execution node has relayed an account observation, ' +
+  'so no deployment, broker or account records can be presented as operational ' +
+  'truth. A node that is publishing telemetry without having sampled its account ' +
+  'also reaches this state — a healthy node is not an account reading.';
+
+/**
+ * M-TRADES-1 — why the durable trade ledger is NOT admitted here.
+ *
+ * `/api/ledger/*` reports `provenance: "durable-store"`. That names where the
+ * record is KEPT, not where it came from: the same store holds trades ingested
+ * from the mock adapter. Storage durability is not evidence of origin, so a
+ * `durable-store` record cannot be shown as operational truth without inferring
+ * authority from the endpoint — the exact mistake M-FLEET-2 exists to prevent.
+ *
+ * MISSING CONTRACT: the ledger must state the ORIGIN of each entry (which
+ * adapter produced the fill) alongside its storage class. Until it does, ledger
+ * history is reported as unavailable rather than rendered. This is a deliberate
+ * gap, not an oversight.
+ */
+export const PROV_DURABLE_STORE = 'durable-store';
+
+/** Reason text for trade surfaces with no admissible source. */
+export const TRADES_UNAVAILABLE_DETAIL =
+  'No authoritative operational source is reporting positions or orders. The active ' +
+  'broker adapter is not a live MT5 connection, so no trade, order or execution ' +
+  'record can be presented as operational truth.';
+
+/**
+ * Guard for derived performance figures.
+ *
+ * `computeMetrics([])` returns a mathematically valid report — 0 trades, 0% win
+ * rate, $0 expectancy — that reads as an OBSERVED flat performance. When the
+ * input list is empty because the source was unavailable or every record was
+ * rejected, that report is a fabrication. Analytics must ask this first.
+ */
+export function analyticsInputAdmissible(status: OperationalStatus): boolean {
+  return status === 'available' || status === 'stale';
+}
+
+/**
+ * M-PKG-1 — there is no package registry.
+ *
+ * Every package, version, hash, promotion date and policy matrix on the
+ * operator surfaces came from the development fixture. No registry module
+ * exists in the backend; it was never built. The honest answer is unavailable,
+ * and it must stay unavailable: deriving a "version" from configuration would
+ * assert that a specific strategy build is deployed and governing decisions,
+ * which nothing in this system can currently support.
+ */
+export const PACKAGES_UNAVAILABLE_DETAIL =
+  'No strategy-package registry exists. Package identity, version, hash, promotion ' +
+  'history and policy matrices have no authoritative source, so no package state ' +
+  'can be reported. This is a missing capability, not a missing connection.';
+
+/**
+ * M-REC-1 — the durable recommendation store is a genuine authority.
+ *
+ * Unlike `/api/ledger/*` (rejected in M-TRADES-1 because `durable-store` names
+ * storage, not origin), the trade-recommendation store has a verified
+ * ingestion path: records enter only through operator action, and
+ * `recommendation_store.py` contains no fixture read of any kind. Durable and
+ * fixture recommendations have therefore never been able to mix, which is why
+ * this domain can be migrated rather than merely emptied.
+ *
+ * Note the asymmetry deliberately: storage class alone still proves nothing.
+ * What admits this store is the audited absence of any fixture path INTO it.
+ */
+export const RECOMMENDATIONS_UNAVAILABLE_DETAIL =
+  'The durable recommendation store is not reporting. No recommendation, decision ' +
+  'or evidence can be shown.';
+
+
+/**
+ * M-CT-FLEET-DASHBOARD-2 — ledger provenance, compared HERE and nowhere else.
+ *
+ * The local mock adapter writes into the same durable trade ledger as genuine
+ * broker fills, and the two are indistinguishable at the top level (both read
+ * `provenance: "durable-store"`). The distinguishing markers live one level
+ * down. They are declared here so the comparison stays in one module — the
+ * structural guard that enforces that exists because scattered provenance
+ * checks drift apart and eventually disagree.
+ */
+export const SIMULATED_MARKERS = [PROV_MOCK_FIXTURE, 'mock', 'fixture', 'replay', 'simulated'] as const;
+export const BROKER_ORIGINS = ['broker', 'live', PROV_LIVE_MT5] as const;
+export const MOCK_ACCOUNT_PREFIX = 'acc_mock';

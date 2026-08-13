@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useShellStore } from '@/store/shellStore';
-import { useFleet } from '@/hooks/useRepository';
+import { useConfiguredInstruments } from '@/hooks/useRepository';
 import { Search, ArrowRight, Command as CmdIcon } from 'lucide-react';
 
 interface CommandItem {
@@ -22,7 +22,11 @@ export function CommandPalette() {
   const setActivePair = useShellStore((s) => s.setActivePair);
   const setMatrixLens = useShellStore((s) => s.setMatrixLens);
   const navigate = useNavigate();
-  const { pairs, deployments } = useFleet();
+  // M-FLEET-2: pair choices come from the CONFIGURED instrument universe, not
+  // from fixture deployment records. Deployment commands are gone — there is no
+  // authoritative deployment to command, and offering one for an invented
+  // record put a fabricated entity behind an action.
+  const { symbols: pairs } = useConfiguredInstruments();
   const [query, setQuery] = useState('');
 
   useEffect(() => {
@@ -83,18 +87,9 @@ export function CommandPalette() {
       group: 'Policy Matrix',
       action: () => setMatrixLens(l),
     }));
-    const deployCmds: CommandItem[] = deployments.map((d) => ({
-      id: `dep-${d.deploymentId}`,
-      label: `Deployment · ${d.pair} · ${d.lane}`,
-      hint: d.lastAction,
-      group: 'Deployments',
-      action: () => {
-        setActivePair(d.pair);
-        navigate(`/pair/${d.pair}/dashboard`);
-      },
-    }));
+    const deployCmds: CommandItem[] = [];   // M-FLEET-2: no authoritative deployments
     return [...nav, ...pairCmds, ...lensCmds, ...deployCmds];
-  }, [pairs, deployments, navigate, setActivePair, setMatrixLens]);
+  }, [pairs, navigate, setActivePair, setMatrixLens]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

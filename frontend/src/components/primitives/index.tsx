@@ -8,6 +8,7 @@ export type { BadgeVariant } from './Badge';
 export { Button, IconButton } from './Button';
 import { badgeColor, marketStateGlyph, marketStateLabel, marketStateVar, eligibilityColor, eligibilityLabel, laneColor, laneLabel } from '@/lib/utils';
 import { CircleDot, CircleAlert, CircleSlash, CircleCheck } from 'lucide-react';
+import { PROVENANCE_HINT, PROVENANCE_LABEL, PROVENANCE_TONE, type DataProvenance } from '@/types/provenance';
 
 /* -------------------------------------------------------------------------- */
 /*  HealthDot — one indicator (dot + label + tooltip) for every domain        */
@@ -164,8 +165,26 @@ export function SampleSize({ n }: { n: number }) {
 /* -------------------------------------------------------------------------- */
 
 import { GitBranch } from 'lucide-react';
-export function PackageVersionChip({ version, hash }: { version: number; hash?: string }) {
+/**
+ * M-PKG-1: `version` is now optional. A package version asserts that a specific
+ * strategy build is deployed and governing decisions; with no registry there is
+ * no such fact, and rendering "v" followed by nothing — or worse a default —
+ * would make the absence look like a value. The chip says so instead.
+ */
+export function PackageVersionChip({ version, hash }: { version?: number; hash?: string }) {
   const short = hash ? (hash.startsWith('sha256:') ? hash.slice(7, 15) : hash.slice(0, 8)) : '';
+  if (version === undefined || version === null) {
+    return (
+      <span
+        className="inline-flex items-center gap-1.5 text-xs text-text-muted"
+        data-testid="package-version-unavailable"
+        title="No strategy-package registry exists, so no package version can be reported."
+      >
+        <GitBranch size={12} strokeWidth={2} />
+        <span>no package registry</span>
+      </span>
+    );
+  }
   return (
     <span className="inline-flex items-center gap-1.5 text-xs text-text-2">
       <GitBranch size={12} strokeWidth={2} />
@@ -217,7 +236,28 @@ export function CohortChip({
 /*  MarketStateBadge — Badge variant                                           */
 /* -------------------------------------------------------------------------- */
 
-export function MarketStateBadge({ state, confidence, confirmed = true }: { state: string; confidence?: number; confirmed?: boolean }) {
+/**
+ * M-NODE-TEL-1: `state` is now optional. The badge rendered an authored regime
+ * (`BullExpand`) at an authored confidence (96%) from an authored model
+ * (`regime@2.3.0`). No node publishes market state, so absence must read as
+ * absence — not as a neutral regime and not as zero confidence, either of which
+ * would be a claim about the market.
+ */
+export function MarketStateBadge({ state, confidence, confirmed = true }: { state?: string; confidence?: number; confirmed?: boolean }) {
+  if (!state) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-2xs text-text-muted"
+        data-testid="market-state-unavailable"
+        title="No market-state model publishes to this process. Regime and confidence are unavailable — not neutral, and not zero."
+      >
+        market state unavailable
+      </span>
+    );
+  }
+  return <MarketStateBadgeInner state={state} confidence={confidence} confirmed={confirmed} />;
+}
+function MarketStateBadgeInner({ state, confidence, confirmed = true }: { state: string; confidence?: number; confirmed?: boolean }) {
   const color = marketStateVar(state);
   return (
     <Badge variant="marketState" color={color} glyph={<span className="mono text-2xs">{marketStateGlyph(state)}</span>}>
@@ -238,6 +278,49 @@ export function ValidationBadgeChip({ badge }: { badge: string }) {
   return (
     <Badge variant="validation" color={badgeColor(badge)} glyph={<CircleCheck size={10} strokeWidth={2.5} />}>
       {badge}
+    </Badge>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  ProvenanceChip — where a displayed value came from (UI-0)                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The single visual treatment for data provenance. Any operator-facing value that
+ * is not genuinely emitted by a live node or a real market source must be rendered
+ * next to one of these. Uses the ONE Badge primitive (no new badge component).
+ */
+export function ProvenanceChip({
+  provenance,
+  detail,
+  className,
+}: {
+  provenance: DataProvenance;
+  detail?: string;
+  className?: string;
+}) {
+  const tone = PROVENANCE_TONE[provenance];
+  const color =
+    tone === 'trusted'
+      ? 'var(--positive)'
+      : tone === 'caution'
+        ? 'var(--caution)'
+        : tone === 'critical'
+          ? 'var(--negative)'
+          : 'var(--text-muted)';
+  const glyph =
+    tone === 'trusted' ? <CircleCheck size={10} strokeWidth={2.5} /> : tone === 'inert' ? <CircleSlash size={10} /> : <CircleAlert size={10} />;
+  return (
+    <Badge
+      variant="neutral"
+      color={color}
+      glyph={glyph}
+      outline={tone === 'inert'}
+      className={className}
+      title={detail ? `${PROVENANCE_HINT[provenance]} ${detail}` : PROVENANCE_HINT[provenance]}
+    >
+      {PROVENANCE_LABEL[provenance]}
     </Badge>
   );
 }

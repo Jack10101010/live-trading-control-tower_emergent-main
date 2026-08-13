@@ -1,0 +1,749 @@
+"""ARCH-2 — the canonical broker adapter boundary.
+
+This module is the ONE authoritative broker adapter contract:
+
+  * one adapter interface (`BrokerAdapter`, the ABC every adapter implements)
+  * one canonical capability model (`BrokerCapability`)
+  * one canonical connection-state model (`ConnectionState`)
+  * one canonical result envelope (`BrokerResult`)
+  * one canonical error model (`BrokerError`)
+  * one centralized, LAZY adapter factory (`get_adapter`) — the only place an
+    adapter may be constructed
+
+It contains NO adapter implementation, NO MT5-specific concept, NO socket, and no
+import of any gateway. Concrete adapters live in `broker.py` (MockBroker, the inert
+MT5Adapter) and are imported lazily inside the factory, so importing this module —
+or any module that depends on it — constructs no broker and touches no network.
+
+DESIGN RULES
+  * The runtime and orchestrator talk ONLY to this contract. No broker-specific
+    result shape exists outside an adapter; anything an adapter returns crosses the
+    boundary as the canonical models or a `BrokerResult` envelope.
+  * Adapter selection is centralized and fail-closed: an unknown or unavailable
+    adapter kind raises `UnknownAdapterError`; nothing falls back to a guessed
+    adapter.
+  * Construction is lazy and cached: no adapter exists until `get_adapter()` is
+    first called for its kind, so importing the backend performs no broker work
+    (previously `broker._REGISTRY` constructed MockBroker AND MT5Adapter — which
+    probes for a live gateway — at import time; ARCH-2 removes that).
+  * Lifecycle operations a given adapter does not implement return an EXPLICIT
+    inert `BrokerResult` (`ok=False, code="unavailable"`) — never a silent pass and
+    never an exception a caller might mistake for connectivity.
+
+FUTURE ADAPTERS (cTrader, JForex, a real MT5 write path) implement this same
+interface; the factory gains a kind; nothing else in the system changes. That is
+the whole point of the boundary.
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Any, Callable
+
+
+# ---------------------------------------------------------------------------
+# Canonical connection-state model — the single owner of these constants.
+# (`execution.py` and `broker_sync.py` previously compared against bare string
+# literals; they now import these.)
+# ---------------------------------------------------------------------------
+
+class ConnectionState:
+    DISCONNECTED = "Disconnected"
+    CONNECTING = "Connecting"
+    CONNECTED = "Connected"
+    DEGRADED = "Degraded"
+    RECONNECTING = "Reconnecting"
+    OFFLINE = "Offline"
+
+
+# ---------------------------------------------------------------------------
+# Canonical broker models — runtime-facing, broker-agnostic. No MT5 structures.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class BrokerCapability:
+    """The one canonical capability model. `command_registry` names which command
+    requires which capability field; adapters declare what they support.
+
+    LIVE-1: `supportsLiveWrite` is the REAL-broker write capability. It is False
+    for EVERY adapter (the mock's "writes" are fixture simulations against the
+    runtime overlay, never a broker; the MT5 adapter is structurally read-only).
+    Execution against a live broker therefore remains impossible by capability."""
+    supportsLiveWrite: bool = False
+    supportsMarketExecution: bool = False
+    supportsPendingOrders: bool = False
+    supportsModify: bool = False
+    supportsPartialClose: bool = False
+    supportsHedging: bool = False
+    supportsNetting: bool = False
+    supportsReplay: bool = False
+    # LIVE-3: the two additional manual-management operations, each explicit.
+    supportsCancelOrder: bool = False
+    supportsClosePosition: bool = False
+
+
+@dataclass
+class BrokerConnection:
+    state: str = ConnectionState.DISCONNECTED
+    since: str | None = None
+    detail: str = ""
+
+
+@dataclass
+class BrokerHealth:
+    brokerId: str
+    kind: str
+    connection: str
+    latencyMs: int | None = None
+    lastSyncAt: str | None = None
+    detail: str = ""
+
+
+@dataclass
+class BrokerSymbol:
+    canonical: str
+    brokerSymbol: str
+
+
+@dataclass
+class BrokerAccount:
+    accountId: str
+    brokerId: str
+    type: str
+    baseCurrency: str
+    balance: float | None = None
+    equity: float | None = None
+
+
+@dataclass
+class BrokerOrder:
+    orderId: str
+    canonicalSymbol: str
+    brokerSymbol: str
+    side: str
+    size: float | None
+    state: str
+    deploymentId: str | None = None
+
+
+@dataclass
+class BrokerPosition:
+    positionId: str
+    canonicalSymbol: str
+    brokerSymbol: str
+    side: str
+    size: float | None
+    entry: float | None
+    sl: float | None
+    tp: float | None
+    state: str
+    deploymentId: str | None = None
+
+
+@dataclass
+class BrokerError:
+    """The one canonical error model. `code` is a stable machine string."""
+    code: str
+    message: str
+    recoverable: bool = True
+
+
+# Sentinels for unsupported operations (the inert MT5 skeleton returns these).
+UNSUPPORTED = BrokerError(code="unsupported", message="Operation not supported by this broker", recoverable=False)
+NOT_IMPLEMENTED = BrokerError(code="not_implemented", message="Adapter is a skeleton — no implementation", recoverable=False)
+
+
+# ---------------------------------------------------------------------------
+# Canonical result envelope — how every lifecycle operation answers.
+# ---------------------------------------------------------------------------
+
+#: Stable result codes (machine-readable; never carry a value or a secret).
+RESULT_OK = "ok"
+RESULT_UNAVAILABLE = "unavailable"          # adapter does not implement / is inert
+RESULT_NOT_CONNECTED = "not_connected"
+RESULT_REJECTED = "rejected"
+RESULT_ERROR = "error"
+
+
+@dataclass(frozen=True)
+class BrokerResult:
+    """The one canonical envelope for a broker lifecycle operation.
+
+    `ok` — did the operation succeed; `code` — stable machine code; `detail` — a
+    redaction-safe human hint; `data` — the canonical payload (models/plain data,
+    never a broker-native structure); `broker_ref` — the broker's own reference for
+    the affected entity, when one exists.
+    """
+    ok: bool
+    code: str
+    detail: str = ""
+    data: Any = None
+    broker_ref: str | None = None
+
+
+def inert_result(operation: str) -> BrokerResult:
+    """The explicit answer of an adapter that does not implement an operation.
+    Fail-closed and unmistakable: `ok=False`, code `unavailable`."""
+    return BrokerResult(ok=False, code=RESULT_UNAVAILABLE,
+                        detail=f"adapter does not implement {operation}; operation is inert")
+
+
+# ---------------------------------------------------------------------------
+# Runtime → adapter injection (unchanged shape; the runtime supplies overlay
+# primitives so adapters never import server internals).
+# ---------------------------------------------------------------------------
+
+@dataclass
+class BrokerContext:
+    now: str
+    reason: str | None
+    payload: dict
+    operator_id: str
+    trade_current: Callable[[str], dict | None]
+    trade_by_order_id: Callable[[str], dict | None]
+    append_trade_management: Callable[..., None]
+    mgmt_entry: Callable[..., dict]
+    close_trade: Callable[[str, str, str | None], tuple]
+    snake_upper: Callable[[str], str]
+    live_trades: Callable[[], list]
+    accounts: Callable[[], list]
+    # M-MOCK-DECOUPLE-1: `brokers` REMOVED. An AST scan of every adapter shows
+    # nothing ever called it — `MockBroker` reads accounts, live_trades,
+    # trade_current and trade_by_order_id; `MT5Adapter` reads only `now`. It was
+    # dead field on the interface, and the only remaining reason the UI
+    # fixture's broker collection was reachable from the broker path. Narrowing
+    # the interface is the point: a field nobody reads is a field a future edit
+    # can start reading without anyone deciding to.
+
+
+# ---------------------------------------------------------------------------
+# The canonical adapter interface.
+# ---------------------------------------------------------------------------
+
+class BrokerAdapter(ABC):
+    """The single execution boundary every broker adapter implements.
+
+    The abstract core is the operation set the existing `Broker` interface already
+    proved (connection, health, capabilities, accounts/positions/orders inspection,
+    command submission, cancel/modify, flatten, sync). The additional lifecycle
+    operations below have EXPLICIT inert defaults: an adapter that has not
+    implemented them answers `unavailable` rather than pretending.
+    """
+
+    kind: str = "broker"
+    broker_id: str = "brk_unknown"
+
+    # -- connection / identity / capabilities --------------------------------
+    @abstractmethod
+    def connect(self) -> BrokerConnection: ...
+
+    @abstractmethod
+    def disconnect(self) -> BrokerConnection: ...
+
+    @abstractmethod
+    def connection(self) -> BrokerConnection: ...
+
+    @abstractmethod
+    def health(self) -> BrokerHealth: ...
+
+    @abstractmethod
+    def capabilities(self) -> BrokerCapability: ...
+
+    def account_identity(self) -> BrokerResult:
+        """The broker-side account identity (id / fingerprint), value-free.
+        Inert by default; adapters override when they can actually report one."""
+        return inert_result("account_identity")
+
+    # -- inspection ----------------------------------------------------------
+    @abstractmethod
+    def accounts(self, ctx: BrokerContext) -> list: ...
+
+    @abstractmethod
+    def positions(self, ctx: BrokerContext) -> list: ...
+
+    @abstractmethod
+    def orders(self, ctx: BrokerContext) -> list: ...
+
+    def recent_executions(self, ctx: BrokerContext) -> BrokerResult:
+        """Recent fills/executions. Inert by default (no adapter reports these yet)."""
+        return inert_result("recent_executions")
+
+    def account_snapshot(self, ctx: BrokerContext) -> BrokerResult:
+        """A point-in-time account snapshot. Inert by default."""
+        return inert_result("account_snapshot")
+
+    # -- command execution (fixture control-plane path) ----------------------
+    @abstractmethod
+    def submit_command(self, name: str, ctx: BrokerContext) -> tuple[dict | None, dict | None]:
+        """Execute a trade/order command. Returns (before, after) for the audit event."""
+
+    @abstractmethod
+    def cancel_order(self, order_id: str, ctx: BrokerContext) -> tuple[dict | None, dict | None]: ...
+
+    @abstractmethod
+    def modify_order(self, order_id: str, changes: dict, ctx: BrokerContext) -> tuple[dict | None, dict | None]: ...
+
+    @abstractmethod
+    def flatten(self, deployment_id: str, ctx: BrokerContext) -> list[str]: ...
+
+    # -- future canonical order lifecycle (inert until a live slice) ---------
+    def submit_order(self, intent: Any, ctx: BrokerContext) -> BrokerResult:
+        """Submit a canonical OrderIntent. Inert by default — NO adapter implements
+        live submission in ARCH-2, including the mock (the fixture world executes
+        through `submit_command`)."""
+        return inert_result("submit_order")
+
+    def submit_market_order(self, request: "MarketOrderRequest",
+                            ctx: BrokerContext) -> BrokerResult:
+        """LIVE-2 — the ONE executable broker operation. Submit exactly one
+        market order described by the canonical `MarketOrderRequest`; answer with
+        a canonical `BrokerResult` whose `data` is a `MarketOrderAck.as_dict()`
+        and whose `broker_ref` is the broker's order ticket when one exists.
+
+        Inert by default: an adapter that does not implement live market-order
+        submission answers `unavailable` and touches nothing."""
+        return inert_result("submit_market_order")
+
+    # -- LIVE-3: the three manual-management operations (inert by default) ----
+    def modify_position_protection(self, request: "ModifyPositionProtectionRequest",
+                                   ctx: BrokerContext) -> BrokerResult:
+        """Modify SL/TP of one position. Inert unless the adapter implements it."""
+        return inert_result("modify_position_protection")
+
+    def cancel_pending_order(self, request: "CancelPendingOrderRequest",
+                             ctx: BrokerContext) -> BrokerResult:
+        """Cancel one pending order. Inert unless the adapter implements it."""
+        return inert_result("cancel_pending_order")
+
+    def close_position(self, request: "ClosePositionRequest",
+                       ctx: BrokerContext) -> BrokerResult:
+        """Close one position (full close only). Inert unless implemented.
+        LIVE-3: signature moved from (position_id, ctx) to the canonical
+        immutable request — the operation is now real on implementing adapters."""
+        return inert_result("close_position")
+
+    # -- reconciliation ------------------------------------------------------
+    @abstractmethod
+    def sync(self, ctx: BrokerContext) -> dict: ...
+
+    def reconcile_snapshot(self, ctx: BrokerContext) -> BrokerResult:
+        """One coherent snapshot for the canonical reconciliation authority:
+        positions, orders, accounts, connection state, and the adapter's own
+        timestamp. Inert by default; adapters that can report state override."""
+        return inert_result("reconcile_snapshot")
+
+    # -- symbols -------------------------------------------------------------
+    def translate_symbol(self, canonical: str) -> str:
+        return canonical
+
+    def to_canonical(self, broker_symbol: str) -> str:
+        return broker_symbol
+
+
+# ---------------------------------------------------------------------------
+# Centralized, lazy, fail-closed adapter selection — the ONLY constructor path.
+# ---------------------------------------------------------------------------
+
+class UnknownAdapterError(LookupError):
+    """Selection failed closed: the requested adapter kind does not exist."""
+
+
+class AdapterDeniedError(PermissionError):
+    """The ConnectionPolicy refused adapter construction. `reason` is the
+    policy's machine-readable code; nothing was initialized."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+#: The DEFAULT adapter kind. The Control Tower runs against the mock adapter
+#: unless an operator explicitly selects another known kind (LIVE-1).
+ACTIVE_KIND = "mock"
+
+#: LIVE-1: explicit adapter selection. Allowed values: mock | mt5. Anything else
+#: DENIES (get_adapter raises; nothing constructs, nothing falls back silently).
+VAR_ADAPTER = "CONTROL_TOWER_BROKER_ADAPTER"
+
+_CACHE: dict[str, BrokerAdapter] = {}
+
+
+def known_kinds() -> tuple[str, ...]:
+    return ("mock", "mt5")
+
+
+def get_adapter(kind: str | None = None) -> BrokerAdapter:
+    """Return the adapter for `kind` (default: the active kind), constructing it
+    LAZILY on first request and caching it. Unknown kinds fail closed with
+    `UnknownAdapterError` — there is no fallback adapter.
+
+    This is the single construction path. `broker.get_broker()` delegates here;
+    nothing else may instantiate an adapter class.
+    """
+    resolved = kind or active_kind()
+    # M-ENV-1: checked BEFORE the cache, because an EXPLICIT `get_adapter("mock")`
+    # must be refused in production too. Startup validation covers the configured
+    # kind; this covers every call site that names a kind directly, which is what
+    # makes "no mock broker can be constructed in production" a property of the
+    # single construction path rather than of import ordering.
+    import environment
+    environment.require_broker_adapter_admissible(resolved)
+    if resolved in _CACHE:
+        return _CACHE[resolved]
+    if resolved not in known_kinds():
+        raise UnknownAdapterError(f"unknown broker adapter kind: {resolved!r}")
+    # LIVE-1: the ConnectionPolicy must approve BEFORE a broker-touching adapter
+    # is constructed. The mock is an in-process fixture (no external system to
+    # police); MT5 touches a terminal, so a policy deny constructs NOTHING and
+    # performs zero MT5 API calls.
+    if resolved == "mt5":
+        import connection_policy
+        decision = connection_policy.evaluate_local_broker("mt5")
+        if not decision.allowed:
+            import logging
+            logging.getLogger("broker_adapter").warning(
+                "AUDIT adapter_denied kind=mt5 reason=%s profile=%s",
+                decision.reason, decision.profile)
+            raise AdapterDeniedError(decision.reason)
+    # Lazy import: the adapters module is only loaded when an adapter is actually
+    # requested, and each adapter is only constructed when ITS kind is requested.
+    import broker as _adapters
+    if resolved == "mock":
+        _CACHE[resolved] = _adapters.MockBroker()
+    else:
+        _CACHE[resolved] = _adapters.MT5Adapter()
+    return _CACHE[resolved]
+
+
+def active_kind() -> str:
+    """LIVE-1: the selected adapter kind. Unset/blank -> the mock default. A value
+    outside `known_kinds()` is returned VERBATIM so every construction attempt
+    fails closed in `get_adapter` (unknown values deny; nothing falls back).
+
+    M-ENV-1: the mock default is a DEVELOPMENT default. In production the
+    fail-open branch is refused outright — an unset variable must never resolve
+    to the mock broker there. Startup validation already rejects that
+    configuration before this is reached, so this is additive defence: it makes
+    "production can never see mock" provable at the function itself rather than
+    only as a consequence of import ordering.
+    """
+    import os
+    import environment
+    raw = (os.environ.get(VAR_ADAPTER) or "").strip().lower()
+    if raw:
+        return raw
+    environment.require_broker_adapter_admissible(None)
+    return ACTIVE_KIND
+
+
+# ── LIVE-1 canonical read models (immutable; MT5 types never escape the adapter) ─
+
+@dataclass(frozen=True)
+class BrokerAccountInfo:
+    """Canonical account snapshot. `login_masked` shows only the last 4 digits."""
+    login_masked: str
+    fingerprint: str | None
+    broker_company: str | None
+    server: str | None
+    currency: str | None
+    balance: float | None
+    equity: float | None
+    margin: float | None
+    margin_free: float | None
+    margin_level: float | None
+    leverage: int | None
+    at: str | None = None
+    #: LIVE-5B: "demo" | "contest" | "real", or None when the terminal did not
+    #: report a mode it could classify. Additive and read-only: it comes from the
+    #: AccountIdentity the adapter ALREADY reads for the fingerprint, so no extra
+    #: broker call is made. It exists because an operator about to enable LIVE
+    #: must be able to see, on the dashboard, whether the account is real.
+    trade_mode: str | None = None
+
+    def as_dict(self) -> dict:
+        from dataclasses import asdict
+        return dict(sorted(asdict(self).items()))     # deterministic serialization
+
+
+@dataclass(frozen=True)
+class BrokerDeal:
+    """Canonical executed deal (history read)."""
+    deal_id: str
+    order_ref: str | None
+    symbol: str | None
+    side: str | None
+    volume: float | None
+    price: float | None
+    profit: float | None
+    at: str | None
+
+    def as_dict(self) -> dict:
+        from dataclasses import asdict
+        return dict(sorted(asdict(self).items()))
+
+
+@dataclass(frozen=True)
+class SymbolSpec:
+    """Canonical symbol specification."""
+    canonical: str
+    broker_symbol: str
+    digits: int | None = None
+    point: float | None = None
+    trade_allowed: bool | None = None
+
+    def as_dict(self) -> dict:
+        from dataclasses import asdict
+        return dict(sorted(asdict(self).items()))
+
+
+@dataclass(frozen=True)
+class TerminalInfo:
+    """Canonical terminal state (value-free: no paths, no build details)."""
+    connected: bool
+    trade_allowed: bool | None = None
+    company: str | None = None
+
+    def as_dict(self) -> dict:
+        from dataclasses import asdict
+        return dict(sorted(asdict(self).items()))
+
+
+# ── LIVE-2 canonical market-order models ──────────────────────────────────────
+# The ONE executable broker operation. Broker-neutral, immutable, deterministic
+# serialization. The request carries only evidence-supported fields (no strategy
+# fields); the acknowledgement carries only plain scalars the adapter mapped out
+# of the broker response — no broker-native object ever crosses this boundary.
+
+MARKET_ORDER_SIDES = frozenset({"long", "short"})
+
+#: Stable acknowledgement statuses (machine-readable; the lifecycle maps them).
+ACK_FILLED = "filled"                    # broker confirmed; position open
+ACK_PARTIAL = "partially_filled"
+ACK_REJECTED = "rejected"                # broker refused; nothing created
+ACK_NOT_SUBMITTED = "not_submitted"      # order_send was never called
+ACK_TIMEOUT = "timeout"                  # outcome unknowable — reconcile
+ACK_COMMUNICATION_FAILED = "communication_failed"   # outcome unknowable — reconcile
+KNOWN_ACK_STATUSES = frozenset({
+    ACK_FILLED, ACK_PARTIAL, ACK_REJECTED, ACK_NOT_SUBMITTED,
+    ACK_TIMEOUT, ACK_COMMUNICATION_FAILED,
+})
+#: Statuses where the broker MAY have acted but the outcome is not knowable —
+#: the lifecycle must go unknown -> reconciliation_required, never guess.
+AMBIGUOUS_ACK_STATUSES = frozenset({ACK_TIMEOUT, ACK_COMMUNICATION_FAILED})
+
+
+@dataclass(frozen=True)
+class MarketOrderRequest:
+    """The immutable, broker-neutral request for ONE market order.
+
+    Only evidence-supported fields: identity/lineage, instrument, side,
+    quantity, optional protective levels, optional comment, execution mode.
+    No strategy fields. Validated at construction — an invalid request can
+    never be instantiated, so nothing malformed reaches an adapter."""
+    intent_id: str
+    instrument: str                       # canonical symbol (e.g. EURUSD)
+    side: str                             # long | short
+    quantity: float                       # lots; finite and > 0
+    stop_loss: float | None = None
+    take_profit: float | None = None
+    comment: str | None = None
+    correlation_id: str | None = None
+    idempotency_key: str | None = None
+    execution_mode: str = "live"          # live | mock-fixture (provenance label)
+
+    def __post_init__(self):
+        import math
+        if not (isinstance(self.intent_id, str) and self.intent_id.startswith("intent_")):
+            raise ValueError("market order request requires a canonical intent_ id")
+        if not (isinstance(self.instrument, str) and self.instrument.strip()):
+            raise ValueError("market order request requires an instrument")
+        if self.side not in MARKET_ORDER_SIDES:
+            raise ValueError(f"unknown market order side: {self.side!r}")
+        if isinstance(self.quantity, bool) or not isinstance(self.quantity, (int, float)) \
+                or not math.isfinite(self.quantity) or self.quantity <= 0:
+            raise ValueError("market order quantity must be a finite positive number")
+        for name in ("stop_loss", "take_profit"):
+            v = getattr(self, name)
+            if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float))
+                                  or not math.isfinite(v) or v <= 0):
+                raise ValueError(f"market order {name} must be a finite positive price")
+        if self.comment is not None and len(str(self.comment)) > 64:
+            raise ValueError("market order comment exceeds 64 characters")
+
+    def as_dict(self) -> dict:
+        from dataclasses import asdict
+        return dict(sorted(asdict(self).items()))     # deterministic serialization
+
+
+@dataclass(frozen=True)
+class MarketOrderAck:
+    """The immutable, broker-neutral acknowledgement of ONE market-order
+    submission. Plain scalars only — the adapter maps the broker response into
+    this model and the broker-native object never escapes."""
+    intent_id: str
+    status: str                           # KNOWN_ACK_STATUSES
+    broker_order_ticket: str | None = None
+    broker_deal_ticket: str | None = None
+    requested_volume: float | None = None
+    filled_volume: float | None = None
+    price: float | None = None
+    reason: str | None = None             # machine-readable failure reason
+    detail: str | None = None             # redaction-safe human hint
+    provenance: str = "live_mt5"          # live_mt5 | mock-fixture
+    at: str | None = None
+
+    def __post_init__(self):
+        if self.status not in KNOWN_ACK_STATUSES:
+            raise ValueError(f"unknown acknowledgement status: {self.status!r}")
+
+    @property
+    def accepted(self) -> bool:
+        return self.status in (ACK_FILLED, ACK_PARTIAL)
+
+    @property
+    def ambiguous(self) -> bool:
+        return self.status in AMBIGUOUS_ACK_STATUSES
+
+    def as_dict(self) -> dict:
+        from dataclasses import asdict
+        return dict(sorted(asdict(self).items()))     # deterministic serialization
+
+
+# ── LIVE-3 canonical manual-management operations ─────────────────────────────
+# Exactly three additional executable operations: modify position protection,
+# cancel a pending order, close a position. Immutable requests validated at
+# construction; one canonical acknowledgement model; deterministic serialization.
+
+ACK_CONFIRMED = "acknowledged"           # broker accepted the ACTION request
+
+_OP_ACK_STATUSES = frozenset({
+    ACK_CONFIRMED, ACK_REJECTED, ACK_NOT_SUBMITTED,
+    ACK_TIMEOUT, ACK_COMMUNICATION_FAILED,
+})
+
+
+def _require_intent_id(value: str) -> None:
+    if not (isinstance(value, str) and value.startswith("intent_")):
+        raise ValueError("operation requires a canonical intent_ operation id")
+
+
+def _require_ref(value, name: str) -> None:
+    if not (isinstance(value, str) and value.strip()):
+        raise ValueError(f"operation requires a {name}")
+
+
+def _require_price(value, name: str) -> None:
+    import math
+    if isinstance(value, bool) or not isinstance(value, (int, float)) \
+            or not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be a finite positive price")
+
+
+@dataclass(frozen=True)
+class ModifyPositionProtectionRequest:
+    """Modify SL/TP of ONE open position. At least one level must be supplied;
+    a level left None is UNCHANGED (protection can never be removed here).
+    Quantity and instrument cannot be changed by construction."""
+    intent_id: str                        # operation id (canonical intent identity)
+    position_ref: str                     # broker position reference (ticket)
+    instrument: str
+    stop_loss: float | None = None
+    take_profit: float | None = None
+    correlation_id: str | None = None
+    idempotency_key: str | None = None
+    execution_mode: str = "live"
+    reason: str | None = None
+
+    def __post_init__(self):
+        _require_intent_id(self.intent_id)
+        _require_ref(self.position_ref, "position reference")
+        _require_ref(self.instrument, "instrument")
+        if self.stop_loss is None and self.take_profit is None:
+            raise ValueError("at least one of stop loss or take profit is required")
+        if self.stop_loss is not None:
+            _require_price(self.stop_loss, "stop_loss")
+        if self.take_profit is not None:
+            _require_price(self.take_profit, "take_profit")
+
+    def as_dict(self) -> dict:
+        from dataclasses import asdict
+        return dict(sorted(asdict(self).items()))
+
+
+@dataclass(frozen=True)
+class CancelPendingOrderRequest:
+    """Cancel ONE pending order by broker reference."""
+    intent_id: str
+    order_ref: str
+    instrument: str
+    correlation_id: str | None = None
+    idempotency_key: str | None = None
+    execution_mode: str = "live"
+    reason: str | None = None
+
+    def __post_init__(self):
+        _require_intent_id(self.intent_id)
+        _require_ref(self.order_ref, "order reference")
+        _require_ref(self.instrument, "instrument")
+
+    def as_dict(self) -> dict:
+        from dataclasses import asdict
+        return dict(sorted(asdict(self).items()))
+
+
+@dataclass(frozen=True)
+class ClosePositionRequest:
+    """Close ONE position. Only a FULL close is supported: a supplied quantity
+    is rejected at construction (the gateway closes the observed volume — a
+    partial close cannot be made deterministic from current broker evidence)."""
+    intent_id: str
+    position_ref: str
+    instrument: str
+    quantity: float | None = None         # must be None — full close only
+    correlation_id: str | None = None
+    idempotency_key: str | None = None
+    execution_mode: str = "live"
+    reason: str | None = None
+
+    def __post_init__(self):
+        _require_intent_id(self.intent_id)
+        _require_ref(self.position_ref, "position reference")
+        _require_ref(self.instrument, "instrument")
+        if self.quantity is not None:
+            raise ValueError("partial close is not supported — quantity must be omitted "
+                             "(full close of the observed volume only)")
+
+    def as_dict(self) -> dict:
+        from dataclasses import asdict
+        return dict(sorted(asdict(self).items()))
+
+
+@dataclass(frozen=True)
+class OperationAck:
+    """The immutable broker-neutral acknowledgement of ONE manual-management
+    action (modify/cancel/close). Plain scalars only. `status=acknowledged`
+    means the broker ACCEPTED the request — the operation is CONFIRMED only by
+    reconciliation observing the resulting broker state."""
+    intent_id: str
+    operation: str                        # modify_position_protection | cancel_pending_order | close_position
+    status: str                           # _OP_ACK_STATUSES
+    entity_ref: str | None = None
+    broker_order_ticket: str | None = None
+    broker_deal_ticket: str | None = None
+    reason: str | None = None
+    detail: str | None = None
+    provenance: str = "live_mt5"
+    at: str | None = None
+
+    def __post_init__(self):
+        if self.status not in _OP_ACK_STATUSES:
+            raise ValueError(f"unknown operation acknowledgement status: {self.status!r}")
+
+    @property
+    def accepted(self) -> bool:
+        return self.status == ACK_CONFIRMED
+
+    def as_dict(self) -> dict:
+        from dataclasses import asdict
+        return dict(sorted(asdict(self).items()))

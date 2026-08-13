@@ -4,16 +4,17 @@
  * Each view uses <WorkspacePage> for consistent shell + toolbar + inspector.
  */
 import { useOutletContext } from 'react-router-dom';
+import { PACKAGES_UNAVAILABLE_DETAIL } from '@/lib/operationalProvenance';
+import { useRuntimeHealth } from '@/hooks/useRepository';
+import { candleCardProvenance } from '@/lib/cardProvenance';
 import { useMemo, useState } from 'react';
 import {
   usePairWorkspace,
   useMarketState,
   useActivePackage,
-  useEdgeMonitor,
-  useTrades,
+  useOperationalTrades,
   useEvents,
   usePolicyMatrix,
-  useFleet,
 } from '@/hooks/useRepository';
 import { ActionBar } from '@/components/structures/ActionBar';
 import { orderActions, tradeActions } from '@/components/domain/tradeActions';
@@ -46,6 +47,7 @@ import {
   TimestampUTC,
   ValidationBadgeChip,
   WhyButton,
+  ProvenanceChip,
 } from '@/components/primitives';
 import { ChartWorkspace } from '@/components/domain/ChartWorkspace';
 import { FeatureGate } from '@/components/FeatureGate';
@@ -65,10 +67,11 @@ export function PairDashboardView() {
   const pair = usePair();
   const ws = usePairWorkspace(pair);
   const ms = useMarketState(pair);
+  const rtHealth = useRuntimeHealth();
   const pkg = useActivePackage();
-  const edge = useEdgeMonitor();
   const openInspector = useShellStore((s) => s.openInspector);
 
+  // M-TRADES-1: was a fixture-derived open-trade count.
   const openTrades = ws.trades.filter((t) => t.state !== 'closed');
   const totalRisk = ws.deployments.reduce((s, d) => s + d.riskState.riskTodayPct, 0);
   const worstDd = Math.min(...ws.deployments.map((d) => d.riskState.ddBufferPct), 100);
@@ -79,47 +82,35 @@ export function PairDashboardView() {
       subtitle="Pair health · market state · recent decisions"
       right={
         <div className="text-2xs text-text-muted mono">
-          {pkg.label} · v{pkg.version}
+          {pkg?.label} · v{pkg?.version}
         </div>
       }
     >
       <div className="grid grid-cols-12 gap-4">
-        <Panel title="Pair Health" className="col-span-12">
-          <div className="grid grid-cols-6 gap-6">
-            <MetricStat label="Open trades" value={openTrades.length} emphasise mono />
-            <MetricStat label="Deployments" value={ws.deployments.length} emphasise mono />
-            <MetricStat
-              label="Risk today"
-              value={<span className="mono">{fmtPercent(totalRisk)}</span>}
-              emphasise
-            />
-            <MetricStat
-              label="DD buffer"
-              value={
-                <span className="mono" style={{ color: worstDd < 40 ? 'var(--warning)' : 'var(--text)' }}>
-                  {fmtPercent(worstDd, 0)}
-                </span>
-              }
-              emphasise
-            />
-            <MetricStat label="Expectancy" value={<RValue value={edge.metrics.expectancyR} />} sub="30d rolling" emphasise />
-            <MetricStat
-              label="Win rate"
-              value={<span className="mono">{fmtPercent(edge.metrics.winRate * 100, 1)}</span>}
-              emphasise
-            />
+        {/* M-EDGE-1: the fixture-fed Expectancy and Win rate tiles are removed
+            (no edge/performance model exists). The remaining tiles are pair
+            operational content and rebalance to four columns. */}
+        <Panel provenance="placeholder" title="Pair Health" className="col-span-12">
+          {/* M-PROVENANCE-FINAL: this counted `openTrades.length`,
+              `deployments.length` and summed `riskTodayPct`. M-TRADES-1 and
+              M-FLEET-2 emptied all three sources, so the card rendered 0 / 0 /
+              0.0% — zero-shaped placeholders that read as observed facts about
+              a quiet pair. The absence is now stated. */}
+          <div className="text-xs text-text-muted" data-testid="pair-health-unavailable">
+            No authoritative source reports open trades, deployments or risk for
+            this instrument. These are unknown, not zero.
           </div>
         </Panel>
 
         {/* Chart — the canonical ChartWorkspace (same rendering path as Replay).
             Resizable: drag the divider under the chart (persisted height). */}
-        <Panel title="Recent Price Action" className="col-span-8" bodyClassName="p-0">
+        <Panel provenance={candleCardProvenance(rtHealth?.marketData?.provider)} title="Recent Price Action" className="col-span-8" bodyClassName="p-0">
           <FeatureGate flag="charts">
-            <ChartWorkspace instrument={pair} mode="live" volume resizable initialHeight={420} />
+            <ChartWorkspace instrument={pair} mode="live" resizable initialHeight={420} />
           </FeatureGate>
         </Panel>
 
-        <Panel title="Market State" className="col-span-4">
+        <Panel provenance="placeholder" title="Market State" className="col-span-4">
           {ms ? (
             <div className="space-y-3">
               <MarketStateBadge state={ms.state} confidence={ms.confidence} />
@@ -142,6 +133,9 @@ export function PairDashboardView() {
         </Panel>
 
         <Panel
+          /* M-PROVENANCE-FINAL: M-REC-1 emptied fixture decision chains, so this
+             always renders its empty state. Nothing fabricated remains. */
+          provenance="placeholder"
           title="Recent Decisions"
           className="col-span-8"
           actions={<span className="text-2xs text-text-muted mono">last 24h</span>}
@@ -176,50 +170,12 @@ export function PairDashboardView() {
           )}
         </Panel>
 
-        <Panel title="Today's Posture" className="col-span-4">
-          <div className="space-y-3">
-            <div className="flex items-baseline justify-between">
-              <span className="text-2xs uppercase tracking-widest text-text-muted">Blocked intents</span>
-              <span className="text-xl font-semibold text-text mono">{ws.blocked.length}</span>
-            </div>
-            <div className="rounded-md p-2 border" style={{ borderColor: 'var(--border-subtle)', background: 'var(--panel-2)' }}>
-              {ws.blocked.length > 0 ? (
-                <ul className="space-y-1">
-                  {ws.blocked.slice(0, 5).map((b) => (
-                    <li
-                      key={b.blockedIntentId}
-                      className="flex items-center gap-2 text-2xs text-text-2 cursor-pointer hover:text-text"
-                      onClick={() => openInspector({ kind: 'blocked', blockedIntentId: b.blockedIntentId })}
-                    >
-                      <Badge variant="live" color="var(--blocked)" size="sm">
-                        {b.blockReason.replace(/_/g, ' ')}
-                      </Badge>
-                      <span className="mono truncate">{b.scenarioKey.replace(`${pair}:`, '')}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <div className="text-text-muted italic text-2xs">No blocks today</div>
-              )}
-            </div>
-            <div className="pt-2 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
-              <div className="text-2xs uppercase tracking-widest text-text-muted mb-1">Deployments</div>
-              <div className="space-y-1">
-                {ws.deployments.map((d) => (
-                  <div
-                    key={d.deploymentId}
-                    className="flex items-center gap-2 text-2xs text-text-2 cursor-pointer hover:text-text"
-                    onClick={() => openInspector({ kind: 'deployment', deploymentId: d.deploymentId })}
-                  >
-                    <LaneChip lane={d.lane} />
-                    <span className="mono">{d.status}</span>
-                    <span className="ml-auto">
-                      <PLValue value={d.riskState.dailyPl} />
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
+        <Panel provenance="placeholder" title="Today's Posture" className="col-span-4">
+          {/* M-PROVENANCE-FINAL: showed `blocked.length` from the emptied
+              blocked-intent array — a confident "0 blocked intents" for a pair
+              with no blocked-intent source at all. */}
+          <div className="text-xs text-text-muted" data-testid="pair-posture-unavailable">
+            No authoritative blocked-intent source reports for this instrument.
           </div>
         </Panel>
       </div>
@@ -233,11 +189,13 @@ export function PairDashboardView() {
 
 export function PairOrdersView() {
   const pair = usePair();
-  const trades = useTrades({ pair });
-  const { accounts, brokers, deployments } = useFleet();
+  // M-TRADES-1: fixture trades severed. Authoritative positions/orders only.
+  const { positions, orders, status: tradesStatus } = useOperationalTrades(pair);
+  const trades = { live: [] as LiveTrade[], ghost: [] as GhostTrade[], blocked: [] as BlockedIntent[] };
+
   const pkg = useActivePackage();
   const openInspector = useShellStore((s) => s.openInspector);
-  const depById = useMemo(() => new Map(deployments.map((d) => [d.deploymentId, d])), [deployments]);
+
   const pending = trades.live.filter((t) => t.state === 'pending');
 
   const cols: Column<LiveTrade>[] = [
@@ -258,14 +216,12 @@ export function PairOrdersView() {
     {
       key: 'account',
       header: 'Account',
-      cell: (t) => {
-        const account = accounts.find((a) => a.accountId === depById.get(t.deploymentId)?.accountId);
-        const broker = brokers.find((b) => b.brokerId === account?.brokerId);
-        return <span className="text-2xs text-text-2">{broker?.venue ?? '—'} · {account?.type ?? '—'}</span>;
-      },
+      // M-FLEET-2: resolved a FIXTURE account and broker for each order row.
+      // No authoritative account mapping exists, so the column reports absence.
+      cell: () => <span className="text-2xs text-text-muted">—</span>,
     },
     { key: 'lane', header: 'Lane', cell: (t) => <LaneChip lane={t.lane} /> },
-    { key: 'pkg', header: 'Package', cell: () => <Badge variant="status">v{pkg.version}</Badge> },
+    { key: 'pkg', header: 'Package', cell: () => <Badge variant="status">v{pkg?.version}</Badge> },
     { key: 'session', header: 'Session', cell: (t) => <span className="text-2xs text-text-2">{parseScenarioKey(t.scenarioKey).session}</span> },
     { key: 'entry', header: 'Entry', align: 'right', mono: true, cell: (t) => fmtPrice(t.entry) },
     { key: 'sl', header: 'Stop', align: 'right', mono: true, cell: (t) => fmtPrice(t.sl) },
@@ -301,13 +257,27 @@ export function PairOrdersView() {
         </>
       }
     >
-      <Panel title="Pending Orders" bodyClassName="p-0">
+      {/* M-TRADES-1: authoritative orders render here. Under the mock adapter
+          the projection's records are rejected by the provenance gate, so this
+          list is empty and the table below states which source is missing. */}
+      {orders.length > 0 && (
+        <Panel provenance="live" title={`Authoritative orders (${orders.length})`} bodyClassName="p-3">
+          <ul className="text-xs mono space-y-1" data-testid="authoritative-orders">
+            {orders.map((o, i) => (
+              <li key={o.brokerOrderReference ?? `order-${i}`} data-testid="authoritative-order-row">
+                {o.instrument ?? '—'} · {o.side ?? '—'} · {o.brokerOrderReference ?? '—'}
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
+      <Panel provenance="live" title="Pending Orders" bodyClassName="p-0">
         <DataTable
           columns={cols}
           data={pending}
           rowKey={(t) => t.tradeId}
           onRowClick={(t) => openInspector({ kind: 'trade', tradeId: t.tradeId })}
-          emptyMessage="No pending orders"
+          emptyMessage={tradesStatus === 'unavailable' ? 'No authoritative order source — orders cannot be reported' : 'No open orders reported'}
           searchable
           searchAccessor={(t) => `${t.brokerOrderId} ${t.scenarioKey} ${t.state}`}
         />
@@ -322,15 +292,20 @@ export function PairOrdersView() {
 
 export function PairTradesView() {
   const pair = usePair();
-  const trades = useTrades({ pair });
-  const { asOf } = useFleet();
+  // M-TRADES-1: fixture trades severed. Authoritative positions/orders only.
+  const { positions, orders, status: tradesStatus } = useOperationalTrades(pair);
+  const trades = { live: [] as LiveTrade[], ghost: [] as GhostTrade[], blocked: [] as BlockedIntent[] };
+
   const currentMs = useMarketState(pair);
   const openInspector = useShellStore((s) => s.openInspector);
   const [tab, setTab] = useState<'open' | 'closed' | 'ghost' | 'blocked'>('open');
 
   const open = trades.live.filter((t) => t.state !== 'closed' && t.state !== 'pending');
   const closed = trades.live.filter((t) => t.state === 'closed');
-  const now = new Date(asOf);
+  // M-FLEET-2: was `new Date(asOf)` — the FIXTURE world's frozen timestamp used
+  // as "now" for age calculations, which made stale rows look fresh. The real
+  // clock is the only honest reference here.
+  const now = new Date();
 
   const liveCols: Column<LiveTrade>[] = [
     {
@@ -470,26 +445,44 @@ export function PairTradesView() {
           <ToolbarLabel>View</ToolbarLabel>
           <ToolbarChip active={tab === 'open'} onClick={() => setTab('open')} count={open.length}>Open</ToolbarChip>
           <ToolbarChip active={tab === 'closed'} onClick={() => setTab('closed')} count={closed.length}>Closed</ToolbarChip>
-          <ToolbarChip active={tab === 'ghost'} onClick={() => setTab('ghost')} count={trades.ghost.length}>Ghost</ToolbarChip>
-          <ToolbarChip active={tab === 'blocked'} onClick={() => setTab('blocked')} count={trades.blocked.length}>Blocked</ToolbarChip>
+          <ToolbarChip active={tab === 'ghost'} onClick={() => setTab('ghost')} count={undefined}>Ghost</ToolbarChip>
+          <ToolbarChip active={tab === 'blocked'} onClick={() => setTab('blocked')} count={undefined}>Blocked</ToolbarChip>
           <ToolbarSpacer />
           <IconButton ariaLabel="Filter"><Filter size={13} /></IconButton>
           <IconButton ariaLabel="Export"><Download size={13} /></IconButton>
         </>
       }
     >
-      <Panel bodyClassName="p-0" title={`${tab.charAt(0).toUpperCase() + tab.slice(1)} · ${pair}`}>
+      {/* M-TRADES-1: authoritative open positions. Rejected under the mock
+          adapter, so this is empty and the tabs below say what is missing. */}
+      {positions.length > 0 && (
+        <Panel provenance="live" title={`Authoritative open positions (${positions.length})`} bodyClassName="p-3">
+          <ul className="text-xs mono space-y-1" data-testid="authoritative-positions">
+            {positions.map((p, i) => (
+              <li key={p.brokerPositionReference ?? `pos-${i}`} data-testid="authoritative-position-row">
+                {p.instrument ?? '—'} · {p.side ?? '—'} · qty {p.quantity ?? '—'} · entry {p.entryPrice ?? '—'}
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
+      {tradesStatus === 'stale' && (
+        <p className="text-2xs text-[color:var(--warning)] mb-2" data-testid="trades-stale">
+          Last reported, not current — these records are past their freshness budget.
+        </p>
+      )}
+      <Panel provenance="live" bodyClassName="p-0" title={`${tab.charAt(0).toUpperCase() + tab.slice(1)} · ${pair}`}>
         {tab === 'open' && (
-          <DataTable columns={activeCols} data={open} rowKey={(t) => t.tradeId} onRowClick={(t) => openInspector({ kind: 'trade', tradeId: t.tradeId })} emptyMessage="No open trades" searchable searchAccessor={(t) => `${t.scenarioKey} ${t.state} ${t.protectionStatus}`} />
+          <DataTable columns={activeCols} data={open} rowKey={(t) => t.tradeId} onRowClick={(t) => openInspector({ kind: 'trade', tradeId: t.tradeId })} emptyMessage={tradesStatus === 'unavailable' ? 'No authoritative position source — open trades cannot be reported' : 'No open positions reported'} searchable searchAccessor={(t) => `${t.scenarioKey} ${t.state} ${t.protectionStatus}`} />
         )}
         {tab === 'closed' && (
-          <DataTable columns={closedCols} data={closed} rowKey={(t) => t.tradeId} onRowClick={(t) => openInspector({ kind: 'trade', tradeId: t.tradeId })} emptyMessage="No closed trades" />
+          <DataTable columns={closedCols} data={closed} rowKey={(t) => t.tradeId} onRowClick={(t) => openInspector({ kind: 'trade', tradeId: t.tradeId })} emptyMessage={tradesStatus === 'unavailable' ? 'No authoritative trade history — the durable ledger does not yet state record origin' : 'No closed trades reported'} />
         )}
         {tab === 'ghost' && (
-          <DataTable columns={ghostCols} data={trades.ghost} rowKey={(g) => g.ghostTradeId} onRowClick={(g) => openInspector({ kind: 'ghost', ghostTradeId: g.ghostTradeId })} emptyMessage="No ghost trades" />
+          <DataTable columns={ghostCols} data={trades.ghost} rowKey={(g) => g.ghostTradeId} onRowClick={(g) => openInspector({ kind: 'ghost', ghostTradeId: g.ghostTradeId })} emptyMessage="No authoritative ghost-execution source — fixture ghost trades removed" />
         )}
         {tab === 'blocked' && (
-          <DataTable columns={blockedCols} data={trades.blocked} rowKey={(b) => b.blockedIntentId} onRowClick={(b) => openInspector({ kind: 'blocked', blockedIntentId: b.blockedIntentId })} emptyMessage="No blocked intents" />
+          <DataTable columns={blockedCols} data={trades.blocked} rowKey={(b) => b.blockedIntentId} onRowClick={(b) => openInspector({ kind: 'blocked', blockedIntentId: b.blockedIntentId })} emptyMessage="No authoritative blocked-intent source — fixture blocked intents removed" />
         )}
       </Panel>
     </WorkspacePage>
@@ -502,59 +495,29 @@ export function PairTradesView() {
 
 export function PairEdgeMonitorView() {
   const pair = usePair();
-  const edge = useEdgeMonitor();
 
   return (
     <WorkspacePage
       title={`${pair} · Edge Monitor`}
-      subtitle="Drift · confidence · research-vs-live · ghost-vs-live · candidates"
+      subtitle="Edge performance metrics are not computed for any pair."
     >
       <div className="grid grid-cols-12 gap-4">
-        <Panel title="Live Edge Signals" className="col-span-12">
-          <div className="grid grid-cols-6 gap-6">
-            <MetricStat label="Expectancy" value={<RValue value={edge.metrics.expectancyR} />} emphasise />
-            <MetricStat label="Win rate" value={<span className="mono">{fmtPercent(edge.metrics.winRate * 100, 1)}</span>} emphasise />
-            <MetricStat label="Edge drift" value={<span className="mono">{edge.metrics.edgeDrift}</span>} emphasise />
-            <MetricStat label="Distribution drift" value={<Badge variant="validation" color="var(--positive)">{edge.metrics.distributionDrift}</Badge>} emphasise />
-            <MetricStat label="Feature drift" value={<span className="mono">{edge.metrics.featureDrift}</span>} emphasise />
-            <MetricStat label="Policy health" value={<Badge variant="health" color="var(--positive)">{edge.metrics.policyHealth}</Badge>} emphasise />
+        {/* M-EDGE-1: the pair-level fabricated edge metrics, comparisons,
+            candidates and the expectancy/drift placeholder charts are GONE. The
+            TAB IS DELIBERATELY KEPT: the absence of an edge model is itself
+            operationally relevant, and a genuine ledger-backed model can later
+            inhabit this surface without another navigation migration. No
+            pair-specific claim is made, because no pair-specific model exists. */}
+        <Panel provenance="placeholder" title="Edge Performance" className="col-span-12">
+          <div className="py-6 px-2 max-w-2xl" data-testid="pair-edge-monitor-not-computed">
+            <div className="text-sm text-text font-medium">Edge performance is not computed.</div>
+            <p className="text-xs text-text-muted mt-2">
+              No edge or performance model is implemented — for this pair or any
+              other. Genuine expectancy, win rate and drift must derive from the
+              authoritative trade ledger and real broker history. Nothing here is
+              estimated from demonstration data.
+            </p>
           </div>
-        </Panel>
-
-        <Panel title="Expectancy trajectory (30d)" className="col-span-8" bodyClassName="p-3">
-          <PlaceholderChart height={220} variant="area" />
-        </Panel>
-
-        <Panel title="Comparisons" className="col-span-4">
-          <KeyValueGrid
-            items={[
-              { label: 'Research vs Live', value: <span className="mono">{edge.metrics.researchVsLive}</span> },
-              { label: 'Ghost vs Live', value: <span className="mono">{edge.metrics.ghostVsLive}</span> },
-              { label: 'Forward-test', value: edge.metrics.forwardTestHealth },
-              { label: 'Rec gen', value: edge.metrics.recommendationGeneration, mono: true },
-              { label: 'Operator conf.', value: <Badge variant="status">{edge.metrics.operatorConfidence}</Badge> },
-              { label: 'As of', value: <TimestampUTC iso={edge.asOf} /> },
-            ]}
-          />
-        </Panel>
-
-        <Panel title="Future Candidates" className="col-span-6">
-          {edge.metrics.futureCandidates.length === 0 ? (
-            <div className="text-xs text-text-muted italic">No candidates pending</div>
-          ) : (
-            <ul className="space-y-2">
-              {edge.metrics.futureCandidates.map((c, i) => (
-                <li key={i} className="flex items-center gap-2 text-xs text-text-2">
-                  <Badge variant="recommendation" size="sm">candidate</Badge>
-                  <span className="mono">{c}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Panel>
-
-        <Panel title="Drift by cohort (heat map)" className="col-span-6" bodyClassName="p-3">
-          <PlaceholderChart height={200} variant="bar" />
         </Panel>
       </div>
     </WorkspacePage>
@@ -576,68 +539,45 @@ export function PairStrategyHealthView() {
   const insufficient = cells.filter((c) => c.evidence.badge === 'INSUFFICIENT').length;
   const notTested = cells.filter((c) => c.evidence.badge === 'NOT_TESTED').length;
 
+  // UI-0: this score is derived from cell badges/eligibility. When the grid is
+  // partly synthesized the score is NOT a research finding and must say so.
+  const synthesizedCells = matrix.synthesizedCells ?? 0;
+  const scoreIsSynthesized = synthesizedCells > 0;
   const healthScore = Math.round(((native / cells.length) * 0.5 + (allowed / cells.length) * 0.5) * 100);
 
   return (
     <WorkspacePage title={`${pair} · Strategy Health`} subtitle="Coverage · stability · integrity">
       <div className="grid grid-cols-12 gap-4">
-        <Panel title="Health Score" className="col-span-4">
-          <div className="flex flex-col items-center gap-3 py-2">
-            <div
-              className="w-28 h-28 rounded-full border-4 flex items-center justify-center"
-              style={{
-                borderColor: healthScore > 70 ? 'var(--positive)' : healthScore > 50 ? 'var(--warning)' : 'var(--negative)',
-                background: 'var(--panel-2)',
-              }}
-            >
-              <div className="text-center">
-                <div className="text-3xl font-semibold mono text-text">{healthScore}</div>
-                <div className="text-2xs uppercase tracking-widest text-text-muted">/ 100</div>
-              </div>
-            </div>
-            <Badge variant="status" color={healthScore > 70 ? 'var(--positive)' : 'var(--warning)'}>
-              {healthScore > 70 ? 'Healthy' : healthScore > 50 ? 'Caution' : 'At risk'}
-            </Badge>
+        <Panel provenance="placeholder" title="Health Score" className="col-span-4">
+          {/* M-PROVENANCE-FINAL: computed
+              `round((native/cells.length*0.5 + allowed/cells.length*0.5)*100)`.
+              M-PKG-1 emptied the policy matrix, so `cells.length` is 0 and the
+              score evaluated to NaN — rendered inside a ring whose colour fell
+              through to NEGATIVE, i.e. a red "unhealthy" dial derived from
+              nothing. A health score is a judgment; without cells there is none. */}
+          <div className="text-xs text-text-muted" data-testid="health-score-unavailable">
+            No policy matrix exists, so no health score can be computed.
           </div>
         </Panel>
 
-        <Panel title="Cell Coverage" className="col-span-8">
-          <div className="grid grid-cols-4 gap-4">
-            <MetricStat label="Total cells" value={cells.length} mono emphasise />
-            <MetricStat label="Allowed" value={<span className="mono text-[color:var(--positive)]">{allowed}</span>} sub={`${((allowed / cells.length) * 100).toFixed(0)}%`} emphasise />
-            <MetricStat label="NATIVE" value={<span className="mono text-[color:var(--validated)]">{native}</span>} sub={`${((native / cells.length) * 100).toFixed(0)}%`} emphasise />
-            <MetricStat label="Under-tested" value={<span className="mono text-[color:var(--warning)]">{insufficient + notTested}</span>} sub={`${(((insufficient + notTested) / cells.length) * 100).toFixed(0)}%`} emphasise />
+        <Panel provenance="placeholder" title="Cell Coverage" className="col-span-8">
+          {/* M-PROVENANCE-FINAL: every percentage divided by `cells.length`,
+              which M-PKG-1 made 0 — the card rendered "NaN%" three times. */}
+          <div className="text-xs text-text-muted" data-testid="cell-coverage-unavailable">
+            No policy matrix exists, so cell coverage cannot be reported.
           </div>
         </Panel>
 
-        <Panel title="Package Integrity" className="col-span-6">
-          <KeyValueGrid
-            items={[
-              { label: 'Version', value: `v${pkg.version}`, mono: true },
-              { label: 'Contract', value: pkg.contractVersion, mono: true },
-              { label: 'Domain', value: pkg.domain },
-              { label: 'Instruments', value: pkg.instruments.join(', ') },
-              { label: 'Hash', value: pkg.packageHash.slice(0, 24) + '…', mono: true },
-              { label: 'Validation ID', value: pkg.validation.validationId ?? '—', mono: true },
-              { label: 'Δ netR', value: <RValue value={pkg.validation.portfolioDeltas.netR} />, mono: true },
-              { label: 'Stability', value: pkg.validation.portfolioDeltas.stability.toFixed(2), mono: true },
-            ]}
-          />
+        <Panel provenance="placeholder" title="Strategy package" className="col-span-6">
+          {/* M-PKG-1: rendered the fixture package's domain, instruments, hash,
+              validation id, portfolio deltas and component versions. No package
+              registry exists, so none of it had a source. */}
+          <div className="text-xs text-text-muted" data-testid="pair-package-unavailable">
+            {PACKAGES_UNAVAILABLE_DETAIL}
+          </div>
         </Panel>
 
-        <Panel title="Component versions" className="col-span-6">
-          <ul className="space-y-1.5 text-xs">
-            {Object.entries(pkg.componentVersions).map(([k, v]) => (
-              <li key={k} className="flex items-center gap-2">
-                <HealthDot state="ok" />
-                <span className="text-text-2">{k}</span>
-                <span className="ml-auto mono text-text-muted">{v}</span>
-              </li>
-            ))}
-          </ul>
-        </Panel>
-
-        <Panel title="Warning signals" className="col-span-12">
+        <Panel provenance="placeholder" title="Warning signals" className="col-span-12">
           <ComingSoon
             title="Signal detectors coming online in Phase 2"
             description="Drift-per-cohort, sample-decay, correlated-loss, session-regime-mismatch will surface here as sortable/dismissable alerts."
@@ -678,7 +618,9 @@ export function PairActivityTimelineView() {
         </>
       }
     >
-      <Panel bodyClassName="p-0">
+      {/* M-PROVENANCE-FINAL: M-EVENTS-1 split the audit stream — /api/events is
+          runtime rows ONLY, so this is no longer a mixed-origin collection. */}
+      <Panel provenance="live" bodyClassName="p-0">
         <ol className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
           {filtered.length === 0 ? (
             <li className="p-8 text-center text-text-muted italic">No events in this scope</li>

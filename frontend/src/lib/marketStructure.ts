@@ -1,3 +1,4 @@
+import type { DataProvenance } from '@/types/provenance';
 /**
  * marketStructure — ONE shared Market Structure DATA SOURCE feeding TWO independent
  * presentation layers (Phase 20). Unlike OB / FVG / Liquidity (one provider per layer),
@@ -29,6 +30,8 @@ export interface Swing {
   price: number;
   strength: number; // 0..1
   formedAtISO: string;
+  /** UI-0 — generated in the Control Tower, NOT detected by the Lux engine. */
+  provenance: DataProvenance;
 }
 
 export interface StructureEvent {
@@ -38,6 +41,8 @@ export interface StructureEvent {
   fromSwing: string; // swing id
   toSwing: string; // swing id
   formedAtISO: string;
+  /** UI-0 — generated in the Control Tower, NOT detected by the Lux engine. */
+  provenance: DataProvenance;
 }
 
 export interface MarketStructure {
@@ -61,7 +66,8 @@ export function deriveMarketStructure(instrument: string, candles: Candle[]): Ma
     const bar = candles[idx];
     const isHigh = k % 2 === 0; // alternate high / low
     return {
-      id: `SW-${4000 + idx}`,
+      id: `SYN-SW-${4000 + idx}`,
+      provenance: 'synthesized',
       type: isHigh ? 'high' : 'low',
       price: round5(isHigh ? bar.high : bar.low),
       strength: round2(0.55 + (idx % 3) * 0.15),
@@ -77,7 +83,7 @@ export function deriveMarketStructure(instrument: string, candles: Candle[]): Ma
     const from = highs[1];
     const to = highs[2];
     structureEvents.push({
-      id: 'STR-BOS-1', type: 'BOS', direction: 'bullish',
+      id: 'SYN-BOS-1', provenance: 'synthesized', type: 'BOS', direction: 'bullish',
       fromSwing: from.id, toSwing: to.id, formedAtISO: to.formedAtISO,
     });
   }
@@ -86,7 +92,7 @@ export function deriveMarketStructure(instrument: string, candles: Candle[]): Ma
     const from = lows[0];
     const to = lows[1];
     structureEvents.push({
-      id: 'STR-CHOCH-1', type: 'CHOCH', direction: 'bearish',
+      id: 'SYN-CHOCH-1', provenance: 'synthesized', type: 'CHOCH', direction: 'bearish',
       fromSwing: from.id, toSwing: to.id, formedAtISO: to.formedAtISO,
     });
   }
@@ -113,7 +119,7 @@ export function swingMarkers(ms: MarketStructure | undefined, ctx: Ctx): ChartMa
       position: s.type === 'high' ? ('aboveBar' as const) : ('belowBar' as const),
       color: s.type === 'high' ? 'var(--negative)' : 'var(--positive)',
       shape: 'circle' as const,
-      text: s.type === 'high' ? 'SH' : 'SL',
+      text: s.type === 'high' ? 'SYN SH' : 'SYN SL',
     }));
 }
 
@@ -154,7 +160,7 @@ export function structureAnnotations(
       position: ev.direction === 'bullish' ? ('belowBar' as const) : ('aboveBar' as const),
       color: base,
       shape: ev.direction === 'bullish' ? ('arrowUp' as const) : ('arrowDown' as const),
-      text: ev.type,
+      text: `SYN ${ev.type}`,
     });
   }
   return { zones, markers };

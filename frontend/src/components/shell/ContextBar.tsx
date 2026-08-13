@@ -1,21 +1,10 @@
 import { useLocation } from 'react-router-dom';
 import { useShellStore } from '@/store/shellStore';
-import { useFleet, useMarketState, useActivePackage, useSystemConfidence } from '@/hooks/useRepository';
+import { useMarketState, useActivePackage } from '@/hooks/useRepository';
 import { ChevronRight } from 'lucide-react';
 import { HealthDot, MarketStateBadge, PackageVersionChip } from '@/components/primitives';
 import { fmtRelative } from '@/lib/format';
 
-const SIGNAL_STATE: Record<string, 'ok' | 'warn' | 'critical' | 'muted'> = {
-  ok: 'ok',
-  warn: 'warn',
-  fail: 'critical',
-  unknown: 'muted',
-};
-const CHIP_SIGNALS: Array<{ key: string; label: string }> = [
-  { key: 'dataFreshness', label: 'MD feed' },
-  { key: 'reconciliation', label: 'Reconcile' },
-  { key: 'brokerHealth', label: 'Broker' },
-];
 
 /**
  * ContextBar — persistent breadcrumb + right-side health chips (§C row 2 & 3).
@@ -24,8 +13,7 @@ const CHIP_SIGNALS: Array<{ key: string; label: string }> = [
  */
 export function ContextBar() {
   const location = useLocation();
-  const { asOf, deployments, brokers, accounts } = useFleet();
-  const confidence = useSystemConfidence();
+
   const activePair = useShellStore((s) => s.activePair);
   const marketState = useMarketState(activePair);
   const pkg = useActivePackage();
@@ -53,15 +41,11 @@ export function ContextBar() {
   else if (inPair) {
     const parts = path.split('/').filter(Boolean);
     const pairId = parts[1] ?? activePair;
-    const dep = deployments.find((d) => d.pair === pairId);
-    const account = accounts.find((a) => a.accountId === dep?.accountId);
-    const broker = brokers.find((b) => b.brokerId === account?.brokerId);
-    crumbs.push(
-      'Fleet',
-      broker?.venue ?? '—',
-      account ? `${account.type} ${account.baseCurrency}` : '—',
-      pairId
-    );
+    // M-FLEET-2: the broker and account segments came from fixture records, so
+    // the breadcrumb asserted a venue and an account type that did not exist.
+    // The instrument is configuration and is real; the operational segments are
+    // simply not shown until an authoritative source reports them.
+    crumbs.push('Instrument', pairId);
     if (parts[2]) {
       const tabLabel = parts[2]
         .split('-')
@@ -93,24 +77,19 @@ export function ContextBar() {
 
       <div className="flex items-center gap-4 px-4 shrink-0">
         {inPair && marketState && (
-          <MarketStateBadge state={marketState.state} confidence={marketState.confidence} confirmed={marketState.confirmed} />
+          <MarketStateBadge state={marketState?.state} confidence={marketState?.confidence} confirmed={marketState?.confirmed} />
         )}
         {inPair && (
           <div className="text-xs">
-            <PackageVersionChip version={pkg.version} hash={pkg.packageHash} />
+            <PackageVersionChip version={pkg?.version} hash={pkg?.packageHash} />
           </div>
         )}
-        {CHIP_SIGNALS.map(({ key, label }) => {
-          const sig = confidence.signals.find((s) => s.key === key);
-          if (!sig) return null;
-          return (
-            <div key={key} className="flex items-center gap-1.5 text-2xs text-text-muted" title={sig.message}>
-              <HealthDot state={SIGNAL_STATE[sig.state] ?? 'muted'} size="sm" />
-              <span>{sig.state === 'ok' ? label : `${label} · ${sig.value}`}</span>
-            </div>
-          );
-        })}
-        <span className="text-2xs text-text-muted mono">as of {fmtRelative(asOf)}</span>
+        {/* M-CONF-1: the three fixture confidence signal chips are GONE —
+            fabricated values may not render in chrome. Real node/bridge state
+            lives in the live-operations strip and System → Connection. */}
+        {/* M-FLEET-2: the fixture world's frozen `asOf` was rendered as a
+            freshness timestamp. It was never one, and there is no authoritative
+            fleet clock to replace it, so no timestamp is claimed here. */}
       </div>
     </div>
   );

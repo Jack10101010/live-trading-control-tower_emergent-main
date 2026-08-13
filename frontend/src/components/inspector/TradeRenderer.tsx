@@ -1,7 +1,9 @@
 import { useNavigate } from 'react-router-dom';
+import type { Recommendation } from '@/types/domain';
+import type { Package } from '@/types/domain';
+import type { EventEntry } from '@/types/domain';
+import type { LiveTrade } from '@/types/domain';
 import {
-  useRepository,
-  useTrades,
   useDecisionChain,
   useMarketState,
   useDeploymentManifest,
@@ -37,8 +39,11 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
 }
 
 export function TradeRenderer({ tradeId }: { tradeId: string }) {
-  const { world } = useRepository();
-  const { live } = useTrades();
+  // M-WORLD-ORDINARY-1: `useRepository()` fetched the whole fixture world here
+  // and no field was ever read from it — M-TRADES-1 had already emptied every
+  // collection this inspector used.
+  // M-TRADES-1: resolved against fixture live trades.
+  const live: LiveTrade[] = [];
   const navigate = useNavigate();
   const openInspector = useShellStore((s) => s.openInspector);
 
@@ -48,15 +53,28 @@ export function TradeRenderer({ tradeId }: { tradeId: string }) {
   const trade = live.find((t) => t.tradeId === tradeId);
   const decision = useDecisionChain(trade?.decisionId ?? '');
   const manifest = useDeploymentManifest(trade?.deploymentId ?? '');
-  const pkg = world.packages.find((p) => p.packageHash === trade?.packageHash);
-  const { instrument, session, structure, direction, marketState } = parseScenarioKey(trade?.scenarioKey ?? 'X:x:BOS:long:BullExpand');
+  // M-PKG-1: resolved the FIXTURE package behind this record's hash, so the
+  // inspector displayed an authored version and validation badge. No package
+  // registry exists.
+  const pkg = undefined as Package | undefined;
+  // M-NODE-TEL-1: the fallback scenario key ended in `BullExpand`, so a trade
+  // with no scenario key rendered an invented regime label. An absent key has
+  // no regime; the parser is given an explicitly empty one.
+  const { instrument, session, structure, direction, marketState } =
+    parseScenarioKey(trade?.scenarioKey ?? '');
   const currentMs = useMarketState(instrument);
 
   if (!trade) return <div className="p-4 text-text-muted">Trade not found</div>;
 
   const cellKey = trade.scenarioKey.split(':').slice(1).join(':');
-  const relatedEvents = world.events.filter((e) => e.scenarioKey === trade.scenarioKey).slice(0, 6);
-  const relatedRecs = world.recommendations.filter((r) => r.scenarioKey === trade.scenarioKey);
+  // M-EVENTS-1: read the FIXTURE world's events directly, so the inspector
+  // showed authored audit entries beside a trade. The runtime audit stream is
+  // /api/events; there is no per-scenario authoritative event query yet.
+  const relatedEvents: EventEntry[] = [];
+  // M-REC-1: joined FIXTURE recommendations by scenario key. Durable
+  // recommendations use their own identity space and are not joinable to a
+  // fixture scenario key.
+  const relatedRecs: Recommendation[] = [];
 
   const toReplay = (iso: string) => navigate(`/pair/${instrument}/replay?t=${isoToUnix(iso)}`);
 
@@ -77,7 +95,7 @@ export function TradeRenderer({ tradeId }: { tradeId: string }) {
         <div className="flex items-center gap-2 flex-wrap">
           <Badge variant="status">{trade.state}</Badge>
           <LaneChip lane={trade.lane} />
-          {pkg && <PackageVersionChip version={pkg.version} hash={pkg.packageHash} />}
+          {pkg && <PackageVersionChip version={pkg?.version} hash={pkg?.packageHash} />}
         </div>
         <div className="grid grid-cols-3 gap-2">
           <MiniStat label="Floating R" value={<RValue value={trade.currentR} />} />
@@ -111,7 +129,7 @@ export function TradeRenderer({ tradeId }: { tradeId: string }) {
         </div>
         <div className="flex items-center gap-3 text-2xs">
           <div className="flex items-center gap-1.5"><span className="text-text-muted uppercase tracking-widest">Original</span><MarketStateBadge state={marketState} /></div>
-          {currentMs && <div className="flex items-center gap-1.5"><span className="text-text-muted uppercase tracking-widest">Current</span><MarketStateBadge state={currentMs.state} confidence={currentMs.confidence} confirmed={currentMs.confirmed} /></div>}
+          {currentMs && <div className="flex items-center gap-1.5"><span className="text-text-muted uppercase tracking-widest">Current</span><MarketStateBadge state={currentMs?.state} confidence={currentMs?.confidence} confirmed={currentMs?.confirmed} /></div>}
         </div>
         <div className="mono text-2xs text-text-muted break-all">scenario: {trade.scenarioKey}</div>
       </section>
@@ -186,10 +204,10 @@ export function TradeRenderer({ tradeId }: { tradeId: string }) {
         <section className="space-y-2">
           <SectionHeader>Validation</SectionHeader>
           <div className="flex items-center gap-2">
-            <ValidationBadgeChip badge={pkg.validation.badge} />
+            <ValidationBadgeChip badge={pkg?.validation.badge} />
             <span className="text-2xs text-text-muted mono">Δ netR</span>
-            <RValue value={pkg.validation.portfolioDeltas.netR} />
-            <span className="text-2xs text-text-muted mono">n={pkg.validation.nDecided}</span>
+            <RValue value={pkg?.validation.portfolioDeltas.netR} />
+            <span className="text-2xs text-text-muted mono">n={pkg?.validation.nDecided}</span>
           </div>
         </section>
       )}

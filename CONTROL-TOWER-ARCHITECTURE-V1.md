@@ -358,3 +358,437 @@ Everything follows from these: strategies cannot know brokers, MT5, Polygon, or 
 | I-10 | Safety functions (Risk Guard, dead-man's switch, broker-side stops) live server-side and operate with CT offline (§4.4, §6) | Review + failure-drill testing |
 
 An invariant with no enforcement column entry would be an aspiration; every entry above names the mechanism that catches its violation. When a future change genuinely requires breaking one of these, that is by definition an architectural change — it goes through an ADR, never through code review alone.
+
+---
+
+## 14. Architecture Decision Records (ADRs)
+
+This frozen baseline is amended only by accepted ADRs (see the Status line at the top). Each ADR records an architectural change made after V1.2 was frozen.
+
+### ADR-1 — Unify execution authority (ARCH-1, 2026-07-27)
+
+**Context.** Architecture Audit A found two parallel execution architectures in the live-prep backend. The *wired* path (`POST /api/commands/{name}` → `execution.ExecutionOrchestrator` → `broker`) enforced a fail-**open** policy: 27 of 33 commands reached broker dispatch through `PolicyResult(True, "none")`, i.e. no authorization gate. The *audited* deny-by-default policy engine (`execution_safety.evaluate()`, UI-18) was imported by nothing. The command vocabulary was declared five times, in two non-intersecting spellings (`CloseTrade` vs `close_position`), so naively wiring the safety gate would have classified every real command as unknown. This violated invariant I-7's spirit: two sources of truth for "may this command execute".
+
+**Decision.** Establish exactly one execution authority with one canonical pipeline. Nothing may reach broker dispatch without passing it.
+
+```
+Operator Command
+      ↓
+Command Contract              (command_channel — read-only operator surface)
+      ↓
+Execution Safety Policy       (execution_safety.evaluate — deny-by-default gate)
+      ↓
+Execution Orchestrator        (execution.ExecutionOrchestrator — the single authority)
+      ↓
+Broker Adapter                (broker — MockBroker active; MT5 inert)
+      ↓
+Broker
+```
+
+The orchestrator's stages are explicit and unskippable:
+
+```
+Validate → Safety → Resolve → Broker Dispatch → Broker Result → Audit
+```
+
+- **Validate** — command is known to the registry (unknown ⇒ reject) + structural pre-checks.
+- **Safety** — `execution_safety.evaluate()` is consulted for **every** command; a DENY ends the pipeline before dispatch. This is the anti-fail-open gate.
+- **Resolve** — per-command feasibility (locked deployment, already-closed trade, capability). A command with no extra rule resolves to an *explicit named* `no_additional_feasibility_constraint`, never a silent allow.
+- **Broker Dispatch / Broker Result / Audit** — effect through the mock broker; before/after captured; immutable BotEvent appended.
+
+**Single command registry.** `backend/command_registry.py` is the one authoritative catalogue. It owns command identity, canonical name, aliases, risk classification, audit category (lifecycle metadata), broker-dispatch flag and required broker capability, and the submission surface. The snake_case safety names are **aliases** of their canonical PascalCase commands (`close_position` → `CloseTrade`), so the two former vocabularies now resolve to one entry. Import-time guards reject duplicate canonical names and alias collisions.
+
+**Removed duplicate authorities** (each now has exactly one owner):
+
+| Concept | Before (duplicated) | After (single owner) |
+|---|---|---|
+| Command identity / vocabulary | `server.KNOWN_COMMANDS`, `execution.COMMAND_SPEC` keys, `broker.BROKER_COMMANDS`, `execution_safety._RISK_BY_COMMAND`, `server._COMMAND_CATEGORY` | `command_registry` (all derive from it) |
+| Risk classification | `execution_safety._RISK_BY_COMMAND` | `command_registry` (constants owned by `execution_safety`) |
+| Policy / authorization | `execution._policy` fail-open + `execution_safety` (unwired) | `execution_safety.evaluate()` — the sole gate, always consulted |
+| Broker-dispatch routing | `broker.BROKER_COMMANDS` literal | `command_registry.broker_dispatched_names()` |
+| Broker capability requirement | hard-coded in feasibility policies | `command_registry` `broker_capability` field |
+| Execution mode vocabulary | `execution_safety` modes vs `security_config.KNOWN_MODES` | (unchanged this slice; `execution_safety` owns execution mode) |
+
+**Broker isolation (unchanged).** `_ACTIVE` remains `"mock"`; MT5 stays inert (order operations are no-ops, no gateway, no socket); no transport, UI or live-trading change. The permissive `SafetyContext` that lets the fixture world keep working is built **only** while the active broker is the mock; against any non-mock broker the pipeline reverts to deny-by-default, so a real broker can never be dispatched to on the strength of the mock context.
+
+**Consequences.** Fail-open is structurally impossible: unknown commands deny, every dispatch requires a prior safety allow, and the "no additional feasibility rule" case is an explicit named outcome. When live execution is built, the only change required is to supply a *real* `SafetyContext` (armed, identified, confirmed, healthy node) for the real broker — the pipeline and registry do not change.
+
+### ADR-2 — Establish the pre-live execution core (ARCH-2, 2026-07-27)
+
+**Context.** ARCH-1 unified the execution authority but left the pre-live core incomplete: adapters were constructed at import (the MT5 adapter probed for a live gateway on `import broker`), execution lifecycle state existed only in process memory, there was no order-intent model, no durable order lifecycle, no canonical reconciliation over execution state, and readiness fields were constants. Audit A additionally flagged the unauthenticated fault-injection route as able to permanently corrupt reconciliation truth.
+
+**Decision.** Build the complete mock-only execution core that Live-1 will activate rather than construct:
+
+```
+Operator (or future strategy) intent
+        ↓
+command_registry            (canonical identity, risk class, intent kind, risk_reducing)
+        ↓
+execution_safety.evaluate   (deny-by-default; + reconciliation gate)
+        ↓
+execution_context           (ONE immutable context assembled at the boundary)
+        ↓
+execution.ExecutionOrchestrator
+        ↓
+broker_adapter.BrokerAdapter (canonical contract; lazy, centralized, fail-closed factory)
+        ↓
+MockBroker (active) / MT5Adapter (inert)
+        ↓
+BrokerResult                 (canonical envelope; inert ops answer `unavailable`)
+        ↓
+order_lifecycle + execution_store   (durable intents + append-only transitions)
+        ↓
+reconciliation               (canonical authority; discrepancies feed safety)
+        ↓
+execution_telemetry + BotEvent audit (derived read model; /api/execution/state)
+```
+
+**Ownership after ARCH-2 (single writable owner per fact):**
+
+| Fact | Owner |
+|---|---|
+| Adapter contract, capability model, connection-state vocabulary, result/error envelope | `broker_adapter.py` |
+| Adapter construction + selection (lazy, cached, fail-closed) | `broker_adapter.get_adapter` |
+| Execution context assembly | `server._execution_context` (one assembly; safety + orchestration consume it) |
+| Order intent model + `intent_`/`recon_` identity | `order_lifecycle.py` |
+| Lifecycle states + allowed transitions | `order_lifecycle.py` (explicit table; terminal protection; evidence rules) |
+| Durable lifecycle + reconciliation records | `execution_store.py` (`backend/execution_state.db`, schema v1, append-only transitions, fail-closed) |
+| Reconciliation classification + safety posture | `reconciliation.py` (`broker_sync` remains the fixture-VIEW sync and delegates canonical runs) |
+| Execution read model + readiness gates | `execution_telemetry.py` (derived only; `tradingReady` is a gate conjunction, never a constant) |
+
+**Key semantics.**
+- *Arming ambiguity resolved:* the node stays authoritative for live arming and broker/account safety (I-7); the tower-side window is named **command authorization** (`ExecutionContext.command_authorization`) and is never populated from node telemetry.
+- *Durability gate:* a broker-dispatched command is denied (`execution_store_unavailable`) immediately before dispatch if the durable lifecycle cannot record it. The store therefore contains exactly the authorized intents; safety/feasibility denials are refused earlier and never dispatch. An audit-append failure after dispatch surfaces loudly while the durable lifecycle already holds the evidence — no silent mutation.
+- *Restart recovery:* deterministic and fail-closed — pre-dispatch intents → `failed(restart_before_dispatch)`; possibly-dispatched intents → `unknown` → `reconciliation_required`. Completion is never fabricated; `unknown` resolves only through reconciliation with evidence.
+- *Reconciliation feeds safety:* unresolved CRITICAL discrepancies deny new risk-increasing execution (`reconciliation_unresolved`); risk-reducing commands (close/cancel/de-risk, flagged in the registry) and emergency stops stay available so an operator can always de-risk. Account-identity mismatch is a hard failure; stale input can never reconcile clean.
+- *Fault injection:* `/api/broker/faults` is test-only and disabled by default (`BROKER_FAULT_INJECTION_ENABLED`).
+
+**Boundary: ARCH-2 does NOT enable live execution.** The mock is the only constructible-active adapter; MT5 is inert (lazy gateway, no order operations, no sockets — proven by subprocess import tests); no live market data, no strategy behaviour, no frontend controls were added. **Live-1 may begin only after the ARCH-2 acceptance criteria pass**, and will consist of supplying real context facts (node-derived health, real command authorization, real account identity) and a real adapter behind the SAME boundary — not of changing the pipeline.
+
+### ADR-3 — Complete secure pre-live activation plane (ARCH-3, 2026-07-27)
+
+**Context.** After ARCH-2, four activation blockers remained: no in-repo client could send the UI-11 credential (enabling auth disabled the platform); the node would have needed the operator token (full API surface) just to publish telemetry; the declared `ConnectionPolicy` gate was unimplemented; and the security surface still reported `active: false` with text claiming transport/auth did not exist. The tower/node arming ambiguity and the permissive mock execution context also needed hard structural boundaries before any Live-1 work.
+
+**Decision.**
+
+1. **Three authentication principals**, each with its own variables, policy object, scope and fail-closed path — no cross-principal reuse by default:
+   - *Operator* (`CONTROL_TOWER_AUTH_ENABLED`/`_API_TOKEN`) — every protected route; applied by the SPA's single header owner (`lib/authSession.ts`, memory-only token, reload clears, 401 ≠ offline).
+   - *Node ingest* (`CONTROL_TOWER_INGEST_AUTH_ENABLED`/`_INGEST_TOKEN`) — governs `POST /api/live/ingest` exclusively (`CLASS_INGEST` route scope). The operator token does NOT authenticate ingest unless the deprecated `CONTROL_TOWER_INGEST_ALLOW_OPERATOR_TOKEN` compat flag is explicitly enabled, which the security surface reports as DEGRADED. The publisher sends the dedicated token and distinguishes 401/403 (`unauthorized: true`) from network failure (`HTTPError` caught before `URLError`); publishing failures never affect trading.
+   - *Tower→node read* (`NODE_API_TOKEN`) — the outbound GET-only transport, unchanged in direction, now policy-gated.
+2. **Canonical `ConnectionPolicy`** (`connection_policy.py`): consulted immediately before EVERY outbound socket (the transport's single I/O method; structural test pins policy-before-open and exactly one opener call). Deny-by-default; immutable decisions with machine reason codes and host-free audit views. **Operating profiles**: `local_loopback` (the ONLY approved profile; loopback hosts only, plain HTTP tolerated locally), `remote_pre_live` and `remote_live` (DENY, naming their missing prerequisites — TLS trust, private network, secrets management, explicit activation attestation — none of which is faked). Transport selection and connection approval remain separate decisions; enabled-but-misconfigured is reported distinctly from disabled (`transport.selection_status`).
+3. **Operator command authorization** (`command_authorization.py`): immutable, bounded, scope-exact `AuthorizationGrant` — no generic "armed" boolean. The ONLY provider is the explicitly-mock provider, which refuses to issue for any non-mock adapter, so the permissive fixture authorization structurally cannot survive adapter activation. Revocation and malformed data fail closed. Node arming remains node-authoritative and observed-only; a grant can never substitute for node health, account identity, reconciliation or broker state (each gate runs independently), and node arming cannot substitute for a grant.
+4. **Execution context with provenance** (`execution_context.py`): tower / node / broker / reconciliation fact groups each labelled (`mock-synthetic`, `node-telemetry`, `durable-store`, `absent`). Node facts derive from real validated telemetry when present (staleness derived, health never invented); the **account-identity gate** (`NODE_EXPECTED_ACCOUNT_FINGERPRINT`) denies all non-read-only commands on MISMATCH and denies execution-affecting commands on UNKNOWN or stale; stale node telemetry maps healthy→stale and denies.
+5. **Truthful surfaces**: `/api/security/config` lost the `active:false` constant and its "nothing exists yet" reason — replaced by explicit dimensions (`auth`, `ingestAuth`, `connectivity` = profile/transport-selection/ConnectionPolicy-decision/outbound-auth/missing-prerequisites). `/api/health` returns a MINIMAL body (`status`,`scope`,`serverTime`) to unauthenticated callers when operator auth is enforcing — no node ids, broker kind or fixture versions. `Cache-Control: no-store` is applied uniformly to every `/api` response by middleware. Readiness gained the activation-plane gates (`operatorAuthenticated`, `commandAuthorizationActive`, `accountIdentityMatch`, `nodeArmingObserved`, `approvedConnectionProfile`) — still a named-gate conjunction, never one unexplained boolean.
+6. **Activation runbook**: 13 ordered, observable steps with rollback (SECURITY-BASELINE.md); transport is enabled last, after its auth and policy prerequisites; remote profiles are verified to still deny as the final step.
+
+**Boundary.** ARCH-3 does not enable remote or live execution: mock remains the only active adapter, MT5 stays inert, no real order path exists, `local_loopback` is the only approved profile, and remote activation remains explicitly prohibited. Completion of ARCH-3 permits work on a mock-validated Live-1 adapter vertical slice; it does not itself authorize any real broker connection or order submission.
+
+### ADR-LIVE-1 — Read-only MT5 adapter vertical slice (LIVE-1, 2026-07-27)
+
+**Context.** ARCH-3 permitted a mock-validated Live-1 adapter slice. Until now every broker read was simulated by `MockBroker`; no in-repo code read a real terminal. The first genuine step toward live operation is to read a real MT5 terminal — account, positions, orders, history, server time — while keeping execution structurally impossible. **LIVE-1 introduces live broker reads only. Execution remains structurally impossible.**
+
+**Decision.**
+
+1. **Genuine read-only MT5 adapter** (`broker.py` `MT5Adapter` over `live/mt5_gateway.py`): supports connection/terminal status, account information + identity fingerprint, broker information, symbol specs, open positions, open orders, recent executions (history deals), and server time. Every write verb — `submit_order`, `close_position`, `submit_command`, `cancel_order`, `modify_order`, `flatten` — is inert and returns a canonical unavailable/denied `BrokerResult` (never touches the terminal). The MT5 SDK is injectable (`MT5Gateway(config, sdk=…)`) so the whole slice is provable against a fake SDK with no terminal present.
+
+2. **Adapter activation is centralized and fail-closed** (`broker_adapter.py`): `active_kind()` reads the single selection variable `CONTROL_TOWER_BROKER_ADAPTER` (blank → `mock` default; unknown value returned verbatim then rejected at construction). `get_adapter()` is the ONLY factory: lazy, cached-after-success, constructs nothing for an unknown kind (`UnknownAdapterError`), and — for `mt5` — calls `ConnectionPolicy.evaluate_local_broker("mt5")` and constructs the adapter only on approval (`AdapterDeniedError` + `AUDIT adapter_denied` otherwise). Importing the backend performs no MT5 import side effects, initialization or connection (pinned by a subprocess test that traps `socket.connect`).
+
+3. **ConnectionPolicy gates all MT5 access** (`connection_policy.py` `evaluate_local_broker`): deny-by-default; `local_loopback` is the only approved profile; `remote_pre_live`/`remote_live` deny naming missing prerequisites; a non-`{mock,mt5}` kind denies (`adapter_unknown`). A denied policy makes zero MT5 API calls — the gateway property short-circuits to `connection_denied` before loading the SDK — with a machine-readable reason and an `AUDIT mt5_gateway_denied` event.
+
+4. **Canonical broker models** (`BrokerAccountInfo`, canonical positions/orders, `BrokerDeal`, `SymbolSpec`, `TerminalInfo`, broker info): immutable, broker-neutral field names, redaction-safe (`login_masked = mt5_****NNNN`; raw login never leaves the adapter), deterministic serialization (`as_dict()` returns sorted keys). No MT5 SDK object (`SimpleNamespace`/named tuple) escapes the adapter boundary — pinned by tests asserting no MT5 type names or SDK objects appear in returned data.
+
+5. **Capabilities derive from the adapter, write stays absent**: `BrokerCapability` gained `supportsLiveWrite` (default `False`). Mock = read ✓ / write ✗; MT5 = read ✓ / write ✗. Execution safety continues to deny every execution command; a non-mock adapter has no permissive execution context, so a live read opens no execution path.
+
+6. **Telemetry integration** (`/api/execution/state` `broker` block): exposes adapter kind, connection state, terminal-connected, account identity + broker identity, equity/balance/margin/margin-level/leverage, open positions/orders counts, recent-execution count, server time, telemetry timestamp, and `provenance` (`live_mt5` vs `mock-fixture`). Unavailable/partial reads are reported with explicit codes (`reads.*`) and never invented — an unavailable account read carries `available:false` + `code`, with no fabricated balances.
+
+7. **Reconciliation consumes live reads, still read-only** (`reconcile_snapshot` → `run_reconciliation`): no corrective action, account-identity mismatch remains a hard failure, `recon_` ids and discrepancy classes preserved.
+
+8. **Minimal read-only UI** (`BrokerReadPanel.tsx`): displays connection, masked account, broker, server, balance, equity, margin level, open positions/orders, adapter kind; labelled **LIVE READ ONLY · NO EXECUTION**; provenance badge (LIVE (MT5) vs MOCK FIXTURE); unavailable reads shown explicitly; no button, input or execution control of any kind.
+
+9. **Graceful failure** (`_guarded`): package missing, terminal absent/closed, login failure, account/symbol unavailable, timeout, or malformed data each map to a canonical `BrokerResult` — no crash, no traceback leakage, machine-readable code, `AUDIT mt5_read_failed` event — and execution remains unavailable throughout.
+
+**Boundary.** LIVE-1 introduces live broker reads only. **Execution remains structurally impossible**: no order submission, modification, cancellation, position close, or account mutation path exists in the live adapter (all write verbs are inert), the MT5 write capability is absent, and `local_loopback` remains the only approved connection profile. LIVE-1 does not enable trade execution, remote profiles, or any account mutation. *(Superseded in exactly one respect by ADR-LIVE-2: market-order submission.)*
+
+### ADR-LIVE-2 — First market-order execution slice (LIVE-2, 2026-07-27)
+
+**Context.** LIVE-1 delivered genuine read-only MT5 access with execution structurally impossible. The first execution-capable step must prove the complete architecture ARCH-1/2/3 built — authentication → authorization → context → safety → adapter → acknowledgement → lifecycle → durable store → reconciliation → telemetry → UI — by allowing exactly one broker operation, with everything else remaining read-only.
+
+**LIVE-2 enables exactly one executable broker operation: `submit_market_order()`. All other broker mutations remain structurally unavailable.**
+
+**Decision.**
+
+1. **Canonical market-order models** (`broker_adapter.py`): immutable, broker-neutral `MarketOrderRequest` (intent id, instrument, side, quantity, optional stop loss / take profit, optional comment, correlation id, idempotency key, execution mode — no strategy fields; validated at construction so nothing malformed can exist) and `MarketOrderAck` (status ∈ {filled, partially_filled, rejected, not_submitted, timeout, communication_failed}, broker order/deal tickets, volumes, price, machine reason, provenance). Both serialize deterministically (`as_dict()` → sorted keys). No broker-native object crosses the boundary.
+
+2. **One executable operation, one surface** (`command_registry.py`): new canonical command `SubmitMarketOrder` on the dedicated `SURFACE_EXECUTION` — submit-able ONLY through `POST /api/execution/market-order`; the fixture control plane (`/api/commands/{name}`) rejects it as unknown, and `execution_command_names()` proves the surface contains exactly one command. Risk class `execution_affecting`, `broker_dispatched`, required capability `supportsMarketExecution`, intent kind `submit`.
+
+3. **Adapters** (`broker.py`): `MockBroker.submit_market_order` — deterministic fixture execution (ticket derived from the intent id; no invented market price; provenance `mock-fixture`). `MT5Adapter.submit_market_order` — the ONE live write, delegating to the gateway's proven typed write path (`live/mt5_gateway.open_position` → `live/mt5_results` conservative classification) and mapping the typed result into the canonical acknowledgement (FILLED/PARTIAL → ok; REJECT retcodes → `rejected`; pre-submit normalization refusal → `not_submitted` with zero `order_send` calls; AMBIGUOUS retcodes → `timeout`; exceptions → `communication_failed`, type name only — no message leakage). MT5 capabilities now declare exactly `supportsLiveWrite=True` + `supportsMarketExecution=True`; every other write capability stays False and every other write verb stays inert.
+
+4. **Execution safety remains authoritative.** The market order flows exclusively through the canonical `ExecutionOrchestrator` pipeline; no alternate path exists. Denial matrix (each independently proven): execution mode not active; operator unidentified; unconfirmed; node not healthy (stale/unknown each deny); account identity mismatch/unknown; unresolved critical reconciliation; disarmed / expired authorization; duplicate command; expired command; unknown command; missing market-execution capability; broker disconnected; unapproved connection profile; execution store unavailable (denied BEFORE dispatch). The mock authorization provider still refuses non-mock adapters, so a permissive fixture grant structurally cannot authorize the live adapter.
+
+5. **Lifecycle** (`order_lifecycle.py`): new terminal state `open`. The required flow maps onto the canonical vocabulary as `created` (intent_created) → `validated` → `ready` (reason `safety_allowed`) → `submitting` → `submitted` (order_send accepted) → `acknowledged` (reason `broker_acknowledged`) → `open` (position confirmed). Failures: `rejected` (broker_rejected), `failed` (submission_failed — order_send never ran), `unknown` → `reconciliation_required` (timeout / communication_failed — the outcome is never guessed). Transitions stay table-validated, append-only, monotonic, evidence-carrying; the broker ticket persists as `broker_ref`.
+
+6. **Persistence** (`execution_store.py`, schema v1 unchanged): the intent row persists the full canonical request facts (instrument/side/quantity/SL/TP); the acknowledgement JSON (+ measured broker latency) persists as transition evidence; the ticket as `broker_ref`; all writes atomic and append-only; restart recovery unchanged (pre-dispatch → failed; in-flight → unknown → reconciliation_required).
+
+7. **Idempotency** — a duplicated submission can never create two broker orders: the route REQUIRES an `Idempotency-Key`; the orchestrator consults the durable store (new `intent_by_idempotency_key`) before creating an intent and replays the original intent's durable outcome (`deduplicated: true`, zero adapter calls) — restart-safe because the store is durable; duplicated broker acknowledgements (two intents, one ticket) are a `duplicate_broker_reference` reconciliation fault.
+
+8. **Reconciliation** (`reconciliation.py`, still read-only, no corrective action): OPEN market orders join the broker-reference integrity scan (an open order without a ticket = `missing_broker_reference`) and contribute their tickets as POSITION lineage (a broker position matching an open intent is expected; one without lineage remains `broker_only_position`); all discrepancy classes preserved; account mismatch remains a hard failure.
+
+9. **Telemetry** (`/api/execution/state` `marketOrder` block): derived entirely from the durable store (provenance `durable-store`) — pending submissions, awaiting-reconciliation count, active market orders, submission failures, last submission (state, ticket, ack status, final reason, measured latency), last broker ticket; store unavailable is reported explicitly. The broker block's `readOnly` now DERIVES from `supportsLiveWrite` instead of being asserted.
+
+10. **UI** (`MarketOrderPanel.tsx`): exactly one control — *Submit Market Order* — disabled unless every backend readiness gate passes, behind an explicit confirmation dialog, labelled **LIVE EXECUTION · ONE MARKET ORDER · NO AUTOMATION**; renders acknowledgement, ticket, lifecycle state, denials (stage + machine code), deduplicated replays and latency. No other execution control exists in the SPA; the read panel's obsolete "execution is structurally impossible" caption was corrected.
+
+**Boundary.** LIVE-2 enables exactly one executable broker operation: `submit_market_order()`. All other broker mutations — pending orders, stop/limit orders, order modification, SL/TP modification, partial close, position close, order cancellation — remain structurally unavailable (inert verbs, absent capabilities). No strategy automation, no scheduling, no autonomous execution exists. Live MT5 submission additionally remains gated behind facts that do not yet exist in this repository: a real (non-mock) authorization provider and grant-issuance flow, a configured expected account fingerprint with healthy fresh node telemetry, and an active execution mode — under the shipped configuration, every live market order still denies at the safety gate.
+
+### ADR-LIVE-3 — Controlled position and order management (LIVE-3, 2026-07-27)
+
+**Context.** LIVE-2 enabled exactly one executable operation (market-order submission) but left no way to manage the resulting risk: no durable operator authorization, no execution-mode governance, and no modify/cancel/close path. LIVE-3 completes the manual-management vertical: **manual, individually confirmed position and order management only. It does not enable autonomous execution, strategy-triggered execution, pending-order creation, bulk mutation, remote activation or unattended trading.**
+
+**Decision.**
+
+1. **Durable operator authorization** (`command_authorization.DurableOperatorAuthorizationProvider`, store schema v2 `auth_grants` + append-only `auth_grant_events`): immutable grants carrying operator identity, issued/expiry timestamps, deployment scopes, an EXACT account-fingerprint scope (no wildcard account scope for live), optional exact command list, optional max quantity, confirmation, revocation state, reason and provider — never a credential. Issuance requires confirmation, an approved (local_loopback) profile, the MT5 adapter, and a VERIFIED account-identity match; every requirement denies with a machine reason. Selection (`applicable_grant`) is deterministic: active, adapter-exact, account-exact, scope/command-covering grants ordered by (expires_at, id) — earliest-expiring wins; expired/revoked/malformed rows never authorize. The mock provider remains for the fixture world and still refuses every non-mock adapter. Minimal operator API: `GET/POST /api/authorization/grants`, `POST /api/authorization/grants/{id}/revoke` (operator principal, no-store). A grant continues to override nothing — node health, arming, account identity, broker connection, execution mode, reconciliation, ConnectionPolicy and store health all gate independently.
+
+2. **Execution-mode governance** (`execution_mode.ExecutionModeOwner`, append-only `mode_transitions`): ONE durable owner; modes observe (DEFAULT — all mutations deny) / manual_live (explicitly authorized manual operations only) / halted (only the registry-flagged emergency de-risking operations). Transitions require operator, reason and confirmation; entering manual_live requires EVERY activation gate healthy (approved profile, MT5 write-capable connected adapter, account match, fresh node telemetry, clean reconciliation, a valid applicable grant, available store); observe/halted are always reachable. **Restart never fabricates activation**: a durable manual_live found at process start is automatically downgraded to observe with an audited `process_restart_requires_reactivation` transition; halted survives restart. No environment variable and no strategy code path can set the mode (test-pinned). API: `GET/POST /api/execution/mode`.
+
+3. **Exactly four executable operations** (registry SURFACE_EXECUTION): `SubmitMarketOrder` (LIVE-2) + `ModifyPositionProtection`, `CancelPendingOrder`, `ClosePosition`. Canonical immutable requests (`ModifyPositionProtectionRequest` — at least one level, levels are finite positive prices, None = UNCHANGED so a stop can never be removed; `CancelPendingOrderRequest`; `ClosePositionRequest` — a supplied quantity is rejected at construction: FULL close only, partial close denies explicitly). No generic broker-command payload exists. Cancel/close are risk-reducing and are the only halted-available commands; modify is not risk-reducing and requires clean reconciliation.
+
+4. **Safety policy** — no route-local logic: structural validation + FRESH canonical snapshot verification (`stale_broker_snapshot` denies; entity must exist in the fresh snapshot; instrument mismatch denies; direction unverifiable denies; a worsened stop denies `risk_increasing_stop`; SL/TP ordering contradictions deny) live in the orchestrator's validators; the safety engine gained MODE_MANUAL_LIVE/MODE_HALTED (halted permits ONLY the flagged commands, all other gates still applying); capability/profile/connection checks per command; entity discrepancy + lock gates in the orchestrator before dispatch; the durable store is required before any dispatch. Market-order submission and protection modification remain denied in halted mode.
+
+5. **Lifecycle** — acknowledgement is NOT final: `created → validated → ready(safety_allowed) → modify_pending|cancel_pending|close_pending → acknowledged(broker_acknowledged) → modified|cancelled|closed` where the terminal transition is recorded ONLY by `reconciliation.confirm_operations` observing the change in a fresh snapshot (`reconciliation_confirmed`). Failures: rejected (broker_rejected), failed (submission_failed — order_send never ran), unknown → reconciliation_required (timeout/communication_failed — the entity freezes). Restart recovery unchanged (in-flight → unknown → reconciliation_required).
+
+6. **Concurrency** (`entity_locks`, durable): ONE in-flight mutation per broker entity — the lock is claimed atomically before dispatch (`entity_locked` denies a second claimant), survives restart, is released only by a terminal outcome or reconciliation evidence (never expiry), and stays held through acknowledged/ambiguous states — a close-vs-modify race cannot double-dispatch, and duplicate idempotent replays do not contend (they short-circuit before locking).
+
+7. **Persistence & idempotency** (schema v1→v2 additive migration, explicit and fail-closed): grants, revocations, mode transitions, operation requests (intent rows), acknowledgements + measured latency (transition evidence), entity references (`broker_ref`), locks — all append-only/atomic. A duplicated idempotency key replays the durable outcome with ZERO broker calls (restart-safe); a CHANGED payload under the same key denies `idempotency_conflict`.
+
+8. **Reconciliation** (still read-only, zero corrective operations): confirms modifications (requested vs observed SL/TP), cancellations (order absent) and closes (position absent); an acknowledgement without an observed change is a persisted `status_mismatch` discrepancy and the entity stays locked; ambiguous (frozen) operations resolve with evidence to confirmed or `operation_not_applied`→failed; a stale snapshot confirms NOTHING; an unresolved same-entity discrepancy denies further mutation (`entity_discrepancy_unresolved`); account mismatch remains a hard failure blocking everything.
+
+9. **Telemetry** (`/api/execution/state` `governance` block, derived-only): current mode (+ provenance durable-store), active grant summary + expiry (redacted), in-flight operations, acknowledged-awaiting-confirmation (DISTINCT from confirmed), reconciliation-required operations, failures, last operation with final reason + latency, active entity locks.
+
+10. **UI** (`ManualExecutionPanel`): mode selector, grant issue/revoke, per-entity modify SL/TP / cancel / close — every mutation gate-disabled and individually confirmed; labels **LIVE MANUAL · NO AUTOMATION · LOCAL LOOPBACK ONLY**; masked account; acknowledgement rendered separately from the reconciled result; no bulk close, no flatten-all, no pending-order creation, no quantity increase; token memory-only, no browser persistence.
+
+**Activation & rollback.** Activation: issue a scoped grant (`POST /api/authorization/grants` — requires verified account identity) → verify gates (`GET /api/execution/mode`) → enter manual_live (confirmed, reasoned) → operate. Rollback at any point: `POST /api/execution/mode {mode: observe|halted}` (always available), revoke grants, or restart the process (manual_live never survives restart).
+
+**Boundary.** LIVE-3 enables manual, individually confirmed position and order management only: exactly four executable operations through the one canonical pipeline. Pending/limit/stop order creation, SL removal, risk-increasing modification, partial close, bulk mutation, strategy/autonomous execution and remote profiles remain structurally unavailable. Under the shipped configuration every live mutation still denies until an operator explicitly issues a grant and activates manual_live with all gates healthy.
+
+*The audited post-LIVE-3 state of the system — ownership map, pipeline, state machines, failure matrix and LIVE-4 entry criteria — is recorded in `LIVE-3-ARCHITECTURE-CHECKPOINT.md`, which is the canonical reference for that material.*
+
+### ADR-LIVE-4A — Operational read model and Control Tower projection (LIVE-4A, 2026-07-27)
+
+**Context.** After LIVE-3 the Control Tower answered a dozen independent endpoints, and each UI panel re-derived its own version of "what is happening" — joining broker reads, node telemetry, execution state and reconciliation locally. Operational truth therefore had no single owner on the read side, and two panels could disagree. **LIVE-4A introduces the canonical operational read model. It introduces no new execution capability.**
+
+**Decision.**
+
+1. **One projection owner** — new `backend/operational_projection.py`. It consumes broker snapshots, node telemetry, execution-store lifecycle, reconciliation posture, execution mode, authorization state and entity locks, and produces immutable read models. It holds no adapter, issues no command, owns no persistence and caches no mutable state. Structural tests pin that it references no `get_broker`, no `order_send`, no store write, no socket, and imports no runtime owner.
+
+2. **Immutable canonical read models** — `NodeOperationalView`, `AccountOperationalView`, `OrderOperationalView`, `PositionOperationalView`, `ScenarioProjection`, `OperationalSummary`. All frozen dataclasses with tuple collections and deterministic `as_dict()` (sorted keys at every level, JSON-safe). **Orders and positions are separate concepts and are never merged** — distinct types with distinct field vocabularies.
+
+3. **Deterministic, injected-clock builder** — every `build_*` function takes an explicit `ProjectionSources` bundle of read-only callables plus `now`. It reads no clock, environment or global, so identical sources at an identical `now` produce byte-identical output. Restart-safe by construction: the projection holds nothing between calls. Projection order is Broker → Execution Store → Lifecycle → Reconciliation → Telemetry → Mode → Authorization → Projection.
+
+4. **Explicit freshness** — every time-sensitive model carries a `Freshness` (`projectionAt`, `sourceAt`, `ageSeconds`, `stale`, `available`, `status`). **UNAVAILABLE (the source could not be read) and STALE (read but too old) are distinct states** and are never collapsed into a zero or a healthy-looking default; an unparseable timestamp is stale, never fresh.
+
+5. **Explicit provenance** — every model carries `provenance` (`live_mt5` / `mock-fixture` / `node-telemetry` / `durable-store` / `absent`), so a fixture value can never be mistaken for live broker truth.
+
+6. **Nothing is invented** — a missing broker snapshot yields no positions (not an empty "healthy" list); a missing account read yields an explicitly unavailable account (not zeroed balances); non-derivable fields (`realizedPnLToday`, `openRisk`, position `currentPrice`, position age) are reported absent rather than estimated; absent node telemetry yields one explicitly-unavailable node view rather than an empty list.
+
+7. **Unified read-only API** — `GET /api/operations/{summary,nodes,accounts,orders,positions}` and `GET /api/operations/{node,order,position}/{id}`. All operator-authenticated by the deny-by-default classifier, all `Cache-Control: no-store`, all derived. **No handler aggregates anything** — each delegates to the projection owner (structurally pinned).
+
+8. **Scenario foundation (placeholder only)** — no scenario entity exists in this repository; the only evidence is a `scenarioKey` string echoed in stored command payloads. `ScenarioProjection` projects exactly that and nothing else. No strategy logic and no scenario generation was added.
+
+9. **Trade-ledger foundation (interfaces only)** — `TradeLedgerProjection`, `ClosedTradeProjection`, `LedgerSummary` pin the shape a future ledger slice must satisfy. No persistence, no analytics: constructing the ledger today reports `available: false`, `ledger_not_implemented`.
+
+10. **Projection-driven UI** — new `OperationalDashboard` with a **single** polling source (`api.operationsSummary`). Node, account, order, position, operations, reconciliation, warnings and system-health cards each receive an already-projected model; formatting lives in one set of shared helpers. Badges are explicit: **LIVE / MOCK / NODE / STALE / UNAVAILABLE / RECONCILIATION REQUIRED**. The dashboard is read-only — it renders zero buttons and zero inputs.
+
+**Boundary.** LIVE-4A is a READ MODEL. It adds no broker execution, no strategy logic, no autonomous behaviour and no change to the execution pipeline: the execution surface remains exactly the four LIVE-2/LIVE-3 operations (test-pinned), and the projection cannot write, execute or persist. The UI no longer reconstructs operational truth — it reflects the projection.
+
+### ADR-LIVE-4B — Canonical Scenario domain (LIVE-4B, 2026-07-27)
+
+**Context.** The trading lineage had no parent. Recommendations, intents, orders and positions each existed independently, joined only by a `scenarioKey` STRING (`instrument:session:structure:direction:entryModel`) carried on fixture records — a convention, not an entity. LIVE-4A could therefore only project that string as a placeholder. Without a canonical parent, no future trade can be attributed, and no ledger or analytics slice can aggregate honestly. **LIVE-4B introduces the canonical Scenario domain. It introduces no strategy engine. It introduces no autonomous trading.**
+
+**Decision.**
+
+1. **The Scenario is the canonical parent object** — new `backend/scenario_domain.py`. Target lineage: `Scenario → Recommendation → Intent → Order → Position → Deals → Ledger → Analytics`. Every future trade must be traceable to exactly one Scenario.
+
+2. **Immutable, validated models** — `Scenario` (frozen; natural key, timeframe, status, node, account fingerprint, timestamps, expiry, explicit link tuples, tags, bounded JSON-safe metadata, provenance), `ScenarioId`, `ScenarioStatus`, `ScenarioOutcome`, `ScenarioEvent`, `ScenarioSummary`. All serialize with sorted keys and are JSON-safe; invalid natural keys, directions, statuses, oversized metadata and excess tags are rejected at construction.
+
+3. **Deterministic identity** — `ScenarioId.derive()` hashes the natural key plus an explicit discriminator, so the same setup always yields the same `scn_<16 hex>` id (replay- and rebuild-stable). `ScenarioId.from_key()` parses the existing fixture convention; malformed keys raise rather than being partially guessed.
+
+4. **Explicit lifecycle** — 15 statuses (`CREATED … REJECTED`) with an explicit forward table plus abandonment (`INVALIDATED`/`EXPIRED`/`CANCELLED`) reachable from every non-terminal status. Terminal statuses are immutable. Transitions require a reason and monotonic time, and are PURE — `transition()` returns a new Scenario and never mutates its input. Illegal pairs raise `ScenarioError("invalid_transition")`.
+
+5. **Append-only durable store** — new `backend/scenario_store.py`, its OWN database file and schema version. `scenario_events` is append-only (no update/delete surface); the `scenarios` table is a snapshot that can be discarded and rebuilt deterministically from events alone (`rebuild_scenario`). Writes are atomic and idempotent on `(scenario_id, sequence)`; creating the same scenario twice appends nothing. Nothing is created or updated automatically. The store owns scenarios ONLY — it never touches execution, reconciliation, authorization, mode or lock tables (structurally pinned).
+
+6. **Explicit relationships** — links are identifier tuples on the Scenario (`linked_recommendation_id`, `linked_intent_ids`, `linked_order_ids`, `linked_position_ids`), recorded through `link()`: idempotent, sorted, conflict-detecting. Nothing is inferred and nothing is reverse-reconstructed — an unrecorded link does not exist.
+
+7. **Projection integration** — the LIVE-4A placeholder is REPLACED. `ScenarioOperationalView` is built from the scenario store with linkage counts, age, masked account fingerprint, freshness and `durable-store` provenance. An unreadable store yields an empty projection AND an explicit `scenarios_available() == False` — an empty list never claims "no scenarios exist".
+
+8. **Read-only API** — `GET /api/scenarios` (with `instrument`/`session`/`nodeId`/`status` filters and a deterministic summary), `/api/scenarios/active`, `/api/scenarios/history`, `/api/scenarios/{id}` (view + append-only history). Operator-authenticated, `no-store`, deterministically ordered, projection-owned, honest 404/503.
+
+9. **Execution independence** — the execution pipeline, broker behaviour, routing, authorization and reconciliation are UNCHANGED. `OrderIntent` gains one OPTIONAL `scenario_id` for lineage, persisted via an additive nullable column (execution store schema 2 → 3, explicit fail-closed migration). The orchestrator CAPTURES it verbatim at intent creation and nothing else: no validator, gate, policy or adapter reads it, and no execution module imports the Scenario domain (all structurally pinned).
+
+10. **Ledger preparation** — `TradeLedgerProjection`, `ClosedTradeProjection` and `LedgerSummary` now carry the scenario dimension (`scenarioId`, `scenarioIds`, `byScenario`). Interfaces only: still no persistence, no analytics, and the ledger still reports `available: false`.
+
+11. **UI** — a read-only Scenario section (`ScenarioPanel`) listing identity, status, natural key, node, linkage counts, age and freshness, with status/instrument/session/node filters. No editing, no mutation, no strategy control (zero buttons, zero inputs; only the four filter selects).
+
+**Boundary.** LIVE-4B introduces the canonical Scenario domain: the parent entity, its lifecycle, its append-only store, its projection and its read-only surfaces. It introduces NO strategy engine, NO signal generation, NO scenario generation and NO autonomous trading — every scenario and every transition is an explicit, caller-supplied fact. The four executable operations and every ARCH-1…LIVE-3 safety guarantee are untouched.
+
+### ADR-LIVE-4C — Canonical Trade Ledger and closed-trade reconstruction (LIVE-4C, 2026-07-27)
+
+**Context.** LIVE-4A/4B delivered the operational read model and the Scenario parent, but the historical economic result of a trade had no owner: the ledger existed only as pinned interfaces. **LIVE-4C introduces the canonical historical Trade Ledger. It introduces no new broker execution capability. It introduces no strategy engine. It introduces no performance analytics beyond ledger totals.**
+
+**Broker-history audit (grounded, and the reason PART 1 was necessary).** Before this slice the broker abstraction did NOT expose enough evidence to reconstruct a closed trade: `history_deals_get` was reached only via `getattr` inside `broker.recent_executions` (optional, 1-day window, 50-deal cap); `history_orders_get` was never called; the canonical `BrokerDeal` carried no position id and no `DEAL_ENTRY` direction; commission / fee / swap appeared nowhere in production; account margin mode was never read; and `MockBroker` had no deal evidence at all.
+
+**Decision.**
+
+1. **Read-only broker-history contract** — new `backend/broker_history.py`: `BrokerDealRecord` (position id + `DEAL_ENTRY` + per-deal `BrokerCostEvidence`), `BrokerHistoricalOrder`, `BrokerClosedPositionEvidence`, `BrokerHistorySnapshot`, plus an explicit account-mode vocabulary. It maps ONLY fields the MetaTrader5 SDK genuinely provides, each probed defensively, and reports capability gaps as `deals_available` / `orders_available` / `costs_available` flags. A failed read is `unavailable`, never an empty history. There is no write method, and no execution import (structurally pinned). Both an MT5 reader and a deterministic mock reader are implemented; the mock reports costs as UNAVAILABLE because the fixture world records none.
+
+2. **Deterministic trade identity** — `TradeId.derive()` hashes ONLY immutable broker lineage (account fingerprint, position id, instrument, opening deal id). Financial values are deliberately excluded, so identity is stable across restart, ledger rebuild, reconciliation rerun, repeated history reads and **late-arriving cost evidence**.
+
+3. **Deterministic reconstruction owner** — new `backend/trade_reconstruction.py`: a pure function of its inputs (no I/O, no clock, no persistence, no broker call). Deals group by broker POSITION ID; `DEAL_ENTRY` splits entries from exits, so one order producing several deals, several entry orders on one position, several closing deals, partial close, scale-in and scale-out are all handled by construction, with volume-weighted entry and exit prices.
+
+4. **Account-mode honesty (fail closed)** — grouping by position id is only sound when a position id identifies one economic trade, which holds on HEDGING accounts. On `netting`, `exchange` or `unknown` the trade is still fully reconstructed and VISIBLE, but a blocking reason prevents finalization. Nothing is silently reconstructed under hedging assumptions.
+
+5. **Ledger lifecycle** — `OBSERVED → RECONSTRUCTING → {INCOMPLETE | READY_TO_FINALIZE | CONFLICTED} → FINALIZED → AMENDED`. Settled truth is never silently overwritten: `FINALIZED` may only move to `AMENDED` (a recorded amendment) or `CONFLICTED`; a refresh of a finalized entry is a no-op. Finalization requires sufficient closing evidence and raises otherwise.
+
+6. **Append-only store** — new `backend/trade_ledger_store.py`, own file and schema version. `ledger_events` has no update or delete surface and no generic CRUD; entries rebuild deterministically from events alone; ingestion is idempotent on `(trade_id, sequence)` with deterministic event ids; writes are atomic; a newer schema fails closed. It owns ledger facts only — never execution, scenario or broker state.
+
+7. **Financial accounting: zero ≠ unavailable** — every group carries a completeness marker (`complete` / `partial` / `pending` / `unavailable` / `not_applicable` / `conflicted`) and every value is `None` when absent. Net PnL stays unavailable while costs are unavailable; a measured zero cost is preserved as `0.0`.
+
+8. **Realized-R policy (canonical, tested)** — R is computed from **GROSS** realized PnL divided by the initial risk amount, and every record states `realizedRBasis: "gross"`. Gross is canonical because cost evidence frequently arrives late; an R that silently changed when a swap settled would not be comparable. Initial risk comes ONLY from the ORIGINAL submit intent's recorded stop — a later protective modification is never used as the initial stop. Without grounded initial-risk evidence, `realizedR` is unavailable and `riskCompleteness` is incomplete.
+
+9. **Exit classification** — explicit broker reason (MT5 `DEAL_REASON_*`) always wins; otherwise proximity to a recorded protective level within a documented instrument-precision tolerance (default 5 points); a partial close is classified by quantity; otherwise `UNKNOWN`, which is preferred to invented certainty.
+
+10. **Scenario lineage and reconciliation gates** — lineage resolves from EXPLICIT identifiers only (intent `scenario_id`, and Scenario-side linked intent/order/position ids). Multiple distinct scenarios is a CONFLICT that blocks finalization; absent linkage does not fabricate a Scenario and, by documented policy, does not block finalization (legacy/manual/external trades remain visible with `scenarioId` unavailable and an explicit `origin`). Unresolved MATERIAL reconciliation findings (account identity, duplicate/missing broker reference, quantity mismatch, unknown) block finalization; non-material findings are recorded and visible but do not gate.
+
+11. **Projection, API and UI** — the placeholder ledger interfaces are replaced by `TradeLedgerOperationalView`, `ClosedTradeOperationalView` and `LedgerOperationalSummary`. Six read-only endpoints (`/api/ledger/summary`, `/trades`, `/trades/{id}`, `/trades/{id}/history`, `/incomplete`, `/conflicts`) are operator-authenticated, `no-store`, deterministically ordered, filtered, paginated with a bounded page size, and honest about 404/unavailable; no handler performs accounting. Ingestion is an internal read-side service (`refresh_trade_ledger`), NOT an HTTP mutation endpoint and NOT an autonomous loop. The read-only UI renders recorded values verbatim — an unavailable figure shows as "—", never zero — with FINALIZED / INCOMPLETE / AMENDED / CONFLICTED / COSTS PENDING / RISK UNAVAILABLE / SCENARIO UNLINKED / RECONCILIATION REQUIRED badges, and no edit, delete or adjustment control.
+
+**Non-goals (explicit).** No win rate, expectancy, drawdown, equity curve, or grouping by strategy/session/instrument. No new broker execution capability, no new execution command, no change to execution authorization, safety, routing or reconciliation write behaviour, and no automated Scenario creation. Backfill is provided as a bounded, idempotent interface shape only — an unbounded full-account history scan is never run.
+
+### ADR-LIVE-4D — Canonical Recommendation domain and decision lineage (LIVE-4D, 2026-07-27)
+
+**Context.** After LIVE-4C the lineage ran Scenario → … → Intent → Order → Position → Deals → Trade Ledger, but the middle was missing: nothing recorded the *proposal to trade a Scenario* or the decision taken on it. `TradeLineage.recommendation_id` was structurally present but never populated, because no recommendation→trade link was recorded anywhere. **LIVE-4D introduces the canonical Recommendation and decision domain. It introduces no strategy runtime. It introduces no autonomous Recommendation generation. It introduces no new broker execution capability. Acceptance of a Recommendation does not execute a trade.**
+
+**Fixture audit (grounded, and the reason the import is labelled evidence).** The pre-existing `/api/recommendations` route serves `WORLD["recommendations"]`, consumed by `PolicyEngineView`, `EdgeMonitorView` and `PolicyCellRenderer`. Inspected in full, those records are **POLICY-CHANGE proposals** (`proposedChange: {field, from, to}` — e.g. move a target from 2.5R to 2.75R) attached to a `scenarioKey`. They are **not trade proposals**: they carry no entry, no stop, no take profit, no quantity and no risk. They are therefore imported as evidence with all trade terms `unavailable` and an explicit `importWarning`; nothing is synthesised. That route is untouched, and the canonical domain is namespaced under `/api/trade-recommendations/*` so it cannot shadow it.
+
+**Decision.**
+
+1. **Canonical models** — new `backend/recommendation_domain.py`: `Recommendation`, `RecommendationTerms` (separate `RecommendationExecutionTerms` and `RecommendationRiskTerms`), `RecommendationDecision`, `RecommendationEvent`, `RecommendationSummary`. All frozen, tuple-collectioned, deterministically serialized (sorted keys, JSON-safe) and construction-validated.
+
+2. **Deterministic identity that admits revision** — `RecommendationId.derive()` hashes `scenario_id | source | discriminator | normalized(terms)` → `rcm_<16 hex>`. Because the *terms* participate, **revised terms produce a distinct Recommendation** rather than silently mutating a proposal an operator already saw; because a discriminator participates, **one Scenario may carry many Recommendations**. Lifecycle state and decisions are excluded, so identity is restart-stable.
+
+3. **Explicit lifecycle where acceptance is not execution** — DRAFT → PROPOSED → PENDING_DECISION → {ACCEPTED | REJECTED} → INTENT_CREATED → {PARTIALLY_EXECUTED | EXECUTED | FAILED}, with EXPIRED / WITHDRAWN / SUPERSEDED / CANCELLED reachable from every active status and every terminal status immutable. **ACCEPTED may only advance to INTENT_CREATED** — `ACCEPTED → EXECUTED` is an illegal transition by construction, so an operator decision can never be mistaken for a broker outcome. Transitions require a reason and monotonic time, and `transition()` is pure.
+
+4. **Append-only decision history** — decisions are recorded, never edited: `recommendation_decisions` and `recommendation_events` have no update or delete surface, entries rebuild deterministically from events alone, and writes are idempotent on `(id, sequence)`. Two different decision types at the same sequence are surfaced as a **visible conflict** rather than silently resolved.
+
+5. **Operator identity is pseudonymized** — `pseudonymize_actor()` maps an actor id to a stable `actor_<12 hex>` used in every projection and API response. The raw operator id never leaves the store. Authorization references are bounded and refused outright if they look like credential material (bearer, password, secret, token, api key), so a session token can never be persisted as an "authorization reference".
+
+6. **One write path, no public write route** — `backend/recommendation_service.py` is the only writer. It requires the parent Scenario to exist and refuses instrument/direction/node/account lineage conflicts; it never mutates the Scenario. **No HTTP route creates a Recommendation or records a decision** (test-pinned across POST/PUT/PATCH/DELETE on every namespaced path): there is no browser-to-broker path, and ACCEPT is not coupled to order submission.
+
+7. **Expiry is explicit, not implied** — past-due is *projected* at read time from the recorded expiry; the stored status is unchanged until `expire_due()` records an EXPIRED event. Expiry cancels no broker order and invalidates no Scenario, and it is not wired to any background loop.
+
+8. **Supersession preserves history** — `supersede()` links old→new in both directions, refuses self-supersession and cross-Scenario supersession, leaves prior decisions immutable, and leaves already-linked intents with the Recommendation that created them.
+
+9. **Intent and ledger linkage, additive and inert** — `OrderIntent` gains one optional `recommendation_id` (execution store schema **3 → 4**, additive nullable column, fail-closed migration), captured verbatim at exactly one site in `_begin_intent`. No gate, validator, policy or dispatch path reads it (structurally pinned), and no execution, safety, broker, reconciliation or scenario module imports the Recommendation domain. The ledger derives `TradeLineage.recommendation_id` from the matching intents: more than one distinct Recommendation is a conflict that blocks finalization, absent linkage is a warning that does not block — and **neither ever changes the accounting** (test-pinned).
+
+10. **Read-only projection, API and UI** — `RecommendationOperationalView` / `RecommendationDecisionView` / `RecommendationOperationalSummary` in the LIVE-4A projection owner; six read-only endpoints under `/api/trade-recommendations/*` (summary, list, active, detail, history, decisions) that are operator-authenticated, `no-store`, deterministically ordered, filtered, bounded-page paginated and honest about 404/503. The UI renders recorded values verbatim (an unavailable term shows "—", never 0), badges PROPOSED / PENDING DECISION / ACCEPTED / REJECTED / EXPIRED / WITHDRAWN / SUPERSEDED / INTENT CREATED / EXECUTED / FAILED / SCENARIO UNAVAILABLE / INTENT UNLINKED / CONFLICTED / PAST DUE from the projection, and offers **no decision, execution or edit control** — only filter selects.
+
+**Non-goals (explicit).** No strategy logic, no signal generation, no autonomous Recommendation creation, no new broker execution capability, no change to execution routing, authorization, safety or reconciliation behaviour, and no performance analytics. Counts of proposals are not performance measurement: `RecommendationOutcome` describes the disposition of the *proposal*, never the profitability of a trade.
+
+### ADR-LIVE-4E — Operator decision surface (LIVE-4E, 2026-07-27)
+
+**Context.** LIVE-4D built the Recommendation domain but left decisions reachable only from inside the process: there was no route by which an operator could accept or reject a proposal. **LIVE-4E adds that surface, and nothing else. It introduces no strategy generation, no autonomous Recommendations and no automatic execution. Accepting a Recommendation still places no order.**
+
+**Grounded audit — three premises of the task turned out to be false against production, and the design changed accordingly.**
+
+1. **There is no `NEW` status, and `EXECUTED` *is* a Recommendation status.** LIVE-4D ships thirteen. Implementing "NEW → ACCEPTED | REJECTED | EXPIRED | SUPERSEDED, no other transitions" literally would have DELETED the execution-observation states, which is destructive and contradicts additive-only. Resolved by reading that table as the **operator** lifecycle and encoding it as a second, strictly smaller table (`OPERATOR_TRANSITIONS`) layered over the domain one.
+2. **There was no `version` and no optimistic concurrency.** Nothing carried a precondition an operator could write against.
+3. **There is no permission model to reuse.** `auth_policy` states in its own docstring that it is "NOT identity… one shared token"; it is disabled by default; and `server._operator_id()` returns the first fixture operator or the literal `"system"`.
+
+**Two defects in the LIVE-4D code were reproduced before being fixed** (both now regression-pinned):
+
+* **A losing concurrent decision was reported as a success.** Two operators submitting ACCEPT and REJECT simultaneously both received `ok`; the loser's decision hit the decision-id unique constraint, was treated as an idempotent replay, and vanished — leaving no trace in history while its author was told the result was `ACCEPTED`.
+* **A decision was not atomic with its own event.** `record_decision` committed the decision row in one transaction and the event plus snapshot in another. A failure in between left a committed decision that history, the rebuild path and the projection could not see.
+
+**Decision.**
+
+1. **A closed operator transition table** — `DECIDABLE_STATUSES = {PROPOSED, PENDING_DECISION}`, `OPERATOR_REACHABLE_STATUSES = {ACCEPTED, REJECTED, EXPIRED}`. INTENT_CREATED, PARTIALLY_EXECUTED, EXECUTED and FAILED are **not reachable by any operator decision** (test-pinned across every source status): they are observation states written only from execution evidence, so an operator cannot move a proposal into a state that asserts a trade happened. SUPERSEDE and WITHDRAW stay internal — supersession requires constructing a replacement proposal, i.e. a creation surface this slice does not expose. `undecidable_reason()` returns the specific reason a proposal is closed, and the UI renders it verbatim.
+
+2. **Version as a derived optimistic-concurrency token** — `Recommendation.version` is the sequence of the last applied event. It is derived from the append-only log, never assigned independently, so it cannot drift from history. Store schema **1 → 2** (additive, fail-closed) adds it plus the decision audit columns and a UNIQUE index on `(recommendation_id, sequence)`; the migration backfills version from the event log for **every** v1 database, including a partially-migrated one.
+
+3. **Atomic decisions with a real compare-and-set** — `record_operator_decision` runs the whole read-check-write inside `BEGIN IMMEDIATE` on a manual-transaction connection, so the write lock is taken *before* the version is read. Two racing operators serialize: one commits, the other re-reads a version that no longer matches and receives `version_conflict`. Exactly one wins, the state stays valid, history stays complete, and **the loser is told**. The decision, its event and the snapshot commit together; `record_decision` was fixed the same way and now raises `decision_sequence_conflict` instead of swallowing a contradictory write.
+
+4. **Idempotency resolved before preconditions** — a retry after a successful commit replays the original decision. Checking state first would tell a caller its own successful decision was illegal, because by then the proposal is terminal. A key reused for a *different* decision type is a conflict.
+
+5. **The smallest possible permission gate** — `recommendation_authorization` reuses `auth_policy` for authentication and never touches the credential. It requires an explicit operator identity on every decision, refusing anonymous mutation whether or not the global gate is enabled, and rejects identities that are malformed or look like credential material. Crucially it records **identity assurance**: `authenticated` when the boundary is enforcing, `asserted` when it is not. A shared token cannot identify a person, so the audit trail says so rather than implying otherwise. Only an `OPERATOR` actor type may decide, and only the three operator decision types are reachable — which is what stops the write API becoming a back door to autonomy.
+
+6. **The minimum write API** — `POST /api/trade-recommendations/{id}/{accept|reject|expire}` and nothing else. No delete, no update, no generic patch, no create (test-pinned across the whole namespace). Every request validates identity, decision type, transition legality, reason and version; a lost race is `409` **carrying the current status and version** so the caller can retry against the truth; a refusal is `422`; every response states `executed: false` with a plain-English notice.
+
+7. **Decision UX that cannot imply execution** — the list stays control-free, so a decision is only reachable after an operator opens and reviews a proposal. The flow is review → reason (required) → optional note → confirm → complete. Controls are driven entirely by the backend's `decidable`/`undecidableReason`; the browser performs no lifecycle or authorization reasoning. The notice *"Accepting a Recommendation records an operator decision only. It does not submit, modify, or execute any trade."* renders unconditionally, including when no decision is possible. History is newest-first with timestamp, actor pseudonym, transition, note, reason, version and assurance badge.
+
+**Non-goals and unchanged guarantees.** No strategy runtime, no autonomous decisions, no scheduler, no execution capability. The execution command surface is still exactly `SubmitMarketOrder`, `ModifyPositionProtection`, `CancelPendingOrder`, `ClosePosition`; MT5 write capabilities are unchanged; no execution, safety, broker, reconciliation, scenario or ledger module imports the decision service or the gate; and accepting through the API creates no intent and leaves the execution store untouched (test-pinned end to end).
+
+**Known limitations (honest).** Operator identity is **asserted, not authenticated** — there are no users, roles or sessions to reuse, so a caller could assert any id; every decision records that this is what happened. A single shared token remains the only authentication, and it is off by default. Decision *authorization* is structural (actor type + decision type), not per-user. And an accepted proposal still has no path to an Intent: linkage remains opt-in at submission time.
+
+### ADR-LIVE-5A — First live trading vertical slice (LIVE-5A, 2026-07-28)
+
+**Context.** LIVE-4A–4E built each domain in isolation. Nothing had ever connected them: there was no live market feed owner, no refresh cadence, no Scenario producer, and no route from a candle to a decision. **LIVE-5A proves the complete production trading pipeline. It is not a production strategy. It is not an optimisation milestone.**
+
+**Audit that shaped the slice (four findings, each verified against production).**
+
+1. **There was no projection refresh owner.** Every `/api/operations/*` handler called `_projection_sources()`, whose `broker_snapshot` binding is `_fresh_broker_snapshot()` — a synchronous broker read on the request path. With fourteen browser polling queries the broker was read fourteen times per cycle, each with its own "now", and nothing recorded when the broker was last heard from.
+2. **The MT5 market-data provider does not supply a real price.** Its `quote()` is annotated "PREVIEW ONLY (fixture-derived bid/ask)". Candles are genuine (`copy_rates_from_pos`); the bid/ask was synthesized from a fixture regime. A live trade cannot be priced from that.
+3. **Substantial live-read capability already existed** — `MarketDataEngine` with provider selection, MT5 `symbol_select` subscription, the broker's connection state and account snapshot, and `live/mt5_gateway.py`. So LIVE-5A composes; it replaces nothing.
+4. **A genuine live trade cannot execute on the development host.** `MetaTrader5` has no macOS build (`ModuleNotFoundError`, host `Darwin arm64`), the gateway is annotated "Windows VPS only; absent everywhere else by design", and no credentials or node endpoint are configured.
+
+**Decision.**
+
+1. **`market_runtime.py` — the live market feed.** Heartbeat, symbol subscription, tick and candle polling, latency, connection state and age-based stale detection, as immutable read models. It owns no timer (cadence belongs to the supervisor), executes nothing, projects nothing and writes no broker state. A failed read never advances the heartbeat, because "last heartbeat" must mean the last time the feed genuinely answered. An unreadable price is `None` with `availability: unavailable` — never 0.0.
+
+2. **`runtime_supervisor.py` — the ONE refresh owner.** A single daemon thread (mirroring the existing `ops_journal`/`ops_notifier` pattern rather than inventing a second concurrency style) ticking every `RUNTIME_TICK_SECONDS` (default 5s). It performs the broker read, the market read and the health derivation, then publishes an immutable snapshot that every API request serves. Ticks never overlap (lock-guarded), a failing tick never kills the loop, and a failing observer never loses a tick. **Stale-loop detection:** ages are recomputed against `now` on every read, so a wedged loop degrades to `STALE` rather than freezing on `CONNECTED`.
+
+3. **Runtime health** — `STARTING → CONNECTED → {STALE | DEGRADED | RECONNECTING} → STOPPED`, plus `UNKNOWN`. Derived only from recorded evidence (timestamps, counters, connection state) by an **ordered** rule set, so identical evidence always yields an identical state.
+
+4. **A genuine tick read.** `MarketDataProvider.live_tick()` is new: the MT5 implementation reads `symbol_info_tick` — the same call the live gateway uses — and returns `None` on any failure. **A zero bid/ask is refused**, because MT5 reports 0.0 for "no quote" and zero is not a price. The runtime prefers `live_tick()` and falls back to the derived quote only with `detail` recording that it is not a broker tick.
+
+5. **One live projection.** `build_live_runtime()` in the existing projection owner produces `RuntimeStatusView`, `BrokerRuntimeView` (including `freeMargin`, which the MT5 adapter has always supplied but nothing surfaced), `MarketSymbolView` and `ExecutionRuntimeView`. `GET /api/live-runtime` is the single payload behind every live card, so the whole dashboard describes one instant. Namespaced `/api/live-runtime/*` because a pre-existing `/api/runtime/health` would otherwise have been shadowed — the collision class caught in LIVE-4D.
+
+6. **`live_pipeline.py` — the minimum producers.** On each **completed** M15 candle: close above the previous high ⇒ long Scenario; below the previous low ⇒ short; otherwise nothing. An in-progress bar is never evaluated, because a forming bar would yield a different answer every poll. Scenario identity derives from the candle's **close time**, which is what makes the producer deterministic, duplicate-free and restart-safe by construction rather than by a de-duplication pass. Each Scenario yields exactly one Recommendation with entry (ask for a buy, bid for a sell), stop, target at 2R, quantity 0.01, risk 0.25% and a 45-minute expiry, immediately `PROPOSED` so an operator can act. **The producer is OFF by default** (`LIVE_PRODUCER_ENABLED`) and runs as a tick *observer*, so there is still exactly one polling owner.
+
+7. **`live_preflight.py` — the pre-trade gate.** Nine conditions evaluated together (runtime ready, broker connected, projection fresh within 15s, execution mode permits, authorization valid, recommendation accepted/current/complete, symbol quoting, scenario tradeable, no duplicate intent) so an operator sees the whole picture at once. **Advisory and fail-closed:** every existing gate — `execution_safety`, `command_authorization`, the mode owner, durable idempotency — is untouched and runs again at submission. Anything unverifiable is a blocker, never an assumption.
+
+8. **The dashboard.** `LiveRuntimePanel` renders broker, market, execution and runtime cards from that one query. The browser never reads MT5, never reads the broker, and calculates no spread, age, position or runtime state; an unavailable figure renders "—" and a stale reading is labelled stale. MOCK and LIVE produce an **identically shaped** projection — only `provenance` differs (test-pinned).
+
+**Non-goals (explicit).** No strategy optimisation, no analytics, no autonomous execution, no new broker capability, no new execution command. The execution surface is still exactly `SubmitMarketOrder`, `ModifyPositionProtection`, `CancelPendingOrder`, `ClosePosition`, and no execution, safety, broker, reconciliation or ledger module imports the runtime.
+
+**The candle rule has no edge.** It was never backtested, tuned or selected; it exists so the plumbing can be exercised. `RecommendationSource.STRATEGY` on these proposals means "not an operator" — it does not assert that a tuned strategy exists.
+
+**Status and limitations.** The automated smoke test proves all ten stages end-to-end against the mock broker. **The genuine live MT5 trade is unperformed and cannot run on this host** (finding 4); §5 of `LIVE-5A-SMOKE-WORKFLOW.md` is the Windows runbook. Also outstanding: the legacy `/api/operations/*` routes still read the broker per request (deliberately untouched — changing them is a LIVE-4A behaviour change this slice must not risk); ledger ingestion on close is proven but not wired to the loop; Recommendation→Intent linkage remains opt-in; and one timeframe with one rule.
+
+### ADR-LIVE-5B — Windows VPS integration and live-trade verification (LIVE-5B, 2026-07-28)
+
+**Context.** LIVE-5A connected the pipeline and proved it end-to-end against the mock broker, leaving one thing undone: making the Control Tower actually capable of reaching a real MT5 terminal, and diagnosable when it cannot. LIVE-5B is integration, verification and debugging. **No new domain was built and no existing system was redesigned.**
+
+**Audit — what precisely blocked a real trade.** Exactly one thing, and it is environmental rather than architectural:
+
+* `import MetaTrader5` fails on the development host (`Darwin arm64`; the package ships a Windows wheel only), so `MT5Gateway.available` is False, `_load_live_gateway()` returns None, and every read and write reports unavailable.
+
+Everything else is configuration, and all of it is **environment-only** — no code change is needed to switch MOCK → DEMO → LIVE (`CONTROL_TOWER_BROKER_ADAPTER`, `MARKET_DATA_PROVIDER`, `LIVE_MODE`, `LIVE_PRODUCER_ENABLED`, plus the execution mode which is deliberately settable only through `POST /api/execution/mode`). Verified by running the whole chain.
+
+**A correction to the assumed topology.** The task described *Mac → Backend → Windows VPS → MT5*. `connection_policy` approves exactly one profile, `local_loopback`; `remote_pre_live` and `remote_live` both deny with `profile_not_approved` and four named prerequisites. **The backend must therefore run ON the VPS beside the terminal**, with the Mac contributing only a browser. Documented in `WINDOWS_VPS_SETUP.md` §1 rather than worked around.
+
+**The one real defect found, and fixed.** `broker._load_live_gateway()` wrapped its entire import-and-construct in a bare `except Exception: return None`. Every possible cause — a `live.config` failure, a bad `LUX_ROOT`, a malformed `LIVE_*` variable, a partial SDK install — surfaced to the operator as one sentence: *"MetaTrader5 package unavailable on this host"*, which on the VPS would frequently be **false** and never actionable. `load_live_gateway_diagnostic()` now guards each step separately and returns the specific reason, and the adapter reports it through `_unavailable_detail()`.
+
+**Decision.**
+
+1. **`mt5_diagnostics.py`** — the chain diagnosed in dependency order: platform, package, connection policy, adapter selection, market provider, credentials, gateway load, terminal, symbol, execution mode, gateway live mode, producer. Every failure carries `detail`, `why` and `fix` (test-pinned: no failing check may omit any of them). Once a prerequisite fails, dependent checks report `skipped`, so the operator sees ONE root cause instead of eight cascading errors. Terminal errors are mapped from MT5's own `last_error()` text to concrete fixes — an authorization failure says a demo password expires with the account; an IPC timeout says start the terminal.
+
+2. **`GET /api/integration/diagnostics`** — read-only, `no-store`, covering gateway, runtime, broker, projection, execution, recommendation, scenario and ledger in a fixed row shape (`status`, `lastSuccess`, `lastFailure`, `latencyMs`, `freshness`, `warnings`). Logins and server names are masked (`80…45`) because diagnostics get pasted into issue trackers; `MT5_PASSWORD` is never read for its value, only named in remediation advice.
+
+3. **Safe automatic recovery.** The supervisor takes a `reconnect_fn` and, when the link is down, attempts one reconnect per tick, counts attempts and successes, records `lastFailureAt`/`lastFailureDetail`, and re-reads immediately on success so the operator does not wait a whole interval. Reconnecting is a **read-path repair** — it opens a terminal session and places no order — so automating it cannot cause a trade. Anything that could affect a **position** is deliberately never auto-recovered: the runtime fails closed and reports. Structurally pinned: the supervisor contains no `close_position`, `submit_market_order`, `order_send`, `flatten` or `modify_position`.
+
+4. **Structured, change-only logging.** `runtime.state` is emitted on transition, not per tick — at a 5s cadence a per-tick line is ~17k lines a day that buries the transitions worth seeing (test-pinned: four identical ticks produce one line). Scenario and Recommendation creation log once each, with identity and terms. A broken log sink can never break a tick.
+
+5. **Operational dashboard fields** — account type (demo/contest/real), masked login, broker company, leverage, gateway latency, and reconnect successes/attempts with the last failure detail. `BrokerAccountInfo.trade_mode` is the one additive DTO field, sourced from the `AccountIdentity` the adapter already reads for the fingerprint, so no extra broker call is made. It exists because **an operator about to enable LIVE must be able to see whether the account is real**; absent evidence renders `UNKNOWN`, never assumed demo.
+
+6. **`integration_smoke.py`** — the twelve-stage checklist with explicit PASS/FAIL per stage and a fix on every failure. It **reads only**: the acceptance and order stages report observed state, never performed actions, and a stage that cannot be evaluated FAILS rather than passing by omission.
+
+**Live trade status — not fabricated.** The trade has **not** been executed. Stages 1–3 (broker connected, quotes updating, candles updating) PASS on the mock adapter here; stages 4–12 require the VPS. `FIRST_LIVE_TRADE_RUNBOOK.md` is the operator procedure, and §7 lists what to confirm before enabling LIVE. Placing a real-money order is a human act by design.
+
+**Unchanged.** Execution command surface, broker write capabilities, authorization, safety gates, and the recommendation, scenario and ledger architectures. `execution.py`, `execution_safety.py`, `execution_store.py`, `reconciliation.py`, `command_registry.py`, `command_authorization.py`, `execution_mode.py`, `order_lifecycle.py`, `trade_ledger_*.py`, `trade_reconstruction.py`, `scenario_*.py`, `recommendation_store.py` and `recommendation_decision_service.py` are all untouched by this commit.

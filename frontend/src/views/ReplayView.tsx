@@ -1,8 +1,8 @@
 import { useOutletContext, useSearchParams } from 'react-router-dom';
+import type { LiveTrade, GhostTrade, BlockedIntent } from '@/types/domain';
 import { useEffect, useRef } from 'react';
 import {
   useReplaySessionForPair,
-  useTrades,
   useMarketState,
   useActivePackage,
 } from '@/hooks/useRepository';
@@ -22,7 +22,10 @@ const TICK_MS = 400;
 export function ReplayView() {
   const { pair } = useOutletContext<{ pair: string }>();
   const session = useReplaySessionForPair(pair);
-  const { live, ghost, blocked } = useTrades({ pair });
+  // M-TRADES-1: replay replayed FIXTURE trades/ghosts/blocked intents.
+  const live: LiveTrade[] = [];
+  const ghost: GhostTrade[] = [];
+  const blocked: BlockedIntent[] = [];
   const marketState = useMarketState(pair);
   const pkg = useActivePackage();
   const openInspector = useShellStore((s) => s.openInspector);
@@ -152,7 +155,6 @@ export function ReplayView() {
                 mode="replay"
                 cursor={cursor}
                 endISO={session?.window.end}
-                volume
               />
             </FeatureGate>
           </div>
@@ -187,10 +189,10 @@ export function ReplayView() {
         style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-elevated)' }}
       >
         <div className="p-4 space-y-4">
-          <Panel title="Policy state at cursor" dense>
+          <Panel provenance="replay" title="Policy state at cursor" dense>
             <div className="space-y-2 text-xs text-text-2">
               <div className="flex items-center gap-2">
-                <PackageVersionChip version={pkg.version} hash={pkg.packageHash} />
+                <PackageVersionChip version={pkg?.version} hash={pkg?.packageHash} />
               </div>
               {marketState && (
                 <MarketStateBadge state={marketState.state} confidence={marketState.confidence} confirmed={marketState.confirmed} />
@@ -202,7 +204,7 @@ export function ReplayView() {
             </div>
           </Panel>
 
-          <Panel title="Active trade" dense>
+          <Panel provenance="replay" title="Active trade" dense>
             {activeTrade ? (
               <button
                 className="w-full text-left rounded-md border p-2 hover:bg-[color:var(--panel-2)] transition-colors"
@@ -224,7 +226,7 @@ export function ReplayView() {
             )}
           </Panel>
 
-          <Panel title="Trades opened (cumulative)" dense>
+          <Panel provenance="replay" title="Trades opened (cumulative)" dense>
             <div className="text-2xs text-text-muted mb-1">
               {openedByCursor.length} live · {ghost.length} ghost · {blocked.length} blocked (window)
             </div>

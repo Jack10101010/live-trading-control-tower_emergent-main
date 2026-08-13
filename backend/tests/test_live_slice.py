@@ -24,6 +24,7 @@ from live.intents import (CLOSE_POSITION, MODIFY_STOP, OPEN_POSITION,          #
                           SKIP_INTRA_WINDOW, diff_frontier)
 from live.mt5_bridge import MT5BarBridge                  # noqa: E402
 from live.mt5_gateway import MT5Gateway                   # noqa: E402
+from live import telemetry
 from live.publisher import CTPublisher                    # noqa: E402
 from live.runner import LiveRunner, assemble_candles, latest_closed_boundary   # noqa: E402
 from live.state import LEDGER_SIMULATED, RunnerState      # noqa: E402
@@ -304,11 +305,17 @@ def test_publisher_payload_and_fallback(tmp_path):
     payload = pub.build_payload({"status": "ok", "boundary": "B", "intents": [_intent()],
                                  "trades_rows": 3}, {"frozen": False, "reconcile": {"findings": []}},
                                 engine_version="5bb6372c", mode="dry_run")
-    assert payload["instance_id"] and payload["deployment_profile"] == "GOLDEN_COMPATIBLE"
-    assert payload["intents"][0]["action"] == OPEN_POSITION
+    # UI-2: the payload is now the versioned snapshot; lineage moved under `engine`
+    # and pending intents under `execution`, but delivery stays fail-soft and the
+    # fallback file is still written BEFORE any network attempt.
+    assert payload["schema_version"] == telemetry.SCHEMA_VERSION
+    assert payload["instance_id"]
+    assert payload["engine"]["deployment_profile"] == "GOLDEN_COMPATIBLE"
+    assert payload["execution"]["cycle_intents"][0]["action"] == OPEN_POSITION
     result = pub.publish(payload, timeout=0.5)
     assert result["delivered"] is False                            # network down ≠ crash
-    assert json.loads(Path(result["fallback"]).read_text())["symbol"] == "EURUSD"
+    fallback = json.loads(Path(result["fallback"]).read_text())
+    assert fallback["engine"]["symbol"] == "EURUSD"
 
 
 # ── P1 shadow: ops log + shadow report ──────────────────────────────────────────
@@ -456,3 +463,567 @@ def test_ct_mt5_adapter_reports_disconnected_off_vps():
     assert h.connection == broker_layer.ConnectionState.DISCONNECTED
     assert adapter.positions(None) == [] and adapter.orders(None) == []
     assert broker_layer.active_kind() == "mock"                    # CT default untouched
+
+
+# ── Phase 1: LR-1 durable intent transaction ────────────────────────────────────
+from live.state import LEDGER_SENT                                  # noqa: E402
+from live.intents import OrderIntent                                # noqa: E402
+
+
+def _lr1_runner(tmp_path):
+    """Runner with an injected pipeline: bootstrap frame, then an OPEN fill frame."""
+    cfg = _cfg(tmp_path)
+    lux_candles = cfg.lux_root / "data" / "candles"
+    lux_candles.mkdir(parents=True)
+    times = pd.date_range("2026-07-17 09:00:00+00:00", periods=75, freq="1min")
+    pd.DataFrame({"time": times.strftime("%Y-%m-%d %H:%M:%S+00:00"),
+                  "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 0}
+                 ).to_csv(lux_candles / "EURUSD_1m_extended_2015_2026.csv", index=False)
+    frames = [
+        _frame([{"trade_id": "L_1", "direction": "bullish", "fill_time": "", "outcome": "UNFILLED"}]),
+        _frame([{"trade_id": "L_1", "direction": "bullish", "fill_time": "t",
+                 "outcome": "OPEN", "entry": "1.1", "stop": "1.09", "tp": "1.12"}]),
+    ]
+    calls = {"n": 0}
+
+    def fake_pipeline(candles, frontier_date):
+        frame = frames[min(calls["n"], 1)]
+        calls["n"] += 1
+        return frame
+
+    runner = LiveRunner(cfg, session=None, pipeline=fake_pipeline)
+    assert runner.run_once()["status"] == "bootstrap"
+    more = pd.date_range("2026-07-17 10:15:00+00:00", periods=16, freq="1min")
+    pd.DataFrame({"time": more.strftime("%Y-%m-%d %H:%M:%S+00:00"),
+                  "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 0}
+                 ).to_csv(cfg.live_segment_csv, index=False)
+    r2 = runner.run_once()          # commits boundary + reserves PENDING intent, NO executor.apply
+    assert r2["status"] == "ok" and len(r2["intents"]) == 1
+    return cfg, r2["intents"][0].intent_id, fake_pipeline
+
+
+# A. LR-1 core crash: intent survives a crash before executor.apply, applied exactly once.
+def test_lr1_crash_before_apply_recovers_intent_exactly_once(tmp_path):
+    cfg, iid, _ = _lr1_runner(tmp_path)
+    # crash simulated: process dies before executor.apply. State is durable.
+    st = RunnerState(cfg.state_dir)
+    assert st.ledger_status(iid) == "pending"          # intent durably reserved
+    assert st.data["last_boundary"] is not None         # boundary durable too
+    # restart: fresh state + executor, drain
+    ex = Executor(cfg, RunnerState(cfg.state_dir), MT5Gateway(cfg, sdk=None))
+    d = ex.drain_pending(today="2026-07-17")
+    assert d["drained"] == [iid] and len(d["applied"]) == 1
+    assert RunnerState(cfg.state_dir).ledger_status(iid) == LEDGER_SIMULATED   # applied once
+    # repeated drain is a no-op (idempotent)
+    ex2 = Executor(cfg, RunnerState(cfg.state_dir), MT5Gateway(cfg, sdk=None))
+    d2 = ex2.drain_pending(today="2026-07-17")
+    assert d2["drained"] == [] and d2["applied"] == []
+
+
+# B. Atomic boundary invariant: no committed boundary without its generated intents.
+def test_lr1_boundary_and_intents_committed_together(tmp_path):
+    cfg, iid, _ = _lr1_runner(tmp_path)
+    st = RunnerState(cfg.state_dir)                      # reloaded from disk
+    assert st.data["last_boundary"] is not None
+    assert iid in dict(st.pending_intents())            # intent durable alongside the boundary
+
+
+# C. No-new-bar restart still recovers the intent independently of the gate.
+def test_lr1_restart_no_new_bar_but_drain_recovers(tmp_path):
+    cfg, iid, pipeline = _lr1_runner(tmp_path)
+    runner2 = LiveRunner(cfg, session=None, pipeline=pipeline)
+    assert runner2.run_once()["status"] == "no_new_bar"     # boundary already committed
+    ex = Executor(cfg, RunnerState(cfg.state_dir), MT5Gateway(cfg, sdk=None))
+    d = ex.drain_pending(today="2026-07-17")
+    assert len(d["applied"]) == 1 and d["drained"] == [iid]
+
+
+# D. Multiple pending intents: deterministic order, each once, repeat no-op.
+def test_lr1_multiple_pending_deterministic_once(tmp_path):
+    cfg = _cfg(tmp_path)
+    st = RunnerState(cfg.state_dir)
+    ids = []
+    for k in range(3):
+        it = OrderIntent(intent_id=f"p{k}", action=OPEN_POSITION, trade_id=f"T{k}",
+                         side="long", frontier_bar="B", entry=1.1, stop=1.09, target=1.12)
+        st.reserve_pending(it)
+        ids.append(it.intent_id)
+    st.save()
+    ex = Executor(cfg, RunnerState(cfg.state_dir), MT5Gateway(cfg, sdk=None))
+    d = ex.drain_pending(today="2026-07-17")
+    assert d["drained"] == ids                          # stable insertion order
+    assert len(d["applied"]) == 3
+    ex2 = Executor(cfg, RunnerState(cfg.state_dir), MT5Gateway(cfg, sdk=None))
+    d2 = ex2.drain_pending(today="2026-07-17")
+    assert d2["drained"] == [] and d2["applied"] == []
+
+
+# E. Malformed persisted payload: not silently ignored -> freeze with diagnostic.
+def test_lr1_malformed_pending_freezes_with_diagnostic(tmp_path):
+    cfg = _cfg(tmp_path)
+    st = RunnerState(cfg.state_dir)
+    st.ledger_set("bad1", "pending", {"intent": {"action": "OPEN_POSITION"}})  # missing fields
+    st.save()
+    ex = Executor(cfg, RunnerState(cfg.state_dir), MT5Gateway(cfg, sdk=None))
+    d = ex.drain_pending(today="2026-07-17")
+    assert d["frozen"] is True and d["applied"] == []
+    assert any("bad1" in f["detail"] for f in d["reconcile"]["findings"])   # id surfaced
+    assert RunnerState(cfg.state_dir).ledger_status("bad1") == "frozen"     # not dropped
+
+
+# F. Existing terminal records are never resubmitted.
+def test_lr1_drain_skips_terminal_records(tmp_path):
+    cfg = _cfg(tmp_path)
+    st = RunnerState(cfg.state_dir)
+    st.ledger_set("t1", LEDGER_SIMULATED, {"mode": "dry_run"})
+    st.ledger_set("t2", "confirmed")
+    st.ledger_set("t3", "failed")
+    st.ledger_set("t4", "blocked")
+    st.save()
+    ex = Executor(cfg, RunnerState(cfg.state_dir), MT5Gateway(cfg, sdk=None))
+    d = ex.drain_pending(today="2026-07-17")
+    assert d["drained"] == [] and d["applied"] == [] and not d["frozen"]
+
+
+class _SnapshotGateway(MT5Gateway):
+    """Fake gateway exposing a fixed broker snapshot; counts any order op."""
+    def __init__(self, cfg, positions):
+        super().__init__(cfg, sdk=None)
+        self._positions = positions
+        self.order_ops = 0
+
+    def snapshot(self):
+        return True, {"account": None, "positions": self._positions, "orders": []}
+
+    def open_position(self, *a, **k):
+        self.order_ops += 1
+        return True, {"ticket": 999}
+
+
+def _arm_runtime():
+    """A pre-validated ArmRuntime (LX-1 Slice 8) matching the doubles' identity —
+    the same typed object startup arming installs after all prerequisites pass."""
+    import time as _t
+    from live.arming import AccountFingerprint, ArmContext, ArmRuntime
+    fp = AccountFingerprint(login=1_000_001, server="Broker-Demo", currency="EUR",
+                            trade_mode="demo")
+    return ArmRuntime(ArmContext(fingerprint=fp, expiry_monotonic=_t.monotonic() + 900,
+                                 probation_max_opens=1,
+                                 request_expires_at="2099-01-01T00:00:00+00:00"))
+
+
+class _RaisingOpenGateway(MT5Gateway):
+    """Live gateway whose open_position raises AFTER the SENT record is durable —
+    simulates a crash during order_send. snapshot() later reveals the position."""
+    def __init__(self, cfg, positions_after=None):
+        super().__init__(cfg, sdk=None)
+        self._positions_after = positions_after or []
+        self.order_ops = 0
+
+    def account_identity(self):
+        # LX-1 Slice 8 runtime continuity: matches _arm_runtime()'s fingerprint
+        from live.account_identity import AccountIdentity
+        return AccountIdentity(login=1_000_001, server="Broker-Demo", currency="EUR",
+                               trade_mode="demo", balance=10_000.0, equity=10_000.0)
+
+    def snapshot(self):
+        return True, {"account": None, "positions": self._positions_after, "orders": []}
+
+    def open_position(self, *a, **k):
+        self.order_ops += 1
+        raise RuntimeError("connection dropped mid-order_send")
+
+
+# G. SENT adoption on restart, via the PRODUCTION record shape (reserve_pending +
+#    the exact _execute SENT write). Adopt unique match; restore mirror; never resubmit.
+def test_lr1_sent_adopts_unique_match_and_never_resubmits(tmp_path):
+    cfg = _cfg(tmp_path)
+    cfg.mode = "live"
+    it = OrderIntent(intent_id="sent_open_xyz9876", action=OPEN_POSITION, trade_id="L_9",
+                     side="long", frontier_bar="B", entry=1.1, stop=1.09, target=1.12)
+    st = RunnerState(cfg.state_dir)
+    st.reserve_pending(it)                                          # PENDING with payload (prod helper)
+    st.ledger_set(it.intent_id, LEDGER_SENT, {"intent": it.to_dict()})  # exact _execute SENT write
+    st.save()
+    # persisted SENT detail retains the full reconstructable payload
+    reloaded = RunnerState(cfg.state_dir)
+    assert reloaded.data["ledger"][it.intent_id]["status"] == "sent"
+    assert reloaded.data["ledger"][it.intent_id]["detail"]["intent"]["trade_id"] == "L_9"
+    # restart: one uniquely matching broker position (comment == intent_id[:26])
+    tag = it.intent_id[:26]
+    # Faithful to the real gateway _pos(): a snapshot position always carries
+    # symbol + volume (Slice 4 is symbol/volume-aware; a full-volume match adopts).
+    gw = _SnapshotGateway(cfg, [{"ticket": 555, "magic": cfg.magic_number, "comment": tag,
+                                 "symbol": "EURUSD", "volume": cfg.fixed_risk_lots}])
+    d = Executor(cfg, RunnerState(cfg.state_dir), gw).drain_pending(today="2026-07-17")
+    assert d["frozen"] is False
+    st2 = RunnerState(cfg.state_dir)
+    assert st2.ledger_status(it.intent_id) == "confirmed"          # adopted, not resubmitted
+    assert st2.mirror_ticket("L_9") == 555                         # mirror restored
+    assert gw.order_ops == 0
+    # subsequent reconcile is healthy: adopted position is in the mirror -> no unknown freeze
+    rep = Executor(cfg, RunnerState(cfg.state_dir), gw).reconcile()
+    assert rep.frozen is False
+    assert all(f["code"] != "unknown_position" for f in rep.findings)
+    # idempotent: a repeat drain is a no-op
+    d2 = Executor(cfg, RunnerState(cfg.state_dir), gw).drain_pending(today="2026-07-17")
+    assert d2["drained"] == [] and not d2["frozen"]
+
+
+# G2. Focused regression for the exact defect: drive the REAL _execute path, crash
+#     during order_send, then prove restart restores BOTH ledger and mirror. Fails
+#     against the pre-fix code (SENT written without payload -> mirror not restorable).
+def test_lr1_sent_crash_during_order_send_restores_ledger_and_mirror(tmp_path):
+    cfg = _cfg(tmp_path)
+    cfg.mode = "live"
+    it = OrderIntent(intent_id="live_open_abc12345", action=OPEN_POSITION, trade_id="L_7",
+                     side="long", frontier_bar="B", entry=1.1, stop=1.09, target=1.12)
+    st = RunnerState(cfg.state_dir)
+    st.reserve_pending(it)                                          # PENDING with payload
+    st.save()
+    # drive the real production _execute; crash (raise) during order_send
+    crash_gw = _RaisingOpenGateway(cfg)
+    with pytest.raises(RuntimeError):
+        Executor(cfg, RunnerState(cfg.state_dir), crash_gw,
+                 arm_runtime=_arm_runtime()).apply([it], today="2026-07-17")
+    assert crash_gw.order_ops == 1                                  # order_send was attempted
+    # the fix: SENT is durable WITH the payload, so the trade_id survives the crash
+    after = RunnerState(cfg.state_dir)
+    assert after.ledger_status(it.intent_id) == LEDGER_SENT
+    assert after.data["ledger"][it.intent_id]["detail"]["intent"]["trade_id"] == "L_7"
+    # restart: broker actually holds the position
+    tag = it.intent_id[:26]
+    recover_gw = _SnapshotGateway(cfg, [{"ticket": 771, "magic": cfg.magic_number, "comment": tag,
+                                         "symbol": "EURUSD", "volume": cfg.fixed_risk_lots}])
+    d = Executor(cfg, RunnerState(cfg.state_dir), recover_gw).drain_pending(today="2026-07-17")
+    assert d["frozen"] is False
+    st2 = RunnerState(cfg.state_dir)
+    assert st2.ledger_status(it.intent_id) == "confirmed"          # ledger restored
+    assert st2.mirror_ticket("L_7") == 771                         # mirror restored (defect fix)
+    assert recover_gw.order_ops == 0                               # never resubmitted
+    # next reconcile stays healthy (no unknown_position freeze)
+    rep = Executor(cfg, RunnerState(cfg.state_dir), recover_gw).reconcile()
+    assert rep.frozen is False
+    assert all(f["code"] != "unknown_position" for f in rep.findings)
+
+
+def test_lr1_sent_freezes_when_ambiguous_never_resubmits(tmp_path):
+    cfg = _cfg(tmp_path)
+    cfg.mode = "live"
+    iid = "sent_zzz111222333444555666"
+    st = RunnerState(cfg.state_dir)
+    st.ledger_set(iid, LEDGER_SENT, {"intent": {
+        "intent_id": iid, "action": OPEN_POSITION, "trade_id": "L_8", "side": "long",
+        "frontier_bar": "B"}})
+    st.save()
+    gw = _SnapshotGateway(cfg, [])                    # no matching position -> ambiguous
+    ex = Executor(cfg, RunnerState(cfg.state_dir), gw)
+    d = ex.drain_pending(today="2026-07-17")
+    assert d["frozen"] is True
+    assert any(iid in f["detail"] for f in d["reconcile"]["findings"])
+    assert gw.order_ops == 0                           # never blindly resubmitted
+
+
+# H. Dry-run drain never submits.
+def test_lr1_drain_dry_run_never_submits(tmp_path):
+    from live.rehearsal import CountingGateway
+    cfg = _cfg(tmp_path)
+    st = RunnerState(cfg.state_dir)
+    it = OrderIntent(intent_id="dr1", action=OPEN_POSITION, trade_id="L_1", side="long",
+                     frontier_bar="B", entry=1.1, stop=1.09, target=1.12)
+    st.reserve_pending(it)
+    st.save()
+    gw = CountingGateway(cfg)
+    ex = Executor(cfg, RunnerState(cfg.state_dir), gw)
+    d = ex.drain_pending(today="2026-07-17")
+    assert len(d["applied"]) == 1 and gw.order_ops == 0
+    assert RunnerState(cfg.state_dir).ledger_status("dr1") == LEDGER_SIMULATED
+
+
+# ── C1-A instrumentation: driver-side timing (cycle + golden_pipeline) ───────────
+import types  # noqa: E402
+
+
+def _fake_session(trades_df):
+    """Minimal stub of LuxSession/rb/core so golden_pipeline runs fast and
+    deterministically without the real 963s Golden pipeline."""
+    ns = types.SimpleNamespace
+    cfg = ns(news_flatten_minutes_before_blackout=0, detection_timeframe="15min",
+             swing_length=5, ob_filter=None, pip_size=0.0001, min_ob_size_pips=0,
+             max_ob_size_pips=999, structure_filter=None,
+             allowed_structure_directions=None, execution_modes=["triggered_edge"])
+    rb = ns(
+        filter_date_range=lambda c, cf: c,
+        load_news_calendar_events=lambda cf: [],
+        load_news_events=lambda cf: [],
+        resample_candles=lambda c, tf: c,
+        tag_order_blocks_with_news=lambda ob, ce: ob,
+        filter_order_blocks_by_structure=lambda ob, sf: ob,
+        filter_order_blocks_by_structure_direction=lambda ob, ad: (ob, None),
+        entry_scenarios=lambda cf: [{"mode": "triggered_edge", "key": "k"}],
+        execute_scenario_job=lambda job, cf, c, sob, ob, nc: {
+            "results": [{"trades": trades_df, "summary": {"net_r": "0"}}]},
+    )
+    core = ns(
+        prepare_candles_for_simulation=lambda c: c,
+        detect_order_blocks=lambda d, **kw: [],
+        prepare_order_blocks_for_simulation=lambda ob: [],
+    )
+    return ns(rb=rb, core=core, engine_version="fake",
+              golden_config=lambda path, end_date: cfg,
+              prepare_news_cache=lambda ne, c, m: {})
+
+
+def test_phase_profiler_and_timed_noop():
+    from live.runner import PhaseProfiler, _timed
+    p = PhaseProfiler()
+    with _timed(p, "a"):
+        pass
+    with _timed(None, "b"):          # None profiler must be a safe no-op
+        pass
+    p.increment("cnt", 2)
+    p.increment("cnt")
+    snap = p.snapshot()
+    assert "a" in snap["phase_timings"] and snap["phase_timings"]["a"] >= 0.0
+    assert "b" not in snap["phase_timings"]
+    assert snap["counters"]["cnt"] == 3
+
+
+def test_golden_pipeline_profiler_is_parity_safe(tmp_path):
+    from live.runner import PhaseProfiler
+    cfg = _cfg(tmp_path)
+    trades = pd.DataFrame({"trade_id": ["L_1"], "direction": ["bullish"], "fill_time": [""],
+                           "outcome": ["OPEN"], "entry": ["1.1"], "stop": ["1.09"], "tp": ["1.12"]})
+    runner = LiveRunner(cfg, session=_fake_session(trades))
+    candles = pd.DataFrame({"time": pd.date_range("2026-07-17 09:00:00+00:00", periods=3,
+                            freq="1min").strftime("%Y-%m-%d %H:%M:%S+00:00")})
+    art_off, art_on = {}, {}
+    out_off = runner.golden_pipeline(candles, "2026-07-17", artifacts=art_off)
+    prof = PhaseProfiler()
+    out_on = runner.golden_pipeline(candles, "2026-07-17", artifacts=art_on, profiler=prof)
+    pd.testing.assert_frame_equal(out_off, out_on)            # timing never changes results
+    # timing NEVER leaks into the deterministic artifacts channel
+    assert "phase_timings" not in art_off and "phase_timings" not in art_on
+    assert set(art_on) == {"config", "candles", "order_blocks",
+                           "simulation_obs", "news_cache", "summary"}
+    assert "execute_scenario_job" in prof.snapshot()["phase_timings"]
+
+
+def test_run_once_emits_phase_timings_real_path(tmp_path):
+    cfg = _cfg(tmp_path)
+    trades = pd.DataFrame({"trade_id": ["L_1"], "direction": ["bullish"], "fill_time": [""],
+                           "outcome": ["UNFILLED"], "entry": [""], "stop": [""], "tp": [""]})
+    candles = pd.DataFrame({"time": pd.date_range("2026-07-17 09:00:00+00:00", periods=40,
+                            freq="1min").strftime("%Y-%m-%d %H:%M:%S+00:00")})
+    from live.runner import snapshot_from_bytes
+    snapshot = snapshot_from_bytes(candles.to_csv(index=False).encode(), None,
+                                   engine_version="fake-engine")
+    runner = LiveRunner(cfg, session=_fake_session(trades), input_provider=lambda: snapshot)
+    out = runner.run_once()
+    assert out["status"] in ("bootstrap", "ok")
+    assert out["phase_timings"] and "execute_scenario_job" in out["phase_timings"]
+    assert isinstance(out["pipeline_s"], float) and out["pipeline_s"] >= 0.0
+
+
+def test_run_once_injected_pipeline_has_empty_phase_timings(tmp_path):
+    cfg = _cfg(tmp_path)
+    lux_candles = cfg.lux_root / "data" / "candles"
+    lux_candles.mkdir(parents=True)
+    times = pd.date_range("2026-07-17 09:00:00+00:00", periods=40, freq="1min")
+    pd.DataFrame({"time": times.strftime("%Y-%m-%d %H:%M:%S+00:00"),
+                  "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 0}
+                 ).to_csv(lux_candles / "EURUSD_1m_extended_2015_2026.csv", index=False)
+    frame = _frame([{"trade_id": "L_1", "direction": "bullish", "fill_time": "", "outcome": "UNFILLED"}])
+    runner = LiveRunner(cfg, session=None, pipeline=lambda c, d: frame)
+    out = runner.run_once()
+    assert out["phase_timings"] == {} and out["pipeline_s"] >= 0.0
+
+
+def test_ops_log_records_stage_and_phase_timings(tmp_path):
+    from live.ops_log import OpsLog
+    ops = OpsLog(tmp_path)
+    rec = ops.cycle_start()
+    ops.cycle_end(rec, boundary="B", status="ok",
+                  stage_timings={"runner_s": 1.5}, phase_timings={"resample": 0.2})
+    got = ops.read_cycles()
+    assert got[-1]["stage_timings"] == {"runner_s": 1.5}
+    assert got[-1]["phase_timings"] == {"resample": 0.2}
+    # a legacy record (pre-C1, no timing keys) still parses
+    with (tmp_path / "ops" / "cycles.jsonl").open("a") as fh:
+        fh.write(json.dumps({"cycle_start": "x", "status": "ok"}) + "\n")
+    assert ops.read_cycles()[-1].get("stage_timings", {}) == {}
+
+
+# ── C1-B mid-cycle liveness (daemon beacon; operational telemetry only) ──────────
+import time as _time  # noqa: E402
+
+
+def _wait_until(pred, timeout=3.0, interval=0.01):
+    """Poll pred() until true or the deadline; robust to thread timing."""
+    deadline = _time.monotonic() + timeout
+    while _time.monotonic() < deadline:
+        try:
+            if pred():
+                return True
+        except Exception:
+            pass
+        _time.sleep(interval)
+    try:
+        return bool(pred())
+    except Exception:
+        return False
+
+
+def _read_liveness(path):
+    try:
+        return json.loads(Path(path).read_text())
+    except Exception:
+        return None
+
+
+def test_liveness_tick_advances_while_caller_blocked(tmp_path):
+    from live.liveness import Liveness
+    path = tmp_path / "ops" / "liveness.json"
+    lv = Liveness(path, interval_s=0.02)
+    lv.start()
+    try:
+        lv.begin_cycle()
+        assert _wait_until(lambda: (_read_liveness(path) or {}).get("tick", 0) >= 1)
+        t1 = _read_liveness(path)["tick"]
+        _time.sleep(0.2)                              # caller thread blocked in "compute"
+        assert _wait_until(lambda: (_read_liveness(path) or {}).get("tick", 0) > t1)
+    finally:
+        lv.stop()
+
+
+def test_liveness_phase_update_reflected_promptly(tmp_path):
+    from live.liveness import Liveness
+    path = tmp_path / "ops" / "liveness.json"
+    lv = Liveness(path, interval_s=5.0)               # long tick: only the wake Event is prompt
+    lv.start()
+    try:
+        lv.begin_cycle()
+        lv.set_phase("runner")
+        assert _wait_until(lambda: (_read_liveness(path) or {}).get("phase") == "runner")
+        seq1 = _read_liveness(path)["cycle_seq"]
+        lv.begin_cycle()
+        assert _wait_until(lambda: (_read_liveness(path) or {}).get("cycle_seq") == seq1 + 1)
+    finally:
+        lv.stop()
+
+
+def test_liveness_schema_and_atomic_replacement(tmp_path):
+    from live.liveness import Liveness
+    path = tmp_path / "ops" / "liveness.json"
+    lv = Liveness(path, interval_s=0.02)
+    lv.start()
+    try:
+        lv.begin_cycle()
+        assert _wait_until(lambda: (_read_liveness(path) or {}).get("tick", 0) >= 2)
+        d = _read_liveness(path)
+        for k in ("at", "started_at", "cycle_seq", "phase", "tick",
+                  "elapsed_s", "state", "interval_s", "pid"):
+            assert k in d, k
+        assert isinstance(d["tick"], int) and isinstance(d["elapsed_s"], float)
+        assert isinstance(d["cycle_seq"], int) and isinstance(d["pid"], int)
+    finally:
+        lv.stop()
+    assert not path.with_name(path.name + ".tmp").exists()   # no stale temp after clean stop
+
+
+def test_liveness_write_failure_is_inert(tmp_path):
+    from live.liveness import Liveness
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x")                           # a FILE where a dir is needed
+    path = blocker / "liveness.json"                  # parent is a file -> mkdir/write fail
+    lv = Liveness(path, interval_s=0.02)
+    lv.start()
+    try:
+        lv.begin_cycle()                              # none of these may raise
+        lv.set_phase("runner")
+        _time.sleep(0.1)                              # let the worker attempt writes
+        assert not path.exists()                      # write never succeeded, but no crash
+    finally:
+        lv.stop()                                     # must not raise
+
+
+def test_liveness_cycle_exception_propagates_and_ends_idle(tmp_path):
+    from live.liveness import Liveness
+    from live.main import cycle
+    cfg = _cfg(tmp_path)
+
+    class Ops:
+        def cycle_start(self):
+            return {"cycle_start": datetime.now(timezone.utc).isoformat()}
+
+        def cycle_end(self, *a, **k):
+            raise RuntimeError("boom-logging")        # a logging failure that must propagate
+
+    class Bridge:
+        def poll_once(self):
+            return {}
+
+    class Runner:
+        session = None
+
+        def run_once(self):
+            return {"status": "no_new_bar", "boundary": "B"}
+
+    class Executor:
+        def drain_pending(self):
+            return None
+
+    class Pub:
+        def build_payload(self, *a, **k):
+            return {}
+
+        def publish(self, payload):
+            return None
+
+    path = tmp_path / "ops" / "liveness.json"
+    lv = Liveness(path, interval_s=5.0)
+    lv.start()
+    try:
+        with pytest.raises(RuntimeError, match="boom-logging"):   # original exception unchanged
+            cycle(cfg, None, Bridge(), Runner(), Executor(), Pub(), Ops(), lv)
+        assert _wait_until(lambda: (_read_liveness(path) or {}).get("state") == "idle")
+    finally:
+        lv.stop()
+
+
+def test_liveness_bounded_idempotent_shutdown(tmp_path):
+    from live.liveness import Liveness
+    lv = Liveness(tmp_path / "ops" / "liveness.json", interval_s=0.05)
+    lv.start()
+    lv.begin_cycle()
+    lv.stop(timeout=2.0)
+    assert _wait_until(lambda: not (lv._thread and lv._thread.is_alive()))
+    lv.stop()                                          # idempotent — must not raise
+
+
+def test_cycle_without_liveness_writes_no_beacon(tmp_path):
+    from live import main as live_main
+    from live.ops_log import OpsLog
+    cfg = _cfg(tmp_path)
+
+    class Bridge:
+        def poll_once(self):
+            return {"last_bar_time": None, "appended": 0}
+
+    class Runner:
+        session = None
+
+        def run_once(self):
+            return {"status": "no_new_bar", "boundary": "B"}
+
+    class Pub:
+        def build_payload(self, *a, **k):
+            return {}
+
+        def publish(self, payload):
+            return None
+
+    ops = OpsLog(cfg.state_dir)
+    rec = live_main.cycle(cfg, None, Bridge(), Runner(), None, Pub(), ops)   # 7 args, no liveness
+    assert rec["status"] == "no_new_bar" and not rec.get("error")
+    assert not (cfg.state_dir / "ops" / "liveness.json").exists()            # no beacon written

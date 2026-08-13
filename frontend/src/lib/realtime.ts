@@ -35,7 +35,10 @@ export function resetLastAppliedSeq(seq: number): void {
 
 const ROOT_KEYS: Record<string, QueryKey> = {
   trades: QK.trades,
-  fleet: QK.fleet,
+  // M-FLEET-2: deployment-affecting commands used to invalidate the fixture
+  // fleet. There is no authoritative deployment record now, so they refresh the
+  // operational node projection instead — the real surface a command can change.
+  fleet: QK.operationsNodes,
   packages: QK.packages,
   runtimeHealth: QK.runtimeHealth,
 };
@@ -54,6 +57,10 @@ function affectedRoots(ev: EventEntry): string[] {
       return ['fleet', 'runtimeHealth'];
     case 'policy':
       return ['packages', 'fleet', 'runtimeHealth'];
+    case 'operational':
+      // L2 operational-transition narration: touches only runtime health
+      // (explicit so it no longer relies on the default arm).
+      return ['runtimeHealth'];
     default:
       return ['runtimeHealth'];
   }

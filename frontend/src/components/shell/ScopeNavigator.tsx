@@ -1,6 +1,6 @@
 import { NavLink, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
-import { useFleet, useFeatureFlags } from '@/hooks/useRepository';
+import { useOperationalFleet, useConfiguredInstruments, useFeatureFlags } from '@/hooks/useRepository';
 import type { FeatureFlag } from '@/types/domain';
 import { useShellStore } from '@/store/shellStore';
 import {
@@ -39,7 +39,13 @@ import { HealthDot } from '@/components/primitives';
  * any tab of any pair without visiting the pair dashboard first.
  */
 export function ScopeNavigator() {
-  const { deployments, brokers, accounts, pairs } = useFleet();
+  // M-FLEET-2: the fleet tree is built from AUTHORITATIVE nodes only, and the
+  // pair list from the CONFIGURED instrument universe. Previously both came
+  // from fixture records, so the navigator offered selectable scopes for
+  // brokers, accounts and deployments that did not exist.
+  // M-NODE-READ-1: nodes come from the NODE gate, not the broker gate.
+  const { nodes, nodeStatus } = useOperationalFleet();
+  const { symbols: pairs } = useConfiguredInstruments();
   const flags = useFeatureFlags();
   const location = useLocation();
   const activePair = useShellStore((s) => s.activePair);
@@ -90,63 +96,41 @@ export function ScopeNavigator() {
             {expanded.has('fleet') ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
             <LayoutGrid size={12} className="ml-0.5" />
             <span className="ml-1 font-medium">Fleet</span>
-            <span className="ml-auto text-2xs text-text-muted mono">{deployments.length} dep</span>
+            {/* M-NODE-READ-1: the count is of GENUINELY REPORTING nodes, admitted
+                through the node gate. It was passing through the broker gate, so
+                it read "—" while a node published every cycle. "0 node" is still
+                never printed: nothing observed means nothing to count. */}
+            <span className="ml-auto text-2xs text-text-muted mono">
+              {nodeStatus === 'absent' ? '—' : `${nodes.length} node`}
+            </span>
           </button>
 
           {expanded.has('fleet') && (
             <div className="pl-3 mt-0.5 space-y-0.5">
-              {brokers.map((broker) => {
-                const brokerAccounts = accounts.filter((a) => a.brokerId === broker.brokerId);
-                const brokerId = `b:${broker.brokerId}`;
-                return (
-                  <div key={broker.brokerId}>
-                    <button
-                      onClick={() => toggle(brokerId)}
-                      className="flex items-center gap-1 w-full text-left h-6 px-1.5 text-2xs text-text-2 hover:bg-[color:var(--panel-2)] rounded-sm"
-                    >
-                      {expanded.has(brokerId) ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                      <HealthDot state={broker.status === 'connected' ? 'ok' : 'critical'} />
-                      <span className="ml-1 truncate">{broker.venue}</span>
-                    </button>
-                    {expanded.has(brokerId) && (
-                      <div className="pl-4 space-y-0.5">
-                        {brokerAccounts.map((acct) => {
-                          const deps = deployments.filter((d) => d.accountId === acct.accountId);
-                          return (
-                            <div key={acct.accountId} className="text-2xs text-text-muted">
-                              <div className="uppercase tracking-wider py-1">{acct.type}</div>
-                              {deps.map((d) => (
-                                <button
-                                  key={d.deploymentId}
-                                  onClick={() => setActivePair(d.pair)}
-                                  className={cn(
-                                    'flex items-center gap-2 w-full text-left h-6 px-1.5 rounded-sm text-2xs hover:bg-[color:var(--panel-2)]',
-                                    activePair === d.pair && 'bg-[color:var(--selection)] text-text'
-                                  )}
-                                >
-                                  <CircleDot
-                                    size={9}
-                                    style={{
-                                      color:
-                                        d.status === 'InTrade'
-                                          ? 'var(--live)'
-                                          : d.status === 'Armed'
-                                          ? 'var(--warning)'
-                                          : 'var(--paused)',
-                                    }}
-                                  />
-                                  <span className="font-medium mono">{d.pair}</span>
-                                  <span className="ml-auto text-text-muted uppercase">{d.lane}</span>
-                                </button>
-                              ))}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+              {nodeStatus === 'absent' ? (
+                <div className="px-1.5 py-1 text-2xs text-text-muted" data-testid="scope-fleet-empty">
+                  No execution node observed
+                </div>
+              ) : (
+                nodes.map((node) => (
+                  <div
+                    key={node.nodeId}
+                    className="flex items-center gap-2 h-6 px-1.5 text-2xs text-text-2"
+                    data-testid={`scope-node-${node.nodeId}`}
+                  >
+                    {/* Three lifecycle states, three dots. Collapsing stale and
+                        degraded into one "critical" hid which of them it was —
+                        an old reading and a reported freeze need different
+                        responses. */}
+                    <HealthDot
+                      state={node.lifecycleState === 'current' ? 'ok'
+                        : node.lifecycleState === 'stale' ? 'warn' : 'critical'}
+                      title={`Node ${node.nodeId}: ${node.lifecycleState}`}
+                    />
+                    <span className="ml-1 truncate mono">{node.nodeId}</span>
                   </div>
-                );
-              })}
+                ))
+              )}
             </div>
           )}
         </div>
@@ -166,16 +150,30 @@ export function ScopeNavigator() {
             />
           ))}
 
-          {/* Ghost / dimmed entries for pairs that would be added later */}
+          {/* UI-0: layout placeholders ONLY. These instruments are not configured
+              deployments and must never read as such — they stay non-interactive and
+              are explicitly labelled. Creating a deployment is out of scope here. */}
+          <div
+            className="mt-2 px-2 text-[9px] uppercase tracking-widest text-text-muted"
+            data-testid="placeholder-pairs-heading"
+          >
+            Placeholders · not configured
+          </div>
           {['GBPUSD', 'XAUUSD', 'NQ', 'ES', 'BTC'].map((p) => (
             <div
               key={`ghost-${p}`}
               className="flex items-center gap-2 h-7 px-2 rounded-sm text-2xs text-text-muted opacity-50 cursor-not-allowed"
-              title="No deployment yet — instrument slot ready"
+              title="Layout placeholder — no deployment exists for this instrument and none can be created here."
+              aria-disabled="true"
+              data-testid={`placeholder-pair-${p}`}
+              data-provenance="placeholder"
             >
               <CircleDot size={9} className="text-text-muted" />
               <span className="mono">{p}</span>
-              <Lock size={9} className="ml-auto text-text-muted" />
+              <span className="ml-auto flex items-center gap-1">
+                <span className="text-[8px] uppercase tracking-wider">placeholder</span>
+                <Lock size={9} className="text-text-muted" />
+              </span>
             </div>
           ))}
         </div>

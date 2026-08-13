@@ -93,8 +93,18 @@ credentials.json
 # Runtime event store (append-only BotEvent log, Phase 4)
 backend/events.db
 
+# L2-A Operational Transition Log projector checkpoint (narration progress only)
+backend/ops_journal_checkpoint.json
+
+# L3-A Notifier durable state + outbox (derived notifier bookkeeping only)
+backend/ops_notifier_state.json
+backend/ops_notifier_outbox.json
+
 # Runtime state overlay (mutable, layered over the fixture, Phase 4 Step 3)
 backend/runtime.db
+
+# ARCH-2 durable execution/order lifecycle store (append-only transitions + reconciliation)
+backend/execution_state.db
 
 # ── M3 live-slice additions ──────────────────────────────────────────────────
 # Golden archive candle mirror: 261MB (> GitHub's 100MB hard limit). It is a
@@ -106,3 +116,18 @@ golden/run-001/reference/candles.csv
 # Live-slice runtime state (ledger, ops logs, bar segments, reports)
 live_state/
 rehearsal_out/
+
+# UI-9 security baseline: certificate/key material must never be committed.
+# (.env, .env.*, *.env, *.pem, *.key and credentials.json are already covered
+# above; these close the remaining formats. No sample secret exists anywhere.)
+*.p12
+*.pfx
+*.crt
+*.cer
+*.csr
+*.jks
+secrets/
+certs/
+backend/scenario_state.db
+backend/trade_ledger.db
+backend/recommendation_state.db

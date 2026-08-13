@@ -1,9 +1,23 @@
 import { useEffect } from 'react';
-import { useFleet, usePackages, useFeatureFlags, useRuntimeHealth, useBrokerReconciliation, useStrategyEvaluation, useSchedulerStatus, useMarketSnapshot, useRiskLimits } from '@/hooks/useRepository';
+import { PACKAGES_UNAVAILABLE_DETAIL } from '@/lib/operationalProvenance';
+import { ConnectionPanel } from '@/components/domain/ConnectionPanel';
+import { SecurityBaselinePanel } from '@/components/domain/SecurityBaselinePanel';
+import { OperatorCommandPanel } from '@/components/domain/OperatorCommandPanel';
+import { AuthSessionPanel } from '@/components/domain/AuthSessionPanel';
+import { BrokerReadPanel } from '@/components/domain/BrokerReadPanel';
+import { MarketOrderPanel } from '@/components/domain/MarketOrderPanel';
+import { ManualExecutionPanel } from '@/components/domain/ManualExecutionPanel';
+import { OperationalDashboard } from '@/components/domain/OperationalDashboard';
+import { RuntimeCompletePanel } from '@/components/domain/RuntimeCompletePanel';
+import { ScenarioPanel } from '@/components/domain/ScenarioPanel';
+import { TradeLedgerPanel } from '@/components/domain/TradeLedgerPanel';
+import { LiveRuntimePanel } from '@/components/domain/LiveRuntimePanel';
+import { RecommendationPanel } from '@/components/domain/RecommendationPanel';
+import { useOperationalFleet, useFeatureFlags, useRuntimeHealth, useBrokerReconciliation, useStrategyEvaluation, useSchedulerStatus, useMarketSnapshot, useRiskLimits, useActivePackage, useBackendHealth, useOperator } from '@/hooks/useRepository';
 import { api, QK } from '@/lib/api';
 import { queryClient } from '@/lib/queryClient';
-import { Panel } from '@/components/structures/Panel';
-import { Badge, PackageVersionChip, TimestampUTC, KeyValueGrid, HealthDot } from '@/components/primitives';
+import { Panel, ProvenanceFrame } from '@/components/structures/Panel';
+import { Badge, PackageVersionChip, TimestampUTC, KeyValueGrid, HealthDot, ProvenanceChip } from '@/components/primitives';
 import { fmtHash } from '@/lib/format';
 
 /** Broker poll loop cadence — simple timer, no threads, no websocket (Phase 7). */
@@ -14,8 +28,12 @@ const SYNC_POLL_MS = 2000;
  * · Feature Flags · settings.
  */
 export function SystemView() {
-  const { deployments, brokers } = useFleet();
-  const packages = usePackages();
+  // M-FLEET-2: authoritative nodes only. The Deployments & Manifests and
+  // Brokers panels below listed fixture records on an ordinary route.
+  // M-NODE-READ-1: nodes come from the NODE gate; `nodeStatus` is its own
+  // admission verdict, independent of broker/account admission.
+  const { nodes, nodeStatus } = useOperationalFleet();
+
   const flags = useFeatureFlags();
   const runtime = useRuntimeHealth();
   const recon = useBrokerReconciliation();
@@ -23,6 +41,47 @@ export function SystemView() {
   const scheduler = useSchedulerStatus();
   const snapshot = useMarketSnapshot();
   const riskLimits = useRiskLimits();
+  const activePackage = useActivePackage();
+  const { health } = useBackendHealth();
+  // LIVE-4E: the acting operator. This is an ASSERTED identity — the system has
+  // no per-operator authentication (see recommendation_authorization) — so the
+  // backend stamps every decision with how much the claim is worth.
+  const operatorId = (useOperator() as { operatorId?: string } | undefined)
+    ?.operatorId;
+
+  // UI-0: real runtime-health values (or `undefined` = unknown). Never fabricated.
+  const rt = runtime;
+  // Card-level provenance: the operational projection, runtime loop and ledger
+  // are REAL pipelines, but their content is adapter-fed. With the mock adapter
+  // active they render mock-synthetic values and must not claim LIVE.
+  const adapterProvenance =
+    rt?.broker?.kind && rt.broker.kind !== 'mock' ? ('live' as const) : ('synthetic' as const);
+  // M-CT-RED-STATE-AUDIT-1 — the operational dashboard is NOT adapter-fed.
+  //
+  // `adapterProvenance` describes the LOCAL broker adapter, and framing the
+  // operational projection with it was correct when that projection's content
+  // came from the adapter. It no longer does: the node and account blocks are
+  // relayed node telemetry (`provenance: "node-telemetry"` / `"node_mt5"`),
+  // which is genuine broker truth observed on the execution node. Framing that
+  // NON-LIVE red told the operator the live node's own account balance was
+  // synthetic — the single most misleading thing on the page, and it fired
+  // while the node was live, armed and reporting.
+  //
+  // Red is reserved for cards that DISPLAY non-operational data. This card
+  // displays node truth, so it is `derived-live` when a genuine node is
+  // reporting. It is NOT promoted to `live`: the orders/positions sub-blocks
+  // are still adapter-derived (and already carry their own DERIVED marks), so
+  // the frame claims a projection over live telemetry, not direct liveness.
+  //
+  // PROVENANCE IS NOT FRESHNESS. A node reporting `stale` or `degraded` is still
+  // reporting NODE TRUTH — the card's own STALE badge says how old it is. Only
+  // `absent` (no genuine node at all) falls back to the adapter's verdict, so
+  // this fails closed.
+  const operationalProvenance =
+    nodeStatus !== 'absent' ? ('derived-live' as const) : adapterProvenance;
+  const componentVersions: Array<[string, unknown]> = Object.entries(
+    (activePackage?.componentVersions ?? {}) as Record<string, unknown>
+  );
 
   // Poll loop: while this view is open, tick reconciliation + the Scheduler every
   // 2s. No background thread. Reconciliation appends an event only on change; the
@@ -86,26 +145,115 @@ export function SystemView() {
         </p>
       </div>
 
+      {/* LIVE-4A — the operational dashboard. ONE projection query feeds every
+          card; no card re-derives operational truth. Placed first: it is the
+          canonical operational view of the system. */}
+      {/* M-CT-FLEET-DASHBOARD-2 — the OPERATOR SUMMARY of node/cycle/news/
+          decisions now lives on Fleet Overview, which is the command surface.
+          What remains here is the deep evidence behind it: the full decision
+          table, the raw news block and the cycle internals an engineer needs
+          when Fleet says something is wrong. Duplication removed at the summary
+          level only — no forensic evidence was deleted. */}
+      <div className="text-2xs text-text-muted mono mb-2" data-testid="system-scope-note">
+        Operational summaries live on{' '}
+        <a href="/fleet" className="underline">Fleet Overview</a>. This page is the
+        engineering/diagnostic surface: process internals, engine components, raw
+        telemetry and reconciliation evidence.
+      </div>
+      {nodes[0]?.nodeId && <RuntimeCompletePanel instanceId={nodes[0].nodeId} />}
+
+      <ProvenanceFrame provenance={operationalProvenance}>
+        <OperationalDashboard />
+      </ProvenanceFrame>
+
+      {/* LIVE-5A — the live runtime: one backend loop owns every broker and
+          market read, and this panel renders the snapshot it published. Placed
+          first because it is the only card that reports the LIVE market. */}
+      <ProvenanceFrame provenance={adapterProvenance}>
+        <LiveRuntimePanel />
+      </ProvenanceFrame>
+
+      {/* LIVE-4B — the canonical Scenario domain: the parent object of every
+          recommendation, intent, order, position and future ledger entry. */}
+      <ScenarioPanel />
+
+      {/* LIVE-4C — the canonical Trade Ledger: the historical economic result
+          of every closed trade. Read-only; no financial reconstruction here. */}
+      {/* LIVE-4D — the canonical Recommendation domain: proposals to act on a
+          Scenario, with their decision history.
+          LIVE-4E — opening a proposal reveals the operator decision surface.
+          The operator id is ASSERTED, not authenticated: this system has no
+          per-operator identity (the auth boundary is one shared token), so
+          every decision records how much its identity claim was worth. */}
+      <ProvenanceFrame provenance="live">
+        <RecommendationPanel operatorId={operatorId} />
+      </ProvenanceFrame>
+
+      <ProvenanceFrame provenance={adapterProvenance}>
+        <TradeLedgerPanel />
+      </ProvenanceFrame>
+
+      {/* UI-1 — the live relationship between this Control Tower, the execution
+          node and MT5. Placed first: it is the only thing on this page that
+          reports the REAL system rather than the fixture world. */}
       <div className="grid grid-cols-12 gap-4">
-        <Panel title="Engine Health" className="col-span-4">
-          <ul className="space-y-2 text-xs">
-            {[
-              { name: 'Market state model', v: 'regime@2.3.0' },
-              { name: 'Policy engine', v: 'policy-engine@1.4.0' },
-              { name: 'Execution policy', v: 'exec-policy@2.0.0' },
-              { name: 'Protection', v: 'protection@1.2.0' },
-              { name: 'Strategy brain', v: 'strategy-brain@1.1.0' },
-            ].map((e) => (
-              <li key={e.name} className="flex items-center gap-2">
-                <HealthDot state="ok" />
-                <span className="text-text">{e.name}</span>
-                <span className="ml-auto mono text-text-muted">{e.v}</span>
-              </li>
-            ))}
-          </ul>
+        <div className="col-span-12 lg:col-span-6">
+          <ConnectionPanel />
+        </div>
+        {/* UI-9 — security configuration status. Value-free by construction: the
+            backend reports configured/missing/invalid and never a value. */}
+        <div className="col-span-12 lg:col-span-6">
+          <ProvenanceFrame provenance="live">
+            <SecurityBaselinePanel />
+          </ProvenanceFrame>
+        </div>
+        {/* UI-17 — read-only operator controls. Three read-only diagnostics only;
+            no execution control, disabled by default. */}
+        <div className="col-span-12 lg:col-span-6">
+          <OperatorCommandPanel />
+        </div>
+        {/* ARCH-3 — operator authentication session (memory-only token entry). */}
+        <div className="col-span-12 lg:col-span-6">
+          <AuthSessionPanel />
+        </div>
+        {/* LIVE-1 — read-only broker state (live MT5 or mock). No execution. */}
+        <div className="col-span-12 lg:col-span-6">
+          <BrokerReadPanel />
+        </div>
+        {/* LIVE-2 — the ONE execution control (gate-disabled, confirmed). */}
+        <div className="col-span-12 lg:col-span-6">
+          <MarketOrderPanel />
+        </div>
+        {/* LIVE-3 — manual position/order management (governed, confirmed). */}
+        <div className="col-span-12 lg:col-span-6">
+          <ManualExecutionPanel />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-12 gap-4">
+        {/* UI-0: previously five hardcoded component versions with forced-green
+            dots. Component versions now come from the active package (fixture) and
+            carry no health claim — the Control Tower cannot observe engine health
+            until a node publishes it. */}
+        <Panel
+          provenance="placeholder"
+          title="Engine Components"
+          className="col-span-4"
+        >
+          {/* M-NODE-TEL-1: listed per-component names and versions taken from the
+              FIXTURE strategy package, presented as engine component state. That
+              was configuration at best and authored data in fact — module
+              presence is not component readiness. `ct.node-telemetry.v1`
+              publishes broad cycle and lifecycle state only; it has no
+              component-level contract, so none is claimed. */}
+          <div className="text-xs text-text-muted" data-testid="engine-components-unavailable">
+            No component-level telemetry contract exists. The node publishes
+            cycle and lifecycle state, which is shown above; per-component
+            health, readiness and versions are not reported by any source.
+          </div>
         </Panel>
 
-        <Panel title={<>Feature Flags <span className="text-text-muted mono ml-1">({Object.keys(flags).length})</span></>} className="col-span-4">
+        <Panel provenance="placeholder" title={<>Feature Flags <span className="text-text-muted mono ml-1">({Object.keys(flags).length})</span></>} className="col-span-4">
           <ul className="space-y-1.5 text-xs">
             {Object.entries(flags).map(([k, v]) => (
               <li key={k} className="flex items-center gap-2">
@@ -122,33 +270,58 @@ export function SystemView() {
           </ul>
         </Panel>
 
-        <Panel title="Storage & Feeds" className="col-span-4">
-          <ul className="space-y-1.5 text-xs">
+        {/* UI-0: this panel previously asserted a document-store connection this
+            stack has no client for, plus a fixed feed-lag figure. Rows now come from
+            the real runtime-health contract, or state plainly that nothing is wired. */}
+        <Panel provenance="live" title="Storage & Feeds" className="col-span-4">
+          <ul className="space-y-1.5 text-xs" data-testid="storage-feeds">
             <li className="flex items-center gap-2">
-              <HealthDot state="ok" />
-              <span className="text-text">MongoDB</span>
-              <span className="ml-auto mono text-text-muted">connected</span>
+              <HealthDot state={rt?.runtimeDbHealthy ? 'ok' : 'critical'} />
+              <span className="text-text">Runtime overlay (SQLite)</span>
+              <span className="ml-auto mono text-text-muted">
+                {rt ? (rt.runtimeDbHealthy ? 'healthy' : 'unhealthy') : 'unknown'}
+              </span>
             </li>
             <li className="flex items-center gap-2">
-              <HealthDot state="warn" />
-              <span className="text-text">EURUSD MD feed</span>
-              <span className="ml-auto mono text-text-muted">40s lag</span>
+              <HealthDot state={rt?.eventStoreHealthy ? 'ok' : 'critical'} />
+              <span className="text-text">Event store</span>
+              <span className="ml-auto mono text-text-muted">
+                {rt ? (rt.eventStoreHealthy ? 'healthy' : 'unhealthy') : 'unknown'}
+              </span>
             </li>
             <li className="flex items-center gap-2">
-              <HealthDot state="ok" />
-              <span className="text-text">Event log</span>
-              <span className="ml-auto mono text-text-muted">append-only</span>
+              <HealthDot state="muted" />
+              <span className="text-text">Market-data provider</span>
+              <span className="ml-auto mono text-text-muted">
+                {rt?.marketData?.provider ?? 'unknown'} · {rt?.marketData?.connection ?? 'unknown'}
+              </span>
             </li>
             <li className="flex items-center gap-2">
-              <HealthDot state="ok" />
+              <HealthDot state="muted" />
+              <span className="text-text">Node telemetry</span>
+              <span className="ml-auto flex items-center gap-1.5">
+                <ProvenanceChip
+                  provenance={health?.liveNodeConnected ? 'live-node' : 'placeholder'}
+                  detail="No execution node has published to this backend."
+                />
+              </span>
+            </li>
+            <li className="flex items-center gap-2">
+              <HealthDot state="muted" />
               <span className="text-text">Replay dataset</span>
-              <span className="ml-auto mono text-text-muted">pinned</span>
+              <span className="ml-auto flex items-center gap-1.5">
+                <ProvenanceChip provenance="placeholder" detail="Replay pinning is not wired." />
+              </span>
             </li>
           </ul>
         </Panel>
       </div>
 
       <Panel
+        /* M-PROVENANCE-FINAL: misclassified. This is /runtime/health — genuine
+           process telemetry, never fixture-backed. It was marked NON-LIVE,
+           which understated real data as badly as the reverse overstates it. */
+        provenance="live"
         title={
           <>
             Runtime Health <span className="text-text-muted mono ml-1">runtime layer · not broker</span>
@@ -322,59 +495,41 @@ export function SystemView() {
           </div>
         )}
 
-        {/* Strategy Engine (Phase 9) — evaluation only; never executes. */}
+        {/* Strategy Engine — M-WORLD-ORDINARY-1.
+
+            This block rendered a `strategyHealthy` dot, a fired/held/rejected
+            split, an evaluation latency, a decision count and up to four
+            decision rows with confidence percentages. Every one of those came
+            from evaluating the engine against FIXTURE deployments, a policy
+            matrix derived from FIXTURE packages, and FIXTURE recommendations:
+            a synthetic evaluation of a fabricated world, presented as the live
+            engine's operational record.
+
+            The engine is real code and is kept. It simply has no admissible
+            input, and the backend now says so rather than evaluating nothing
+            and reporting zeros — which would assert that an evaluation ran. */}
         <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
           <div className="flex items-center gap-2 text-xs mb-2">
-            <HealthDot state={strategy.metrics.strategyHealthy ? 'ok' : 'critical'} />
             <span className="text-text">Strategy Engine</span>
-            <span className="mono text-2xs text-text-muted">{strategy.strategyName}</span>
-            <span className="ml-auto mono text-2xs text-text-muted">
-              {strategy.report.fired} fired · {strategy.report.held} hold · {strategy.report.rejected} rej
-            </span>
           </div>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-2xs">
-            <div className="flex justify-between">
-              <span className="text-text-muted">Evaluation latency</span>
-              <span className="mono text-text-2">{strategy.report.durationMs}ms</span>
+          {strategy.available ? (
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-2xs"
+                 data-testid="strategy-engine-available">
+              <div className="flex justify-between">
+                <span className="text-text-muted">Evaluations</span>
+                <span className="mono text-text-2">{strategy.metrics?.evaluations ?? '—'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-muted">Decisions</span>
+                <span className="mono text-text-2">{strategy.report?.evaluated ?? '—'}</span>
+              </div>
             </div>
-            <div className="flex justify-between">
-              <span className="text-text-muted">Evaluations</span>
-              <span className="mono text-text-2">{strategy.metrics.evaluations}</span>
+          ) : (
+            <div className="text-2xs text-text-muted" data-testid="strategy-engine-unavailable">
+              {strategy.detail ??
+                'The strategy engine has no authoritative inputs, so no evaluation ' +
+                'is reported. This is a missing capability, not a failed evaluation.'}
             </div>
-            <div className="flex justify-between">
-              <span className="text-text-muted">Decisions</span>
-              <span className="mono text-text-2">{strategy.report.evaluated}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-text-muted">Candidates · executed</span>
-              <span className="mono text-text-2">
-                {strategy.report.candidateCommands} · {strategy.report.executed}
-              </span>
-            </div>
-            <div className="flex justify-between col-span-2">
-              <span className="text-text-muted">Last strategy</span>
-              <span className="mono text-text-2">{strategy.metrics.lastStrategy ?? '—'}</span>
-            </div>
-          </div>
-          {strategy.decisions.length > 0 && (
-            <ul className="mt-2 space-y-1">
-              {strategy.decisions.slice(0, 4).map((d) => (
-                <li key={d.decisionId} className="flex items-center gap-2 text-2xs">
-                  <span
-                    className="w-1.5 h-1.5 rounded-full shrink-0"
-                    style={{
-                      background:
-                        d.signal === 'fired' ? 'var(--positive)' : d.signal === 'rejected' ? 'var(--negative)' : 'var(--warning)',
-                    }}
-                  />
-                  <span className="mono text-text-2">{d.signal}</span>
-                  <span className="text-text-muted truncate">
-                    {d.pair} · {d.policyCell ?? '—'} · {Math.round(d.confidence * 100)}%
-                    {d.candidateCommands.length ? ` → ${d.candidateCommands.map((c) => c.name).join(', ')}` : ''}
-                  </span>
-                </li>
-              ))}
-            </ul>
           )}
         </div>
 
@@ -524,9 +679,20 @@ export function SystemView() {
               <span className="ml-auto mono text-2xs" style={{ color: 'var(--positive)' }}>
                 {runtime.risk.allowed} allow
                 <span className="text-text-muted"> · </span>
-                <span style={{ color: 'var(--warning)' }}>{runtime.risk.warnings} warn</span>
+                {/* M-CT-RED-STATE-AUDIT-1 — a count of ZERO is not the thing it
+                    counts. `0 warn` in amber and `0 deny` in red said something
+                    had gone wrong when nothing had; the severity colour belongs
+                    to the OCCURRENCE, so it applies only when the count is
+                    non-zero. */}
+                <span style={runtime.risk.warnings > 0 ? { color: 'var(--warning)' } : undefined}
+                      className={runtime.risk.warnings > 0 ? undefined : 'text-text-muted'}>
+                  {runtime.risk.warnings} warn
+                </span>
                 <span className="text-text-muted"> · </span>
-                <span style={{ color: 'var(--negative)' }}>{runtime.risk.denials} deny</span>
+                <span style={runtime.risk.denials > 0 ? { color: 'var(--negative)' } : undefined}
+                      className={runtime.risk.denials > 0 ? undefined : 'text-text-muted'}>
+                  {runtime.risk.denials} deny
+                </span>
               </span>
             </div>
             <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-2xs">
@@ -549,7 +715,11 @@ export function SystemView() {
               <div className="flex justify-between col-span-2 mt-1 pt-1 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
                 <span className="text-text-muted">Limits</span>
                 <span className="mono text-text-2">
-                  {riskLimits.maxOpenTrades} trades · {riskLimits.maxExposureLots} lots · ${riskLimits.maxDailyLoss} daily · ${riskLimits.maxFloatingLoss} floating
+                  {riskLimits.configured && riskLimits.limits
+                    ? Object.entries(riskLimits.limits)
+                        .map(([k, v]) => `${k} ${v}`)
+                        .join(' · ')
+                    : 'no funded-rule source configured — node safeguards publish via telemetry'}
                 </span>
               </div>
             </div>
@@ -570,7 +740,11 @@ export function SystemView() {
                 <span className="text-text-muted"> · </span>
                 <span style={{ color: 'var(--warning)' }}>{runtime.portfolio.deferred} defer</span>
                 <span className="text-text-muted"> · </span>
-                <span style={{ color: 'var(--negative)' }}>{runtime.portfolio.rejected} reject</span>
+                {/* zero is not the thing it counts — see the deny/warn note above */}
+                <span style={runtime.portfolio.rejected > 0 ? { color: 'var(--negative)' } : undefined}
+                      className={runtime.portfolio.rejected > 0 ? undefined : 'text-text-muted'}>
+                  {runtime.portfolio.rejected} reject
+                </span>
               </span>
             </div>
             <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-2xs">
@@ -599,65 +773,59 @@ export function SystemView() {
         </div>
       </Panel>
 
-      <Panel title={<>Deployments & Manifests <span className="text-text-muted mono ml-1">({deployments.length})</span></>}>
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-          {deployments.map((d) => (
-            <div
-              key={d.deploymentId}
-              className="rounded-md border p-3"
-              style={{ borderColor: 'var(--border-subtle)', background: 'var(--panel-2)' }}
-            >
-              <div className="flex items-center gap-2 mb-2">
-                <Badge variant="status">{d.status}</Badge>
-                <Badge variant="mode" color={d.executionMode === 'live' ? 'var(--mode-live)' : 'var(--mode-mock)'}>
-                  {d.executionMode}
-                </Badge>
-                <span className="ml-auto mono text-2xs text-text-muted">{d.deploymentId.slice(0, 24)}…</span>
+      <Panel
+        provenance="live"
+        title={<>Execution Nodes <span className="text-text-muted mono ml-1">({nodes.length})</span></>}
+      >
+        {/* M-FLEET-2: this listed fixture "deployments & manifests". There is no
+            authoritative deployment record, so it lists authoritative execution
+            NODES — or says it has none. */}
+        {nodeStatus === 'absent' ? (
+          <div className="text-xs text-text-muted" data-testid="system-nodes-empty">
+            No execution node has published telemetry to this Control Tower.
+          </div>
+        ) : (
+          <div className="space-y-1">
+            {/* M-NODE-READ-1: `connectionState` was the MAC adapter's connection,
+                shown here as though the node had reported it. The node's own
+                lifecycle, mode and cycle status replace it. */}
+            {nodes.map((n) => (
+              <div key={n.nodeId} className="text-xs mono text-text-2" data-testid={`system-node-${n.nodeId}`}>
+                {n.nodeId} · {n.lifecycleState} · {n.nodeMode ?? 'mode unreported'} ·{' '}
+                {n.cycleStatus ?? 'cycle unreported'}
               </div>
-              <KeyValueGrid
-                items={[
-                  { label: 'Pair', value: d.pair, mono: true },
-                  { label: 'Lane', value: d.lane },
-                  { label: 'Package hash', value: fmtHash(d.packageHash, 16), mono: true },
-                  { label: 'Action', value: <span className="text-2xs">{d.lastAction}</span> },
-                ]}
-              />
-            </div>
-          ))}
+            ))}
+          </div>
+        )}
+      </Panel>
+
+      <Panel provenance="placeholder" title="Packages">
+        {/* M-PKG-1: listed the fixture's authored packages with versions,
+            hashes, validation badges and promotion dates. No registry exists. */}
+        <div className="text-xs text-text-muted" data-testid="system-packages-unavailable">
+          {PACKAGES_UNAVAILABLE_DETAIL}
         </div>
       </Panel>
 
-      <Panel title="Packages">
-        <ul className="space-y-2">
-          {packages.map((pkg) => (
-            <li
-              key={`${pkg.packageId}-v${pkg.version}`}
-              className="rounded-md border p-3 flex items-center gap-3"
-              style={{ borderColor: 'var(--border-subtle)' }}
-            >
-              <PackageVersionChip version={pkg.version} hash={pkg.packageHash} />
-              <span className="text-xs text-text">{pkg.label}</span>
-              <Badge variant="status">{pkg.status}</Badge>
-              <Badge variant="validation">{pkg.validation.badge}</Badge>
-              <span className="ml-auto text-2xs text-text-muted">
-                {pkg.promotedAt ? <TimestampUTC iso={pkg.promotedAt} /> : 'not promoted'}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </Panel>
+      <Panel provenance="placeholder" title="Brokers" dense>
+        {/* M-NODE-READ-1 — THIS PANEL HAD NO SOURCE.
+            M-FLEET-2 repointed it from the fixture brokers to "authoritative
+            nodes", reading `n.broker`, `n.adapter` and `n.connectionState`. All
+            three were the Control Tower's OWN state, so the panel showed the
+            Mac's adapter kind and connection under a broker heading — and its
+            HealthDot went red whenever the Mac adapter was not "Connected",
+            which says nothing about any broker.
 
-      <Panel title="Brokers" dense>
-        <ul className="space-y-1.5 text-xs">
-          {brokers.map((b) => (
-            <li key={b.brokerId} className="flex items-center gap-2">
-              <HealthDot state={b.status === 'connected' ? 'ok' : 'critical'} />
-              <span className="text-text">{b.venue}</span>
-              <span className="mono text-text-muted">{b.adapterType}</span>
-              <span className="ml-auto text-2xs text-text-muted">last recon <TimestampUTC iso={b.lastReconcileAt} /></span>
-            </li>
-          ))}
-        </ul>
+            `ct.node-telemetry.v1` publishes no broker company. The node reports
+            a SERVER name only when it has sampled its account identity, which
+            is broker truth and belongs on an account surface. So there is no
+            broker source here, and the panel says so rather than deriving one. */}
+        <div className="text-xs text-text-muted" data-testid="system-brokers-unavailable">
+          No broker identity source exists. Node telemetry reports node
+          operational state, not broker identity; the broker server name is part
+          of account identity and appears on Accounts &amp; Protection when an
+          execution node relays an account observation.
+        </div>
       </Panel>
     </div>
   );

@@ -18,6 +18,9 @@ import time
 from dataclasses import dataclass, asdict
 from typing import Any
 
+# ARCH-2: connection-state vocabulary is owned by the canonical adapter boundary.
+from broker_adapter import ConnectionState
+
 
 # ---------------------------------------------------------------------------
 # Reconciliation vocabulary
@@ -174,7 +177,7 @@ def _apply_faults(positions: list, orders: list, connection: str, faults: dict) 
         orders.append(dict(dup))
         orders.append(dict(dup))
 
-    conn = "Degraded" if faults.get("connectionDegraded") else connection
+    conn = ConnectionState.DEGRADED if faults.get("connectionDegraded") else connection
     return positions, orders, conn, notes
 
 
@@ -253,9 +256,9 @@ def reconcile(broker_snap: dict, runtime_snap: dict) -> dict:
                 findings.append(Finding(unexpected_t, Severity.ERROR, eid,
                                         f"{kind} {eid} reported by broker but not in runtime"))
 
-    if broker_snap.get("connection") != "Connected":
+    if broker_snap.get("connection") != ConnectionState.CONNECTED:
         findings.append(Finding(CONNECTION_DEGRADED, Severity.WARNING, broker_snap.get("connection", "?"),
-                                f"broker connection is {broker_snap.get('connection')}", broker_snap.get("connection"), "Connected"))
+                                f"broker connection is {broker_snap.get('connection')}", broker_snap.get("connection"), ConnectionState.CONNECTED))
 
     errors = sum(1 for f in findings if f.severity == Severity.ERROR)
     warnings = sum(1 for f in findings if f.severity == Severity.WARNING)
