@@ -43,6 +43,24 @@ class Executor:
                                  news_gate=news_gate)
         self._reconciling = False       # single-flight guard
 
+    def set_observed_account(self, binding: dict | None) -> dict:
+        """Install THIS cycle's canonical account observation on the rails.
+
+        M-ARM-ACCOUNT-SOURCE-FIX-1. The binding used to be captured once at
+        process start, so a value that was empty at boot stayed authoritative
+        forever and refused every OPEN. It is now refreshed each cycle from the
+        connected gateway, via the same `AccountObserver` observation telemetry
+        publishes, so execution and monitoring cannot disagree about which
+        account is live.
+
+        An empty/None binding is installed as `{}` rather than skipped: losing
+        the observation must make the arm rail refuse, never leave a previous
+        cycle's account standing in for one we can no longer see.
+        """
+        self.observed_account = dict(binding or {})
+        self.rails.observed_account = self.observed_account
+        return self.observed_account
+
     # ── reconciliation ───────────────────────────────────────────────────────
     def reconcile(self) -> ReconcileReport:
         """Establish broker truth. Single-flight, and never nested.

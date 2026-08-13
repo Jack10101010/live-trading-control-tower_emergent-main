@@ -96,18 +96,18 @@ def build(lifecycle=None) -> tuple:
     # configured one) is what the arm binds against -- see live/arming.py.
     from live.arming import ArmRuntime
     arm_runtime = ArmRuntime.load(config.state_dir)
+    # M-ARM-ACCOUNT-SOURCE-FIX-1. NO account read here. This function runs
+    # BEFORE `gateway.connect()` (see main(): build() then connect()), so the
+    # read that used to live here always returned "not connected" and left the
+    # binding empty -- refusing every OPEN with arm_server_mismatch for the
+    # whole life of the process while telemetry, reading through the connected
+    # gateway, published fingerprint_matches: true.
+    #
+    # The rails now start with NO account and are given the canonical
+    # observation each cycle by `cycle()`, after connect. Starting empty is the
+    # fail-closed direction: until an account is actually observed, OPEN is
+    # refused.
     observed_account = None
-    try:
-        ok, snap = gateway.read_account_state()
-        if ok and isinstance(snap, dict):
-            acct = snap.get("account") or {}
-            observed_account = {"login": acct.get("login"), "server": acct.get("server"),
-                                # trade_mode 0 == DEMO. Carried so the arm rail
-                                # can re-prove demo status per OPEN rather than
-                                # trusting the creation-time check alone.
-                                "trade_mode": acct.get("trade_mode")}
-    except Exception:                      # never let arming binding break boot
-        observed_account = None
     # M-LIVE-NEWS-1. One calendar per process. Refreshed once per cycle on its
     # own TTL (never per decision), read from memory by the safety rail. An
     # unreachable source at boot is NOT fatal: the node still starts, still
@@ -162,21 +162,31 @@ def _news_block(news_gate) -> dict | None:
                 "detail": f"telemetry build failed: {type(exc).__name__}"}
 
 
-def _observe(observer) -> dict | None:
-    """Account observation for the snapshot, or None.
+def _observe_account(observer):
+    """THE canonical account observation for one cycle, or None.
+
+    Returns the `AccountObservation` itself rather than a pre-projected
+    mapping, because two consumers now project from it: the arm rails
+    (`as_arm_binding`) and telemetry (`as_observed_mapping`). Handing each of
+    them a separately-derived value is precisely how execution and monitoring
+    came to disagree — the rails compared an empty boot-time snapshot while the
+    Control Tower published a matching fingerprint read through the connected
+    gateway.
 
     `AccountObserver.observe()` already contains its own failures, but the
     observer itself is optional (tests and alternate entrypoints construct
-    `cycle()` without one). A missing or misbehaving observer must degrade to an
-    unavailable account section -- never raise into the trading try-block, where
-    it would be recorded as a cycle error.
+    `cycle()` without one). A missing or misbehaving observer must degrade to
+    an unavailable account -- never raise into the trading try-block, where it
+    would be recorded as a cycle error. Degrading to None is fail-closed for
+    execution: the rails then receive `{}` and refuse every OPEN.
     """
     if observer is None:
         return None
     try:
-        return observer.observe().as_observed_mapping()
+        return observer.observe()
     except Exception as exc:   # noqa: BLE001 - telemetry must never break a cycle
-        print(f"account observation failed (continuing): {type(exc).__name__}: {exc}")
+        print(f"account observation failed (continuing; OPEN will refuse): "
+              f"{type(exc).__name__}: {exc}")
         return None
 
 
@@ -201,6 +211,13 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops,
         # happened to emit an intent, leaving the mirror (and with it the
         # max_open_positions rail and the daily-loss counter) stale for as long
         # as the engine was quiet. Broker truth must lead the cycle, not trail it.
+        # THE canonical account observation for this cycle. Taken after the
+        # gateway is connected, used by the arm rails AND published as
+        # telemetry, so `fingerprint_matches` and the rail's server/demo
+        # comparison are literally the same observation.
+        observation = _observe_account(observer)
+        executor.set_observed_account(
+            observation.as_arm_binding() if observation is not None else {})
         reconcile_report = executor.reconcile()
         bridge_result = bridge.poll_once()
 
@@ -228,7 +245,8 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops,
                     # Observed HERE too, not only at cycle end: the recompute is
                     # the long pole, so a node that only sampled afterwards would
                     # publish a stale account for the whole of it.
-                    observed=_observe(observer),
+                    observed=(observation.as_observed_mapping()
+                      if observation is not None else None),
                     bridge=bridge_result)
                 publisher.hand_off(early)
             except Exception as exc:
@@ -267,7 +285,8 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops,
             mode=config.mode,
             state=getattr(runner, "state", None),
             arm_runtime=getattr(executor, "arm_runtime", None),
-            observed=_observe(observer),
+            observed=(observation.as_observed_mapping()
+                      if observation is not None else None),
             bridge=bridge_result,
             news=_news_block(news_gate))
         # Local, atomic, non-blocking. The Mac being asleep can no longer

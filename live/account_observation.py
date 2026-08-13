@@ -140,6 +140,32 @@ class AccountObservation:
             "observed_at": self.health_observed_at or self.identity_observed_at,
         }
 
+    def as_arm_binding(self) -> dict:
+        """The SAME observation, projected for `SafetyRails` arm authorization.
+
+        M-ARM-ACCOUNT-SOURCE-FIX-1. Before this existed the rails compared
+        against a snapshot taken in `build()`, BEFORE the gateway was ever
+        connected, which therefore read "not connected" and left the binding
+        empty for the entire life of the process. Every OPEN was refused
+        `arm_server_mismatch` while telemetry, which re-read the account over
+        the live session, published `fingerprint_matches: true`. Two
+        authorities for one fact, and the reassuring one was the one on screen.
+        This method exists so there is exactly one observation and both
+        consumers project from it.
+
+        Returns `{}` when the account was not observed. That is deliberate and
+        fail-closed: `authorize_open` compares `str(None)` against the bound
+        server and refuses, so an unobservable account cannot open a position.
+        Nothing here is ever defaulted from config or from the token — the
+        configured account is what an operator can get wrong, and the token is
+        the claim being tested, so neither may stand in for the observation.
+        """
+        if self.status == STATUS_UNAVAILABLE or self.identity is None:
+            return {}
+        return {"login": self.identity.login,
+                "server": self.identity.server,
+                "trade_mode": self.identity.trade_mode}
+
 
 class AccountObserver:
     """Bounded-cadence, read-only account sampler.

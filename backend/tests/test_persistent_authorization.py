@@ -231,7 +231,7 @@ def test_daily_cap_blocks_only_after_the_cap_and_resets_next_day(tmp_path):
     arm = authorize(tmp_path, cap=3, now=day1)
     for _ in range(3):
         assert ok(arm, now=day1)[0]
-        arm.consume_open_attempt()
+        arm.consume_open_attempt(day1)
     assert ok(arm, now=day1) == (False, R_DAILY_CAP)
     # ...and the very next UTC day it is available again, with no operator action
     assert ok(arm, now=day1 + timedelta(hours=2))[0] is True
@@ -246,14 +246,14 @@ def test_the_cap_is_far_above_the_strategys_measured_worst_day():
 def test_daily_counter_survives_restart_within_the_same_day(tmp_path):
     day = datetime(2026, 8, 11, 9, 0, tzinfo=timezone.utc)
     arm = authorize(tmp_path, cap=2, now=day)
-    arm.consume_open_attempt()
+    arm.consume_open_attempt(day)
     assert ArmRuntime.load(tmp_path)._opens_today(day) == 1
 
 
 def test_a_stale_day_counter_reads_as_zero_not_as_spent(tmp_path):
     day = datetime(2026, 8, 11, 9, 0, tzinfo=timezone.utc)
     arm = authorize(tmp_path, cap=2, now=day)
-    arm.consume_open_attempt(); arm.consume_open_attempt()
+    arm.consume_open_attempt(day); arm.consume_open_attempt(day)
     assert ok(arm, now=day) == (False, R_DAILY_CAP)
     assert ArmRuntime.load(tmp_path)._opens_today(day + timedelta(days=1)) == 0
 

@@ -338,13 +338,13 @@ class ArmRuntime:
         return True, (f"ARMED: elevated to live until {self.context.request_expires_at} "
                       f"with {self.remaining_attempts} OPEN attempt(s) remaining")
 
-    def consume_open_attempt(self) -> int:
+    def consume_open_attempt(self, now: datetime | None = None) -> int:
         """Decrement and PERSIST before the broker call. Returns the remainder.
 
         Written through immediately: a crash between this and the submission
         must not hand the budget back, because the order may already exist.
         """
-        now = _now()
+        now = _now(now)
         if self.type == TYPE_PERSISTENT:
             # The UTC-day roll is persisted HERE, atomically with the spend, so
             # the reset and the consumption can never be separated by a crash.

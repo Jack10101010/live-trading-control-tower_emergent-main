@@ -146,18 +146,18 @@ def test_main_supplies_observation_outside_the_intent_branch():
     for node in ast.walk(tree):
         if isinstance(node, ast.If):
             branch = ast.dump(node)
-            if "intents" in branch and "_observe" in branch:
+            if "intents" in branch and "_observe_account" in branch:
                 pytest.fail("account observation is gated on intents")
 
 
 def test_main_guards_observation_so_it_cannot_fail_a_cycle():
     tree = _tree("main.py")
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "_observe":
+        if isinstance(node, ast.FunctionDef) and node.name == "_observe_account":
             assert any(isinstance(n, ast.Try) for n in ast.walk(node)), \
                 "_observe must contain its own failure"
             return
-    pytest.fail("_observe() not found")
+    pytest.fail("_observe_account() not found")
 
 
 # ── payload shape ────────────────────────────────────────────────────────────
