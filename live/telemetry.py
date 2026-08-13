@@ -539,6 +539,8 @@ def build_snapshot(
     bridge: dict | None = None,
     decisions: dict | None = None,
     news: dict | None = None,
+    readiness: dict | None = None,
+    delivery: dict | None = None,
 ) -> dict:
     """Assemble the v1 snapshot. Pure: no I/O, no broker calls, no mutation.
 
@@ -724,6 +726,14 @@ def build_snapshot(
     # credentials, no URLs beyond the public source.
     if isinstance(news, dict) and news:
         snapshot["news"] = news
+    # M-CT-FLEET-AUTHORITY-1, additive and backward-compatible like the rest.
+    # `execution_readiness` lives under `runtime` because it IS a runtime
+    # verdict, produced by the SAME rail machinery execution uses -- never a
+    # second opinion computed in telemetry code.
+    if isinstance(readiness, dict) and readiness:
+        snapshot.setdefault("runtime", {})["execution_readiness"] = readiness
+    if isinstance(delivery, dict) and delivery:
+        snapshot["delivery"] = delivery
     return snapshot
 
 

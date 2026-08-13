@@ -6,6 +6,7 @@ automatically). Rails are config-frozen at process start.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from live.config import SYMBOL
 from live.intents import CLOSE_POSITION, MODIFY_STOP, OPEN_POSITION
@@ -40,14 +41,18 @@ class SafetyRails:
         #: what an operator can get wrong; the terminal is ground truth.
         self.observed_account = observed_account or {}
 
-    def _arm_verdict(self, intent) -> "RailVerdict | None":
-        """None => this rail has nothing to say about this intent."""
-        if intent.action != OPEN_POSITION or self.config.mode != "live":
-            return None
+    def _arm_check(self) -> tuple[bool, str]:
+        """Intent-free arm authorization: (ok, reason).
+
+        Extracted so `_arm_verdict` (real execution) and `readiness`
+        (side-effect-free reporting) cannot drift. Nothing about arming depends
+        on WHICH candidate is being opened — it depends on the account, the
+        server, DEMO status, the engine and today's budget — so this is the
+        whole rule, not a reporting approximation of it.
+        """
         if self.arm_runtime is None:
-            return RailVerdict(False, "not_armed",
-                               "live mode without an operator arm token")
-        ok, reason = self.arm_runtime.authorize_open(
+            return False, "not_armed"
+        return self.arm_runtime.authorize_open(
             login=self.observed_account.get("login"),
             server=self.observed_account.get("server"),
             mode=self.config.mode,
@@ -55,9 +60,16 @@ class SafetyRails:
             # OBSERVED demo status, re-proved on every OPEN. Absent reads as
             # unknown and therefore refuses under a demo_only authorization.
             trade_mode=self.observed_account.get("trade_mode"))
+
+    def _arm_verdict(self, intent) -> "RailVerdict | None":
+        """None => this rail has nothing to say about this intent."""
+        if intent.action != OPEN_POSITION or self.config.mode != "live":
+            return None
+        ok, reason = self._arm_check()
         if not ok:
-            return RailVerdict(False, reason,
-                               f"arm refused: {reason}")
+            detail = ("live mode without an operator arm token"
+                      if reason == "not_armed" else f"arm refused: {reason}")
+            return RailVerdict(False, reason, detail)
         return None
 
     def _stale_open_verdict(self, intent) -> "RailVerdict | None":
@@ -202,6 +214,111 @@ class SafetyRails:
                 return RailVerdict(False, "unknown_position",
                                    f"no mirrored ticket for {intent.trade_id}")
         return RailVerdict(True, ALLOWED)
+
+    #: Rails that CANNOT be answered without a real candidate, and why. Reported
+    #: honestly rather than assumed-pass: fabricating a symbol/side/price to turn
+    #: a null into a true would be inventing the answer.
+    CANDIDATE_RAILS = {
+        "duplicate_intent": "needs a real intent_id",
+        "stale_open": "needs the candidate's engine fill_time vs frontier",
+    }
+
+    def readiness(self, *, reconcile_frozen: bool | None = None,
+                  today: str | None = None) -> dict:
+        """M-CT-FLEET-AUTHORITY-1. What the OPEN rails would say RIGHT NOW.
+
+        STRICTLY READ-ONLY. It creates no intent, consumes no OPEN attempt,
+        writes no ledger record, calls no broker method and mutates nothing —
+        `authorize_open` is a pure predicate and `consume_open_attempt` is never
+        reached from here. That is enforced by test, not by convention.
+
+        It is NOT a second opinion. Every check below calls the same predicate
+        the executing rail calls, so the Control Tower cannot show READY while
+        the node would refuse — the exact class of divergence that hid the
+        L_2106 incident, where telemetry and execution consulted different
+        account authorities.
+
+        Candidate-specific rails are reported as unevaluated rather than
+        guessed, so a "ready" verdict means "every globally knowable gate is
+        open", never "the next trade is guaranteed to be accepted".
+        """
+        checks: dict[str, dict] = {}
+        def note(name, ok, detail=""):
+            checks[name] = {"ok": ok, "detail": str(detail)[:120]}
+            return ok
+
+        mode_live = str(getattr(self.config, "mode", "")) == "live"
+        note("submission", mode_live and not bool(
+            getattr(self.config, "submission_disabled", False)),
+            "mode is not live" if not mode_live else "")
+        note("kill", not self._kill_switch_on(), str(self.config.kill_file))
+        note("symbol_whitelist", self._instrument_allowed(),
+             getattr(self.config, "broker_symbol", "?"))
+
+        acct = self.observed_account or {}
+        note("account_identity", bool(acct.get("server")) and acct.get("login") is not None,
+             "no canonical account observation this cycle" if not acct else "observed")
+        tm = acct.get("trade_mode")
+        note("demo_mode", str(tm) == "0", f"trade_mode={tm!r}")
+        note("broker_connected", bool(acct),
+             "account observation unavailable" if not acct else "")
+
+        arm_ok, arm_reason = self._arm_check()
+        note("authorization", arm_ok, arm_reason)
+        # The daily cap is inside authorize_open; surface it separately so the
+        # dashboard can distinguish "not authorized" from "budget spent today".
+        remaining = getattr(self.arm_runtime, "remaining_attempts", None)
+        note("daily_open_cap", not (isinstance(remaining, int) and remaining <= 0),
+             f"{remaining} remaining today" if remaining is not None else "unknown")
+
+        if self.news_gate is None:
+            note("news", False, "no news gate wired")
+        else:
+            try:
+                n_ok, n_reason, n_detail = self.news_gate.verdict()
+            except Exception as exc:
+                n_ok, n_reason, n_detail = False, "news_calendar_unavailable", str(exc)[:80]
+            note("news", n_ok, n_reason or n_detail)
+
+        try:
+            open_n = self.state.open_mirror_count()
+            note("max_positions", open_n < self.config.max_open_positions,
+                 f"{open_n}/{self.config.max_open_positions}")
+        except Exception as exc:
+            note("max_positions", False, f"{type(exc).__name__}")
+        try:
+            realized = self.state.daily_realized_r(today or "")
+            note("daily_loss", realized > -abs(self.config.daily_loss_limit_r),
+                 f"{realized:.2f}R")
+        except Exception as exc:
+            note("daily_loss", False, f"{type(exc).__name__}")
+
+        if reconcile_frozen is None:
+            checks["reconciliation"] = {"ok": None, "detail": "not reported this cycle"}
+        else:
+            note("reconciliation", not reconcile_frozen,
+                 "frozen" if reconcile_frozen else "clean")
+
+        blocking = [k for k, v in checks.items() if v["ok"] is False]
+        unknown = [k for k, v in checks.items() if v["ok"] is None]
+        if blocking:
+            status, eligible = "blocked", False
+        elif unknown:
+            status, eligible = "partial", None
+        else:
+            status, eligible = "ready", True
+        return {
+            "schema_version": "ct.node-readiness.v1",
+            "status": status,
+            "eligible": eligible,
+            "evaluated_at": datetime.now(timezone.utc).isoformat(),
+            "reasons": blocking or unknown,
+            "checks": checks,
+            # Never claimed as passing. A `ready` verdict means every globally
+            # knowable gate is open, not that the next candidate will be taken.
+            "candidate_checks_not_evaluated": dict(self.CANDIDATE_RAILS),
+            "account_fingerprint_source": "canonical_cycle_observation",
+        }
 
     def record_block(self, intent, verdict: RailVerdict) -> None:
         self.state.ledger_set(intent.intent_id, LEDGER_BLOCKED,

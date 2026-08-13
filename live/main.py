@@ -129,10 +129,19 @@ def build(lifecycle=None) -> tuple:
     # worker delivers them with bounded backoff. Measured cause: the Mac is a
     # laptop and sleeps -- 2.2% delivery 00:00-07:00 vs 95.4% 09:00-12:00 --
     # so a synchronous send was paying a timeout for an absent peer.
-    from live.telemetry_outbox import DeliveryWorker, TelemetryOutbox
+    from live.telemetry_outbox import DeliveryWorker, NodeHeartbeat, TelemetryOutbox
+    import os as _os
+    from live.telemetry import INSTANCE_ID
     outbox = TelemetryOutbox(config.state_dir)
     publisher = CTPublisher(config, outbox=outbox)
-    delivery_worker = DeliveryWorker(outbox, config.ct_base_url.rstrip("/") + "/live/ingest")
+    # M-CT-FLEET-AUTHORITY-1. Liveness is emitted by the DELIVERY worker, not
+    # the trading loop, so it keeps beating through a ~20 minute recompute --
+    # the window in which a healthy node and a dead one were indistinguishable.
+    heartbeat = NodeHeartbeat(INSTANCE_ID, pid=_os.getpid())
+    delivery_worker = DeliveryWorker(outbox, config.ct_base_url.rstrip("/") + "/live/ingest",
+                                     heartbeat=heartbeat)
+    publisher.heartbeat = heartbeat
+    publisher.delivery_worker = delivery_worker
     delivery_worker.start()
     print(f"telemetry delivery worker started -> {delivery_worker.url}")
     # ONE observer for the process, sharing the governed gateway. It owns its own
@@ -141,6 +150,53 @@ def build(lifecycle=None) -> tuple:
     observer = AccountObserver(gateway)
     ops = OpsLog(config.state_dir)
     return config, gateway, bridge, runner, executor, publisher, ops, observer
+
+
+def _beat(publisher, **kw) -> None:
+    """Move the heartbeat's phase. Never raises into a trading cycle."""
+    hb = getattr(publisher, "heartbeat", None)
+    if hb is None:
+        return
+    try:
+        hb.update(**{k: v for k, v in kw.items() if v is not None})
+    except Exception:
+        pass
+
+
+def _readiness_block(executor, reconcile_report) -> dict | None:
+    """Side-effect-free OPEN readiness from the REAL rails.
+
+    Contained exactly like every other reporting seam: a readiness fault must
+    never be recorded as a cycle error. Returning None means "not reported",
+    which the Control Tower must render as unknown -- never as ready.
+    """
+    rails = getattr(executor, "rails", None)
+    if rails is None or not hasattr(rails, "readiness"):
+        return None
+    try:
+        frozen = None if reconcile_report is None else bool(reconcile_report.frozen)
+        return rails.readiness(reconcile_frozen=frozen,
+                               today=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    except Exception as exc:
+        return {"schema_version": "ct.node-readiness.v1", "status": "unavailable",
+                "eligible": None, "reasons": [f"{type(exc).__name__}"], "checks": {}}
+
+
+def _delivery_block(publisher) -> dict | None:
+    """CT delivery health straight from the outbox worker -- the authority that
+    already knows, so the Mac never has to infer it from arrival timing."""
+    w = getattr(publisher, "delivery_worker", None)
+    if w is None:
+        return None
+    try:
+        h = dict(w.health_snapshot())
+        h["schema_version"] = "ct.node-delivery.v1"
+        # The target is the operator's private tailnet address; the Mac already
+        # knows who it is talking to and does not need it echoed back.
+        h.pop("target", None)
+        return h
+    except Exception:
+        return None
 
 
 def _news_block(news_gate) -> dict | None:
@@ -218,10 +274,11 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops,
         observation = _observe_account(observer)
         executor.set_observed_account(
             observation.as_arm_binding() if observation is not None else {})
+        _beat(publisher, phase="reconciling")
         reconcile_report = executor.reconcile()
         bridge_result = bridge.poll_once()
 
-        def _announce_recompute(boundary_str: str) -> None:
+        def _announce_recompute(boundary_str: str) -> None:  # noqa: D401
             """Tell the Control Tower we are entering a long phase, before we do.
 
             Publishing only at cycle end left the node silent for the whole
@@ -232,6 +289,7 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops,
             fault can never break a trading cycle (publish() is already
             fallback-first; this guards build_payload too).
             """
+            _beat(publisher, phase="recomputing", boundary=boundary_str)
             try:
                 early = publisher.build_payload(
                     {"status": "recomputing", "boundary": boundary_str,
@@ -279,6 +337,17 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops,
         # so a node that never traded never reported an account at all. This runs
         # every cycle — including no_new_bar and market-closed — and its own
         # bounded cadence decides whether a terminal read actually happens.
+        # RECONCILIATION MERGED BEFORE THE PAYLOAD IS BUILT. It used to be
+        # merged into `ex` AFTER build_payload, so a quiet cycle (no intents ->
+        # executor_result None) published `reconciliation.available: false`
+        # despite a perfectly good local report. The data always existed; it
+        # simply arrived too late to be published.
+        if reconcile_report is not None:
+            executor_result = {**(executor_result or {}),
+                               "reconcile": reconcile_report.to_dict(),
+                               "frozen": reconcile_report.frozen}
+        _beat(publisher, phase="publishing", boundary=runner_result.get("boundary"),
+              last_complete_boundary=runner_result.get("boundary"))
         payload = publisher.build_payload(
             runner_result, executor_result,
             engine_version=runner.session.engine_version if runner.session else "n/a",
@@ -288,7 +357,9 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops,
             observed=(observation.as_observed_mapping()
                       if observation is not None else None),
             bridge=bridge_result,
-            news=_news_block(news_gate))
+            news=_news_block(news_gate),
+            readiness=_readiness_block(executor, reconcile_report),
+            delivery=_delivery_block(publisher))
         # Local, atomic, non-blocking. The Mac being asleep can no longer
         # delay a boundary advance or an execution decision.
         delivery = publisher.hand_off(payload)

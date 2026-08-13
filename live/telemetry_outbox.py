@@ -63,7 +63,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from live.state import atomic_write_text
@@ -72,6 +72,13 @@ OUTBOX_DIRNAME = "telemetry_outbox"
 RUNTIME_SLOT = "latest_runtime.json"
 COMPLETE_SLOT = "latest_complete.json"
 HEALTH_FILE = "delivery_health.json"
+#: M-CT-FLEET-AUTHORITY-1. A THIRD slot, and it needs justifying: the heartbeat
+#: is written every ~20s while the strategy slots change every ~20 MINUTES.
+#: Sharing a slot would mean rapid writes overwriting the runtime/complete
+#: snapshots, destroying exactly the two-slot guarantee the transport milestone
+#: established. It is also never classified `complete`, so it can never displace
+#: the last cycle-end payload carrying news/decisions.
+HEARTBEAT_SLOT = "latest_heartbeat.json"
 
 #: Short on purpose. When the Mac is awake it answers in ~0.2s, so 5s already
 #: had 25x headroom and the failures were never slow responses — they were an
@@ -85,6 +92,10 @@ BACKOFF_START_S = 5.0
 BACKOFF_MAX_S = 60.0
 #: How long a delivered runtime snapshot stays "fresh enough" not to resend.
 IDLE_POLL_S = 5.0
+#: How often the node proves it is ALIVE. Fast enough that a ~20 minute
+#: recompute is visibly healthy rather than indistinguishable from a dead
+#: process, slow enough to be free next to a 67KB strategy snapshot.
+HEARTBEAT_INTERVAL_S = 20.0
 
 
 def _utcnow() -> str:
@@ -103,6 +114,7 @@ class TelemetryOutbox:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.runtime_path = self.dir / RUNTIME_SLOT
         self.complete_path = self.dir / COMPLETE_SLOT
+        self.heartbeat_path = self.dir / HEARTBEAT_SLOT
         self.health_path = self.dir / HEALTH_FILE
         self._seq_lock = threading.Lock()
         self._seq = self._recover_sequence()
@@ -154,6 +166,28 @@ class TelemetryOutbox:
             atomic_write_text(self.complete_path, blob)
         return {"staged": True, "sequence": payload["sequence"], "complete": complete}
 
+    def stage_heartbeat(self, payload: dict) -> dict:
+        """Persist a liveness beat. Writes the HEARTBEAT SLOT ONLY.
+
+        Deliberately not routed through `stage`: a heartbeat must never touch
+        the runtime or complete slots, and must never be classified complete.
+        `news`/`decisions` are stripped defensively even though the builder does
+        not add them, because the cost of that assumption being wrong later is
+        the Control Tower losing its strategy context to a liveness ping.
+        """
+        if not isinstance(payload, dict):
+            return {"staged": False, "reason": "payload is not a dict"}
+        payload = {k: v for k, v in payload.items() if k not in ("news", "decisions")}
+        payload["sequence"] = self.next_sequence()
+        atomic_write_text(self.heartbeat_path, json.dumps(payload, indent=1, default=str))
+        return {"staged": True, "sequence": payload["sequence"], "heartbeat": True}
+
+    def slot_published_at(self, path) -> str | None:
+        try:
+            return json.loads(Path(path).read_text(encoding="utf-8")).get("published_at")
+        except (OSError, ValueError):
+            return None
+
     # ── health ───────────────────────────────────────────────────────────────
     def read_health(self) -> dict:
         try:
@@ -168,6 +202,84 @@ class TelemetryOutbox:
             pass
 
 
+class NodeHeartbeat:
+    """Proof the PROCESS is alive, independent of the strategy computation.
+
+    THE DEFECT. The node publishes a transition payload at recompute start then
+    goes silent for ~20-25 minutes until cycle end. Telemetry age was therefore
+    not a liveness signal at all: a healthy long recompute and a process that
+    died mid-recompute look identical from the Control Tower.
+
+    WHAT IT DOES NOT MEAN. A beat says "this process is running" and nothing
+    else. It deliberately carries the runtime and last-complete timestamps
+    UNCHANGED from their own slots, so a fresh beat can never make stale
+    strategy data look current. Three ages, three independent facts:
+
+        heartbeat.emitted_at         -> is the node alive
+        runtime_snapshot_at          -> how old is the node's runtime view
+        last_complete_at             -> how old is the last full strategy cycle
+
+    The cycle updates `phase`/`boundary` on this object; the delivery worker
+    reads them. That is the whole coupling — no locks, no strategy work, and a
+    beat costs one small file write.
+    """
+
+    def __init__(self, instance_id: str, *, pid: int | None = None,
+                 started_at: str | None = None):
+        self.instance_id = instance_id
+        self.pid = pid
+        self.started_at = started_at or _utcnow()
+        self.phase: str = "starting"
+        self.boundary: str | None = None
+        self.last_complete_boundary: str | None = None
+
+    def update(self, *, phase: str | None = None, boundary: str | None = None,
+               last_complete_boundary: str | None = None) -> None:
+        if phase is not None:
+            self.phase = str(phase)
+        if boundary is not None:
+            self.boundary = str(boundary)
+        if last_complete_boundary is not None:
+            self.last_complete_boundary = str(last_complete_boundary)
+
+    def build(self, outbox: "TelemetryOutbox") -> dict:
+        """A MINIMAL canonical envelope carrying the beat.
+
+        It must be a canonical envelope because the Control Tower rejects
+        anything else (a bare heartbeat payload returns HTTP 400 — measured).
+        It carries no `news` and no `decisions`, so it can never be mistaken for
+        a cycle-end snapshot.
+        """
+        now = datetime.now(timezone.utc)
+        try:
+            up = round((now - datetime.fromisoformat(self.started_at)).total_seconds(), 1)
+        except ValueError:
+            up = None
+        return {
+            "schema_version": "ct.node-telemetry.v1",
+            "instance_id": self.instance_id,
+            # This is the BEAT's time. It is not the snapshot's time, and it is
+            # deliberately not written into `published_at`.
+            "published_at": outbox.slot_published_at(outbox.runtime_path),
+            "cycle": {"status": self.phase, "last_boundary": self.boundary},
+            "heartbeat": {
+                "schema_version": "ct.node-heartbeat.v1",
+                "emitted_at": _utcnow(),
+                "process_started_at": self.started_at,
+                "uptime_s": up,
+                "pid": self.pid,
+                "instance_id": self.instance_id,
+                "phase": self.phase,
+                "boundary": self.boundary,
+                # The two strategy ages, carried through untouched so the Mac
+                # renders three distinct facts and never infers one from another.
+                "runtime_snapshot_at": outbox.slot_published_at(outbox.runtime_path),
+                "last_complete_at": outbox.slot_published_at(outbox.complete_path),
+                "last_complete_boundary": self.last_complete_boundary,
+            },
+        }
+
+
 class DeliveryWorker:
     """Delivers the outbox to the Control Tower, independently of trading.
 
@@ -179,8 +291,13 @@ class DeliveryWorker:
     """
 
     def __init__(self, outbox: TelemetryOutbox, url: str, *,
-                 timeout: float = DELIVER_TIMEOUT_S, sender=None):
+                 timeout: float = DELIVER_TIMEOUT_S, sender=None, heartbeat=None):
         self.outbox = outbox
+        #: `NodeHeartbeat` or None. When present the worker emits a beat on its
+        #: own cadence, so liveness keeps flowing through a long recompute.
+        self.heartbeat = heartbeat
+        self._last_beat: float | None = None
+        self.last_failure_at: str | None = None
         self.url = url
         self.timeout = timeout
         #: Injection seam for tests. Production uses urllib.
@@ -244,15 +361,34 @@ class DeliveryWorker:
             self.last_error = f"{name}: {detail} (rejected; will not retry this snapshot)"
             return False
         self.last_error = f"{name}: {detail}"
+        self.last_failure_at = _utcnow()
         return False
 
+    def beat_if_due(self, force: bool = False) -> bool:
+        """Stage a heartbeat when its interval has elapsed. Never raises."""
+        if self.heartbeat is None:
+            return False
+        now = time.monotonic()
+        if not force and self._last_beat is not None and                 (now - self._last_beat) < HEARTBEAT_INTERVAL_S:
+            return False
+        try:
+            self.outbox.stage_heartbeat(self.heartbeat.build(self.outbox))
+            self._last_beat = now
+            return True
+        except Exception as exc:
+            self.last_error = f"heartbeat: {type(exc).__name__}: {str(exc)[:80]}"
+            return False
+
     def deliver_once(self) -> dict:
-        """One pass over both slots. Complete first: it is the payload whose
-        loss actually costs information."""
+        """One pass over the slots. Complete first: it is the payload whose
+        loss actually costs information. Heartbeat last: it is the cheapest and
+        the most replaceable."""
+        self.beat_if_due()
         results = {}
         any_attempt = any_ok = False
         for name, path in (("complete", self.outbox.complete_path),
-                           ("runtime", self.outbox.runtime_path)):
+                           ("runtime", self.outbox.runtime_path),
+                           ("heartbeat", self.outbox.heartbeat_path)):
             r = self._deliver_slot(path, name)
             results[name] = r
             if r is not None:
@@ -281,13 +417,15 @@ class DeliveryWorker:
                 age = round((now - datetime.fromisoformat(self.last_success_at)).total_seconds(), 1)
             except ValueError:
                 age = None
-        pend = {}
+        pend, seqs = {}, {}
         for name, path in (("complete", self.outbox.complete_path),
-                           ("runtime", self.outbox.runtime_path)):
+                           ("runtime", self.outbox.runtime_path),
+                           ("heartbeat", self.outbox.heartbeat_path)):
             try:
                 seq = json.loads(path.read_text(encoding="utf-8")).get("sequence")
             except (OSError, ValueError):
                 seq = None
+            seqs[name] = seq
             pend[name] = (isinstance(seq, int) and self._delivered.get(name) != seq)
         status = ("healthy" if self.consecutive_failures == 0
                   else "degraded" if self.consecutive_failures < 10 else "offline")
@@ -300,12 +438,18 @@ class DeliveryWorker:
             "target": self.url,
             "last_success_at": self.last_success_at,
             "last_success_age_s": age,
+            "last_failure_at": self.last_failure_at,
             "consecutive_failures": self.consecutive_failures,
             "last_error": self.last_error,
             "pending_runtime": pend["runtime"],
             "pending_complete": pend["complete"],
+            "pending_heartbeat": pend["heartbeat"],
+            "runtime_sequence": seqs["runtime"],
+            "complete_sequence": seqs["complete"],
+            "heartbeat_sequence": seqs["heartbeat"],
             "delivered_sequences": dict(self._delivered),
             "retry_backoff_s": self._backoff(),
+            "next_retry_at": (now + timedelta(seconds=self._backoff())).isoformat(),
         }
 
     def _backoff(self) -> float:
