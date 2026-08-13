@@ -131,7 +131,7 @@ def build(lifecycle=None) -> tuple:
     # so a synchronous send was paying a timeout for an absent peer.
     from live.telemetry_outbox import DeliveryWorker, NodeHeartbeat, TelemetryOutbox
     import os as _os
-    from live.telemetry import INSTANCE_ID
+    from live import INSTANCE_ID
     outbox = TelemetryOutbox(config.state_dir)
     publisher = CTPublisher(config, outbox=outbox)
     # M-CT-FLEET-AUTHORITY-1. Liveness is emitted by the DELIVERY worker, not
@@ -305,7 +305,14 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops,
                     # publish a stale account for the whole of it.
                     observed=(observation.as_observed_mapping()
                       if observation is not None else None),
-                    bridge=bridge_result)
+                    bridge=bridge_result,
+                    # Readiness and delivery health are CURRENT facts, not
+                    # cycle-end ones. Publishing them here too means the Fleet
+                    # view keeps a truthful "READY TO OPEN" through the ~20
+                    # minute recompute instead of holding a verdict computed
+                    # before the recompute began.
+                    readiness=_readiness_block(executor, reconcile_report),
+                    delivery=_delivery_block(publisher))
                 publisher.hand_off(early)
             except Exception as exc:
                 print(f"transition publish failed (continuing): {exc}")

@@ -506,3 +506,46 @@ def test_sequences_remain_monotonic_across_all_three_slots(tmp_path):
             ob.stage_heartbeat({"heartbeat": {}})["sequence"],
             ob.stage({"cycle": {"status": "recomputing"}})["sequence"]]
     assert seqs == sorted(seqs) and len(set(seqs)) == 3
+
+
+# ── deferred imports: the production-only path ──────────────────────────────
+
+def test_every_deferred_import_inside_build_and_cycle_resolves():
+    """`import live.main` does NOT exercise imports written inside functions.
+
+    That gap took the node down: `from live.telemetry import INSTANCE_ID` was
+    added inside build(), the module imported fine, the whole suite passed, and
+    the process died on boot with ImportError because INSTANCE_ID lives in
+    `live/__init__.py`. Function-local imports are a deliberate pattern here
+    (keeping heavy modules off the import path), so they need their own guard.
+    """
+    import ast
+    import importlib
+    src = (REPO_ROOT / "live" / "main.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    targets = [n for n in tree.body
+               if isinstance(n, ast.FunctionDef) and n.name in ("build", "cycle", "main")]
+    assert targets, "build/cycle not found"
+    missing = []
+    for fn in targets:
+        for node in ast.walk(fn):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                try:
+                    mod = importlib.import_module(node.module)
+                except Exception as exc:
+                    missing.append(f"{fn.name}: import {node.module} -> {exc}")
+                    continue
+                for alias in node.names:
+                    if not hasattr(mod, alias.name):
+                        try:
+                            importlib.import_module(f"{node.module}.{alias.name}")
+                        except Exception:
+                            missing.append(
+                                f"{fn.name}: {alias.name!r} not in {node.module}")
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    try:
+                        importlib.import_module(alias.name)
+                    except Exception as exc:
+                        missing.append(f"{fn.name}: import {alias.name} -> {exc}")
+    assert not missing, "deferred imports that would fail at boot:\n  " + "\n  ".join(missing)
