@@ -371,7 +371,17 @@ def safe_reconciliation(reconcile: dict | None, unresolved_sent: int,
     available = bool(rec)
     return {
         "available": available,
-        "clean": (not frozen and snapshot_status == "ok" and unresolved_sent == 0)
+        # M-CT-FLEET-AUTHORITY-1. `clean` is TRI-STATE, and the third state is
+        # load-bearing. The node's ReconciliationReport does not carry
+        # `snapshot_status`, so requiring it to equal "ok" made `clean` false
+        # FOREVER whenever a report existed -- asserting "not clean" from an
+        # absence, with frozen=false, zero findings and zero unresolved sends.
+        # That is the same dishonesty as reporting clean when nothing ran, just
+        # pointing the other way. Unknown provenance now yields null: the
+        # Control Tower renders it as unknown and never as a fault, and a true
+        # only ever comes from facts the node actually observed.
+        "clean": (None if snapshot_status is None else
+                  (not frozen and snapshot_status == "ok" and unresolved_sent == 0))
                  if available else None,
         "frozen": frozen if available else None,
         "snapshot_status": snapshot_status,

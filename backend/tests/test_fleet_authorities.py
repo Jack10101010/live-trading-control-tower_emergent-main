@@ -549,3 +549,31 @@ def test_every_deferred_import_inside_build_and_cycle_resolves():
                     except Exception as exc:
                         missing.append(f"{fn.name}: import {alias.name} -> {exc}")
     assert not missing, "deferred imports that would fail at boot:\n  " + "\n  ".join(missing)
+
+
+# ── 9. reconciliation honesty ───────────────────────────────────────────────
+
+def test_reconciliation_clean_is_tri_state_and_never_asserts_from_absence():
+    """`clean` false must mean OBSERVED not-clean, not 'we lack provenance'."""
+    from live.telemetry import safe_reconciliation
+    # no report at all -> unavailable, clean null (pre-existing contract)
+    none = safe_reconciliation(None, 0, 0, None)
+    assert none["available"] is False and none["clean"] is None
+    # a real report with no snapshot_status -> available, clean UNKNOWN
+    partial = safe_reconciliation({"frozen": False, "findings": []}, 0, 0, None)
+    assert partial["available"] is True and partial["clean"] is None, \
+        "absence of snapshot_status must not read as not-clean"
+    assert partial["frozen"] is False
+    # a report that DOES state its provenance -> a real verdict
+    good = safe_reconciliation({"frozen": False, "findings": [], "snapshot_status": "ok"},
+                               0, 0, None)
+    assert good["clean"] is True
+    frozen = safe_reconciliation({"frozen": True, "findings": [], "snapshot_status": "ok"},
+                                 0, 0, None)
+    assert frozen["clean"] is False and frozen["frozen"] is True
+
+
+def test_a_frozen_reconciliation_still_blocks_readiness(tmp_path):
+    """The roll-up change must not soften the rail."""
+    r = rails(tmp_path).readiness(reconcile_frozen=True)
+    assert r["status"] == "blocked" and "reconciliation" in r["reasons"]

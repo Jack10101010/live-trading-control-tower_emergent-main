@@ -295,7 +295,12 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops,
                     {"status": "recomputing", "boundary": boundary_str,
                      "trades_rows": None, "intents": [],
                      "note": "recompute started; telemetry resumes at cycle end"},
-                    None,
+                    # Reconciliation is known BEFORE the recompute starts, so the
+                    # transition payload can carry it too. Passing None here was
+                    # the other half of `reconciliation.available: false`.
+                    ({"reconcile": reconcile_report.to_dict(),
+                      "frozen": reconcile_report.frozen}
+                     if reconcile_report is not None else None),
                     engine_version=runner.session.engine_version if runner.session else "n/a",
                     mode=config.mode,
                     state=getattr(runner, "state", None),
