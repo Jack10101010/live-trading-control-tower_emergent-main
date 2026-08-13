@@ -310,6 +310,11 @@ class DeliveryWorker:
         #: sequence last ACCEPTED by the Mac, per slot — so a slot that has not
         #: changed is not re-sent every few seconds while the Mac is awake.
         self._delivered: dict[str, int] = {}
+        #: M-CT-DELIVERY-RECOVERY-1. Last ATTEMPT outcome per slot:
+        #: "ok" | "failed" | "rejected". Status is derived from these CURRENT
+        #: facts plus pending state, never from a sticky counter — see
+        #: `health_snapshot`.
+        self._outcome: dict[str, str] = {}
 
     # ── transport ────────────────────────────────────────────────────────────
     def _http_post(self, blob: bytes) -> tuple[bool, str]:
@@ -352,14 +357,17 @@ class DeliveryWorker:
             return False
         if ok:
             self._delivered[name] = seq
+            self._outcome[name] = "ok"
             self.last_success_at = _utcnow()
             self.last_error = None
             return True
         if detail.startswith("HTTP 4"):
+            self._outcome[name] = "rejected"
             # Poisoned payload: do not retry this exact one forever.
             self._delivered[name] = seq
             self.last_error = f"{name}: {detail} (rejected; will not retry this snapshot)"
             return False
+        self._outcome[name] = "failed"
         self.last_error = f"{name}: {detail}"
         self.last_failure_at = _utcnow()
         return False
@@ -394,13 +402,37 @@ class DeliveryWorker:
             if r is not None:
                 any_attempt = True
                 any_ok = any_ok or bool(r)
-        if any_attempt:
-            if any_ok:
-                self.consecutive_failures = 0
-            else:
-                self.consecutive_failures += 1
+        # The streak describes work that is STILL outstanding. Resetting it on
+        # "any slot succeeded" was the false-healthy bug: a succeeding heartbeat
+        # cleared a streak owed to a complete snapshot that had not landed.
+        if any_attempt and not any_ok:
+            self.consecutive_failures += 1
+        elif self._all_settled():
+            self.consecutive_failures = 0
         self._write_health(results)
         return results
+
+    def _all_settled(self) -> bool:
+        """Every slot's CURRENT content is delivered and its last attempt was ok.
+
+        This is the whole recovery condition. A historical `last_failure_at` or
+        a retained `last_error` says what once happened; neither may imply the
+        node is unhealthy NOW.
+        """
+        for name, path in (("complete", self.outbox.complete_path),
+                           ("runtime", self.outbox.runtime_path),
+                           ("heartbeat", self.outbox.heartbeat_path)):
+            try:
+                seq = json.loads(path.read_text(encoding="utf-8")).get("sequence")
+            except (OSError, ValueError):
+                continue                      # a slot with no content owes nothing
+            if not isinstance(seq, int):
+                continue
+            if self._delivered.get(name) != seq:
+                return False                  # current content still undelivered
+            if self._outcome.get(name) in ("failed", "rejected"):
+                return False                  # last thing we know of it was a failure
+        return True
 
     def _write_health(self, results: dict) -> None:
         h = self.health_snapshot()
@@ -427,8 +459,15 @@ class DeliveryWorker:
                 seq = None
             seqs[name] = seq
             pend[name] = (isinstance(seq, int) and self._delivered.get(name) != seq)
-        status = ("healthy" if self.consecutive_failures == 0
-                  else "degraded" if self.consecutive_failures < 10 else "offline")
+        # DERIVED FROM CURRENT FACTS, not from a sticky counter. Two defects
+        # this replaces, in opposite directions:
+        #   * healthy while `pending_complete` was true, because a succeeding
+        #     heartbeat reset the streak the complete slot had earned;
+        #   * degraded forever after one HTTP 400 when no new work arrived to
+        #     re-evaluate the streak.
+        settled = self._all_settled()
+        status = ("offline" if self.consecutive_failures >= 10
+                  else "healthy" if settled else "degraded")
         return {
             "at": now.isoformat(),
             # DELIVERY health only. Execution health is a separate fact and a
@@ -448,6 +487,7 @@ class DeliveryWorker:
             "complete_sequence": seqs["complete"],
             "heartbeat_sequence": seqs["heartbeat"],
             "delivered_sequences": dict(self._delivered),
+            "slot_outcomes": dict(self._outcome),
             "retry_backoff_s": self._backoff(),
             "next_retry_at": (now + timedelta(seconds=self._backoff())).isoformat(),
         }
