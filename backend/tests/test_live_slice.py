@@ -29,6 +29,26 @@ from live.runner import LiveRunner, assemble_candles, latest_closed_boundary   #
 from live.state import LEDGER_SIMULATED, RunnerState      # noqa: E402
 
 
+import datetime as _dt
+AT_OPEN = "2026-07-17T09:50:00+00:00"
+def _allow_open_execution(ex_or_rails, *, at, px):
+    """M-LIVE-STALE-OPEN-GUARDS-1 test wiring.
+
+    Two OPEN rails now require the modelled fill to still be EXECUTABLE:
+    wall-clock freshness, and executable-price divergence. These fixtures
+    predate them and run with `gateway=None` (no quote source), so an OPEN they
+    intend to be applied is correctly refused. Production always supplies both
+    (diff_frontier stamps fill_time; the Executor wires the gateway), so the
+    clock and quote are set here from each fixture's OWN data. Nothing is
+    invented and neither guard is weakened -- the fixture is simply made as
+    internally consistent as production is.
+    """
+    rails = getattr(ex_or_rails, "rails", ex_or_rails)
+    rails._clock = lambda: _dt.datetime.fromisoformat(at)
+    rails.quote_provider = lambda: (True, {"bid": px, "ask": px, "at": at})
+    return ex_or_rails
+
+
 def _cfg(tmp_path, **kw) -> LiveConfig:
     c = LiveConfig(lux_root=tmp_path / "lux", state_dir=tmp_path / "state",
                    market_data_dir=tmp_path / "md", kill_file=tmp_path / "state" / "KILL")
@@ -165,13 +185,15 @@ def test_state_atomic_roundtrip_and_daily_loss(tmp_path):
 def _intent(action=OPEN_POSITION, tid="L_1", iid="abc123"):
     from live.intents import OrderIntent
     return OrderIntent(intent_id=iid, action=action, trade_id=tid, side="long",
-                       frontier_bar="B", entry=1.1, stop=1.09, target=1.12)
+                       frontier_bar="B", entry=1.1, stop=1.09, target=1.12,
+                       fill_time="2026-07-17 09:47:00+00:00")
 
 
 def test_executor_dry_run_applies_and_dedupes(tmp_path):
     cfg = _cfg(tmp_path)
     runner_state = RunnerState(cfg.state_dir)
     ex = Executor(cfg, runner_state, gateway=None if False else MT5Gateway(cfg, sdk=None))
+    _allow_open_execution(ex, at=AT_OPEN, px=1.1)
     r1 = ex.apply([_intent()], today="2026-07-17")
     assert not r1["frozen"] and len(r1["applied"]) == 1
     assert runner_state.ledger_status("abc123") == LEDGER_SIMULATED
@@ -261,6 +283,7 @@ def test_dry_run_executor_never_touches_order_ops(tmp_path):
     cfg = _cfg(tmp_path)
     gw = CountingGateway(cfg)
     ex = Executor(cfg, RunnerState(cfg.state_dir), gw)
+    _allow_open_execution(ex, at=AT_OPEN, px=1.1)
     res = ex.apply([_intent(iid="z1"), _intent(action=MODIFY_STOP, tid="L_1", iid="z2")],
                    today="2026-07-17")
     assert gw.order_ops == 0                                   # dry_run: zero broker calls

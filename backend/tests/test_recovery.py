@@ -42,12 +42,20 @@ from live.state import RunnerState, frame_hash                       # noqa: E40
 BAR1 = datetime(2026, 7, 27, 8, 14, tzinfo=timezone.utc)
 BAR2 = datetime(2026, 7, 27, 8, 29, tzinfo=timezone.utc)
 
+# `diff_frontier` reads `entry`/`stop`/`tp` (live/intents.py:108); these
+# fixtures only ever carried `entry_price`/`stop_price`/`target_price`, so every
+# OPEN intent they produced had None geometry. Harmless until an execution rail
+# needed it — the divergence guard cannot verify a price against an absent
+# entry, and correctly refuses. The canonical names are added so the fixture
+# matches the production frame; the *_price columns stay for existing readers.
 UNFILLED = [{"trade_id": "T_1", "status": "unfilled", "fill_time": "", "exit_time": "",
              "direction": "long", "entry_price": "1.1", "stop_price": "1.09",
-             "target_price": "1.12", "exit_price": "", "net_r": ""}]
+             "target_price": "1.12", "exit_price": "", "net_r": "",
+             "entry": "1.1", "stop": "1.09", "tp": "1.12"}]
 OPENED = [{"trade_id": "T_1", "status": "open", "fill_time": "2026-07-27 08:20:00",
            "exit_time": "", "direction": "long", "entry_price": "1.1",
-           "stop_price": "1.09", "target_price": "1.12", "exit_price": "", "net_r": ""}]
+           "stop_price": "1.09", "target_price": "1.12", "exit_price": "", "net_r": "",
+           "entry": "1.1", "stop": "1.09", "tp": "1.12"}]
 
 
 def _cfg(tmp_path, **kw) -> LiveConfig:
@@ -226,6 +234,16 @@ def test_duplicate_reconciliation_cannot_duplicate_an_intent(tmp_path):
     r2 = _runner(cfg, OPENED, BAR2)
     res = r2.run_once(defer_commit=True)
     ex = Executor(cfg, r2.state, gateway=None)
+    # M-LIVE-STALE-OPEN-GUARDS-1. Two OPEN rails now require the modelled fill
+    # to still be executable: wall-clock freshness and price divergence. This
+    # test is about the LEDGER, so the OPEN must be legitimately applicable —
+    # otherwise `first` is empty and the suppression it asserts is untestable.
+    # The clock and quote come from the fixture's OWN data (fills 08:20 @ 1.1),
+    # so nothing is invented; real wall-clock would make a months-old fixture
+    # permanently stale, which is the guards working, not a defect.
+    ex.rails._clock = lambda: datetime(2026, 7, 27, 8, 22, tzinfo=timezone.utc)
+    ex.rails.quote_provider = lambda: (True, {"bid": 1.1, "ask": 1.1,
+                                              "at": "2026-07-27T08:22:00+00:00"})
     ex.reconcile()
     first = ex.apply(res["intents"], today="2026-07-27")
     ex.reconcile()

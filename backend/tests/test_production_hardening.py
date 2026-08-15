@@ -40,6 +40,26 @@ TRADE_COLS = ["trade_id", "direction", "fill_time", "outcome",
               "entry", "stop", "tp", "net_r"]
 
 
+import datetime as _dt
+AT_OPEN = "2026-07-28T08:35:00+00:00"
+def _allow_open_execution(ex_or_rails, *, at, px):
+    """M-LIVE-STALE-OPEN-GUARDS-1 test wiring.
+
+    Two OPEN rails now require the modelled fill to still be EXECUTABLE:
+    wall-clock freshness, and executable-price divergence. These fixtures
+    predate them and run with `gateway=None` (no quote source), so an OPEN they
+    intend to be applied is correctly refused. Production always supplies both
+    (diff_frontier stamps fill_time; the Executor wires the gateway), so the
+    clock and quote are set here from each fixture's OWN data. Nothing is
+    invented and neither guard is weakened -- the fixture is simply made as
+    internally consistent as production is.
+    """
+    rails = getattr(ex_or_rails, "rails", ex_or_rails)
+    rails._clock = lambda: _dt.datetime.fromisoformat(at)
+    rails.quote_provider = lambda: (True, {"bid": px, "ask": px, "at": at})
+    return ex_or_rails
+
+
 def _cfg(tmp_path, **kw) -> LiveConfig:
     c = LiveConfig(lux_root=tmp_path / "lux", state_dir=tmp_path / "state",
                    market_data_dir=tmp_path / "md", kill_file=tmp_path / "state" / "KILL")
@@ -199,7 +219,7 @@ def test_dry_run_close_accrues_realized_r_and_arms_the_rail(tmp_path):
     ex = Executor(cfg, state, gateway=None, arm_runtime=_armed(cfg), observed_account={"login": 9000000001, "server": "FTMO-Demo"})
     state.mirror_set("L_1", -1)
     prev = _frame([{"trade_id": "L_1", "direction": "bullish",
-                    "fill_time": "t0", "outcome": "OPEN"}])
+                    "fill_time": "2026-07-28 08:30:00+00:00", "outcome": "OPEN"}])
     cur = _frame([{"trade_id": "L_1", "direction": "bullish", "fill_time": "t0",
                    "outcome": "LOSS", "net_r": "-3.0"}])
     ex.apply(diff_frontier(prev, cur, "b1"), today="2026-07-28")
@@ -211,9 +231,10 @@ def test_dry_run_close_accrues_realized_r_and_arms_the_rail(tmp_path):
 def test_daily_loss_rail_blocks_opens_once_breached(tmp_path):
     cfg = _cfg(tmp_path, daily_loss_limit_r=5.0)
     state = RunnerState(cfg.state_dir)
-    rails = SafetyRails(cfg, state)
+    rails = _allow_open_execution(SafetyRails(cfg, state), at=AT_OPEN, px=1.1)
     prev = _frame([{"trade_id": "L_9", "direction": "bullish", "fill_time": "", "outcome": "UNFILLED"}])
-    cur = _frame([{"trade_id": "L_9", "direction": "bullish", "fill_time": "t",
+    cur = _frame([{"trade_id": "L_9", "direction": "bullish",
+                   "fill_time": "2026-07-28 08:30:00+00:00",
                    "outcome": "OPEN", "entry": "1.1", "stop": "1.0", "tp": "1.3"}])
     (open_intent,) = diff_frontier(prev, cur, "b")
     assert open_intent.action == OPEN_POSITION
@@ -300,7 +321,8 @@ BAR2 = "2026-07-28 08:29:00"     # -> boundary 08:15
 
 
 UNFILLED = [{"trade_id": "L_1", "direction": "bullish", "fill_time": "", "outcome": "UNFILLED"}]
-OPENED = [{"trade_id": "L_1", "direction": "bullish", "fill_time": "t1",
+OPENED = [{"trade_id": "L_1", "direction": "bullish",
+           "fill_time": "2026-07-28 08:30:00+00:00",
            "outcome": "OPEN", "entry": "1.1", "stop": "1.0", "tp": "1.3"}]
 
 
@@ -332,7 +354,10 @@ def test_lr1_fixed_deferred_commit_replays_and_executes_exactly_once(tmp_path):
     replay = r3.run_once(defer_commit=True)
     assert replay["status"] == "ok"
     assert [i.intent_id for i in replay["intents"]] == first_ids   # identical ids
-    applied = Executor(cfg, r3.state, gateway=None, arm_runtime=_armed(cfg), observed_account={"login": 9000000001, "server": "FTMO-Demo"}).apply(replay["intents"], today="2026-07-28")
+    applied = _allow_open_execution(
+        Executor(cfg, r3.state, gateway=None, arm_runtime=_armed(cfg),
+                 observed_account={"login": 9000000001, "server": "FTMO-Demo"}),
+        at=AT_OPEN, px=1.1).apply(replay["intents"], today="2026-07-28")
     assert len(applied["applied"]) == 1
     r3.commit_cycle()
     # a further cycle at the same boundary is a no-op — no duplicate execution

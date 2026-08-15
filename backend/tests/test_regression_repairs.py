@@ -44,6 +44,26 @@ from live.state import LEDGER_SIMULATED, RunnerState                        # no
 COLS = ["trade_id", "direction", "fill_time", "outcome", "entry", "stop", "tp", "net_r"]
 
 
+import datetime as _dt
+AT_OPEN = "2026-07-28T08:35:00+00:00"
+def _allow_open_execution(ex_or_rails, *, at, px):
+    """M-LIVE-STALE-OPEN-GUARDS-1 test wiring.
+
+    Two OPEN rails now require the modelled fill to still be EXECUTABLE:
+    wall-clock freshness, and executable-price divergence. These fixtures
+    predate them and run with `gateway=None` (no quote source), so an OPEN they
+    intend to be applied is correctly refused. Production always supplies both
+    (diff_frontier stamps fill_time; the Executor wires the gateway), so the
+    clock and quote are set here from each fixture's OWN data. Nothing is
+    invented and neither guard is weakened -- the fixture is simply made as
+    internally consistent as production is.
+    """
+    rails = getattr(ex_or_rails, "rails", ex_or_rails)
+    rails._clock = lambda: _dt.datetime.fromisoformat(at)
+    rails.quote_provider = lambda: (True, {"bid": px, "ask": px, "at": at})
+    return ex_or_rails
+
+
 def _cfg(tmp_path, **kw) -> LiveConfig:
     c = LiveConfig(lux_root=tmp_path / "lux", state_dir=tmp_path / "state",
                    market_data_dir=tmp_path / "md", kill_file=tmp_path / "state" / "KILL")
@@ -235,8 +255,10 @@ def test_unlimited_replays_never_duplicate_execution(tmp_path):
     cfg = _cfg(tmp_path)
     st = RunnerState(cfg.state_dir)
     ex = Executor(cfg, st, gateway=None, arm_runtime=_armed(cfg), observed_account={"login": 9000000001, "server": "FTMO-Demo"})
+    _allow_open_execution(ex, at=AT_OPEN, px=1.1)
     prev = _frame([{"trade_id": "L_1", "direction": "bullish", "fill_time": "", "outcome": "UNFILLED"}])
-    cur = _frame([{"trade_id": "L_1", "direction": "bullish", "fill_time": "t",
+    cur = _frame([{"trade_id": "L_1", "direction": "bullish",
+                   "fill_time": "2026-07-28 08:30:00+00:00",
                    "outcome": "OPEN", "entry": "1.1", "stop": "1.0", "tp": "1.3"}])
     ints = diff_frontier(prev, cur, "b1")
     total = sum(len(ex.apply(ints, today="2026-07-28")["applied"]) for _ in range(10))
@@ -245,7 +267,7 @@ def test_unlimited_replays_never_duplicate_execution(tmp_path):
 
 
 UNFILLED = [{"trade_id": "L_1", "direction": "bullish", "fill_time": "", "outcome": "UNFILLED"}]
-OPENED = [{"trade_id": "L_1", "direction": "bullish", "fill_time": "t1", "outcome": "OPEN",
+OPENED = [{"trade_id": "L_1", "direction": "bullish", "fill_time": "2026-07-28 08:30:00+00:00", "outcome": "OPEN",
            "entry": "1.1", "stop": "1.0", "tp": "1.3"}]
 BAR1, BAR2 = "2026-07-28 08:14:00", "2026-07-28 08:29:00"
 
@@ -272,8 +294,10 @@ def test_repeated_crash_recovery_across_restarts_executes_once(tmp_path):
         assert res["status"] == "ok"
         ids = ids or [i.intent_id for i in res["intents"]]
         assert [i.intent_id for i in res["intents"]] == ids       # replay determinism
-        total += len(Executor(cfg, r.state, gateway=None, arm_runtime=_armed(cfg), observed_account={"login": 9000000001, "server": "FTMO-Demo"})
-                     .apply(res["intents"], today="2026-07-28")["applied"])
+        total += len(_allow_open_execution(
+            Executor(cfg, r.state, gateway=None, arm_runtime=_armed(cfg),
+                     observed_account={"login": 9000000001, "server": "FTMO-Demo"}),
+            at=AT_OPEN, px=1.1).apply(res["intents"], today="2026-07-28")["applied"])
     assert total == 1
     r = _runner(cfg, _frame(OPENED), BAR2)
     r.run_once(defer_commit=True); r.commit_cycle()

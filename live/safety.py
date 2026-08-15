@@ -8,11 +8,39 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from live.config import SYMBOL
+from live.config import OPEN_MAX_AGE_S, OPEN_MAX_DIVERGENCE_R, SYMBOL
 from live.intents import CLOSE_POSITION, MODIFY_STOP, OPEN_POSITION
 from live.state import LEDGER_BLOCKED, LEDGER_SUPPRESSING
 
 ALLOWED = "allowed"
+
+#: Stable rail identifiers. Distinct from the pre-existing `stale_open`, which
+#: remains the frontier/bar-ORDERING check and is unchanged.
+R_STALE_WALLCLOCK = "stale_open_wallclock"
+R_PRICE_DIVERGENCE = "entry_price_divergence"
+
+
+def _parse_utc(raw):
+    """Aware-UTC datetime, or None. Strict: a value we cannot parse must not
+    become a freshness claim."""
+    if raw in (None, "", "nan", "NaT"):
+        return None
+    try:
+        import pandas as pd
+        ts = pd.to_datetime(raw, utc=True)
+        if pd.isna(ts):
+            return None
+        return ts.to_pydatetime()
+    except Exception:
+        return None
+
+
+def _as_float(v):
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if f == f and f not in (float("inf"), float("-inf")) else None
 
 
 @dataclass(frozen=True)
@@ -20,11 +48,15 @@ class RailVerdict:
     allowed: bool
     rail: str
     detail: str = ""
+    #: Structured evidence for a refusal, so a future "why wasn't this taken?"
+    #: is answerable from the record rather than reconstructed from prose.
+    #: Additive: existing call sites and tests construct RailVerdict unchanged.
+    evidence: dict | None = None
 
 
 class SafetyRails:
     def __init__(self, config, state, arm_runtime=None, observed_account=None,
-                 news_gate=None):
+                 news_gate=None, quote_provider=None, clock=None):
         self.config = config
         self.state = state
         #: `live.news_feed.NewsCalendar`, or None to disable the news rail
@@ -40,6 +72,16 @@ class SafetyRails:
         #: arm binds to the observed account, never to configuration — config is
         #: what an operator can get wrong; the terminal is ground truth.
         self.observed_account = observed_account or {}
+        #: () -> (ok, {"bid","ask","at"}). Sampled at RAIL time, microseconds
+        #: before submission -- never a quote captured at recompute start.
+        #: None disables the divergence rail's ability to prove anything, so it
+        #: refuses rather than passes.
+        self.quote_provider = quote_provider
+        #: Injectable authoritative clock, so freshness is deterministic in test.
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+
+    def _now(self):
+        return self._clock()
 
     def _arm_check(self) -> tuple[bool, str]:
         """Intent-free arm authorization: (ok, reason).
@@ -156,6 +198,122 @@ class SafetyRails:
             return None
         return RailVerdict(False, reason or "news_calendar_unavailable", detail[:200])
 
+    # ── M-LIVE-STALE-OPEN-GUARDS-1 ──────────────────────────────────────────
+    # Two INTERIM execution guards from the S_2108 forensic. Both gate OPEN
+    # only, both fail closed, and neither touches strategy semantics: the
+    # engine's decision, entry, stop, TP and RR are untouched. They decide
+    # whether the modelled basis still holds well enough to SUBMIT.
+    #
+    # Deliberately SEPARATE from `_stale_open_verdict`, which is a different
+    # concept and stays exactly as it was:
+    #   * `stale_open`            — frontier/bar ORDERING (a skipped boundary)
+    #   * `stale_open_wallclock`  — elapsed WALL-CLOCK since the modelled fill
+    # A fill can satisfy ordering perfectly and still be 38 minutes old, which
+    # is precisely what happened to S_2108.
+
+    def _wallclock_freshness_verdict(self, intent) -> "RailVerdict | None":
+        """Refuse an OPEN whose modelled fill is older than OPEN_MAX_AGE_S.
+
+        Boundary is CLOSED at the limit: age == 900s passes, age > 900s
+        refuses. A missing, unparseable, or FUTURE fill_time refuses — a
+        timestamp we cannot trust is not evidence of freshness.
+        """
+        if intent.action != OPEN_POSITION:
+            return None
+        raw = getattr(intent, "fill_time", None)
+        now = self._now()
+        ft = _parse_utc(raw)
+        if ft is None:
+            return RailVerdict(
+                False, R_STALE_WALLCLOCK,
+                f"engine fill_time {raw!r} is missing or unparseable; freshness "
+                "cannot be established",
+                {"fill_time": str(raw), "evaluated_at": now.isoformat(),
+                 "max_age_seconds": OPEN_MAX_AGE_S})
+        age = (now - ft).total_seconds()
+        ev = {"fill_time": ft.isoformat(), "evaluated_at": now.isoformat(),
+              "age_seconds": round(age, 3), "max_age_seconds": OPEN_MAX_AGE_S}
+        if age < 0:
+            return RailVerdict(
+                False, R_STALE_WALLCLOCK,
+                f"engine fill_time {ft.isoformat()} is {-age:.0f}s in the FUTURE "
+                "relative to the execution clock; refusing rather than guessing "
+                "which clock is wrong", ev)
+        if age > OPEN_MAX_AGE_S:
+            return RailVerdict(
+                False, R_STALE_WALLCLOCK,
+                f"modelled fill is {age/60:.1f} min old (limit "
+                f"{OPEN_MAX_AGE_S/60:.0f} min); a market order now would execute "
+                "at a price the engine never modelled", ev)
+        return None
+
+    def _price_divergence_verdict(self, intent) -> "RailVerdict | None":
+        """Refuse an OPEN whose executable price has drifted from the canonical
+        entry by more than OPEN_MAX_DIVERGENCE_R of the trade's OWN risk.
+
+        Direction-aware and executable-side: a BUY is compared against the ASK,
+        a SELL against the BID — the prices the broker would actually fill at,
+        sampled NOW. Midpoint is never substituted; if bid/ask cannot be
+        obtained the rail refuses.
+
+        Risk is the MODEL's risk (|entry - stop|), never recomputed from the
+        current price: recomputing would let a drifted entry redefine its own
+        tolerance, which is the opposite of a guard.
+        """
+        if intent.action != OPEN_POSITION:
+            return None
+        entry, stop = _as_float(getattr(intent, "entry", None)), _as_float(getattr(intent, "stop", None))
+        base = {"canonical_entry": entry, "canonical_stop": stop,
+                "max_divergence_r": OPEN_MAX_DIVERGENCE_R}
+        if entry is None or stop is None:
+            return RailVerdict(False, R_PRICE_DIVERGENCE,
+                               f"missing geometry (entry={entry!r} stop={stop!r})", base)
+        risk = abs(entry - stop)
+        base["model_risk"] = risk
+        if risk <= 0:
+            return RailVerdict(False, R_PRICE_DIVERGENCE,
+                               "model risk is zero/negative; divergence is undefined", base)
+        if self.quote_provider is None:
+            return RailVerdict(False, R_PRICE_DIVERGENCE,
+                               "no executable quote source wired; cannot prove the "
+                               "current price matches the modelled entry", base)
+        try:
+            ok, quote = self.quote_provider()
+        except Exception as exc:
+            ok, quote = False, f"{type(exc).__name__}: {str(exc)[:80]}"
+        if not ok or not isinstance(quote, dict):
+            base["quote_error"] = str(quote)[:120]
+            return RailVerdict(False, R_PRICE_DIVERGENCE,
+                               f"no executable quote available ({quote}); refusing "
+                               "rather than assuming the price is unchanged", base)
+        # BUY lifts the ask, SELL hits the bid. Using the wrong side would
+        # understate divergence by exactly the spread.
+        side = "ask" if intent.side == "long" else "bid"
+        px = _as_float(quote.get(side))
+        base.update({"quote_side": side, "executable_price": px,
+                     "quote_at": quote.get("at")})
+        if px is None:
+            return RailVerdict(False, R_PRICE_DIVERGENCE,
+                               f"quote has no usable {side}", base)
+        div = abs(px - entry)
+        div_r = div / risk
+        base.update({"divergence_price": round(div, 6), "divergence_r": round(div_r, 6)})
+        # Compared in PRICE space with an explicit float tolerance. `0.25 * risk`
+        # is not exactly representable, so a divergence that is mathematically
+        # exactly at the limit lands a few ulps either side of it and the
+        # boundary would be decided by representation noise. The S_2108 arm was
+        # settled by a 5.5e-17 difference; that is not a mechanism to rely on
+        # twice. 1e-12 is ~7 orders of magnitude below one FX tick (1e-5), so it
+        # cannot mask a real divergence -- it only makes "exactly at the limit"
+        # deterministically ALLOWED, which is the pinned boundary.
+        if div > OPEN_MAX_DIVERGENCE_R * risk + 1e-12:
+            return RailVerdict(
+                False, R_PRICE_DIVERGENCE,
+                f"executable {side} {px:.5f} differs from modelled entry "
+                f"{entry:.5f} by {div_r:.3f}R (limit {OPEN_MAX_DIVERGENCE_R}R); "
+                "this is no longer the trade the strategy tested", base)
+        return None
+
     def _kill_switch_on(self) -> bool:
         return self.config.kill_file.exists()
 
@@ -213,6 +371,15 @@ class SafetyRails:
                     return RailVerdict(True, ALLOWED)
                 return RailVerdict(False, "unknown_position",
                                    f"no mirrored ticket for {intent.trade_id}")
+        # 7) M-LIVE-STALE-OPEN-GUARDS-1, evaluated LAST so they sit as close to
+        # broker submission as the architecture allows (Executor.apply calls
+        # evaluate() and then _execute() in the same loop iteration). Appended
+        # rather than inserted: no existing rail is reordered, weakened or
+        # bypassed, and each still reports its own reason first.
+        for verdict in (self._wallclock_freshness_verdict(intent),
+                        self._price_divergence_verdict(intent)):
+            if verdict is not None:
+                return verdict
         return RailVerdict(True, ALLOWED)
 
     #: Rails that CANNOT be answered without a real candidate, and why. Reported
@@ -321,5 +488,9 @@ class SafetyRails:
         }
 
     def record_block(self, intent, verdict: RailVerdict) -> None:
-        self.state.ledger_set(intent.intent_id, LEDGER_BLOCKED,
-                              {"rail": verdict.rail, "detail": verdict.detail})
+        record = {"rail": verdict.rail, "detail": verdict.detail}
+        if verdict.evidence:
+            # So "why wasn't this taken?" is answerable from the durable record
+            # months later, without re-deriving it from prose.
+            record["evidence"] = verdict.evidence
+        self.state.ledger_set(intent.intent_id, LEDGER_BLOCKED, record)

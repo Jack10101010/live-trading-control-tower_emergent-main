@@ -38,9 +38,18 @@ class Executor:
         self.lifecycle = lifecycle
         self.arm_runtime = arm_runtime
         self.news_gate = news_gate
+        # M-LIVE-STALE-OPEN-GUARDS-1. The divergence rail needs the price the
+        # broker would fill at RIGHT NOW. `evaluate()` and `_execute()` run in
+        # the same loop iteration, so a quote sampled here is microseconds from
+        # the `order_send` that uses the same tick -- the closest the current
+        # architecture allows without the incremental redesign.
+        quote_provider = None
+        if gateway is not None and hasattr(gateway, "current_quote"):
+            quote_provider = gateway.current_quote
         self.rails = SafetyRails(config, state, arm_runtime=arm_runtime,
                                  observed_account=observed_account,
-                                 news_gate=news_gate)
+                                 news_gate=news_gate,
+                                 quote_provider=quote_provider)
         self._reconciling = False       # single-flight guard
 
     def set_observed_account(self, binding: dict | None) -> dict:

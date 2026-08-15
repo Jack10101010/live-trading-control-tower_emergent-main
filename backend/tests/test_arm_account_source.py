@@ -46,6 +46,26 @@ DEMO = 0
 
 # ── fixtures ────────────────────────────────────────────────────────────────
 
+# ── M-LIVE-STALE-OPEN-GUARDS-1 test wiring ──────────────────────────────────
+# Two OPEN rails were added after these tests were written: wall-clock freshness
+# of the modelled fill, and executable-price divergence. Production always
+# supplies both a fill_time (diff_frontier sets it on every OPEN) and a quote
+# provider (the Executor wires the gateway), so these fixtures now do the same.
+# The fixed clock keeps them deterministic and the quote sits exactly on the
+# canonical entry, so both guards abstain and each test still proves what it
+# was written to prove rather than tripping on the new rails.
+import datetime as _dt
+_GUARD_NOW = _dt.datetime.fromisoformat("2026-08-12T18:05:00+00:00")
+
+
+def _guard_clock():
+    return _GUARD_NOW
+
+
+def _guard_quote():
+    return True, {"bid": 1.15234, "ask": 1.15234, "at": "2026-08-12T18:05:00+00:00"}
+
+
 class Cfg:
     def __init__(self, root, mode="live"):
         self.state_dir = root
@@ -93,13 +113,15 @@ def authorize(root):
 
 def rails(root, *, binding, arm=None, news=None, mode="live"):
     return SafetyRails(Cfg(root, mode), State(), arm_runtime=arm or authorize(root),
-                       observed_account=binding, news_gate=news or HealthyNews())
+                       observed_account=binding, news_gate=news or HealthyNews(),
+                       quote_provider=_guard_quote, clock=_guard_clock)
 
 
 def open_intent():
     return OrderIntent(intent_id="i1", action=OPEN_POSITION, trade_id="L_2106",
                        side="long", frontier_bar="2026-08-12 18:00:00+00:00",
-                       entry=1.15234, stop=1.15166, target=1.15319)
+                       entry=1.15234, stop=1.15166, target=1.15319,
+                       fill_time="2026-08-12 18:02:00+00:00")
 
 
 # ── 5. POSITIVE AUTHORIZATION — the test whose absence hid the incident ─────
@@ -160,6 +182,7 @@ def test_the_fresh_connected_observation_replaces_the_empty_boot_value(tmp_path)
     ex = Executor(Cfg(tmp_path), State(), Gw(), arm_runtime=authorize(tmp_path),
                   observed_account=observation(connected=False).as_arm_binding(),
                   news_gate=HealthyNews())
+    ex.rails.quote_provider, ex.rails._clock = _guard_quote, _guard_clock
     # boot state: empty, refuses
     assert ex.rails.observed_account == {}
     assert ex.rails.evaluate(open_intent(), "EURUSD", "2026-08-12").rail == "arm_server_mismatch"
@@ -178,6 +201,7 @@ def test_losing_the_observation_refuses_rather_than_reusing_the_last_good_one(tm
         pass
     ex = Executor(Cfg(tmp_path), State(), Gw(), arm_runtime=authorize(tmp_path),
                   observed_account=None, news_gate=HealthyNews())
+    ex.rails.quote_provider, ex.rails._clock = _guard_quote, _guard_clock
     ex.set_observed_account(observation().as_arm_binding())
     assert ex.rails.evaluate(open_intent(), "EURUSD", "2026-08-12").allowed
     ex.set_observed_account({})                      # observation lost this cycle

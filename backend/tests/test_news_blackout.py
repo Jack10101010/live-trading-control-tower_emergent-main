@@ -40,6 +40,26 @@ T = datetime(2026, 8, 12, 12, 30, tzinfo=timezone.utc)
 
 # ── fixtures ────────────────────────────────────────────────────────────────
 
+# ── M-LIVE-STALE-OPEN-GUARDS-1 test wiring ──────────────────────────────────
+# Two OPEN rails were added after these tests were written: wall-clock freshness
+# of the modelled fill, and executable-price divergence. Production always
+# supplies both a fill_time (diff_frontier sets it on every OPEN) and a quote
+# provider (the Executor wires the gateway), so these fixtures now do the same.
+# The fixed clock keeps them deterministic and the quote sits exactly on the
+# canonical entry, so both guards abstain and each test still proves what it
+# was written to prove rather than tripping on the new rails.
+import datetime as _dt
+_GUARD_NOW = _dt.datetime.fromisoformat("2026-08-12T12:05:00+00:00")
+
+
+def _guard_clock():
+    return _GUARD_NOW
+
+
+def _guard_quote():
+    return True, {"bid": 1.1, "ask": 1.1, "at": "2026-08-12T12:05:00+00:00"}
+
+
 class Cfg:
     """Minimal LiveConfig stand-in. News parameters are set explicitly here so
     a test never depends on the production golden config."""
@@ -110,13 +130,15 @@ def rails(cal, tmp_path, mirror=None):
     kill file, dry_run so arming abstains, empty ledger), so a block on an
     OPEN can only have come from the news rail."""
     return SafetyRails(cal.config, State(mirror), arm_runtime=None,
-                       observed_account={}, news_gate=cal)
+                       observed_account={}, news_gate=cal,
+                       quote_provider=_guard_quote, clock=_guard_clock)
 
 
 def open_intent():
     return OrderIntent(intent_id="i1", action=OPEN_POSITION, trade_id="L_1",
                        side="long", frontier_bar="2026-08-12 12:00:00+00:00",
-                       entry=1.1, stop=1.0, target=1.3)
+                       entry=1.1, stop=1.0, target=1.3,
+                       fill_time="2026-08-12 12:02:00+00:00")
 
 
 def close_intent():

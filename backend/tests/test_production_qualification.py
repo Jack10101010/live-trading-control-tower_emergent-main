@@ -374,6 +374,14 @@ def test_status_reports_healthy_on_a_clean_idle_deployment(tmp_path):
     ops = OpsLog(cfg.state_dir)
     ops.cycle_end(ops.cycle_start(), boundary="2026-07-28 08:15:00+00:00", status="no_new_bar")
     RunnerState(cfg.state_dir).save()
+    # A CLEAN deployment has news protection in place. Without a calendar the
+    # `news protection?` row is correctly FAIL (M-LIVE-NEWS-1 fails closed), so
+    # a fixture asserting zero FAILs has to supply one. Written through the
+    # production writer with an injected feed — no hand-rolled cache file.
+    from live.news_feed import NewsCalendar
+    NewsCalendar(cfg, opener=lambda url: [
+        {"title": "CPI m/m", "country": "USD", "impact": "High",
+         "date": "2030-01-01T12:30:00+00:00"}]).refresh()
     live_status.ROWS.clear()
     live_status.collect(cfg, probe_mt5=False)
     answered = {q for q, _, _ in live_status.ROWS}

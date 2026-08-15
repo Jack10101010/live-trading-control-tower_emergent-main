@@ -30,6 +30,15 @@ except ImportError:  # pragma: no cover - exercised via injection in tests
 _DST_ZONES = {"us": ZoneInfo("America/New_York"), "eu": ZoneInfo("Europe/Brussels")}
 
 
+def _finite_positive(v) -> bool:
+    """A price we can compare against. NaN/inf/None/<=0 are not prices."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return False
+    return f == f and f not in (float("inf"), float("-inf")) and f > 0
+
+
 class MT5Gateway:
     """Thin, stateless-ish wrapper. `sdk` is injectable for tests/fakes."""
 
@@ -341,6 +350,30 @@ class MT5Gateway:
         }
 
     # ── order operations (market mirror model: engine is the state machine) ──
+    def current_quote(self) -> tuple[bool, dict | str]:
+        """Fresh executable bid/ask, sampled NOW. Read-only.
+
+        M-LIVE-STALE-OPEN-GUARDS-1. The price-divergence rail must compare
+        against the price the broker would actually execute against at the
+        moment of submission -- not a quote captured when the ~20 minute
+        recompute began. This is the same `symbol_info_tick` read
+        `open_position` performs microseconds later, exposed so a rail can use
+        it without reaching into the SDK or duplicating the side convention.
+
+        Returns `(False, reason)` rather than a guess when the tick is absent,
+        so the caller can fail closed.
+        """
+        if not self._connected:
+            return False, "not connected"
+        tick = self.sdk.symbol_info_tick(self.config.broker_symbol)
+        if tick is None:
+            return False, "no tick"
+        bid, ask = getattr(tick, "bid", None), getattr(tick, "ask", None)
+        if not _finite_positive(bid) or not _finite_positive(ask):
+            return False, f"non-finite quote bid={bid!r} ask={ask!r}"
+        return True, {"bid": float(bid), "ask": float(ask),
+                      "at": datetime.now(timezone.utc).isoformat()}
+
     def open_position(self, side: str, lots: float, sl: float, tp: float,
                       intent_id: str) -> tuple[bool, dict | str]:
         if not self._connected:

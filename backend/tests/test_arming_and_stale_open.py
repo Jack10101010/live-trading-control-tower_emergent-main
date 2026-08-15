@@ -37,6 +37,26 @@ from live.safety import SafetyRails  # noqa: E402
 LOGIN, SERVER = 9000000001, "FTMO-Demo"
 
 
+# ── M-LIVE-STALE-OPEN-GUARDS-1 test wiring ──────────────────────────────────
+# Two OPEN rails were added after these tests were written: wall-clock freshness
+# of the modelled fill, and executable-price divergence. Production always
+# supplies both a fill_time (diff_frontier sets it on every OPEN) and a quote
+# provider (the Executor wires the gateway), so these fixtures now do the same.
+# The fixed clock keeps them deterministic and the quote sits exactly on the
+# canonical entry, so both guards abstain and each test still proves what it
+# was written to prove rather than tripping on the new rails.
+import datetime as _dt
+_GUARD_NOW = _dt.datetime.fromisoformat("2026-08-07T09:40:00+00:00")
+
+
+def _guard_clock():
+    return _GUARD_NOW
+
+
+def _guard_quote():
+    return True, {"bid": 1.1, "ask": 1.1, "at": "2026-08-07T09:40:00+00:00"}
+
+
 class Cfg:
     def __init__(self, root, mode="live"):
         self.state_dir = root
@@ -66,10 +86,11 @@ def arm_now(root, *, ttl=60, opens=3, login=LOGIN, server=SERVER, mode="live"):
 
 def rails(root, arm=None, mode="live", observed=None):
     return SafetyRails(Cfg(root, mode), State(), arm_runtime=arm,
-                       observed_account=observed or {"login": LOGIN, "server": SERVER})
+                       observed_account=observed or {"login": LOGIN, "server": SERVER},
+                       quote_provider=_guard_quote, clock=_guard_clock)
 
 
-def open_intent(frontier="2026-08-07 09:30:00+00:00", fill=None):
+def open_intent(frontier="2026-08-07 09:30:00+00:00", fill="2026-08-07 09:37:00+00:00"):
     return OrderIntent(intent_id="i1", action=OPEN_POSITION, trade_id="L_1",
                        side="long", frontier_bar=frontier, entry=1.1, stop=1.0,
                        target=1.3, fill_time=fill)
@@ -284,7 +305,10 @@ def test_implausibly_old_fill_abstains_rather_than_refusing(tmp_path):
     pandas turns short tokens into year 1 without raising. The rail must not
     manufacture a refusal from that; the other rails still govern."""
     i = open_intent(FRONTIER, fill="2020-01-01 00:00:00+00:00")
-    assert rails(tmp_path, arm=arm_now(tmp_path)).evaluate(i, "EURUSD", TODAY).allowed
+    # Asserted on the FRONTIER rail specifically. Through the full stack a
+    # six-year-old fill is now refused by `stale_open_wallclock`, which is
+    # correct and is a different rail; this test is about THIS one abstaining.
+    assert rails(tmp_path, arm=arm_now(tmp_path))._stale_open_verdict(i) is None
 
 
 def test_close_is_never_stale_gated(tmp_path):
@@ -298,9 +322,12 @@ def test_close_is_never_stale_gated(tmp_path):
 
 
 def test_missing_fill_time_does_not_silently_refuse(tmp_path):
-    """Other rails still apply; absence of the field is not evidence of staleness."""
-    assert rails(tmp_path, arm=arm_now(tmp_path)).evaluate(
-        open_intent(FRONTIER, fill=None), "EURUSD", TODAY).allowed
+    """Absence of the field is not evidence of ORDERING staleness, so THIS rail
+    abstains. Through the full stack a missing fill_time is now refused by
+    `stale_open_wallclock` — a different rail, deliberately fail-closed, because
+    freshness that cannot be established must not be assumed."""
+    assert rails(tmp_path, arm=arm_now(tmp_path))._stale_open_verdict(
+        open_intent(FRONTIER, fill=None)) is None
 
 
 def test_diff_frontier_carries_fill_time_onto_open_intents():
@@ -412,9 +439,11 @@ def test_unparseable_fill_time_abstains_rather_than_refusing(tmp_path):
     errors="coerce", which made the rail refuse a legitimate OPEN on a parse
     artefact. Garbage must make the rail abstain, not block."""
     for junk in ("t1", "n/a", "?", "not-a-time"):
-        v = rails(tmp_path, arm=arm_now(tmp_path)).evaluate(
-            open_intent(FRONTIER, fill=junk), "EURUSD", TODAY)
-        assert v.allowed, f"{junk!r} caused a bogus stale_open refusal"
+        # THIS rail must abstain on garbage. The wall-clock guard separately
+        # refuses it through the full stack, which is the intended fail-closed
+        # behaviour for input whose freshness cannot be established.
+        assert rails(tmp_path, arm=arm_now(tmp_path))._stale_open_verdict(
+            open_intent(FRONTIER, fill=junk)) is None,             f"{junk!r} caused a bogus stale_open refusal"
 
 
 # ── PART 4: arm-based elevation (launcher stays dry_run) ─────────────────────

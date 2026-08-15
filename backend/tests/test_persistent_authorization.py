@@ -42,6 +42,26 @@ LOGIN, SERVER = 9000000001, "FTMO-Demo"
 DEMO, LIVE_ACCT = 0, 2
 
 
+# ── M-LIVE-STALE-OPEN-GUARDS-1 test wiring ──────────────────────────────────
+# Two OPEN rails were added after these tests were written: wall-clock freshness
+# of the modelled fill, and executable-price divergence. Production always
+# supplies both a fill_time (diff_frontier sets it on every OPEN) and a quote
+# provider (the Executor wires the gateway), so these fixtures now do the same.
+# The fixed clock keeps them deterministic and the quote sits exactly on the
+# canonical entry, so both guards abstain and each test still proves what it
+# was written to prove rather than tripping on the new rails.
+import datetime as _dt
+_GUARD_NOW = _dt.datetime.fromisoformat("2026-08-12T12:05:00+00:00")
+
+
+def _guard_clock():
+    return _GUARD_NOW
+
+
+def _guard_quote():
+    return True, {"bid": 1.1, "ask": 1.1, "at": "2026-08-12T12:05:00+00:00"}
+
+
 def authorize(root, *, login=LOGIN, server=SERVER, cap=DEFAULT_DAILY_OPEN_CAP, now=None):
     return ArmRuntime.create_persistent(root, login=login, server=server,
                                         mode="live", daily_open_cap=cap, now=now)
@@ -87,13 +107,15 @@ def rails(root, arm=None, *, state=None, observed=None, gate=Gate(), mode="live"
     return SafetyRails(Cfg(root, mode), state or State(), arm_runtime=arm,
                        observed_account=observed if observed is not None else
                        {"login": LOGIN, "server": SERVER, "trade_mode": DEMO},
-                       news_gate=gate)
+                       news_gate=gate, quote_provider=_guard_quote,
+                       clock=_guard_clock)
 
 
 def open_intent(tid="L_1", iid="i1"):
     return OrderIntent(intent_id=iid, action=OPEN_POSITION, trade_id=tid,
                        side="long", frontier_bar="2026-08-12 12:00:00+00:00",
-                       entry=1.1, stop=1.0, target=1.3)
+                       entry=1.1, stop=1.0, target=1.3,
+                       fill_time="2026-08-12 12:02:00+00:00")
 
 
 def close_intent():

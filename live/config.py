@@ -26,6 +26,26 @@ SYMBOL = "EURUSD"                                   # hard whitelist — single 
 # is genuinely wedged, and a dead node is still detected in under 25 minutes.
 # Consumed by live.status heartbeat/stall/lifecycle rows and any VPS-side
 # freshness surface; the Mac derives its own staleness from received_at.
+#: M-LIVE-STALE-OPEN-GUARDS-1. INTERIM LIVE-EXECUTION SAFETY, not strategy.
+#: The S_2108 incident: the engine modelled a fill at 07:52:00Z @ 1.15493, and
+#: the cycle that processed that boundary did not finish until 08:30:24Z, so a
+#: MARKET order went in 38m24s later at 1.15527 -- 3.4 pips, 45.95% of the
+#: trade's own 7.4-pip risk. Direction and gating were right; the price was not.
+#:
+#: These two bounds make that unreachable while the incremental live fast path
+#: and broker edge orders are designed. Both are EXECUTION constraints: they
+#: refuse to submit a trade whose modelled basis no longer holds. Neither
+#: changes what the strategy decides, and neither is consulted by the engine.
+#:
+#: 15 minutes is the design's own stated tolerance -- one M15 window, the
+#: latency the mirror model always accepted. S_2108 was ~2.5 windows.
+OPEN_MAX_AGE_S = 900
+#: Fraction of the trade's OWN modelled risk that the executable price may
+#: differ from the canonical entry. Deliberately symmetric: a favourable
+#: divergence is still a departure from the strategy that was tested, and a
+#: 0.46R "improvement" silently changes the trade's R geometry.
+OPEN_MAX_DIVERGENCE_R = 0.25
+
 CYCLE_BUDGET_S = 1500
 IDLE_HEARTBEAT_BUDGET_S = 120
 GOLDEN_CONFIG_RELPATH = "generated_configs/d6cdae589b1e4c37a67763253c466067.json"

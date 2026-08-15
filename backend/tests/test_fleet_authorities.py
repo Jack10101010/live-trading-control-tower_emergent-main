@@ -42,6 +42,26 @@ LOGIN, SERVER, DEMO = 9000000001, "FTMO-Demo", 0
 
 # ── fixtures ────────────────────────────────────────────────────────────────
 
+# ── M-LIVE-STALE-OPEN-GUARDS-1 test wiring ──────────────────────────────────
+# Two OPEN rails were added after these tests were written: wall-clock freshness
+# of the modelled fill, and executable-price divergence. Production always
+# supplies both a fill_time (diff_frontier sets it on every OPEN) and a quote
+# provider (the Executor wires the gateway), so these fixtures now do the same.
+# The fixed clock keeps them deterministic and the quote sits exactly on the
+# canonical entry, so both guards abstain and each test still proves what it
+# was written to prove rather than tripping on the new rails.
+import datetime as _dt
+_GUARD_NOW = _dt.datetime.fromisoformat("2026-08-14T09:05:00+00:00")
+
+
+def _guard_clock():
+    return _GUARD_NOW
+
+
+def _guard_quote():
+    return True, {"bid": 1.1, "ask": 1.1, "at": "2026-08-14T09:05:00+00:00"}
+
+
 class Cfg:
     def __init__(self, root, mode="live"):
         self.state_dir = root
@@ -104,7 +124,8 @@ def rails(root, *, observation=None, arm=None, news=None, state=None, mode="live
                        arm_runtime=arm if arm is not None else ArmRuntime.create_persistent(
                            root, login=LOGIN, server=SERVER, mode="live", daily_open_cap=12),
                        observed_account=o.as_arm_binding(),
-                       news_gate=news or News())
+                       news_gate=news or News(), quote_provider=_guard_quote,
+                       clock=_guard_clock)
 
 
 # ── 12. EXECUTION READINESS — positive first ────────────────────────────────
@@ -202,7 +223,11 @@ def test_readiness_calls_no_broker_method(tmp_path):
     """A gateway whose every attribute explodes: if readiness touched the
     broker at all, this raises."""
     class Boom:
+        def current_quote(self):
+            raise AssertionError("readiness called the broker for a quote")
         def __getattr__(self, name):
+            if name.startswith("__"):
+                raise AttributeError(name)
             raise AssertionError(f"readiness called broker method {name!r}")
     from live.executor import Executor
     ex = Executor(Cfg(tmp_path), State(), Boom(),
@@ -245,7 +270,8 @@ def test_readiness_and_real_rail_evaluation_agree(tmp_path):
     def intent():
         return OrderIntent(intent_id="x", action=OPEN_POSITION, trade_id="T",
                            side="long", frontier_bar="2026-08-14 09:00:00+00:00",
-                           entry=1.1, stop=1.0, target=1.3)
+                           entry=1.1, stop=1.0, target=1.3,
+                           fill_time="2026-08-14 09:02:00+00:00")
     for kw, expect_ready in ((dict(), True),
                              (dict(observation=obs(server="Other")), False),
                              (dict(observation=obs(trade_mode=2)), False),
