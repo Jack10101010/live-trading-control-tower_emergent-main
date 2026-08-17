@@ -87,6 +87,8 @@ BUILD_TARGETS = {
                       "67_replay_visuals", "68_live_setups",
                       "60_parity_output", "70_legend", "90_debug", "99_hud"),
         "plot_reserve": 2,
+        "declaration": None,
+        "embed": ("replay", "targets", "news"),
     },
     "execution_1m": {
         "target_id": "execution_1m",
@@ -104,6 +106,93 @@ BUILD_TARGETS = {
         # will need room; spending the budget on S7 debug plots now is how the
         # detection build reached 83 and hit RE10140 on a live chart.
         "plot_reserve": 8,
+        "declaration": None,
+        "embed": (),
+    },
+    # ── the Strategy Tester companion ────────────────────────────────────────
+    #
+    # A `strategy()`, not an `indicator()`, and the ONLY build that is one. It
+    # exists because the Strategy Tester will not run an indicator, and the
+    # Visual Oracle must stay an indicator: converting it would put orders
+    # inside the artefact whose whole purpose is to show what production did.
+    #
+    # It OWNS NO STAGES. It reuses the detection build's compute fragments
+    # verbatim — same swings, same structure, same order blocks, same sessions,
+    # same market state — so there is one implementation, not two. Parity
+    # evidence is recorded against `detection_15m`, where those stages live; a
+    # second claim here would be the same measurement filed twice under two
+    # names, and the first question would be which copy is authoritative.
+    #
+    # What it adds is the order lifecycle, and that is NOT parity-claimable at
+    # all: production executes on 1-minute candles and this chart is 15-minute.
+    # The script says so on its own panel, unsuppressibly.
+    "strategy_companion": {
+        "target_id": "strategy_companion",
+        "label": "Strategy Tester companion (15m)",
+        "timeframe": "15min",
+        "chart_timeframe_seconds": [900],
+        "stages": (),
+        "indicator_title": "TVO Strategy Companion — {symbol}",
+        "indicator_short": "TVO-SC",
+        "pine": GEN_DIR / "tradingview_strategy_companion_15m.pine",
+        "manifest": ARTIFACT_DIR / "parity_manifest_strategy_companion.json",
+        "fragments": ("s10_inputs", "20_data_context", "30_time", "40_sessions",
+                      "45_volatility", "55_swings", "58_structure",
+                      "65_order_blocks", "66_regime", "s90_strategy"),
+        "plot_reserve": 8,
+        # THE COST MODEL, and the reason `slippage` is zero.
+        #
+        # Production books cost as a FRACTION OF R: 0.6 pip round trip against
+        # the trade's own stop distance. TradingView offers two places to put
+        # that — `slippage`, in ticks, and `commission`. Slippage in ticks is a
+        # fixed price offset, so on an 8.6-pip stop it is 7% of R and on a
+        # 30-pip stop it is 2%: the same setting, two different costs. That is
+        # not what production does.
+        #
+        # Cash-per-contract with risk-derived sizing IS what production does.
+        # Quantity = risk / stop distance, so a fixed cash charge per unit is a
+        # fixed fraction of R at every stop distance. Verified against S_2094
+        # (8.6-pip risk): 2 * 0.00003 / 0.00086 = 0.0698, which is the
+        # `total_cost_r` production recorded for that trade.
+        #
+        # Slippage is therefore ZERO — not because production is frictionless,
+        # but because its friction is already fully represented here and
+        # charging it twice would be the easy way to make the headline look
+        # conservative while being wrong.
+        "declaration": (
+            'strategy("{title}", "{short}",\n'
+            "     overlay = true,\n"
+            "     // Production's rail is `max_open_positions = 6`\n"
+            "     // (live/config.py). The historical maximum actually observed\n"
+            "     // is 2 — that is evidence about a quiet sample, not the\n"
+            "     // strategy's authority, and sizing the cap to it would\n"
+            "     // silently forbid a seventh trade production permits.\n"
+            "     pyramiding = 6,\n"
+            "     initial_capital = 100000,\n"
+            "     default_qty_type = strategy.fixed,\n"
+            "     default_qty_value = 1,\n"
+            "     // See the cost model note in generate_pine.py's build target.\n"
+            "     slippage = 0,\n"
+            "     commission_type = strategy.commission.cash_per_contract,\n"
+            "     commission_value = 0.00003,\n"
+            "     // FALSE, deliberately. An order submitted at a bar's close is\n"
+            "     // then active from the NEXT bar, so the 3-minute delay is\n"
+            "     // satisfied with 12 minutes to spare and can never be\n"
+            "     // violated. True would fill at the close of the bar the arm\n"
+            "     // was detected on — the arm==fill defect, rebuilt.\n"
+            "     process_orders_on_close = false,\n"
+            "     calc_on_order_fills = false,\n"
+            "     max_labels_count = 500, max_boxes_count = 500,\n"
+            "     max_lines_count = 500)"),
+        # It needs the 144-cell target table and the news schedule (both are
+        # fill-time authority) and has nothing to do with the replay recording.
+        "embed": ("targets", "news"),
+        "authority": (
+            "// Python is the sole source of truth. Where this strategy and "
+            "the production\n// engine disagree, THIS STRATEGY IS WRONG — and "
+            "on the execution lifecycle it\n// cannot be right, because "
+            "production executes on 1-minute candles and this\n// chart is "
+            "15-minute. Nothing here is a parity claim."),
     },
 }
 
@@ -355,7 +444,59 @@ TARGET_SCOPE_NOTE = {
         "// and a second aggregation would be a second unproven authority.\n"
         "//\n"
         "// S7 is NOT YET IMPLEMENTED in this build. It claims no parity."),
+    "strategy_companion": (
+        "// WHAT THIS BUILD IS. A `strategy()` so TradingView's Strategy Tester\n"
+        "// has something to run. The Visual Oracle stays an `indicator()` and is not\n"
+        "// modified by this build's existence.\n"
+        "//\n"
+        "// It CLAIMS NO PARITY, and the claim is not merely unrecorded — it is\n"
+        "// unavailable. Production detects order blocks on 15-minute bars and EXECUTES\n"
+        "// on 1-minute ones: the arm, the 3-minute delay and the fill all happen at a\n"
+        "// resolution this chart does not have. A 15-minute bar that both touches the\n"
+        "// entry edge and breaches the far edge contains production's fill and\n"
+        "// production's invalidation at once, and OHLC cannot order the minutes\n"
+        "// between them.\n"
+        "//\n"
+        "// THE TWO MODES DIFFER IN EXACTLY ONE DECISION, and it is not the one a\n"
+        "// reader would guess. Neither can decline the bar above: TradingView matches\n"
+        "// a resting order against a bar BEFORE the script is evaluated at that bar's\n"
+        "// close, so if such a bar delivers the entry the fill has already happened.\n"
+        "// Both modes therefore only refuse to START, and both count the fills whose\n"
+        "// own bar broke the block.\n"
+        "//\n"
+        "// What they do differ on is the ARM BAR. If the bar that armed a setup had\n"
+        "// already reached the entry edge, production — on 1-minute candles — may well\n"
+        "// have filled inside it; 28 of 46 recorded fills (61%) did. This build cannot\n"
+        "// trade a bar that has closed, so its order waits for a later bar to revisit\n"
+        "// the edge: same price, different hour, therefore a different session, market\n"
+        "// state and possibly matrix cell. STRICT will not call that production's\n"
+        "// trade and declines. PRACTICAL takes it, flags it emulator-dependent, and\n"
+        "// labels every headline APPROXIMATE. Neither is called parity."),
 }
+
+
+#: The declaration every ORACLE build gets. A target may override it; exactly
+#: one does, because exactly one of them is a `strategy()`.
+#:
+#: max_lines_count WAS OMITTED here once, and Pine's default is FIFTY. The
+#: replay layer alone draws up to four lines per setup and the live layer four
+#: per block, so entry / stop / target lines were being evicted by the engine
+#: within a few setups — which is what "the risk-reward tools are not showing"
+#: was. Boxes and labels were already raised; lines were not, and the omission
+#: is invisible because Pine evicts silently rather than erroring.
+DEFAULT_DECLARATION = (
+    'indicator("{title}", "{short}",\n'
+    "     overlay = true, max_labels_count = 500, max_boxes_count = 500,\n"
+    "     max_lines_count = 500)")
+
+#: The one-way synchronisation rule, stated on every generated file. Per target
+#: because the noun differs and the sentence is quoted verbatim by
+#: `test_generated_pine_carries_the_do_not_edit_banner` — it is a commitment,
+#: not boilerplate, and rewording it for all builds to suit one of them is how a
+#: commitment quietly becomes a slogan.
+DEFAULT_AUTHORITY = (
+    "// Python is the sole source of truth. Where this indicator and the "
+    "production\n// engine disagree, THIS INDICATOR IS WRONG.")
 
 
 def build_generated_header(contract: dict, source_hash_placeholder: str,
@@ -364,6 +505,13 @@ def build_generated_header(contract: dict, source_hash_placeholder: str,
     f = contract["fingerprint"]
     cfgctx = contract["configuration"]["pine_relevant"]["data_context"]
     title = spec["indicator_title"].format(symbol=cfgctx["symbol"])
+    # The declaration is per target because ONE of them is not an indicator.
+    # Hardcoding `indicator(...)` here is what made the strategy companion
+    # impossible to generate at all, and hand-editing the emitted file would
+    # have been detected as tampering — correctly.
+    declaration = (spec.get("declaration") or DEFAULT_DECLARATION).format(
+        title=title, short=spec["indicator_short"])
+    authority = spec.get("authority") or DEFAULT_AUTHORITY
     return f'''// =============================================================================
 // TRADINGVIEW VISUAL ORACLE — GENERATED FILE. DO NOT EDIT.
 // =============================================================================
@@ -381,7 +529,7 @@ def build_generated_header(contract: dict, source_hash_placeholder: str,
 //
 // Build target      : {spec["target_id"]}  ({spec["label"]})
 // Chart timeframe   : {spec["timeframe"]}  — this build is REFUSED on any other
-// Owned stages      : {", ".join(spec["stages"])}
+// Owned stages      : {", ".join(spec["stages"]) or "none — reuses the detection build's stages"}
 //
 // Any hand edit to this file is DETECTED by
 //     python -m tools.oracle.check_freshness --target {spec["target_id"]}
@@ -391,20 +539,11 @@ def build_generated_header(contract: dict, source_hash_placeholder: str,
 //
 {TARGET_SCOPE_NOTE[spec["target_id"]]}
 //
-// Python is the sole source of truth. Where this indicator and the production
-// engine disagree, THIS INDICATOR IS WRONG.
+{authority}
 // =============================================================================
 
 //@version=6
-// max_lines_count WAS OMITTED, and Pine's default is FIFTY. The replay layer
-// alone draws up to four lines per setup and the live layer four per block, so
-// entry / stop / target lines were being evicted by the engine within a few
-// setups — which is what "the risk-reward tools are not showing" was. Boxes and
-// labels were already raised; lines were not, and the omission is invisible
-// because Pine evicts silently rather than erroring.
-indicator("{title}", "{spec["indicator_short"]}",
-     overlay = true, max_labels_count = 500, max_boxes_count = 500,
-     max_lines_count = 500)
+{declaration}
 
 // The assembled-source identifier, as a CONSTANT (the debug panel renders it).
 // It lives in this fragment rather than 05 because it is the one value that
@@ -891,6 +1030,8 @@ def build_generated_replay(spec=None) -> str:
     return "\n".join(lines)
 
 
+
+
 def build_generated_targets(spec=None) -> str:
     """Production's trade-target table, as Pine arrays.
 
@@ -989,6 +1130,8 @@ def build_generated_targets(spec=None) -> str:
         "// Cohort session vocabulary — `_cohort_session_key`, NOT the S1 keys.",
         _pine_str_array("TGT_SESSION_NAME", table["sessions"]),
         _pine_str_array("TGT_STATE_NAME", states),
+        "",
+        "",
         "// index = ((session * 2 + structure) * 2 + direction)",
         _pine_float_array("TGT_BASE_RR", [c2["target_rr"] for c2 in base]),
         _pine_int_array_safe("TGT_BASE_ON",
@@ -1093,20 +1236,22 @@ def assemble(contract: dict, spec=None) -> tuple[str, list[dict]]:
     the hash of the body it heads."""
     spec = spec or resolve_target()
     gen_contract = build_generated_contract(contract, spec)
-    # Only the detection build draws setups; the execution build gets an empty
-    # block so the two stay structurally identical without carrying data it has
-    # nothing to draw with.
-    gen_replay = (build_generated_replay(spec)
-                  if spec["target_id"] == DEFAULT_TARGET
-                  else "// 06 — no replay data for this target.\nRP_COUNT = 0")
-    gen_news = (build_generated_news(spec)
-                if spec["target_id"] == DEFAULT_TARGET
-                else "// 08 — no news schedule for this target.\n"
+    # WHAT EACH BUILD CARRIES, declared per target rather than inferred from
+    # "is it the default". The strategy companion needs the 144-cell target
+    # table and the news schedule — both are fill-time authority it must read —
+    # and has no use for the replay recording. Keying this off DEFAULT_TARGET
+    # gave it neither, and a build that silently loses the target table does not
+    # fail: `TGT_PRESENT = false` makes every cell fall through to the global
+    # RR, which is a plausible number and a wrong one.
+    embed = spec.get("embed") or ()
+    gen_replay = (build_generated_replay(spec) if "replay" in embed
+                  else "// 06 - no replay data for this target.\nRP_COUNT = 0")
+    gen_news = (build_generated_news(spec) if "news" in embed
+                else "// 08 - no news schedule for this target.\n"
                      "NEWS_PRESENT   = false\n"
                      'NEWS_LAST_TXT  = "no schedule embedded"')
-    gen_targets = (build_generated_targets(spec)
-                   if spec["target_id"] == DEFAULT_TARGET
-                   else "// 07 — no target table for this target.\n"
+    gen_targets = (build_generated_targets(spec) if "targets" in embed
+                   else "// 07 - no target table for this target.\n"
                         "TGT_PRESENT = false")
 
     def compose(source_hash: str) -> tuple[str, list[dict]]:

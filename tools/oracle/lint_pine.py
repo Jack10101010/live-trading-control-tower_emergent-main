@@ -83,8 +83,31 @@ def _strip_comments_and_strings(src: str) -> list[tuple[int, str]]:
     return [(n, re.sub(r'"(?:[^"\\]|\\.)*"', '""', l)) for n, l in _strip_comments(src)]
 
 
+#: Build targets that are `strategy()` scripts rather than `indicator()`
+#: ones. There is exactly one, and it is the whole reason this distinction
+#: exists: the Strategy Tester will not run an indicator, and the Visual Oracle
+#: must never place an order. Rules that encode "the oracle is an indicator"
+#: are therefore scoped to the builds that ARE oracles, rather than deleted —
+#: deleting them would let a future edit put `strategy.entry` into the oracle
+#: with nothing to object.
+STRATEGY_TARGETS = {"strategy_companion"}
+
+
+def build_target(src: str) -> str:
+    """Which build this file claims to be, read from its generated header.
+
+    The header is generated and covered by the source hash, so a file cannot
+    quietly claim to be a different target than it is: `check_freshness`
+    compares the hash and reports INCOMPATIBLE.
+    """
+    m = re.search(r"^// Build target\s*:\s*(\S+)", src, re.M)
+    return m.group(1) if m else "detection_15m"
+
+
 def lint(src: str) -> list[dict]:
     findings: list[dict] = []
+    target = build_target(src)
+    is_strategy = target in STRATEGY_TARGETS
     code = _strip_comments_and_strings(src)   # literals blanked
     lit = _strip_comments(src)                # literals intact
 
@@ -151,12 +174,55 @@ def lint(src: str) -> list[dict]:
     if not re.search(r"^//@version=6\s*$", src, re.M):
         add("error", "version", 0, "missing `//@version=6`")
     ind = [n for n, l in code if re.match(r"\s*indicator\s*\(", l)]
-    if len(ind) != 1:
-        add("error", "indicator", ind[0] if ind else 0,
-            f"expected exactly one indicator() declaration, found {len(ind)}")
-    if re.search(r"^\s*strategy\s*\(", src, re.M):
+    strat = [n for n, l in code if re.match(r"\s*strategy\s*\(", l)]
+    want, got, other = (("strategy", strat, ind) if is_strategy
+                        else ("indicator", ind, strat))
+    if len(got) != 1:
+        add("error", "declaration", got[0] if got else 0,
+            f"expected exactly one {want}() declaration, found {len(got)}")
+    if other:
+        add("error", "declaration_kind", other[0],
+            f"build target {target!r} must be a {want}(), but the file declares "
+            f"{'an indicator' if is_strategy else 'a strategy'}()")
+    if not is_strategy and re.search(r"^\s*strategy\.", src, re.M):
         add("error", "not_a_strategy", 0,
-            "strategy() found — the oracle is an INDICATOR; it must never place orders")
+            "strategy.* found — an oracle build is an INDICATOR; it must never "
+            "place orders")
+
+    # ── CE10123: input.time needs a CONST int ────────────────────────────────
+    #
+    # `timestamp("UTC", 2026, 6, 23, 0, 0)` is a SIMPLE int; only
+    # `timestamp("<iso>")` folds to a const. Everything else about the two forms
+    # is identical, which is what makes the wrong one so easy to write — and the
+    # compiler is the only other thing that will tell you.
+    GOOD_DEFVAL = re.compile(r'input\.time\s*\(\s*timestamp\s*\(\s*"[^"]*"\s*\)')
+    for n, l in lit:
+        if "input.time" in l and not GOOD_DEFVAL.search(l):
+            add("error", "input_time_not_const", n,
+                "`input.time` requires a CONST int default, and only the "
+                "single-string form gives one: "
+                'timestamp("2026-06-23T00:00:00+0000"). The multi-argument '
+                "timestamp(\"UTC\", y, m, d, …) is a SIMPLE int and "
+                "TradingView rejects it with CE10123.")
+
+    # ── CE10197: a bare literal is not a statement ───────────────────────────
+    #
+    # Runs against `lit` (literals INTACT) for the same reason the day-semantics
+    # rule does: the defect IS the literal, so the blanked view cannot see it.
+    prev_code = ""
+    for n, l in ((n, l) for n, l in lit if l.strip()):
+        body = l.split("//")[0].rstrip()
+        if not body.strip():
+            continue
+        s = body.strip()
+        pure = (len(s) >= 2 and s[0] in "'\"" and s[-1] == s[0]
+                and s[1:-1].count(s[0]) == 0)
+        if pure and not prev_code.endswith(CONT_OPS):
+            add("error", "bare_literal", n,
+                f"`{s}` is a statement that is only a literal — TradingView "
+                f"rejects this with CE10197 \"is not a valid statement\". It is "
+                f"usually the residue of a deleted line.")
+        prev_code = s
 
     # ── the array.push trap ──────────────────────────────────────────────────
     for n, l in code:
@@ -464,7 +530,10 @@ def lint(src: str) -> list[dict]:
     # ── non-suppressible warning ─────────────────────────────────────────────
     warn_lines = [n for n, l in enumerate(src.splitlines(), 1)
                   if "SHADOW MODE" in l and "EXECUTION STATE UNKNOWN" in l]
-    if len(warn_lines) < 2:
+    # The oracle's banner claims "this chart is not production's execution
+    # state". The strategy companion makes a DIFFERENT unsuppressible claim, on
+    # its own panel, and is checked for that below instead.
+    if not is_strategy and len(warn_lines) < 2:
         add("error", "warning_suppressible", warn_lines[0] if warn_lines else 0,
             "the SHADOW MODE / EXECUTION STATE UNKNOWN / NEWS UNAVAILABLE banner must "
             "render on BOTH the HUD-on and HUD-off paths so no input can hide it")
@@ -478,7 +547,16 @@ def lint(src: str) -> list[dict]:
                 add("error", rule, n, "generated file embeds a machine-specific path")
     if "DO NOT EDIT" not in src:
         add("error", "no_edit_banner", 0, "generated file lacks a DO-NOT-EDIT banner")
-    if re.search(r"\b20\d\d-\d\d-\d\dT\d\d:\d\d", src):
+    # A DATE INSIDE `timestamp(...)` IS A FIXED DEFAULT, NOT A STAMP. The rule
+    # guards against the GENERATOR writing the current time into the file, which
+    # would make every regeneration a different file and destroy the tamper
+    # check. `input.time(timestamp("2026-06-23T00:00:00+0000"), …)` is the same
+    # bytes on every run — and it is the ONLY form `input.time` accepts, because
+    # the multi-argument `timestamp()` returns a simple int where a const is
+    # required (CE10123). Scoped rather than deleted: a bare ISO stamp anywhere
+    # else still errors, and a test holds both halves.
+    unstamped = re.sub(r'timestamp\s*\(\s*"[^"]*"\s*\)', "timestamp()", src)
+    if re.search(r"\b20\d\d-\d\d-\d\dT\d\d:\d\d", unstamped):
         add("error", "wallclock_stamp", 0,
             "generated file embeds a wall-clock timestamp — regeneration would not "
             "be byte-identical and the tamper check would break")
@@ -487,11 +565,59 @@ def lint(src: str) -> list[dict]:
     banned = ("ta.pivothigh", "ta.pivotlow", "ta.atr", "ta.rma", "ta.ema", "ta.sma",
               "strategy.entry", "strategy.close", "order_block", "swingHigh",
               "swingLow", "bosLevel", "chochLevel")
-    for n, l in code:
-        for b in banned:
-            if b in l:
-                add("error", "stage_scope", n,
-                    f"`{b}` is beyond Stage S1 (data/time/session only)")
+    if not is_strategy:
+        for n, l in code:
+            for b in banned:
+                if b in l:
+                    add("error", "stage_scope", n,
+                        f"`{b}` is beyond Stage S1 (data/time/session only)")
+
+    # ── the strategy companion's own non-negotiables ─────────────────────
+    #
+    # Each of these is a defect this project has already made once, on the
+    # oracle, and would otherwise be free to make again on a second script.
+    if is_strategy:
+        # The declaration STATEMENT, not a fixed window of leading lines.
+        # A window is a guess about how long the header comment happens to be,
+        # and this one was wrong by four lines: `slippage = 0` fell inside it
+        # and `commission_type` fell outside, so two of the three cost rules
+        # were passing on absence rather than on evidence.
+        first = strat[0] if strat else 0
+        decl = " ".join(l for n, l in code
+                        if first <= n < first + 40).split(")")[0]
+        # SLIPPAGE. The cost is carried entirely by a cash-per-contract
+        # commission against risk-derived quantity, which is a fixed fraction
+        # of R at every stop distance. A tick-denominated slippage on top is
+        # both a second charge and a stop-distance-dependent one.
+        if not re.search(r"slippage\s*=\s*0\b", decl):
+            add("error", "cost_double_counted", 0,
+                "the declaration must set `slippage = 0`: production's cost is "
+                "represented in full by the cash-per-contract commission, and a "
+                "tick slippage would charge it twice at a rate that varies with "
+                "the stop distance")
+        if "strategy.commission.cash_per_contract" not in decl:
+            add("error", "cost_model", 0,
+                "commission must be cash_per_contract — percent-of-value and "
+                "per-order forms do not reduce to a constant fraction of R")
+        # PROCESS ORDERS ON CLOSE. True fills an order at the close of the very
+        # bar the arm was detected on, which is arm == fill: the exact defect
+        # removed from the oracle's live layer.
+        if not re.search(r"process_orders_on_close\s*=\s*false", decl):
+            add("error", "arm_equals_fill", 0,
+                "`process_orders_on_close = false` is required: true fills at "
+                "the close of the bar the arm was detected on, reproducing the "
+                "arm==fill defect and violating production's 3-minute delay")
+        # THE DISCLOSURE. A backtest headline travels without its caveats
+        # unless the caveat is on the same surface as the number.
+        if "APPROXIMATE" not in src:
+            add("error", "undisclosed_approximation", 0,
+                "PRACTICAL mode's headline metrics must be labelled APPROXIMATE "
+                "on the script's own panel — a number read off the Strategy "
+                "Tester is quoted without whatever a comment said")
+        if not re.search(r"production executes on 1m", src):
+            add("error", "undisclosed_timeframe", 0,
+                "the panel must state that production executes on 1-minute "
+                "candles while this build is 15-minute, on every path")
 
     # ── undeclared generated constants ───────────────────────────────────────
     # The rule that would have caught CE10272 "Undeclared identifier
@@ -607,6 +733,30 @@ def lint(src: str) -> list[dict]:
                 "(CE10088). Derive the value at the call site, or compute it "
                 "on demand instead of keeping a counter.")
 
+    def _split_args(tail: str) -> list:
+        """Top-level comma-separated arguments of an already-opened call.
+
+        Depth-aware, and it stops at the call's own closing bracket. The regex
+        this replaced could not split `a, 2, 3)` at all — every comma looked
+        nested to it — so any table declared on a single line went unchecked.
+        """
+        out, cur, depth = [], [], 0
+        for ch in tail:
+            if ch in "([":
+                depth += 1
+            elif ch in ")]":
+                if depth == 0:
+                    break
+                depth -= 1
+            elif ch == "," and depth == 0:
+                out.append("".join(cur).strip())
+                cur = []
+                continue
+            cur.append(ch)
+        if "".join(cur).strip():
+            out.append("".join(cur).strip())
+        return [a for a in out if a]
+
     # ── table row capacity ───────────────────────────────────────────────────
     # RE10040 "Row N is out of table bounds". A RUNTIME error, so it survives
     # compilation and static syntax checking and only appears once a chart is
@@ -628,9 +778,13 @@ def lint(src: str) -> list[dict]:
         for _, nxt in code[idx + 1: idx + 3]:
             if tail.count("(") > tail.count(")"):
                 tail += " " + nxt.strip()
-        args = [a.strip() for a in re.split(r",(?![^(]*\))", tail) if a.strip()]
+        args = _split_args(tail)
         if len(args) >= 3:
-            rows_expr = args[2]
+            # A declaration that closes on its own line leaves the third
+            # argument as `20)`. Left unstripped that parses as neither a digit
+            # nor a name, `rows` stays None, and the table is skipped entirely
+            # — the check passing because it never looked.
+            rows_expr = args[2].rstrip(")").strip()
             rm = re.fullmatch(r"(\w+)", rows_expr)
             rows = None
             if rows_expr.isdigit():
@@ -660,24 +814,48 @@ def lint(src: str) -> list[dict]:
             if cm and cm.group(1) in tables:
                 helper_table[cur_helper] = cm.group(1)
 
+    # ROWS, not cell writes. A four-column panel writes two cells per row; a
+    # rule that counts writes reports twice the height and demands twice the
+    # capacity, which is the opposite of what it is for.
     writes: dict[str, int] = {t: 0 for t in tables}
+    rowset: dict[str, set] = {t: set() for t in tables}
+    offsets: dict[str, int] = {t: 0 for t in tables}
+
+    def _note_row(tbl, expr):
+        """Record a row expression. Returns False if it could not be read."""
+        expr = expr.strip()
+        if re.fullmatch(r"\d+", expr):
+            rowset[tbl].add(int(expr))
+            return True
+        m = re.fullmatch(r"(\w+)\s*\+\s*(\d+)", expr)
+        if m:
+            # `base + N`: the base is itself some number of rows in, so the
+            # reachable index is at least N. Tracked separately and added to
+            # the count of unresolved rows below.
+            offsets[tbl] = max(offsets[tbl], int(m.group(2)) + 1)
+            return True
+        return False
+
     for n, l in code:
         stripped = l.strip()
         if re.match(r"[A-Za-z_]\w*\s*\(.*\)\s*=>", stripped):
             continue                       # the helper's own definition
         for helper, tbl in helper_table.items():
-            if re.search(rf"(?<![\w.]){re.escape(helper)}\s*\(", stripped):
+            hm = re.search(
+                rf"(?<![\w.]){re.escape(helper)}\s*\(\s*([^,]+),", stripped)
+            if hm and not _note_row(tbl, hm.group(1)):
                 writes[tbl] += 1
-        dm = re.search(r"table\.cell\s*\(\s*(\w+)\s*,", stripped)
+        dm = re.search(r"table\.cell\s*\(\s*(\w+)\s*,\s*[^,]+,\s*([^,]+),",
+                       stripped)
         if dm and dm.group(1) in writes and not any(
                 re.search(rf"(?<![\w.]){re.escape(h)}\s*\(", stripped)
                 for h in helper_table):
-            # a direct table.cell outside a helper; only count it once per line
-            if cur_helper is None:
+            if cur_helper is None and not _note_row(dm.group(1), dm.group(2)):
                 writes[dm.group(1)] += 1
 
     for tbl, (rows, lineno) in tables.items():
-        used = writes.get(tbl, 0)
+        literal = max(rowset.get(tbl, {0}) or {0}) + 1
+        used = max(literal, writes.get(tbl, 0) + offsets.get(tbl, 0))
         if used > rows:
             add("error", "table_row_overflow", lineno,
                 f"table `{tbl}` is declared with {rows} rows but up to {used} "

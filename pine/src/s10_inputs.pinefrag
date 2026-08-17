@@ -1,0 +1,191 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// s10 — STRATEGY COMPANION INPUTS
+//
+// This build is a `strategy()`, not an indicator. It exists so TradingView's
+// Strategy Tester has something to run; the Visual Oracle remains the parity
+// and visual tool and is untouched.
+//
+// It reuses the ORACLE'S OWN detection stack — swings, structure, order blocks,
+// sessions, market state — fragment for fragment, so there is exactly one
+// implementation of each and no second opinion to drift. What it adds is the
+// order lifecycle and the diagnostics.
+//
+// Everything visual is off. The compute fragments reference a handful of
+// display symbols, so they are declared here as constants and the two retention
+// helpers are stubs that are never reached (both call sites are guarded by the
+// flags below). Carrying the oracle's furniture across would imply this script
+// draws things it does not.
+// ─────────────────────────────────────────────────────────────────────────────
+
+grpMode  = "Mode"
+grpExec  = "Execution"
+grpDebug = "Diagnostics"
+
+// ── THE MODE SELECTOR ────────────────────────────────────────────────────────
+//
+// Two honest answers to one impossible question. Production executes on
+// 1-MINUTE candles; this chart is 15-minute, so part of production's lifecycle
+// is not reconstructable here. The modes differ in exactly one decision.
+//
+// STRICT / PROVABLE  —  A DIAGNOSTIC, NOT A BACKTEST.
+//   It answers one question: what can a 15-minute chart prove without inventing
+//   the order of minutes inside a bar? A setup whose ARM BAR had already reached
+//   the entry edge could have filled inside that bar in production — 28 of 46
+//   recorded fills (61%) did — and a bar that has closed cannot be traded here.
+//   STRICT will not call a later fill at the same price production's trade, so
+//   it declines and counts it.
+//
+//   ON THE MEASURED WINDOW THAT LEAVES ZERO TRADES, and that is the result, not
+//   a fault: 22 of 22 armed setups had an arm bar containing the entry edge,
+//   which is structural — the edge is the block boundary and the arm level is
+//   25% inside it, so price crosses the edge on its way to arming. Read STRICT
+//   as a measurement of how much temporal information M15 lacks. It is
+//   deliberately NOT tuned to produce trades; a heuristic that made it more
+//   active would make it a worse instrument, not a better one.
+//
+// PRACTICAL / TV EMULATOR  —  THE MODE TO ACTUALLY BACKTEST WITH.
+//   Same lifecycle, but it takes those setups and lets TradingView's broker
+//   emulator resolve what the chart cannot. This is the mode for the equity
+//   curve, win rate, profit factor, drawdown, trade list and parameter work.
+//   Its headline metrics are APPROXIMATE and the panel says so in red, on every
+//   path. Every result that leaned on an emulator assumption is counted, so a
+//   reader can see how much of the number belongs to TradingView.
+//
+// NEITHER IS CALLED PARITY. M15 cannot reproduce all M1 timing, and a mode name
+// implying otherwise would be the one claim this whole project exists to avoid.
+i_mode = input.string("STRICT / PROVABLE", "Mode",
+     options = ["STRICT / PROVABLE", "PRACTICAL / TV EMULATOR"],
+     tooltip = "STRICT never claims a trade it cannot prove and will take " +
+               "FEWER trades than production. PRACTICAL lets TradingView's " +
+               "emulator resolve intrabar ordering and produces APPROXIMATE " +
+               "metrics — useful for equity/PF/drawdown, not for parity.",
+     group = grpMode)
+
+f_strict() => i_mode == "STRICT / PROVABLE"
+
+// ── execution ────────────────────────────────────────────────────────────────
+//
+// RISK-BASED SIZING, and it is what makes the cost model reconcile. Production
+// books cost as a fraction of R against a unit risk; TradingView charges cash
+// against quantity. Those agree only when quantity is derived from the stop
+// distance, which is what `f_qty` below does.
+i_riskPerTrade = input.float(1000, "Risk per trade (account currency)",
+     minval = 1,
+     tooltip = "Position size is derived from this and the stop distance, so " +
+               "every trade risks the same amount. Production sizes at 1R with " +
+               "`risk_amount = 1.0`; the absolute number here only scales the " +
+               "equity curve, never the R multiples.",
+     group = grpExec)
+
+// The order is cancelled and re-placed as the gates move, so it can never fill
+// while the policy says BLOCK. This bounds how long a single armed order may
+// wait for price to come back, matching the block's own life.
+i_maxWaitBars = input.int(120, "Cancel an armed order after (bars)",
+     minval = 4, maxval = 2000,
+     tooltip = "An armed order waits for price to revisit the entry edge. This " +
+               "is how long it may wait before the setup is abandoned. It does " +
+               "not change any production rule; it bounds a working order.",
+     group = grpExec)
+
+// ── the backtest window ──────────────────────────────────────────────────────
+//
+// The Strategy Tester reports whatever the chart happens to have loaded, which
+// is not a question anybody asked. This bounds ORDER PLACEMENT to an explicit
+// window so a reported trade count means something specific.
+//
+// It bounds PLACEMENT ONLY. Detection, swings, structure and the daily market
+// state keep running over the whole history — they have a warm-up measured in
+// hundreds of bars, and starting them at the window edge would report a market
+// state that had never been computed. A trade whose order was placed inside the
+// window and whose exit falls outside it still resolves, because abandoning it
+// would invent an outcome production never had.
+i_useWindow  = input.bool(false, "Limit orders to a date window",
+     tooltip = "Detection always runs over the full history; only order " +
+               "PLACEMENT is bounded. Trades opened inside the window are " +
+               "allowed to finish outside it.",
+     group = grpExec)
+// THE ISO FORM IS NOT A STYLE CHOICE. `input.time` requires a CONST int, and
+// only `timestamp("<iso>")` folds to one — `timestamp("UTC", 2026, 6, 23, 0, 0)`
+// is a SIMPLE int and TradingView rejects it outright with CE10123. Writing it
+// the other way to keep a text-level lint rule quiet cost a compile; the rule
+// was scoped instead, and it still catches a wall-clock stamp anywhere else.
+i_windowFrom = input.time(timestamp("2026-06-23T00:00:00+0000"), "  from",
+     group = grpExec)
+i_windowTo   = input.time(timestamp("2026-08-01T00:00:00+0000"), "  to",
+     group = grpExec)
+
+i_showMarkers = input.bool(true, "Mark entries on the chart", group = grpDebug)
+i_showPanel   = input.bool(true, "Diagnostics panel",         group = grpDebug)
+
+// ── WHERE THE PANEL GOES, and why it is not top-right ────────────────────────
+//
+// The Visual Oracle's HUD is at `position.top_right` (99_hud.pinefrag). This
+// panel was too. Two tables in one chart cell do not tile — one covers the
+// other, silently, with no runtime error and no clue in either script. The
+// companion appeared to have lost its diagnostics while cheerfully continuing
+// to trade.
+//
+// The default moves rather than the oracle's, because this is the newer script
+// and the oracle is the one whose layout people already know. Middle-right
+// because top-left carries TradingView's own script labels and the bottom is
+// where the Strategy Tester pane opens.
+//
+// It is an input as well as a default: the next script added to this chart will
+// have the same problem, and a fixed default cannot solve a class of collisions
+// — it can only move which pair collides.
+i_panelPos = input.string("Middle right", "Diagnostics position",
+     options = ["Middle right", "Top right", "Bottom right",
+                "Middle left", "Top left", "Bottom left"],
+     tooltip = "Move the panel if another script occupies the same corner. " +
+               "The Visual Oracle's HUD sits at TOP RIGHT, so this defaults " +
+               "to MIDDLE RIGHT; two tables in one cell hide each other with " +
+               "no error of any kind.",
+     group = grpDebug)
+
+f_panelPos() =>
+    string p = position.middle_right
+    if i_panelPos == "Middle right"
+        p := position.middle_right
+    else if i_panelPos == "Top right"
+        p := position.top_right
+    else if i_panelPos == "Bottom right"
+        p := position.bottom_right
+    else if i_panelPos == "Middle left"
+        p := position.middle_left
+    else if i_panelPos == "Top left"
+        p := position.top_left
+    else if i_panelPos == "Bottom left"
+        p := position.bottom_left
+    p
+
+// ── symbols the shared compute fragments reference ───────────────────────────
+// Declared, never used to draw. Both guarded call sites are switched off, so
+// the two helpers below are unreachable — they exist so the fragments compile
+// unchanged rather than being forked for this build.
+i_debug           = false
+i_showOrderBlocks = false
+i_showRegime      = false
+i_maxObjects      = 10
+
+f_drawChartObs() => false
+f_pushLabel(label lbl) => lbl
+f_pushLine(line ln) => ln
+
+// The order-block palette. Unreachable here — every use is inside
+// `if i_showOrderBlocks and f_drawChartObs()`, both false — but Pine resolves
+// identifiers at COMPILE time, not at run time, so an unreachable reference to
+// an undeclared constant is still CE10272 "Undeclared identifier". Values are
+// the oracle's, so the two scripts cannot drift into different blues.
+COL_OB_BULL = #2E86DE
+COL_OB_BEAR = #E67E22
+// The OB CREATION MARKER. A vertical line spanning the block at the bar its
+// structure break confirmed it. Two of the three renderers anchor the box at the
+// ORIGIN candle, so without this a wide box cannot say where the strategy
+// actually found the block — only where it sits.
+COL_OB_MARK = color.new(color.black, 0)
+
+// ── palette, for the diagnostics panel only ──────────────────────────────────
+BG_HUD  = color.new(#0E1117, 8)
+BG_WARN = color.new(#B00020, 5)
+BG_STAT = color.new(#E08000, 10)
+BG_HEAD = color.new(#1A2340, 5)

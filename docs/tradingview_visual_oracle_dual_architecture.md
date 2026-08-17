@@ -31,9 +31,12 @@ script silently deciding which domain each value belongs to.
 |---|---|---|---|
 | `detection_15m` | 15m | S1–S6 | `pine/generated/tradingview_visual_oracle_detection_15m.pine` |
 | `execution_1m` | 1m | S7+ | `pine/generated/tradingview_visual_oracle_execution_1m.pine` |
+| `strategy_companion` | 15m | *nothing* | `pine/generated/tradingview_strategy_companion_15m.pine` |
 
 Every stage has exactly one owner. A stage in two builds would have two source
 hashes and two evidence trails for one claim.
+
+The third build owns no stages on purpose — see §7.
 
 ---
 
@@ -66,6 +69,91 @@ columns and packed groups (`TARGET_SURFACES`). So:
 
 That independence is the entire point of having two targets, and it is tested in
 both directions.
+
+---
+
+## 2b. The third build: a `strategy()`, and why it owns nothing
+
+`strategy_companion` exists because TradingView's Strategy Tester will not run
+an `indicator()`, and the Visual Oracle must stay one. Converting the oracle
+would put orders inside the artefact whose entire purpose is to show what
+production *did*.
+
+It reuses the detection build's compute fragments **verbatim** — `20_data_context`,
+`30_time`, `40_sessions`, `45_volatility`, `55_swings`, `58_structure`,
+`65_order_blocks`, `66_regime` — and adds two of its own: `s10_inputs` (a slim
+input set with every visual switched off) and `s90_strategy` (the order
+lifecycle). One implementation of each algorithm, so there is no second opinion
+to drift.
+
+It therefore **owns no stages and records no parity evidence**. Those stages
+live in `detection_15m`, where they are already measured; a second claim here
+would be one measurement filed under two names, and the first question would be
+which copy is authoritative. `check_freshness --target strategy_companion`
+reports `UNVERIFIED / not_validated`, which is the correct and permanent answer.
+
+### What it can and cannot reproduce
+
+Production executes on **1-minute** candles. Three consequences, all measured,
+none of them fixable by effort:
+
+1. **The arm bar is unrecoverable.** A historical bar is evaluated once, at its
+   close, so by the time the script sees the arm the bar is over. An order
+   placed then is active from the *next* bar. Production waited 3 minutes; this
+   waits 15. Measured: **28 of 46 recorded fills (61%) landed in the same
+   15-minute bar as their arm.**
+2. **The order type has to be chosen per bar.** Production's fill test is a
+   touch (`low <= entry <= high`), indifferent to direction of approach.
+   TradingView has no touch order: a buy limit is valid only below the market, a
+   buy stop only above. Measured at placement time, **60 of 89 resolvable setups
+   had the market on the STOP side**; a fixed limit would have filled those at
+   the next bar's open, a median 0.44R from the block edge and up to 4.46R. The
+   script picks the side from `close` vs `entry` each bar.
+3. **A bar that both delivers the entry and breaks the far edge cannot be
+   ordered.** TradingView matches resting orders against a bar *before* the
+   script runs at its close, so neither mode can decline such a fill after the
+   fact. It is counted (`fill bar also broke`) and never suppressed.
+
+### Two modes, and neither is called parity
+
+| | STRICT / PROVABLE | PRACTICAL / TV EMULATOR |
+|---|---|---|
+| a setup whose arm bar already reached the entry edge | declined, counted as omitted | taken, flagged emulator-dependent |
+| everything else | identical | identical |
+| headline label | — | `APPROXIMATE / TV EMULATOR` |
+
+The word *parity* is deliberately absent from both. M15 cannot reproduce all M1
+timing, and a mode name implying otherwise would be the one claim this project
+exists to avoid.
+
+### Position and cost rails
+
+* `pyramiding = 6`, from production's `live/config.py` `max_open_positions = 6`.
+  The historically observed maximum is 2 — evidence about a quiet sample, not
+  the strategy's authority.
+* `slippage = 0`, and the whole cost carried by
+  `commission_type = strategy.commission.cash_per_contract`,
+  `commission_value = 0.00003` (0.3 pip a side, 0.6 round trip). Quantity is
+  derived from the stop distance, so a fixed cash charge is a fixed *fraction of
+  R* at every stop distance — which is how production books it. A tick slippage
+  is a fixed *price*: 7% of R on an 8.6-pip stop and 2% on a 30-pip one.
+  Pinned to S_2094: `2 × 0.00003 / 0.00086 = 0.0698`, production's recorded
+  `total_cost_r` for that trade.
+* `process_orders_on_close = false`. True fills at the close of the bar the arm
+  was detected on — arm == fill, the defect removed from the oracle's live layer.
+
+`tools/oracle/lint_pine.py` enforces all four, plus the two disclosure strings,
+on any build in `STRATEGY_TARGETS`; the oracle's own "must never place orders"
+rule is scoped rather than deleted, and is tested in both directions.
+
+### Predicting it without TradingView
+
+`python -m tools.oracle.companion_backtest --start … --end …` runs the same
+lifecycle over the same 15-minute bars in Python, with a model of TradingView's
+documented four-price intrabar assumption (up bar → open, low, high, close). It
+is a **hypothesis about what the Strategy Tester will report**, not a substitute
+for it: the chart uses TradingView's own feed, and where the two disagree the
+chart is the observation.
 
 ---
 

@@ -192,9 +192,21 @@ def test_generated_pine_defines_every_pack_constant_the_fragments_use():
     shipping their radices would imply it exports them — so a fragment's
     constants must be defined by ITS OWN build, not by whichever happens to be
     on disk."""
+    from tools.oracle.compare_stages import TARGET_SURFACES
     from tools.oracle.generate_pine import BUILD_TARGETS
     all_used = set()
     for name, spec in BUILD_TARGETS.items():
+        # A build that EXPORTS NOTHING references no packed constants, and that
+        # is not a hole in the check — the packed transport exists to carry
+        # exported values to the comparator. The strategy companion has no
+        # export surface at all (it reuses the detection build's stages, where
+        # the parity question is already answered), so requiring constants of it
+        # would be requiring an export it deliberately does not have.
+        if not TARGET_SURFACES[name]:
+            assert not spec["stages"], (
+                f"{name} owns stages but exports nothing — one of the two is "
+                f"wrong, and a stage with no export can never be compared")
+            continue
         pine = spec["pine"].read_text(encoding="utf-8")
         defined = set(re.findall(r"^(PACK_\w+)\s*=", pine, re.M))
         used = set()

@@ -11,7 +11,7 @@
 // Engine manifest   : 196acb79847f6d8bdab045b868d1b53ade7bb5a4493ffc298f7eef20e113dedf
 // Resolved config   : 998c82c6fc9d1eab18fda1409efb20dcdaa176a7dc610b6efb15c8ba3c9cfe83
 // Policy version    : 2026-07-09.te-v1.2-surgical-disable
-// Source hash       : ea12423c9fad8d75
+// Source hash       : 5f225e2c17d7f941
 //
 // Build target      : detection_15m  (Detection oracle (15m))
 // Chart timeframe   : 15min  — this build is REFUSED on any other
@@ -39,12 +39,6 @@
 // =============================================================================
 
 //@version=6
-// max_lines_count WAS OMITTED, and Pine's default is FIFTY. The replay layer
-// alone draws up to four lines per setup and the live layer four per block, so
-// entry / stop / target lines were being evicted by the engine within a few
-// setups — which is what "the risk-reward tools are not showing" was. Boxes and
-// labels were already raised; lines were not, and the omission is invisible
-// because Pine evicts silently rather than erroring.
 indicator("TV Visual Oracle S1 — EURUSD", "TVO-S1",
      overlay = true, max_labels_count = 500, max_boxes_count = 500,
      max_lines_count = 500)
@@ -52,7 +46,7 @@ indicator("TV Visual Oracle S1 — EURUSD", "TVO-S1",
 // The assembled-source identifier, as a CONSTANT (the debug panel renders it).
 // It lives in this fragment rather than 05 because it is the one value that
 // depends on the assembled body, and the two-pass assembly resolves it here.
-ORACLE_SOURCE_HASH_SHORT     = "ea12423c9fad8d75"
+ORACLE_SOURCE_HASH_SHORT     = "5f225e2c17d7f941"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 05 — GENERATED CONTRACT CONSTANTS. DO NOT EDIT.
@@ -460,6 +454,8 @@ TGT_BASE_N         = 24
 // Cohort session vocabulary — `_cohort_session_key`, NOT the S1 keys.
 var array<string> TGT_SESSION_NAME = array.from("asia", "london", "lull", "newYork", "ny_pm", "outside")
 var array<string> TGT_STATE_NAME = array.from("Bull/Expand", "Bull/Compress", "Bull/Chop", "Bear/Expand", "Bear/Compress", "Bear/Chop")
+
+
 // index = ((session * 2 + structure) * 2 + direction)
 var array<float> TGT_BASE_RR = array.from(2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0)
 var array<int> TGT_BASE_ON = array.from(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)

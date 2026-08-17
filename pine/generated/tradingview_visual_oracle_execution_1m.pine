@@ -6,12 +6,12 @@
 // Source contract   : contracts/tradingview_oracle_contract.json
 // Contract schema   : 1.0.0
 // Trace schema      : 1.4.0
-// Engine fingerprint: lux-5edc50a_cfg-a4cb908_pol-d1dfc11_c1.0.0_t1.4.0_g0.5.1
-// Engine hash       : eb251e5bef327e7b863de73b4cbed9e2cd23282ec077673306e27b3187f57463
-// Engine manifest   : 5edc50abdb621daf4e33ab4c63ef8b93b2e417595a3022e416ac7e1ceb27ad6b
-// Resolved config   : a4cb908e94eee3726e826e0c2234cb384cf407acf8807a9fa1bb299fc9f4fda0
+// Engine fingerprint: lux-196acb7_cfg-998c82c_pol-d1dfc11_c1.0.0_t1.4.0_g0.5.1
+// Engine hash       : 5099f31cdcf064ac67843a157ea9ce76dc910f042622a3e6fd244de3fc0a9952
+// Engine manifest   : 196acb79847f6d8bdab045b868d1b53ade7bb5a4493ffc298f7eef20e113dedf
+// Resolved config   : 998c82c6fc9d1eab18fda1409efb20dcdaa176a7dc610b6efb15c8ba3c9cfe83
 // Policy version    : 2026-07-09.te-v1.2-surgical-disable
-// Source hash       : b39bc51fe0d05a40
+// Source hash       : b3dfa1e7b84f29a7
 //
 // Build target      : execution_1m  (Execution oracle (1m))
 // Chart timeframe   : 1min  — this build is REFUSED on any other
@@ -39,12 +39,13 @@
 
 //@version=6
 indicator("TV Visual Oracle S7 — EURUSD (1m execution)", "TVO-X1",
-     overlay = true, max_labels_count = 500, max_boxes_count = 500)
+     overlay = true, max_labels_count = 500, max_boxes_count = 500,
+     max_lines_count = 500)
 
 // The assembled-source identifier, as a CONSTANT (the debug panel renders it).
 // It lives in this fragment rather than 05 because it is the one value that
 // depends on the assembled body, and the two-pass assembly resolves it here.
-ORACLE_SOURCE_HASH_SHORT     = "b39bc51fe0d05a40"
+ORACLE_SOURCE_HASH_SHORT     = "b3dfa1e7b84f29a7"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 05 — GENERATED CONTRACT CONSTANTS. DO NOT EDIT.
@@ -56,22 +57,22 @@ ORACLE_SOURCE_HASH_SHORT     = "b39bc51fe0d05a40"
 
 // ── build identity ──────────────────────────────────────────────────────────
 ORACLE_BUILD_VERSION         = "v0.1.0"
-ORACLE_ENGINE_ID_SHORT       = "lux-5edc50a_cfg-a4cb908_pol-d1dfc11_c1.0.0_t1.4.0_g0.5.1"
+ORACLE_ENGINE_ID_SHORT       = "lux-196acb7_cfg-998c82c_pol-d1dfc11_c1.0.0_t1.4.0_g0.5.1"
 // Display form. The full id is 56 chars and forced the HUD table to a
 // width that covered the price action; the full value stays available in
 // the debug panel and in ORACLE_ENGINE_ID_SHORT above.
-ORACLE_ENGINE_ID_COMPACT     = "lux-5edc50a_cfg-a4cb908"
-ORACLE_ENGINE_HASH           = "eb251e5bef327e7b863de73b4cbed9e2cd23282ec077673306e27b3187f57463"
-ORACLE_ENGINE_MANIFEST_SHORT = "5edc50abdb621daf"
-ORACLE_CONFIG_HASH_SHORT     = "a4cb908e94eee372"
+ORACLE_ENGINE_ID_COMPACT     = "lux-196acb7_cfg-998c82c"
+ORACLE_ENGINE_HASH           = "5099f31cdcf064ac67843a157ea9ce76dc910f042622a3e6fd244de3fc0a9952"
+ORACLE_ENGINE_MANIFEST_SHORT = "196acb79847f6d8b"
+ORACLE_CONFIG_HASH_SHORT     = "998c82c6fc9d1eab"
 ORACLE_POLICY_VERSION        = "2026-07-09.te-v1.2-surgical-disable"
 ORACLE_CONTRACT_SCHEMA       = "1.0.0"
 ORACLE_TRACE_SCHEMA          = "1.4.0"
 ORACLE_GENERATOR_VERSION     = "0.5.1"
 // Derived from the contract, NOT the wall clock — a wall-clock stamp would
 // make every regeneration a different file and destroy the tamper check.
-ORACLE_GENERATED_AT          = "contract eb251e5bef32"
-ORACLE_BUILD_CODE            = 78363
+ORACLE_GENERATED_AT          = "contract 5099f31cdcf0"
+ORACLE_BUILD_CODE            = 266524
 
 // ── build target ───────────────────────────────────────────────────────────
 // Production has TWO time domains and this build owns one of them. The
@@ -238,8 +239,13 @@ CODE_EV_CHOCH_BULL           = 2
 CODE_EV_BOS_BEAR             = 3
 CODE_EV_CHOCH_BEAR           = 4
 
-// 06 — no replay data for this target.
+// 06 - no replay data for this target.
 RP_COUNT = 0
+// 07 - no target table for this target.
+TGT_PRESENT = false
+// 08 - no news schedule for this target.
+NEWS_PRESENT   = false
+NEWS_LAST_TXT  = "no schedule embedded"
 // ─────────────────────────────────────────────────────────────────────────────
 // x10 — INPUTS (execution oracle)
 //

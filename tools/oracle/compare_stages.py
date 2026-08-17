@@ -334,6 +334,11 @@ STAGE_COLUMNS = {
 TARGET_SURFACES = {
     "detection_15m": ("S1", "S2", "S3", "S4", "S5", "S6"),
     "execution_1m": ("XF",),
+    # The strategy companion EXPORTS NOTHING. It reuses the detection
+    # build's compute fragments, so its parity question is already answered
+    # there; a second export surface would be the same measurement filed
+    # twice, and the first question would be which copy is authoritative.
+    "strategy_companion": (),
 }
 
 
