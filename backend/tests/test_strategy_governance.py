@@ -148,7 +148,13 @@ def test_decision_record_carries_the_fields_the_UI_needs():
               "target_rr", "entry", "stop", "tp", "action"):
         assert f in d, f"missing {f}"
     assert out["schema_version"] == SCHEMA_VERSION
-    assert d["structure"] == "BOS" and d["action"] == "FILLED" and d["eligible"] is True
+    assert d["structure"] == "BOS" and d["action"] == "FILLED"
+    # `eligible` was `action != "REFUSED"` under v1, which read `true` here.
+    # Under v2 it answers "can this setup still open a position?", and this row
+    # holds an open one — so it cannot open another. `true` is never published;
+    # see `_eligible` in live/decisions.py.
+    assert d["eligible"] is False
+    assert d["lifecycle"] == "POSITION_OPEN" and d["terminal"] is False
 
 
 def test_refusals_carry_a_reason_and_are_not_eligible():

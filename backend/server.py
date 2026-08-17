@@ -1724,22 +1724,77 @@ async def feature_flags() -> dict[str, Any]:
 _LIVE_STATUS: dict = {}
 
 
+#: Bounded. The node's own projections are already capped (50 decisions, 50
+#: positions, 25 intents…), so a payload far past this is not a bigger snapshot
+#: — it is a different thing wearing the envelope's name.
+_LIVE_INGEST_MAX_BYTES = 2 * 1024 * 1024
+
+#: Schema families this endpoint knows how to store. An unknown version is
+#: accepted (forward compatibility is the point of the version field) but a
+#: payload with NO version is not a node snapshot.
+_LIVE_ENVELOPE_PREFIX = "ct.node-"
+
+
+def _live_v1_projection(payload: dict) -> dict:
+    """Event-spine scalars, read from the paths `ct.node-telemetry.v1` uses.
+
+    These previously read `payload["intents"]`, `payload["at"]`,
+    `payload["mode"]` and `execution.frozen` — all PRE-V1 FLAT KEYS. Against a
+    real v1 snapshot every one of them missed: the intent count published as 0
+    however many were outstanding, `frozen` as False however frozen the cycle
+    was, and the idempotency key degenerated to `live|<id>|None|None`, so every
+    ingest wrote a fresh event row instead of deduplicating.
+    """
+    cycle = payload.get("cycle") if isinstance(payload.get("cycle"), dict) else {}
+    execution = (payload.get("execution")
+                 if isinstance(payload.get("execution"), dict) else {})
+    runtime = (payload.get("runtime")
+               if isinstance(payload.get("runtime"), dict) else {})
+    cycle_intents = execution.get("cycle_intents")
+    return {
+        "at": payload.get("published_at"),
+        "boundary": cycle.get("last_boundary"),
+        "mode": runtime.get("mode"),
+        "intents": len(cycle_intents) if isinstance(cycle_intents, list) else 0,
+        "frozen": bool(execution.get("cycle_frozen")),
+        "sequence": payload.get("sequence"),
+    }
+
+
 @api_router.post("/live/ingest")
 async def live_ingest(request: Request):
-    payload = await request.json()
-    if not isinstance(payload, dict) or "instance_id" not in payload:
+    raw = await request.body()
+    if len(raw) > _LIVE_INGEST_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="payload too large")
+    try:
+        payload = json.loads(raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="payload must be JSON")
+    if not isinstance(payload, dict) or not payload.get("instance_id"):
         raise HTTPException(status_code=400, detail="payload must include instance_id")
+    schema = payload.get("schema_version")
+    if not isinstance(schema, str) or not schema.startswith(_LIVE_ENVELOPE_PREFIX):
+        # THE INVARIANT: a rejected snapshot must not overwrite the last valid
+        # one. Validation happens BEFORE the store is touched, so a malformed
+        # or foreign payload leaves the previous good state exactly as it was —
+        # the node keeps retrying with whatever is current, so nothing is lost
+        # by refusing this one.
+        raise HTTPException(status_code=400,
+                            detail="payload must carry a ct.node-* schema_version")
+
+    proj = _live_v1_projection(payload)
     _LIVE_STATUS[payload["instance_id"]] = payload
-    idem = f"live|{payload['instance_id']}|{payload.get('runner', {}).get('boundary')}|{payload.get('at')}"
+    idem = (f"live|{payload['instance_id']}|{proj['boundary']}|"
+            f"{proj['sequence']}|{proj['at']}")
     event = {
         "eventId": f"evt_live_{uuid.uuid4().hex[:12]}",
         "type": "LIVE_STATUS",
-        "at": payload.get("at"),
+        "at": proj["at"],
         "instanceId": payload["instance_id"],
-        "boundary": payload.get("runner", {}).get("boundary"),
-        "mode": payload.get("mode"),
-        "intents": len(payload.get("intents", [])),
-        "frozen": bool(payload.get("execution", {}).get("frozen")),
+        "boundary": proj["boundary"],
+        "mode": proj["mode"],
+        "intents": proj["intents"],
+        "frozen": proj["frozen"],
     }
     stored, deduplicated = _append_event(event, idem)
     return {"ok": True, "seq": stored.get("seq"), "deduplicated": deduplicated}

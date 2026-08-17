@@ -22,7 +22,15 @@ from __future__ import annotations
 
 from datetime import timezone
 
-SCHEMA_VERSION = "ct.node-decisions.v1"
+#: v2 — `action` and `eligible` CHANGED MEANING, so the version moved with
+#: them. Under v1 every row that was not COHORT_DISABLED / STATE_BLOCKED and had
+#: no fill_time was published as `action="PENDING", eligible=true`. That
+#: included invalidated, regime-blocked and news-cancelled setups: on the live
+#: node, 19 of 50 published decisions were terminal order blocks presented as
+#: live and eligible. A receiver could not tell a resting candidate from a dead
+#: one, so the value was not merely imprecise — it was wrong in the direction
+#: that matters, implying opportunity where there was none.
+SCHEMA_VERSION = "ct.node-decisions.v2"
 
 #: Hard cap. A cycle can produce thousands of candidate rows across 11 years of
 #: history; the Control Tower only ever renders recent decisions, and an
@@ -67,6 +75,99 @@ FIELD_MAP = (
 REFUSAL_OUTCOMES = {"COHORT_DISABLED": "cohort_disabled",
                     "STATE_BLOCKED": "state_blocked"}
 
+# ── LIFECYCLE, FROM THE ENGINE'S OWN TERMINAL LABELS ─────────────────────────
+#
+# `simulate_trades` walks candles with a `pending` list. Every exit from that
+# list stamps a specific reason MID-WALK — invalidated_before_edge_entry,
+# state_target_block, regime_blocked, news_touch_cancel. What remains in
+# `pending` when the walk ENDS is flushed by the loop at
+# `strategy_core/execution.py:3293-3302`:
+#
+#     for item in pending:
+#         reason = ("never_filled_after_trigger" if item["triggered_edge_armed"]
+#                   else "never_triggered")
+#         row["outcome"] = "UNFILLED"
+#
+# and immediately above it, open positions are flushed as `outcome = "OPEN"`.
+#
+# THAT IS THE STRUCTURAL DISTINCTION, and it is why this is not a heuristic. A
+# row labelled `never_triggered` is not "a setup that historically failed to
+# trigger" — it is a setup the engine was STILL CARRYING when it reached the
+# last candle. On the live node the last candle IS the frontier, because every
+# cycle replays to the current bar. So:
+#
+#     never_triggered            -> still resting at the frontier
+#     never_filled_after_trigger -> armed at the frontier, delay/fill pending
+#
+# Nothing here infers liveness from detection recency, age or distance from
+# price. Those were considered and rejected: they would answer a different
+# question (is this setup interesting) than the one asked (is the engine still
+# carrying it).
+#
+# Verified against the live frame: `cancel_reason` and `outcome` agree 1:1 over
+# all 2089 rows, with no row carrying a reason its outcome contradicts.
+RESTING = "RESTING"
+ARMED = "ARMED"
+POSITION_OPEN = "POSITION_OPEN"
+CLOSED = "CLOSED"
+BLOCKED = "BLOCKED"
+INVALIDATED = "INVALIDATED"
+CANCELLED = "CANCELLED"
+UNKNOWN = "UNKNOWN"
+
+#: Lifecycles whose story has ended. A terminal setup can never be eligible and
+#: must never be published as pending.
+TERMINAL = frozenset({CLOSED, BLOCKED, INVALIDATED, CANCELLED})
+
+#: outcome -> lifecycle, for the outcomes that decide it on their own.
+_OUTCOME_LIFECYCLE = {
+    "OPEN": POSITION_OPEN,
+    "WIN": CLOSED,
+    "LOSS": CLOSED,
+    "BE": CLOSED,
+    "INVALID": INVALIDATED,
+    "STATE_BLOCKED": BLOCKED,
+    "COHORT_DISABLED": BLOCKED,
+    "REGIME_BLOCKED": BLOCKED,
+    "NEWS_TOUCH_CANCEL": CANCELLED,
+}
+
+#: The frontier flush. UNFILLED alone does not say which; the cancel_reason does.
+_FRONTIER_REASON_LIFECYCLE = {
+    "never_triggered": RESTING,
+    "never_filled_after_trigger": ARMED,
+}
+
+
+def lifecycle(row: dict) -> str:
+    """Where this setup actually stands, from combined source evidence.
+
+    Deliberately NOT derived from any single column. `outcome` decides most
+    cases; `UNFILLED` needs `cancel_reason` to separate resting from armed; and
+    an unrecognised combination returns UNKNOWN rather than defaulting to
+    something reassuring. A new engine outcome should surface as UNKNOWN and be
+    noticed, not be silently absorbed into RESTING.
+    """
+    outcome = str(row.get("outcome", "") or "").strip().upper()
+    reason = str(row.get("cancel_reason", "") or "").strip().lower()
+
+    if outcome == "UNFILLED":
+        return _FRONTIER_REASON_LIFECYCLE.get(reason, UNKNOWN)
+    mapped = _OUTCOME_LIFECYCLE.get(outcome)
+    if mapped is not None:
+        # A WIN/LOSS is only CLOSED once the exit exists; without one the engine
+        # is still carrying the position.
+        if mapped is CLOSED and not str(row.get("exit_time", "") or ""):
+            return POSITION_OPEN
+        return mapped
+    if not outcome and str(row.get("fill_time", "") or ""):
+        return POSITION_OPEN
+    return UNKNOWN
+
+
+def is_terminal(row: dict) -> bool:
+    return lifecycle(row) in TERMINAL
+
 _MAX_STR = 64
 
 
@@ -84,26 +185,75 @@ def _structure(tag) -> str | None:
     return "BOS" if "bos" in t else None
 
 
+#: lifecycle -> the one-word `action` a reader sees. The vocabulary keeps
+#: v1's three words where they were right and adds the distinctions v1 could
+#: not express: a setup that DIED is not a setup that is WAITING, and a policy
+#: BLOCK is not the same event as price invalidating the block.
+_ACTION = {
+    RESTING: "PENDING",
+    ARMED: "ARMED",
+    POSITION_OPEN: "FILLED",
+    CLOSED: "CLOSED",
+    BLOCKED: "REFUSED",
+    INVALIDATED: "INVALIDATED",
+    CANCELLED: "CANCELLED",
+    UNKNOWN: "UNKNOWN",
+}
+
+
 def _action(row: dict) -> str:
-    """What the strategy DID, as one word."""
-    outcome = str(row.get("outcome", "") or "")
-    if outcome in REFUSAL_OUTCOMES:
-        return "REFUSED"
-    if str(row.get("fill_time", "") or ""):
-        return "FILLED"
-    return "PENDING"
+    """What the strategy DID, as one word.
+
+    v1 returned PENDING for everything that was neither a matrix refusal nor
+    filled, which swept invalidated, regime-blocked and news-cancelled setups
+    into the same bucket as genuinely resting ones.
+    """
+    return _ACTION.get(lifecycle(row), "UNKNOWN")
 
 
 def _refusal_reason(row: dict) -> str | None:
-    """Why the strategy refused, preferring the most specific recorded reason."""
-    outcome = str(row.get("outcome", "") or "")
-    if outcome in REFUSAL_OUTCOMES:
-        for col in ("cancel_reason", "regime_block_reason", "portfolio_decision_reason"):
-            v = _clip(row.get(col))
-            if v:
-                return v
-        return REFUSAL_OUTCOMES[outcome]
-    return None
+    """Why this setup ended, preferring the most specific recorded reason.
+
+    v1 answered only for the two matrix refusals, so an invalidated or
+    news-cancelled setup published `refusal_reason: null` — no reason at all
+    for the thing that ended it. Every terminal lifecycle now carries one.
+    """
+    lc = lifecycle(row)
+    if lc not in TERMINAL or lc is CLOSED:
+        return None
+    for col in ("cancel_reason", "regime_block_reason", "portfolio_decision_reason"):
+        v = _clip(row.get(col))
+        if v:
+            return v
+    return REFUSAL_OUTCOMES.get(str(row.get("outcome", "") or ""))
+
+
+#: `eligible` answers exactly one question: CAN THIS SETUP STILL OPEN A
+#: POSITION? A setup already holding one cannot open a second, so
+#: POSITION_OPEN sits here beside the terminal states. The invariant is then
+#: crisp and testable: `eligible is None` ⟺ the setup is still a live
+#: candidate — which is precisely the set a live-setups view wants.
+_CANNOT_OPEN = TERMINAL | {POSITION_OPEN}
+
+
+def _eligible(row: dict):
+    """TRI-STATE, and never optimistic.
+
+    v1 computed `action != "REFUSED"`, so any non-refused row read `true` —
+    including dead ones. Worse, `true` there meant only "the matrix did not
+    refuse it", while a reader naturally hears "this can open".
+
+    false  — it cannot open: policy refused it, price killed it, it already
+             closed, or it is the position currently open.
+    None   — the matrix admitted it and it is still resting or armed, but the
+             candidate-specific rails (arm, divergence, staleness, duplicate)
+             are evaluated at OPEN time by the executor, not here. The node
+             does not know yet, and `true` would be a claim it cannot support.
+
+    `true` is therefore never published. Nothing this projection can see
+    entitles it to promise an entry.
+    """
+    return False if lifecycle(row) in _CANNOT_OPEN else None
 
 
 def _session_debug(detection_time):
@@ -153,7 +303,9 @@ def build_decision_records(frame, *, limit: int = MAX_RECORDS,
         for col, field in FIELD_MAP:
             rec[field] = _clip(row.get(col))
         rec["structure"] = _structure(row.get("structure_tag"))
-        rec["eligible"] = _action(row) != "REFUSED"
+        rec["lifecycle"] = lifecycle(row)
+        rec["terminal"] = is_terminal(row)
+        rec["eligible"] = _eligible(row)
         rec["action"] = _action(row)
         rec["refusal_reason"] = _refusal_reason(row)
         tid = str(row.get("trade_id", "") or "")

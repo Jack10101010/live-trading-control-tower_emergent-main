@@ -54,6 +54,10 @@ import math
 from datetime import datetime, timezone
 from typing import Any
 
+# The ledger's own status vocabulary. Imported rather than re-listed so the
+# telemetry projection and the persistence layer cannot drift apart.
+from live.state import LEDGER_PENDING, LEDGER_SENT
+
 SCHEMA_VERSION = "ct.node-telemetry.v1"
 
 #: Capabilities this node advertises. Tuple (not list/set) so ordering is
@@ -339,7 +343,7 @@ def safe_positions(mirror: dict | None, reconcile: dict | None) -> list:
     return out
 
 
-def safe_reconciliation(reconcile: dict | None, unresolved_sent: int,
+def safe_reconciliation(reconcile: dict | None, unresolved_sent: int | None,
                         expected_positions: int, completed_at: str | None) -> dict:
     """Structured projection of the node's Slice-4 ReconciliationReport.
 
@@ -380,15 +384,24 @@ def safe_reconciliation(reconcile: dict | None, unresolved_sent: int,
         # pointing the other way. Unknown provenance now yields null: the
         # Control Tower renders it as unknown and never as a fault, and a true
         # only ever comes from facts the node actually observed.
-        "clean": (None if snapshot_status is None else
-                  (not frozen and snapshot_status == "ok" and unresolved_sent == 0))
+        # An UNREADABLE LEDGER is unknown provenance too. Before this, a null
+        # unresolved count made `unresolved_sent == 0` false and `clean` came
+        # out FALSE — asserting a reconciliation fault from an absence, which
+        # is the same dishonesty this comment already warns about, arriving by
+        # a second route.
+        "clean": (None if (snapshot_status is None or unresolved_sent is None)
+                  else (not frozen and snapshot_status == "ok"
+                        and unresolved_sent == 0))
                  if available else None,
         "frozen": frozen if available else None,
         "snapshot_status": snapshot_status,
+        # None when the ledger could not be read — an unknown count is not zero.
         "unresolved_sent_count": unresolved_sent,
         "expected_position_count": expected_positions,
         "observed_position_count": observed if available else None,
-        "recovery_required": bool(frozen or unresolved_sent > 0) if available else None,
+        "recovery_required": (None if unresolved_sent is None
+                              else bool(frozen or unresolved_sent > 0)) if available
+                             else None,
         "findings": safe_findings,
         "counts": {k: v for k, v in counts.items() if isinstance(v, int)},
         "last_completed_at": completed_at,
@@ -452,7 +465,7 @@ def safe_execution(executor_result: dict | None, ledger_counts: dict | None,
                        "rail": _clip(d.get("rail"), 64),
                        "detail": _clip(d.get("detail"), MAX_STR)})
 
-    unresolved_out = []
+    unresolved_out = None if unresolved is None else []
     for u in (unresolved or [])[:MAX_UNRESOLVED]:
         if isinstance(u, (list, tuple)) and u:
             unresolved_out.append({"intent_id": _clip(u[0], 64), "status": "sent"})
@@ -463,7 +476,10 @@ def safe_execution(executor_result: dict | None, ledger_counts: dict | None,
     return {
         "cycle_frozen": bool(ex.get("frozen")),
         "cycle_intents": [_intent_summary(i) for i in (cycle_intents or [])[:MAX_INTENTS]],
-        "pending_intents": [_intent_summary(p) for p in (pending or [])[:MAX_INTENTS]],
+        # None (not []) when the ledger is unreadable. `[]` is the claim
+        # "nothing is pending", which this function is not entitled to make.
+        "pending_intents": (None if pending is None
+                            else [_intent_summary(p) for p in pending[:MAX_INTENTS]]),
         "attempts": attempts,
         "blocks": blocks,
         "skipped_count": len(ex.get("skipped") or []),
@@ -565,25 +581,55 @@ def build_snapshot(
 
     data = getattr(state, "data", {}) if state is not None else {}
     mirror = data.get("mirror") if isinstance(data.get("mirror"), dict) else {}
-    ledger = data.get("ledger") if isinstance(data.get("ledger"), dict) else {}
+    # Whether the ledger EXISTS is load-bearing. Coercing a missing ledger to
+    # `{}` makes "we cannot see the ledger" indistinguishable from "the ledger
+    # is empty", and only one of those means nothing is outstanding.
+    _ledger_raw = data.get("ledger")
+    ledger_available = isinstance(_ledger_raw, dict)
+    ledger = _ledger_raw if ledger_available else {}
     ledger_counts: dict[str, int] = {}
     for entry in ledger.values():
         if isinstance(entry, dict):
             status = entry.get("status")
             if isinstance(status, str):
                 ledger_counts[status] = ledger_counts.get(status, 0) + 1
-    try:
-        sent = state.sent_intents() if state is not None else []
-    except Exception:                                     # never break publication
-        sent = []
-    try:
-        pending = state.pending_intents() if state is not None else []
-    except Exception:
-        pending = []
-    pending_intents = [
-        (p[1] or {}).get("intent") if isinstance(p, (list, tuple)) and len(p) > 1 else None
-        for p in (pending or [])
-    ]
+    # ── INTENT STATE COMES FROM THE LEDGER, WHICH IS THE ONLY AUTHORITY ──────
+    #
+    # This block used to call `state.sent_intents()` and
+    # `state.pending_intents()`. NEITHER METHOD EXISTS ON `RunnerState` — only
+    # on the test doubles in `test_telemetry_builder.py`. Each call raised
+    # AttributeError on every real cycle, and a bare `except Exception: []`
+    # turned that into an empty list. So `execution.pending_intents`,
+    # `execution.unresolved_sent` and `reconciliation.unresolved_sent_count`
+    # published as "nothing outstanding" for the entire life of the node,
+    # whatever was actually outstanding. An empty list is a claim; a swallowed
+    # AttributeError is not entitled to make it.
+    #
+    # The ledger IS the authority — `ledger_counts` above is already derived
+    # from it — so the same source answers here. Note what the ledger does NOT
+    # carry: the intent OBJECT. It stores `intent_id -> {status, detail, at}`,
+    # so ids are published and the payload is not reconstructed.
+    #
+    # `None` rather than `[]` when the ledger itself is unavailable: those mean
+    # different things and only one of them is reassuring.
+    # Shaped as the downstream helpers read them: `_intent_summary` and the
+    # unresolved projection both take dicts. The ledger holds no intent OBJECT,
+    # so only the id and status are published — nothing is reconstructed.
+    if ledger_available:
+        pending_intents = [
+            {"intent_id": iid, "status": LEDGER_PENDING}
+            for iid in sorted(ledger)
+            if isinstance(ledger[iid], dict)
+            and ledger[iid].get("status") == LEDGER_PENDING]
+        unresolved_sent = [
+            {"intent_id": iid, "status": LEDGER_SENT}
+            for iid in sorted(ledger)
+            if isinstance(ledger[iid], dict)
+            and ledger[iid].get("status") == LEDGER_SENT]
+    else:
+        pending_intents = None
+        unresolved_sent = None
+    sent = unresolved_sent
 
     daily = data.get("daily") if isinstance(data.get("daily"), dict) else {}
     kill_switch = False
@@ -652,7 +698,10 @@ def build_snapshot(
             except Exception:
                 pass
 
-    unresolved_count = len(sent or [])
+    # `None`, not 0. `safe_reconciliation` reads this to decide `clean` and
+    # `recovery_required`; feeding it a fabricated 0 would let an unreadable
+    # ledger report a clean reconciliation.
+    unresolved_count = len(sent) if sent is not None else None
     recon = safe_reconciliation(reconcile, unresolved_count, len(mirror),
                                obs.get("reconciled_at"))
     submission_disabled = bool(getattr(config, "submit_disabled", False))
