@@ -11,7 +11,7 @@
 // Engine manifest   : 196acb79847f6d8bdab045b868d1b53ade7bb5a4493ffc298f7eef20e113dedf
 // Resolved config   : 998c82c6fc9d1eab18fda1409efb20dcdaa176a7dc610b6efb15c8ba3c9cfe83
 // Policy version    : 2026-07-09.te-v1.2-surgical-disable
-// Source hash       : 6fe800a8dc4cf0c2
+// Source hash       : 1f4b85961f26029e
 //
 // Build target      : detection_15m  (Detection oracle (15m))
 // Chart timeframe   : 15min  — this build is REFUSED on any other
@@ -46,7 +46,7 @@ indicator("TV Visual Oracle S1 — EURUSD", "TVO-S1",
 // The assembled-source identifier, as a CONSTANT (the debug panel renders it).
 // It lives in this fragment rather than 05 because it is the one value that
 // depends on the assembled body, and the two-pass assembly resolves it here.
-ORACLE_SOURCE_HASH_SHORT     = "6fe800a8dc4cf0c2"
+ORACLE_SOURCE_HASH_SHORT     = "1f4b85961f26029e"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 05 — GENERATED CONTRACT CONSTANTS. DO NOT EDIT.
@@ -789,6 +789,11 @@ f_packv(float v, int width, int offset) =>
 // a time window, and the two must not be confusable at a glance.
 COL_OB_BULL = #2E86DE
 COL_OB_BEAR = #E67E22
+// The OB CREATION MARKER. A vertical line spanning the block at the bar its
+// structure break confirmed it. Two of the three renderers anchor the box at the
+// ORIGIN candle, so without this a wide box cannot say where the strategy
+// actually found the block — only where it sits.
+COL_OB_MARK = color.new(color.black, 0)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 20 — DATA CONTEXT GUARD
@@ -1611,6 +1616,7 @@ s5_last_tag        := 0
 // oldest is deleted rather than letting Pine silently drop the newest.
 var box[] s5_boxes = array.new_box()
 var label[] s5_obLabels = array.new_label()
+var line[] s5_obMarks = array.new_line()
 
 // ── bullish candidate (evaluated FIRST, as in production) ───────────────────
 // `s4_bull_break` / `s4_bear_break` are set in fragment 58, which has already
@@ -1651,6 +1657,10 @@ if s4_bull_break
                      border_color = COL_OB_BULL, border_width = 1,
                      bgcolor = color.new(COL_OB_BULL, 85),
                      extend = extend.none))
+                // Confirmed HERE — the box's right edge. Its width is the wait
+                // between the origin candle forming and structure breaking.
+                array.push(s5_obMarks, line.new(bar_index, t, bar_index,
+                     b, color = COL_OB_MARK, width = 2))
                 array.push(s5_obLabels, label.new(s5_bull_idx,
                      math.max(t, b), "OB#" + str.tostring(s5_last_ob_id) + " " +
                      (s4_bull_code == CODE_EV_CHOCH_BULL ? "CHoCH" : "BOS"),
@@ -1693,6 +1703,10 @@ if s4_bear_break
                      border_color = COL_OB_BEAR, border_width = 1,
                      bgcolor = color.new(COL_OB_BEAR, 85),
                      extend = extend.none))
+                // Confirmed HERE — the box's right edge. Its width is the wait
+                // between the origin candle forming and structure breaking.
+                array.push(s5_obMarks, line.new(bar_index, t2, bar_index,
+                     b2, color = COL_OB_MARK, width = 2))
                 array.push(s5_obLabels, label.new(s5_bear_idx,
                      math.min(t2, b2), "OB#" + str.tostring(s5_last_ob_id) + " " +
                      (s4_bear_code_out == CODE_EV_CHOCH_BEAR ? "CHoCH" : "BOS"),
@@ -1705,6 +1719,8 @@ while array.size(s5_boxes) > i_maxObjects
     box.delete(array.shift(s5_boxes))
 while array.size(s5_obLabels) > i_maxObjects
     label.delete(array.shift(s5_obLabels))
+while array.size(s5_obMarks) > i_maxObjects
+    line.delete(array.shift(s5_obMarks))
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 66 — S6 · UTC DAILY REGIME AND MARKET STATE
@@ -2158,6 +2174,12 @@ if CTX_OK and barstate.isconfirmed and i_showReplay and RP_COUNT > 0
                          xloc = xloc.bar_time,
                          border_color = color.new(col, 25), border_width = 1,
                          bgcolor = color.new(col, 88)))
+                    // Creation marker. On a replay box this coincides with
+                    // the left edge, because `t0` IS `detection_time` — the
+                    // export carries no origin-candle timestamp. Drawn anyway
+                    // so the same line means the same thing on every layer.
+                    f_keepLine(line.new(t0, obTop, t0, obBot,
+                         xloc = xloc.bar_time, color = COL_OB_MARK, width = 2))
                     // Terminal tick: where the BLOCK finished, at its true
                     // instant even when the box stopped short of it.
                     f_keepLine(line.new(tBlockEnd, obTop, tBlockEnd, obBot,
@@ -2629,6 +2651,7 @@ type LiveOb
     line  stopLine
     line  targetLine
     line  armLine
+    line  markLine
     label tag
     float top
     float bottom
@@ -2675,6 +2698,7 @@ f_loRetire(LiveOb o) =>
     line.delete(o.stopLine)
     line.delete(o.targetLine)
     line.delete(o.armLine)
+    line.delete(o.markLine)
     label.delete(o.tag)
 
 // ── the risk-reward tool ─────────────────────────────────────────────────────
@@ -2904,6 +2928,11 @@ f_liveCreate(bool isLong, bool isChoch, float obTop, float obBottom,
          obBox = box.new(obIdx, obTop, bar_index + i_liveTailBars, obBottom,
               border_color = color.new(COL_LC_LIVE, 25), border_width = 1,
               bgcolor = color.new(COL_LC_LIVE, 90)),
+         // Confirmed on THIS bar. The box starts at the origin candle and
+         // runs to the frontier, so this is the only thing on the drawing that
+         // says where the block was actually found.
+         markLine = line.new(bar_index, obTop, bar_index, obBottom,
+              color = COL_OB_MARK, width = 2),
          riskBox = na, rewardBox = na,
          entryLine = na, stopLine = na, targetLine = na,
          // The arm level spans the block from the origin bar, dotted and in its

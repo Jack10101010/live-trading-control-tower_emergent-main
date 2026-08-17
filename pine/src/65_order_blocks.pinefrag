@@ -102,6 +102,7 @@ s5_last_tag        := 0
 // oldest is deleted rather than letting Pine silently drop the newest.
 var box[] s5_boxes = array.new_box()
 var label[] s5_obLabels = array.new_label()
+var line[] s5_obMarks = array.new_line()
 
 // ── bullish candidate (evaluated FIRST, as in production) ───────────────────
 // `s4_bull_break` / `s4_bear_break` are set in fragment 58, which has already
@@ -142,6 +143,10 @@ if s4_bull_break
                      border_color = COL_OB_BULL, border_width = 1,
                      bgcolor = color.new(COL_OB_BULL, 85),
                      extend = extend.none))
+                // Confirmed HERE — the box's right edge. Its width is the wait
+                // between the origin candle forming and structure breaking.
+                array.push(s5_obMarks, line.new(bar_index, t, bar_index,
+                     b, color = COL_OB_MARK, width = 2))
                 array.push(s5_obLabels, label.new(s5_bull_idx,
                      math.max(t, b), "OB#" + str.tostring(s5_last_ob_id) + " " +
                      (s4_bull_code == CODE_EV_CHOCH_BULL ? "CHoCH" : "BOS"),
@@ -184,6 +189,10 @@ if s4_bear_break
                      border_color = COL_OB_BEAR, border_width = 1,
                      bgcolor = color.new(COL_OB_BEAR, 85),
                      extend = extend.none))
+                // Confirmed HERE — the box's right edge. Its width is the wait
+                // between the origin candle forming and structure breaking.
+                array.push(s5_obMarks, line.new(bar_index, t2, bar_index,
+                     b2, color = COL_OB_MARK, width = 2))
                 array.push(s5_obLabels, label.new(s5_bear_idx,
                      math.min(t2, b2), "OB#" + str.tostring(s5_last_ob_id) + " " +
                      (s4_bear_code_out == CODE_EV_CHOCH_BEAR ? "CHoCH" : "BOS"),
@@ -196,3 +205,5 @@ while array.size(s5_boxes) > i_maxObjects
     box.delete(array.shift(s5_boxes))
 while array.size(s5_obLabels) > i_maxObjects
     label.delete(array.shift(s5_obLabels))
+while array.size(s5_obMarks) > i_maxObjects
+    line.delete(array.shift(s5_obMarks))

@@ -188,6 +188,12 @@ if CTX_OK and barstate.isconfirmed and i_showReplay and RP_COUNT > 0
                          xloc = xloc.bar_time,
                          border_color = color.new(col, 25), border_width = 1,
                          bgcolor = color.new(col, 88)))
+                    // Creation marker. On a replay box this coincides with
+                    // the left edge, because `t0` IS `detection_time` — the
+                    // export carries no origin-candle timestamp. Drawn anyway
+                    // so the same line means the same thing on every layer.
+                    f_keepLine(line.new(t0, obTop, t0, obBot,
+                         xloc = xloc.bar_time, color = COL_OB_MARK, width = 2))
                     // Terminal tick: where the BLOCK finished, at its true
                     // instant even when the box stopped short of it.
                     f_keepLine(line.new(tBlockEnd, obTop, tBlockEnd, obBot,

@@ -296,3 +296,8 @@ f_packv(float v, int width, int offset) =>
 // a time window, and the two must not be confusable at a glance.
 COL_OB_BULL = #2E86DE
 COL_OB_BEAR = #E67E22
+// The OB CREATION MARKER. A vertical line spanning the block at the bar its
+// structure break confirmed it. Two of the three renderers anchor the box at the
+// ORIGIN candle, so without this a wide box cannot say where the strategy
+// actually found the block — only where it sits.
+COL_OB_MARK = color.new(color.black, 0)

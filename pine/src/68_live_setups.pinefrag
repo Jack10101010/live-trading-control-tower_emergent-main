@@ -356,6 +356,7 @@ type LiveOb
     line  stopLine
     line  targetLine
     line  armLine
+    line  markLine
     label tag
     float top
     float bottom
@@ -402,6 +403,7 @@ f_loRetire(LiveOb o) =>
     line.delete(o.stopLine)
     line.delete(o.targetLine)
     line.delete(o.armLine)
+    line.delete(o.markLine)
     label.delete(o.tag)
 
 // ── the risk-reward tool ─────────────────────────────────────────────────────
@@ -631,6 +633,11 @@ f_liveCreate(bool isLong, bool isChoch, float obTop, float obBottom,
          obBox = box.new(obIdx, obTop, bar_index + i_liveTailBars, obBottom,
               border_color = color.new(COL_LC_LIVE, 25), border_width = 1,
               bgcolor = color.new(COL_LC_LIVE, 90)),
+         // Confirmed on THIS bar. The box starts at the origin candle and
+         // runs to the frontier, so this is the only thing on the drawing that
+         // says where the block was actually found.
+         markLine = line.new(bar_index, obTop, bar_index, obBottom,
+              color = COL_OB_MARK, width = 2),
          riskBox = na, rewardBox = na,
          entryLine = na, stopLine = na, targetLine = na,
          // The arm level spans the block from the origin bar, dotted and in its
