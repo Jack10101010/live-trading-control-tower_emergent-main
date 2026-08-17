@@ -61,7 +61,7 @@ IDLE_HEARTBEAT_BUDGET_S = 120
 #: performance: the bounded detector only rediscovers OBs inside its rolling
 #: window, so an old resting OB detected before the window would be lost. See
 #: live/working_set.py and the milestone report.
-COMPUTATION_MODE = "full_replay"
+COMPUTATION_MODE = "bounded_shadow"
 GOLDEN_CONFIG_RELPATH = "generated_configs/d6cdae589b1e4c37a67763253c466067.json"
 # M-SESSION-DST-1: recomputed after the Europe/London session correction in
 # strategy_core/sessions.py. BOTH identities move: M-CAP-GOV-1 repaired

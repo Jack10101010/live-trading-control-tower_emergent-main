@@ -603,12 +603,18 @@ def test_telemetry_block_reaches_the_canonical_envelope():
     assert "computation" not in plain, "block must be additive, never fabricated"
 
 
-def test_migration_switch_is_a_single_named_constant():
+def test_migration_switch_never_reaches_bounded_live():
+    """The gate that matters: bounded must not own execution.
+
+    `bounded_live` is blocked until the durable active-OB store exists, because
+    the bounded detector only rediscovers OBs inside its rolling window — an
+    older resting OB would simply vanish. Recent parity being exact is NOT
+    sufficient evidence, so this is pinned rather than left to judgement.
+    """
     from live import config as live_config
-    assert live_config.COMPUTATION_MODE in (
-        bounded.MODE_FULL, bounded.MODE_SHADOW, bounded.MODE_LIVE)
-    assert live_config.COMPUTATION_MODE == bounded.MODE_FULL, (
-        "this milestone must NOT leave the node on a bounded authority")
+    assert live_config.COMPUTATION_MODE in (bounded.MODE_FULL, bounded.MODE_SHADOW)
+    assert live_config.COMPUTATION_MODE != bounded.MODE_LIVE, (
+        "bounded_live requires M-LIVE-ACTIVE-OB-STORE-1 first")
 
 
 # ══ F3. SHADOW RUNNER WIRING (M-LIVE-BOUNDED-SHADOW-ACTIVATE-1) ══════════════
