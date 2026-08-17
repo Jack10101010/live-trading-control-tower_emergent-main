@@ -28,7 +28,15 @@ f_dbg(int r, string k, string v) =>
              text_halign = text.align_left, text_color = color.white,
              bgcolor = color.new(color.black, 80))
 
-if barstate.islast and i_debug
+// The debug panel, as a function.
+//
+// LIFTED OUT OF THE MAIN BODY for CE10295: TradingView caps the main
+// body's size and code inside a function does not count against it.
+// This block is pure output — it reads globals, writes cells and
+// exports nothing — and it assigns no global and reads no history, so
+// calling it conditionally is safe. The guard below is the one that
+// used to be on the `if`; nothing about what renders has changed.
+f_dbgRender() =>
     table.clear(dbg, 0, 0, 1, DBG_ROWS - 1)
     int d = 0
 
@@ -133,4 +141,8 @@ if barstate.islast and i_debug
     d := d + 1
     f_dbg(d, "S6 validity", s6_validity == CODE_REGIME_VALID ? "valid" :
               s6_validity == CODE_REGIME_WARMUP ? "warmup" : "INVALID")
+    true
+
+if barstate.islast and i_debug
+    f_dbgRender()
 

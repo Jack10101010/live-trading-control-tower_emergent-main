@@ -11,7 +11,7 @@
 // Engine manifest   : 196acb79847f6d8bdab045b868d1b53ade7bb5a4493ffc298f7eef20e113dedf
 // Resolved config   : 998c82c6fc9d1eab18fda1409efb20dcdaa176a7dc610b6efb15c8ba3c9cfe83
 // Policy version    : 2026-07-09.te-v1.2-surgical-disable
-// Source hash       : 1f4b85961f26029e
+// Source hash       : 6b09ebfd8525841a
 //
 // Build target      : detection_15m  (Detection oracle (15m))
 // Chart timeframe   : 15min  — this build is REFUSED on any other
@@ -46,7 +46,7 @@ indicator("TV Visual Oracle S1 — EURUSD", "TVO-S1",
 // The assembled-source identifier, as a CONSTANT (the debug panel renders it).
 // It lives in this fragment rather than 05 because it is the one value that
 // depends on the assembled body, and the two-pass assembly resolves it here.
-ORACLE_SOURCE_HASH_SHORT     = "1f4b85961f26029e"
+ORACLE_SOURCE_HASH_SHORT     = "6b09ebfd8525841a"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 05 — GENERATED CONTRACT CONSTANTS. DO NOT EDIT.
@@ -3553,7 +3553,15 @@ f_dbg(int r, string k, string v) =>
              text_halign = text.align_left, text_color = color.white,
              bgcolor = color.new(color.black, 80))
 
-if barstate.islast and i_debug
+// The debug panel, as a function.
+//
+// LIFTED OUT OF THE MAIN BODY for CE10295: TradingView caps the main
+// body's size and code inside a function does not count against it.
+// This block is pure output — it reads globals, writes cells and
+// exports nothing — and it assigns no global and reads no history, so
+// calling it conditionally is safe. The guard below is the one that
+// used to be on the `if`; nothing about what renders has changed.
+f_dbgRender() =>
     table.clear(dbg, 0, 0, 1, DBG_ROWS - 1)
     int d = 0
 
@@ -3658,6 +3666,10 @@ if barstate.islast and i_debug
     d := d + 1
     f_dbg(d, "S6 validity", s6_validity == CODE_REGIME_VALID ? "valid" :
               s6_validity == CODE_REGIME_WARMUP ? "warmup" : "INVALID")
+    true
+
+if barstate.islast and i_debug
+    f_dbgRender()
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3739,7 +3751,15 @@ if barstate.islast
 // (state / regime / bias), what the engine last did (order block, structure),
 // where the setups came from, and the limitations a reader would be misled
 // without. The unsuppressible warning is last, as before.
-if barstate.islast and i_showHud
+// The HUD, as a function.
+//
+// LIFTED OUT OF THE MAIN BODY for CE10295: TradingView caps the main
+// body's size and code inside a function does not count against it.
+// This block is pure output — it reads globals, writes cells and
+// exports nothing — and it assigns no global and reads no history, so
+// calling it conditionally is safe. The guard below is the one that
+// used to be on the `if`; nothing about what renders has changed.
+f_hudRender() =>
     table.clear(hud, 0, 0, 1, HUD_ROWS - 1)
     int r = 0
 
@@ -3979,6 +3999,10 @@ if barstate.islast and i_showHud
            color.white, BG_STAT)
     r := r + 1
     f_span(r, "SHADOW MODE - EXECUTION STATE UNKNOWN", color.white, BG_WARN)
+    true
+
+if barstate.islast and i_showHud
+    f_hudRender()
 
 // …and the SAME warning as a standalone label whenever the HUD is hidden, so no
 // cosmetic setting can remove it from the chart entirely.

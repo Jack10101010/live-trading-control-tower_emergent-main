@@ -263,7 +263,12 @@ def test_the_hud_hides_engineering_metadata_by_default():
     """Comments stripped first: the fragment's own header DISCUSSES these
     constants, and matching prose would make the test pass or fail on wording."""
     code = "\n".join(l.split("//")[0] for l in _frag("99_hud").splitlines())
-    start = code.index("if barstate.islast and i_showHud")
+    # The block lives inside `f_hudRender()` since it was lifted out of the
+    # main body for CE10295. Anchoring on the `if` still "worked" afterwards —
+    # it just bracketed the two-line CALL SITE, so both halves came out empty
+    # and every "X not in normal" assertion passed vacuously. The non-emptiness
+    # check below exists so that can never be why this goes green.
+    start = code.index("f_hudRender() =>")
     end = code.index("var label warnLabel")
     # The HUD INTERLEAVES normal and debug blocks, so "before the first
     # `if i_debug`" is the wrong test. Walk the block instead: a debug region
@@ -282,6 +287,9 @@ def test_the_hud_hides_engineering_metadata_by_default():
             in_debug = False
         (debug_lines if in_debug else normal_lines).append(line)
     normal, debug = "\n".join(normal_lines), "\n".join(debug_lines)
+    assert len(normal_lines) > 20 and len(debug_lines) > 5, (
+        f"the walk found {len(normal_lines)} normal and {len(debug_lines)} "
+        f"debug lines — the anchors are not bracketing the HUD block")
 
     for engineering in ("ORACLE_ENGINE_ID_COMPACT", "ORACLE_CONFIG_HASH_SHORT",
                         "ORACLE_S1_LOGIC", "ORACLE_GLOBAL_STATUS",

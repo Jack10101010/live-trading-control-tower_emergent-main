@@ -77,7 +77,15 @@ if barstate.islast
 // (state / regime / bias), what the engine last did (order block, structure),
 // where the setups came from, and the limitations a reader would be misled
 // without. The unsuppressible warning is last, as before.
-if barstate.islast and i_showHud
+// The HUD, as a function.
+//
+// LIFTED OUT OF THE MAIN BODY for CE10295: TradingView caps the main
+// body's size and code inside a function does not count against it.
+// This block is pure output — it reads globals, writes cells and
+// exports nothing — and it assigns no global and reads no history, so
+// calling it conditionally is safe. The guard below is the one that
+// used to be on the `if`; nothing about what renders has changed.
+f_hudRender() =>
     table.clear(hud, 0, 0, 1, HUD_ROWS - 1)
     int r = 0
 
@@ -317,6 +325,10 @@ if barstate.islast and i_showHud
            color.white, BG_STAT)
     r := r + 1
     f_span(r, "SHADOW MODE - EXECUTION STATE UNKNOWN", color.white, BG_WARN)
+    true
+
+if barstate.islast and i_showHud
+    f_hudRender()
 
 // …and the SAME warning as a standalone label whenever the HUD is hidden, so no
 // cosmetic setting can remove it from the chart entirely.
