@@ -111,7 +111,7 @@ f_resolveCell(int sessIdx, bool isChoch, bool isLong) =>
                 why := "cohort_disabled"
             // Only a CONFIRMED state may move eligibility or the target.
             if s6_stateCode > 0 and s6_confirmed
-                st = s6_stateCode - 1
+                st = f_tgtStateCol(s6_stateCode)
                 if st >= 0 and st < TGT_STATE_N
                     slot = base * TGT_STATE_N + st
                     elig = array.get(TGT_STATE_ELIG, slot)
@@ -151,7 +151,8 @@ f_applyOverrides(float prodRr, int sessIdx, bool isChoch, bool isLong) =>
             rr := i_ovSession
             src := LS_OV_SESSION
         if i_ovState > 0 and s6_stateCode > 0
-             and array.get(TGT_STATE_NAME, s6_stateCode - 1) == i_ovStateName
+             and array.get(TGT_STATE_NAME, f_tgtStateCol(s6_stateCode))
+                  == i_ovStateName
             rr := i_ovState
             src := LS_OV_STATE
         // The exact cell wins outright — it is the most specific thing the user

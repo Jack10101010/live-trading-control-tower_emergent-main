@@ -330,12 +330,12 @@
  ],
  "oracle_version": "0.1.0",
  "pine_source": {
-  "line_count": 2100,
+  "line_count": 2130,
   "module_sources": [
    {
     "generated": true,
     "path": "<generated>/00_generated_header.pinefrag",
-    "sha256": "2ae9408c4621e3dc292bd52bde198e1db8b6de0b0b5ce3081cd27f593de8ae69"
+    "sha256": "2ee8e674eaea7ca6fc7d1e35ef6b1b7f921011291d08f5ebaacbe17012823df0"
    },
    {
     "generated": true,
@@ -350,7 +350,7 @@
    {
     "generated": true,
     "path": "<generated>/07_generated_targets.pinefrag",
-    "sha256": "f0ee21c585f8514c2bc1d85386c176e9e68cec47016c7564fa55b10f334ebb86"
+    "sha256": "4e66dfca70a51a8a067934455dc84d6ef7ad2994f62ebd3925d03813033349a6"
    },
    {
     "generated": true,
@@ -400,7 +400,7 @@
    {
     "generated": false,
     "path": "pine/src/66_regime.pinefrag",
-    "sha256": "6e1c7562827e1b04dc789fa07896f11b98d47032b240bbd42742b5ea26405d0a"
+    "sha256": "95175e0fc41fe328937fb2525eccd698616f93f2898d84514fa804dadfd6257e"
    },
    {
     "generated": false,
@@ -409,11 +409,11 @@
    }
   ],
   "path": "pine/generated/tradingview_strategy_companion_15m.pine",
-  "sha256": "66d861a70b810c51cde33c12db07b0c2f4af3ea877fb0d49b756752a9238ff6f"
+  "sha256": "671788cbd0d50529703c17193ee8298465e6f0f7da1cb71e62b188a1e8e5c082"
  },
  "production": {
   "control_tower_branch": "hardening/m3-p1-production-fixes",
-  "control_tower_commit": "32fb85e5a6743ff82704746848a37ce7db8bd121",
+  "control_tower_commit": "3d3d0dcc3addc869c624eb0682282caa74509b9a",
   "engine_branch": "golden-run-001-engine",
   "engine_commit": "b276f15f874d051012f24e06208293bf18a44fd1",
   "environment_provenance": {
