@@ -328,4 +328,4 @@ if barstate.islast and not i_showHud
          "\nGLOBAL: " + ORACLE_GLOBAL_STATUS +
          "\n" + ORACLE_ENGINE_ID_COMPACT,
          style = label.style_label_left, size = size.small,
-         color = color.new(#B00020, 5), textcolor = color.white)
+         color = color.new(#B00020, 32), textcolor = color.black)

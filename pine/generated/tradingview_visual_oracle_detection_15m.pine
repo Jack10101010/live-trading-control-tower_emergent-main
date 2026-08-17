@@ -11,7 +11,7 @@
 // Engine manifest   : 196acb79847f6d8bdab045b868d1b53ade7bb5a4493ffc298f7eef20e113dedf
 // Resolved config   : 998c82c6fc9d1eab18fda1409efb20dcdaa176a7dc610b6efb15c8ba3c9cfe83
 // Policy version    : 2026-07-09.te-v1.2-surgical-disable
-// Source hash       : 5f225e2c17d7f941
+// Source hash       : 6fe800a8dc4cf0c2
 //
 // Build target      : detection_15m  (Detection oracle (15m))
 // Chart timeframe   : 15min  — this build is REFUSED on any other
@@ -46,7 +46,7 @@ indicator("TV Visual Oracle S1 — EURUSD", "TVO-S1",
 // The assembled-source identifier, as a CONSTANT (the debug panel renders it).
 // It lives in this fragment rather than 05 because it is the one value that
 // depends on the assembled body, and the two-pass assembly resolves it here.
-ORACLE_SOURCE_HASH_SHORT     = "5f225e2c17d7f941"
+ORACLE_SOURCE_HASH_SHORT     = "6fe800a8dc4cf0c2"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 05 — GENERATED CONTRACT CONSTANTS. DO NOT EDIT.
@@ -1154,7 +1154,7 @@ if CTX_OK and barClosed
     if i_showOpens and isSessionOpen
         f_pushLabel(label.new(bar_index, low, "▲ " + sessLabel,
              style = label.style_label_up, size = size.tiny,
-             color = color.new(color.teal, 20), textcolor = color.white,
+             color = color.new(color.teal, 20), textcolor = color.black,
              tooltip = "session_open · code " + str.tostring(sessCode) +
                        " · UTC " + str.tostring(utcHour, "00") + ":" +
                        str.tostring(utcMin, "00")))
@@ -1162,18 +1162,18 @@ if CTX_OK and barClosed
     if i_showCloses and isSessionClose
         f_pushLabel(label.new(bar_index, high, "▼ " + dispPrevSessKey + " → " + sessLabel,
              style = label.style_label_down, size = size.tiny,
-             color = color.new(color.maroon, 20), textcolor = color.white,
+             color = color.new(color.maroon, 35), textcolor = color.black,
              tooltip = "session_close_to_fallback · code " + str.tostring(sessCode)))
 
     if i_showTransLbl and sessTransition and not isSessionOpen and not isSessionClose
         f_pushLabel(label.new(bar_index, high, sessTransitionReason,
              style = label.style_label_down, size = size.tiny,
-             color = color.new(color.gray, 30), textcolor = color.white))
+             color = color.new(color.gray, 30), textcolor = color.black))
 
     if i_showDayRoll and dayTransition
         f_pushLabel(label.new(bar_index, low, "UTC " + str.tostring(dayKey),
              style = label.style_label_up, size = size.tiny,
-             color = color.new(color.navy, 20), textcolor = color.white,
+             color = color.new(color.navy, 46), textcolor = color.black,
              tooltip = "UTC calendar-day rollover (production utc_date_key)"))
 
 // Unsupported context: one persistent, unmissable label. Drawn even when the
@@ -1186,7 +1186,7 @@ if barstate.islast and not CTX_OK
          "\nParity claims suppressed — this build mirrors " + ORACLE_SYMBOL +
          " on " + ORACLE_TF_LABEL,
          style = label.style_label_left, size = size.normal,
-         color = color.new(color.red, 10), textcolor = color.white)
+         color = color.new(color.red, 10), textcolor = color.black)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 55 — STAGE S3: LIVE-PATH SWING LOOP
@@ -1440,7 +1440,7 @@ if CTX_OK and barClosed and i_showSwingMarks and s3_created != 0
          s3_created == 1 ? s3_swing_high_level : s3_swing_low_level,
          s3_created == 1 ? "SH" : "SL",
          style = s3_created == 1 ? label.style_label_down : label.style_label_up,
-         size = size.tiny, textcolor = color.white,
+         size = size.tiny, textcolor = color.black,
          color = s3_created == 1 ? color.new(#EF476F, 25) : color.new(#06D6A0, 25),
          tooltip = "confirmed " + (s3_created == 1 ? "swing high" : "swing low") +
                    " · pivot bar " + str.tostring(bar_index - SWING_LENGTH) +
@@ -1489,7 +1489,7 @@ if CTX_OK and barClosed and i_showStructure and s4_event_code != 0
         f_pushLabel(label.new(mid, s4_broken_level,
          (isChoch ? "CH" : "BOS") + (s4_event_count > 1 ? "×2" : ""),
          style = label.style_label_center, size = size.tiny,
-         textcolor = color.white, color = color.new(col, 15),
+         textcolor = color.black, color = color.new(col, 15),
          tooltip = (isChoch ? "CHoCH" : "BOS") + " " +
                    (bull ? "bullish" : "bearish") +
                    "\nbroke " + str.tostring(s4_broken_level, format.mintick) +
@@ -1504,7 +1504,7 @@ if CTX_OK and barClosed and i_showStructure and s4_event_code != 0
         f_pushLabel(label.new(bar_index, bull ? high : low,
              f_eventText(s4_event_code),
              style = bull ? label.style_label_down : label.style_label_up,
-             size = size.tiny, textcolor = color.white,
+             size = size.tiny, textcolor = color.black,
              color = color.new(col, 25)))
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1638,7 +1638,7 @@ if s4_bull_break
                 f_pushLabel(label.new(bar_index, high, "OB REJECT " +
                      str.tostring(w, "#.#") + "p", style = label.style_label_down,
                      size = size.tiny, color = color.new(#EF476F, 20),
-                     textcolor = color.white))
+                     textcolor = color.black))
         else
             s5_last_ob_id := s5_next_ob_id
             s5_next_ob_id := s5_next_ob_id + 1
@@ -1655,7 +1655,7 @@ if s4_bull_break
                      math.max(t, b), "OB#" + str.tostring(s5_last_ob_id) + " " +
                      (s4_bull_code == CODE_EV_CHOCH_BULL ? "CHoCH" : "BOS"),
                      style = label.style_label_down, size = size.tiny,
-                     color = color.new(COL_OB_BULL, 30), textcolor = color.white))
+                     color = color.new(COL_OB_BULL, 30), textcolor = color.black))
 
 // ── bearish candidate (NOT `else` — both can fire on one bar) ───────────────
 if s4_bear_break
@@ -1680,7 +1680,7 @@ if s4_bear_break
                 f_pushLabel(label.new(bar_index, low, "OB REJECT " +
                      str.tostring(w2, "#.#") + "p", style = label.style_label_up,
                      size = size.tiny, color = color.new(#EF476F, 20),
-                     textcolor = color.white))
+                     textcolor = color.black))
         else
             s5_last_ob_id := s5_next_ob_id
             s5_next_ob_id := s5_next_ob_id + 1
@@ -1697,7 +1697,7 @@ if s4_bear_break
                      math.min(t2, b2), "OB#" + str.tostring(s5_last_ob_id) + " " +
                      (s4_bear_code_out == CODE_EV_CHOCH_BEAR ? "CHoCH" : "BOS"),
                      style = label.style_label_up, size = size.tiny,
-                     color = color.new(COL_OB_BEAR, 30), textcolor = color.white))
+                     color = color.new(COL_OB_BEAR, 30), textcolor = color.black))
 
 // Retention. Deleting the OLDEST keeps the most recent structure legible; the
 // HUD reports the horizon so a reader knows the chart is not the whole history.
@@ -1957,7 +1957,7 @@ if i_showRegime and s6_transition and s6_stateCode != 0 and barstate.isconfirmed
     f_pushLabel(label.new(bar_index, low,
          array.get(REGIME_STATE_NAME, s6_stateCode - 1),
          style = label.style_label_up, size = size.tiny,
-         color = color.new(s6_stateColour, 25), textcolor = color.white))
+         color = color.new(s6_stateColour, 25), textcolor = color.black))
 
 // ── confirmed? ───────────────────────────────────────────────────────────────
 // Production's target lookup only honours a CONFIRMED market state: an
@@ -2238,7 +2238,7 @@ if CTX_OK and barstate.isconfirmed and i_showReplay and RP_COUNT > 0
                          f_statusChip(status, outc, reason),
                      xloc = xloc.bar_time, yloc = yloc.price,
                      style = bull ? label.style_label_down : label.style_label_up,
-                     color = color.new(col, 20), textcolor = color.white,
+                     color = color.new(col, 20), textcolor = color.black,
                      size = size.tiny,
                      tooltip =
                          "source: REPLAY · M1 authority\n\n" +
@@ -2914,7 +2914,7 @@ f_liveCreate(bool isLong, bool isChoch, float obTop, float obBottom,
               style = line.style_dotted),
          tag = label.new(obIdx, isLong ? obBottom : obTop, "",
               style = isLong ? label.style_label_up : label.style_label_down,
-              color = color.new(COL_LC_LIVE, 20), textcolor = color.white,
+              color = color.new(COL_LC_LIVE, 20), textcolor = color.black,
               size = size.tiny),
          top = obTop, bottom = obBottom, entry = entry, arm = arm, stop = stop,
          target = na, isLong = isLong, isChoch = isChoch, obId = obId,
@@ -3961,4 +3961,4 @@ if barstate.islast and not i_showHud
          "\nGLOBAL: " + ORACLE_GLOBAL_STATUS +
          "\n" + ORACLE_ENGINE_ID_COMPACT,
          style = label.style_label_left, size = size.small,
-         color = color.new(#B00020, 5), textcolor = color.white)
+         color = color.new(#B00020, 32), textcolor = color.black)

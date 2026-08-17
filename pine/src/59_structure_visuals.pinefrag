@@ -49,7 +49,7 @@ if CTX_OK and barClosed and i_showSwingMarks and s3_created != 0
          s3_created == 1 ? s3_swing_high_level : s3_swing_low_level,
          s3_created == 1 ? "SH" : "SL",
          style = s3_created == 1 ? label.style_label_down : label.style_label_up,
-         size = size.tiny, textcolor = color.white,
+         size = size.tiny, textcolor = color.black,
          color = s3_created == 1 ? color.new(#EF476F, 25) : color.new(#06D6A0, 25),
          tooltip = "confirmed " + (s3_created == 1 ? "swing high" : "swing low") +
                    " · pivot bar " + str.tostring(bar_index - SWING_LENGTH) +
@@ -98,7 +98,7 @@ if CTX_OK and barClosed and i_showStructure and s4_event_code != 0
         f_pushLabel(label.new(mid, s4_broken_level,
          (isChoch ? "CH" : "BOS") + (s4_event_count > 1 ? "×2" : ""),
          style = label.style_label_center, size = size.tiny,
-         textcolor = color.white, color = color.new(col, 15),
+         textcolor = color.black, color = color.new(col, 15),
          tooltip = (isChoch ? "CHoCH" : "BOS") + " " +
                    (bull ? "bullish" : "bearish") +
                    "\nbroke " + str.tostring(s4_broken_level, format.mintick) +
@@ -113,5 +113,5 @@ if CTX_OK and barClosed and i_showStructure and s4_event_code != 0
         f_pushLabel(label.new(bar_index, bull ? high : low,
              f_eventText(s4_event_code),
              style = bull ? label.style_label_down : label.style_label_up,
-             size = size.tiny, textcolor = color.white,
+             size = size.tiny, textcolor = color.black,
              color = color.new(col, 25)))

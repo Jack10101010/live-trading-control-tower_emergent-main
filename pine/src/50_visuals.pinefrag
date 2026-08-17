@@ -60,7 +60,7 @@ if CTX_OK and barClosed
     if i_showOpens and isSessionOpen
         f_pushLabel(label.new(bar_index, low, "▲ " + sessLabel,
              style = label.style_label_up, size = size.tiny,
-             color = color.new(color.teal, 20), textcolor = color.white,
+             color = color.new(color.teal, 20), textcolor = color.black,
              tooltip = "session_open · code " + str.tostring(sessCode) +
                        " · UTC " + str.tostring(utcHour, "00") + ":" +
                        str.tostring(utcMin, "00")))
@@ -68,18 +68,18 @@ if CTX_OK and barClosed
     if i_showCloses and isSessionClose
         f_pushLabel(label.new(bar_index, high, "▼ " + dispPrevSessKey + " → " + sessLabel,
              style = label.style_label_down, size = size.tiny,
-             color = color.new(color.maroon, 20), textcolor = color.white,
+             color = color.new(color.maroon, 35), textcolor = color.black,
              tooltip = "session_close_to_fallback · code " + str.tostring(sessCode)))
 
     if i_showTransLbl and sessTransition and not isSessionOpen and not isSessionClose
         f_pushLabel(label.new(bar_index, high, sessTransitionReason,
              style = label.style_label_down, size = size.tiny,
-             color = color.new(color.gray, 30), textcolor = color.white))
+             color = color.new(color.gray, 30), textcolor = color.black))
 
     if i_showDayRoll and dayTransition
         f_pushLabel(label.new(bar_index, low, "UTC " + str.tostring(dayKey),
              style = label.style_label_up, size = size.tiny,
-             color = color.new(color.navy, 20), textcolor = color.white,
+             color = color.new(color.navy, 46), textcolor = color.black,
              tooltip = "UTC calendar-day rollover (production utc_date_key)"))
 
 // Unsupported context: one persistent, unmissable label. Drawn even when the
@@ -92,4 +92,4 @@ if barstate.islast and not CTX_OK
          "\nParity claims suppressed — this build mirrors " + ORACLE_SYMBOL +
          " on " + ORACLE_TF_LABEL,
          style = label.style_label_left, size = size.normal,
-         color = color.new(color.red, 10), textcolor = color.white)
+         color = color.new(color.red, 10), textcolor = color.black)

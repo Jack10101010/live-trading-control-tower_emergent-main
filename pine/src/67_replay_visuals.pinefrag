@@ -268,7 +268,7 @@ if CTX_OK and barstate.isconfirmed and i_showReplay and RP_COUNT > 0
                          f_statusChip(status, outc, reason),
                      xloc = xloc.bar_time, yloc = yloc.price,
                      style = bull ? label.style_label_down : label.style_label_up,
-                     color = color.new(col, 20), textcolor = color.white,
+                     color = color.new(col, 20), textcolor = color.black,
                      size = size.tiny,
                      tooltip =
                          "source: REPLAY · M1 authority\n\n" +

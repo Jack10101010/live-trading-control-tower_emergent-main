@@ -335,7 +335,7 @@
    {
     "generated": true,
     "path": "<generated>/00_generated_header.pinefrag",
-    "sha256": "7bf1213404c628c8d914ab26926cf3064ba4f374fded8d3b5a07fb0233e4e149"
+    "sha256": "3b278b50c920d2933e707ae43c53e7ebecc43f3c34a884c365cac6c0dda926d1"
    },
    {
     "generated": true,
@@ -395,12 +395,12 @@
    {
     "generated": false,
     "path": "pine/src/65_order_blocks.pinefrag",
-    "sha256": "2225661551cf4354b204ccd1a0f1f543e4c9cef1de72928ec33a7c0c503059ae"
+    "sha256": "f3ca7ad3b849202e123bb903be78ce8c5548e751224eb11726a1a4567c019e00"
    },
    {
     "generated": false,
     "path": "pine/src/66_regime.pinefrag",
-    "sha256": "5b459c9b00336d7c09c5986d013403c1cea834e4357364f8a413b159eef18005"
+    "sha256": "6e1c7562827e1b04dc789fa07896f11b98d47032b240bbd42742b5ea26405d0a"
    },
    {
     "generated": false,
@@ -409,11 +409,11 @@
    }
   ],
   "path": "pine/generated/tradingview_strategy_companion_15m.pine",
-  "sha256": "b4d76f37de47841efce21f3f60f6101ca87310fbd54d5e420f164e138cad358a"
+  "sha256": "972d9edb9d900634d327727844e9422effa1fad61fc18b8a7b86a69fcf756729"
  },
  "production": {
   "control_tower_branch": "hardening/m3-p1-production-fixes",
-  "control_tower_commit": "b2f7ae4311aaa3b359c3cbdad169e23f198cf96d",
+  "control_tower_commit": "5efdfd34fff4b06806bbaaf16edf8c61eebfd940",
   "engine_branch": "golden-run-001-engine",
   "engine_commit": "b276f15f874d051012f24e06208293bf18a44fd1",
   "environment_provenance": {

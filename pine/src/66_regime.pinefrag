@@ -249,7 +249,7 @@ if i_showRegime and s6_transition and s6_stateCode != 0 and barstate.isconfirmed
     f_pushLabel(label.new(bar_index, low,
          array.get(REGIME_STATE_NAME, s6_stateCode - 1),
          style = label.style_label_up, size = size.tiny,
-         color = color.new(s6_stateColour, 25), textcolor = color.white))
+         color = color.new(s6_stateColour, 25), textcolor = color.black))
 
 // ── confirmed? ───────────────────────────────────────────────────────────────
 // Production's target lookup only honours a CONFIRMED market state: an

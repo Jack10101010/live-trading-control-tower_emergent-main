@@ -129,7 +129,7 @@ if s4_bull_break
                 f_pushLabel(label.new(bar_index, high, "OB REJECT " +
                      str.tostring(w, "#.#") + "p", style = label.style_label_down,
                      size = size.tiny, color = color.new(#EF476F, 20),
-                     textcolor = color.white))
+                     textcolor = color.black))
         else
             s5_last_ob_id := s5_next_ob_id
             s5_next_ob_id := s5_next_ob_id + 1
@@ -146,7 +146,7 @@ if s4_bull_break
                      math.max(t, b), "OB#" + str.tostring(s5_last_ob_id) + " " +
                      (s4_bull_code == CODE_EV_CHOCH_BULL ? "CHoCH" : "BOS"),
                      style = label.style_label_down, size = size.tiny,
-                     color = color.new(COL_OB_BULL, 30), textcolor = color.white))
+                     color = color.new(COL_OB_BULL, 30), textcolor = color.black))
 
 // ── bearish candidate (NOT `else` — both can fire on one bar) ───────────────
 if s4_bear_break
@@ -171,7 +171,7 @@ if s4_bear_break
                 f_pushLabel(label.new(bar_index, low, "OB REJECT " +
                      str.tostring(w2, "#.#") + "p", style = label.style_label_up,
                      size = size.tiny, color = color.new(#EF476F, 20),
-                     textcolor = color.white))
+                     textcolor = color.black))
         else
             s5_last_ob_id := s5_next_ob_id
             s5_next_ob_id := s5_next_ob_id + 1
@@ -188,7 +188,7 @@ if s4_bear_break
                      math.min(t2, b2), "OB#" + str.tostring(s5_last_ob_id) + " " +
                      (s4_bear_code_out == CODE_EV_CHOCH_BEAR ? "CHoCH" : "BOS"),
                      style = label.style_label_up, size = size.tiny,
-                     color = color.new(COL_OB_BEAR, 30), textcolor = color.white))
+                     color = color.new(COL_OB_BEAR, 30), textcolor = color.black))
 
 // Retention. Deleting the OLDEST keeps the most recent structure legible; the
 // HUD reports the horizon so a reader knows the chart is not the whole history.
