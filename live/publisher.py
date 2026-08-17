@@ -37,7 +37,8 @@ class CTPublisher:
                       state=None, arm_runtime=None, observed: dict | None = None,
                       bridge: dict | None = None, sequence: int | None = None,
                       news: dict | None = None, readiness: dict | None = None,
-                      delivery: dict | None = None) -> dict:
+                      delivery: dict | None = None,
+                      computation: dict | None = None) -> dict:
         """Build the canonical `ct.node-telemetry.v1` snapshot.
 
         Replaces the flat pre-UI-2 payload. That shape carried no
@@ -73,6 +74,7 @@ class CTPublisher:
             news=news,
             readiness=readiness,
             delivery=delivery,
+            computation=computation,
             sequence=sequence,
         )
 

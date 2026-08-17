@@ -48,6 +48,20 @@ OPEN_MAX_DIVERGENCE_R = 0.25
 
 CYCLE_BUDGET_S = 1500
 IDLE_HEARTBEAT_BUDGET_S = 120
+
+#: M-LIVE-BOUNDED-WORKING-SET-1 — the single switch governing the migration off
+#: full-history replay.
+#:
+#:   "full_replay"     the 11-year path is the sole authority (current)
+#:   "bounded_shadow"  bounded path computes alongside and is compared; the
+#:                     full path still decides. NO execution authority.
+#:   "bounded_live"    bounded path is the authority
+#:
+#: Moving to "bounded_live" is gated on the durable active-OB store, NOT on
+#: performance: the bounded detector only rediscovers OBs inside its rolling
+#: window, so an old resting OB detected before the window would be lost. See
+#: live/working_set.py and the milestone report.
+COMPUTATION_MODE = "full_replay"
 GOLDEN_CONFIG_RELPATH = "generated_configs/d6cdae589b1e4c37a67763253c466067.json"
 # M-SESSION-DST-1: recomputed after the Europe/London session correction in
 # strategy_core/sessions.py. BOTH identities move: M-CAP-GOV-1 repaired

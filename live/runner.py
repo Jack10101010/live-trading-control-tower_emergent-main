@@ -195,7 +195,7 @@ class LiveRunner:
 
     # ── one cycle ────────────────────────────────────────────────────────────
     def run_once(self, now_utc: datetime | None = None, defer_commit: bool = False,
-                 on_work_start=None) -> dict:
+                 on_work_start=None, artifacts: dict | None = None) -> dict:
         """Recompute for the newest closed boundary.
 
         `on_work_start(boundary_str)` fires once, after this cycle has committed
@@ -223,7 +223,15 @@ class LiveRunner:
 
         pipeline = self._pipeline or self.golden_pipeline
         frontier_date = str(boundary.date())
-        trades = pipeline(candles, frontier_date)
+        # `artifacts` is a pure capture channel (see golden_pipeline) — it lets
+        # the bounded shadow compare against the authority's OWN detector output
+        # instead of paying for a second full-history detection. Injected test
+        # pipelines may not accept it, so ask rather than assume; guessing with
+        # try/except TypeError would silently re-run a pipeline that raised.
+        if artifacts is not None and _accepts_artifacts(pipeline):
+            trades = pipeline(candles, frontier_date, artifacts)
+        else:
+            trades = pipeline(candles, frontier_date)
         trades_str = trades.astype(str)
 
         # M-OB-ID-GUARD: identity continuity gates EVERYTHING downstream. On
@@ -270,6 +278,18 @@ class LiveRunner:
             "note": ("first run establishes the baseline frame; no intents emitted"
                      if first_run else ""),
         }
+
+
+def _accepts_artifacts(pipeline) -> bool:
+    """Does this pipeline take the optional third capture argument?"""
+    import inspect
+    try:
+        params = inspect.signature(pipeline).parameters
+    except (TypeError, ValueError):
+        return False
+    if "artifacts" in params:
+        return True
+    return any(p.kind is inspect.Parameter.VAR_POSITIONAL for p in params.values())
 
 
 def _engine_time_string(ts: pd.Timestamp) -> str:

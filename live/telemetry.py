@@ -551,6 +551,7 @@ def build_snapshot(
     news: dict | None = None,
     readiness: dict | None = None,
     delivery: dict | None = None,
+    computation: dict | None = None,
 ) -> dict:
     """Assemble the v1 snapshot. Pure: no I/O, no broker calls, no mutation.
 
@@ -744,6 +745,11 @@ def build_snapshot(
         snapshot.setdefault("runtime", {})["execution_readiness"] = readiness
     if isinstance(delivery, dict) and delivery:
         snapshot["delivery"] = delivery
+    # M-LIVE-BOUNDED-WORKING-SET-1: which computation path produced this cycle,
+    # what it cost, and the NODE's own shadow-parity verdict. The Control Tower
+    # renders `parity`; it never re-derives it.
+    if isinstance(computation, dict) and computation:
+        snapshot["computation"] = computation
     return snapshot
 
 

@@ -90,6 +90,19 @@ def build(lifecycle=None) -> tuple:
     session = LuxSession(config.lux_root)
     session.verify_engine()
     runner = LiveRunner(config, session=session)
+    # M-LIVE-BOUNDED-SHADOW-ACTIVATE-1: attach the observational bounded path.
+    # Attached to the runner purely as a carrier — LiveRunner never calls it;
+    # main.cycle does, after the commit point. Absent in any other mode, so
+    # full_replay behaviour is unchanged including the attribute not existing.
+    from live.config import COMPUTATION_MODE
+    if COMPUTATION_MODE == "bounded_shadow":
+        from live.bounded import BoundedComputation
+        from live.shadow import ShadowRecorder, ShadowRunner
+        runner.shadow_runner = ShadowRunner(
+            BoundedComputation(config, session),
+            ShadowRecorder(config.state_dir / "shadow" / "shadow_parity.json"))
+        print(f"bounded shadow ATTACHED (observational only; "
+              f"execution authority remains full_replay)")
     # Durable operator authorisation, loaded ONCE per process from state. A
     # restart reloads the same deadline and the same remaining budget: it can
     # only lose budget, never extend the arm. The observed account (not the
@@ -199,6 +212,32 @@ def _delivery_block(publisher) -> dict | None:
         return None
 
 
+def _computation_block(duration_ms: float | None, shadow_block: dict | None = None
+                       ) -> dict | None:
+    """Which computation path produced this cycle, and what it cost (§21).
+
+    The mode comes from `config.COMPUTATION_MODE`, the single switch that
+    governs the migration. `authority` is always reported explicitly so the
+    Control Tower can never read "bounded_shadow healthy" as "bounded owns
+    execution" — in shadow mode the authority is still the full replay.
+    """
+    try:
+        from live.config import COMPUTATION_MODE
+        from live.shadow import computation_block
+        block = shadow_block or computation_block(COMPUTATION_MODE,
+                                                  duration_ms=duration_ms)
+        block = dict(block)
+        block["authority"] = "full_replay"
+        block["authority_duration_ms"] = (round(duration_ms, 1)
+                                          if duration_ms is not None else None)
+        # The bounded detector only rediscovers OBs inside its rolling window,
+        # so continuity for older resting OBs is NOT yet guaranteed (§9).
+        block["active_ob_continuity"] = "not_guaranteed"
+        return block
+    except Exception:
+        return None
+
+
 def _news_block(news_gate) -> dict | None:
     """News-protection health for the snapshot, or None.
 
@@ -250,6 +289,8 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops,
           observer=None) -> dict:
     record = ops.cycle_start()
     error = ""
+    compute_ms = None
+    shadow_block = None
     bridge_result: dict = {}
     runner_result: dict = {"status": "error"}
     executor_result = None
@@ -335,8 +376,15 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops,
                           f"(cached calendar retained; OPENs refuse once stale)")
             except Exception as exc:
                 print(f"news calendar refresh raised: {type(exc).__name__}: {exc}")
+        # Capture channel for the bounded shadow. Requested ONLY in shadow mode
+        # so the authority's behaviour is byte-for-byte unchanged otherwise.
+        from live.config import COMPUTATION_MODE
+        artifacts = {} if COMPUTATION_MODE == "bounded_shadow" else None
+        _compute_t0 = time.perf_counter()
         runner_result = runner.run_once(defer_commit=True,
-                                        on_work_start=_announce_recompute)
+                                        on_work_start=_announce_recompute,
+                                        artifacts=artifacts)
+        compute_ms = (time.perf_counter() - _compute_t0) * 1000
         if runner_result.get("status") == "ok" and runner_result.get("intents"):
             executor_result = executor.apply(runner_result["intents"],
                                              report=reconcile_report)
@@ -344,6 +392,18 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops,
         # durable. A crash before here replays the cycle; the ledger suppresses
         # anything already applied, so nothing is duplicated or lost.
         runner.commit_cycle()
+        # BOUNDED SHADOW — strictly after the authority has decided, executed
+        # and committed, so it cannot influence any of the three. It consumes
+        # the authority's captured order blocks, compares, records, and returns
+        # a telemetry block. It never touches intents, the frame, the ledger,
+        # the arm or the broker; `observe` swallows its own failures so an
+        # unhealthy shadow costs the trading cycle nothing.
+        if artifacts is not None:
+            shadow_runner = getattr(runner, "shadow_runner", None)
+            if shadow_runner is not None and artifacts.get("order_blocks") is not None:
+                shadow_block = shadow_runner.observe(
+                    runner_result.get("boundary", ""),
+                    artifacts["order_blocks"], compute_ms)
         # Account observation is deliberately OUTSIDE the intent path. The
         # historical implementation sampled inside Executor.apply(intents, ...),
         # so a node that never traded never reported an account at all. This runs
@@ -371,7 +431,8 @@ def cycle(config, gateway, bridge, runner, executor, publisher, ops,
             bridge=bridge_result,
             news=_news_block(news_gate),
             readiness=_readiness_block(executor, reconcile_report),
-            delivery=_delivery_block(publisher))
+            delivery=_delivery_block(publisher),
+            computation=_computation_block(compute_ms, shadow_block))
         # Local, atomic, non-blocking. The Mac being asleep can no longer
         # delay a boundary advance or an execution decision.
         delivery = publisher.hand_off(payload)
