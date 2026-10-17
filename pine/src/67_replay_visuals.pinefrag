@@ -184,14 +184,20 @@ if CTX_OK and barstate.isconfirmed and i_showReplay and RP_COUNT > 0
                     blockEnd = tBlockEnd + i_replayTailBars * RP_BAR_MS
                     capEnd = t0 + i_obMaxBars * RP_BAR_MS
                     boxEnd = math.min(blockEnd, capEnd)
-                    f_keepBox(box.new(t0, obTop, boxEnd, obBot,
+                    // LEFT EDGE = THE ORIGIN CANDLE, where the block formed —
+                    // matching the live layer, which always anchored there.
+                    // Recordings older than the origin_ms field carry 0 and
+                    // fall back to the detection bar, which is what this box
+                    // drew for its whole life before the field existed.
+                    orig = array.get(RP_ORIGIN, i)
+                    tLeft = orig > 0 ? orig : t0
+                    f_keepBox(box.new(tLeft, obTop, boxEnd, obBot,
                          xloc = xloc.bar_time,
                          border_color = color.new(col, 25), border_width = 1,
                          bgcolor = color.new(col, 88)))
-                    // Creation marker. On a replay box this coincides with
-                    // the left edge, because `t0` IS `detection_time` — the
-                    // export carries no origin-candle timestamp. Drawn anyway
-                    // so the same line means the same thing on every layer.
+                    // Creation marker at the DETECTION bar — now genuinely
+                    // distinct from the left edge, same meaning as on the live
+                    // layer: where the structure break confirmed the block.
                     f_keepLine(line.new(t0, obTop, t0, obBot,
                          xloc = xloc.bar_time, color = COL_OB_MARK, width = 2))
                     // Terminal tick: where the BLOCK finished, at its true
@@ -238,47 +244,73 @@ if CTX_OK and barstate.isconfirmed and i_showReplay and RP_COUNT > 0
                                  border_width = 1,
                                  border_color = color.new(COL_TARGET, 60)))
 
-                    f_keepLine(line.new(t0, entry, tEnd, entry,
-                         xloc = xloc.bar_time, color = color.new(COL_ENTRY, 25)))
-                    if stop > 0
-                        // SOLID. Broken edges read as uncertainty about the
-                        // level, which is the opposite of what these are.
-                        f_keepLine(line.new(t0, stop, tEnd, stop,
+                    // DEFAULT OFF (i_replayPlanLines). The plan lines span
+                    // detection to end — median 313 bars on the current
+                    // recording — and most recorded setups never filled, so
+                    // the default chart dragged hundreds-of-bars hairlines
+                    // for trades that never existed. The numbers stay in the
+                    // P-chip tooltip; this is the plan's DRAWING, not the plan.
+                    if i_replayPlanLines
+                        f_keepLine(line.new(t0, entry, tEnd, entry,
                              xloc = xloc.bar_time,
-                             color = color.new(COL_STOP, 30)))
-                    if target > 0
-                        f_keepLine(line.new(t0, target, tEnd, target,
-                             xloc = xloc.bar_time,
-                             color = color.new(COL_TARGET, 30)))
+                             color = color.new(COL_ENTRY, 25)))
+                        if stop > 0
+                            // SOLID. Broken edges read as uncertainty about the
+                            // level, which is the opposite of what these are.
+                            f_keepLine(line.new(t0, stop, tEnd, stop,
+                                 xloc = xloc.bar_time,
+                                 color = color.new(COL_STOP, 30)))
+                        if target > 0
+                            f_keepLine(line.new(t0, target, tEnd, target,
+                                 xloc = xloc.bar_time,
+                                 color = color.new(COL_TARGET, 30)))
 
                     // Fill and terminal markers. On a 15-minute chart the exact
                     // minute is not resolvable (L-21), so these mark the BAR.
-                    if fill > 0
+                    // OPT-IN (i_replayMarks, default off). These are the replay
+                    // layer's fill/exit points — production evidence — but they
+                    // sit on top of the live lifecycle box and read as loud as
+                    // the verdict itself. The P-chip tooltip carries the same
+                    // instants as text, and the dotted terminal tick already
+                    // marks where the block ended.
+                    if i_replayMarks and fill > 0
                         f_keepLabel(label.new(fill, entry, "",
                              xloc = xloc.bar_time, yloc = yloc.price,
                              style = label.style_triangleup,
-                             color = color.new(COL_ENTRY, 30), size = size.tiny))
-                    if exitT > 0
+                             color = color.new(COL_ENTRY, 60), size = size.tiny,
+                             tooltip = "source: REPLAY · production fill bar"))
+                    if i_replayMarks and exitT > 0
                         f_keepLabel(label.new(exitT,
                              outc == RP_OUT_WIN ? target : stop, "",
                              xloc = xloc.bar_time, yloc = yloc.price,
                              style = label.style_xcross,
-                             color = color.new(col, 20), size = size.tiny))
+                             color = color.new(col, 60), size = size.tiny,
+                             tooltip = "source: REPLAY · production exit " +
+                                  "(bar the target/stop was reached)"))
 
                 // ── the compact marker, with everything in the tooltip ──────
                 // Pine has no click handler on a box, so the tooltip IS the
                 // detail view. The visible text stays at "OB 34 · WIN".
                 f_keepLabel(label.new(t0, bull ? math.max(obTop, entry)
                                               : math.min(obBot, entry),
-                     "OB " + str.tostring(array.get(RP_OBID, i)) + " · " +
+                     // "P", not "OB": FOUR id namespaces exist on this chart
+                     // (production-export seq here, s5 detection ids in the
+                     // live tooltips, the companion's sc_seq in the tester's
+                     // Signal column, and production trade ids). This is the
+                     // only one visible on a label, and it must not read as
+                     // any of the others.
+                     "P" + str.tostring(array.get(RP_OBID, i)) + " · " +
                          f_statusChip(status, outc, reason),
                      xloc = xloc.bar_time, yloc = yloc.price,
                      style = bull ? label.style_label_down : label.style_label_up,
-                     color = color.new(col, 20), textcolor = color.black,
+                     // 45, not 20: SECONDARY. The live lifecycle chip keeps 20,
+                     // so opacity is what ranks the two verdicts on one OB.
+                     color = color.new(col, 45), textcolor = color.black,
                      size = size.tiny,
                      tooltip =
-                         "source: REPLAY · M1 authority\n\n" +
-                         "OB " + str.tostring(array.get(RP_OBID, i)) + "  " +
+                         "source: REPLAY · M1 authority\n" +
+                         "P<n> is the production export's own sequence\n\n" +
+                         "P" + str.tostring(array.get(RP_OBID, i)) + "  " +
                          (bull ? "bullish" : "bearish") + "  " +
                          array.get(RP_STRUCT, i) +
                          "\ndetected  " + str.format_time(t0,

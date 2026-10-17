@@ -288,3 +288,59 @@ shared          feed    DIFFERENT                  (L-02, no Pine change moves i
 
 The project remains PARTIAL while either build has uncovered stages. That is the
 honest reading and it is derived, never hand-set.
+
+## 8. The visual layer hierarchy, and why the chart looks the way it does
+
+Established during M-TV-POST-FIX-RECONCILIATION-1's rendering forensic. The
+chart carries FOUR independent visual systems plus TradingView's own, and this
+section is the authority on which one a reader is looking at.
+
+### Authority order
+
+| rank | layer | drawn by | box | visible label |
+|---|---|---|---|---|
+| PRIMARY | LIVE lifecycle (68) | oracle | the canonical OB box | two-line tag, `FINAL · <sess> · <state>` |
+| SECONDARY | REPLAY — production record (67) | oracle | outline setup box | `P<n> · <chip>` |
+| TERTIARY | Strategy Companion / native trades | TradingView + companion | none | native arrows; panel |
+| DEBUG | raw S5 detector geometry (65) | oracle | short origin→detection box | `OB#<n>` |
+
+The lifecycle verdict is never restyled by a companion trade: the companion
+draws no OB objects (its embedded S5 visuals are compile-time dead), so an
+INVALIDATED block that the emulator nevertheless traded reads as a purple
+lifecycle box with native arrows overlaid — the verdict stays the verdict.
+
+### Rules a reader must know
+
+* **Freeze-at-terminal.** A lifecycle box extends (`+4 bar tail`) only while
+  RESTING or ARMED. At WIN/LOSS/INVALIDATED/BLOCK/UNDECIDABLE it freezes at the
+  resolution bar. A frozen July box is correct, not stale.
+* **S5 boxes are short by design** — origin to detection bar, never extended.
+  Default OFF since this forensic; enable "S5 detector boxes (debug)" to see
+  them.
+* **Object budgets.** The lifecycle layer retires whole OBs atomically, oldest
+  first (`i_liveMaxObs`, 50 = its ceiling: 50×4 lines + replay 150 + marker
+  pool ≤120 + 2 = 472 of Pine's 500/type). The shared marker pool (regime,
+  structure, debug labels — contextual, not OB furniture) keeps the last
+  `i_maxObjects`. Replay pools are fixed at 150 with deterministic eviction
+  (L-08).
+* **Coverage boundaries are not mode switches.** Native trade markers end at
+  the companion's order window (`2026-08-01` in the reconciliation runs).
+  Replay data ends at its export frontier — the HUD's `recorded to` row states
+  it and turns orange when the chart is past it.
+* **Deep Backtesting is prohibited** for these scripts: the truncated dataset
+  changes swing history, hence detection, hence geometry, hence trades
+  (measured: 4.2 pips on L_2100's stop; two-trade population change; flipped
+  outcomes).
+
+### The four id namespaces
+
+| namespace | where it appears | notes |
+|---|---|---|
+| `P<n>` — production export seq | replay labels | includes blocks other layers miss (e.g. S_2094) |
+| `OB <n>` — s5 detection id | live-layer tooltips, `OB#<n>` debug labels | chart-instance counter |
+| `OB<n>` — companion `sc_seq` | Strategy Tester Signal column | **= s5 id − 1** (one warm-up block skipped); known, documented, deliberately not yet unified — changing it touches `strategy.entry/exit/cancel` id strings and needs its own reviewed milestone |
+| `L_/S_<n>` — production trade ids | Lux frame only | join by detection time + geometry, never by number |
+
+Numeric coincidences across namespaces (e.g. replay P130 and s5 130 both being
+L_2100 while the tester says OB129) are exactly that — coincidences of two
+offsetting one-block differences. Join by evidence, not numbers.

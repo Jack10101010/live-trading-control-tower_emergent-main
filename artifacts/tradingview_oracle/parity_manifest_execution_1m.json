@@ -390,7 +390,7 @@
  },
  "production": {
   "control_tower_branch": "hardening/m3-p1-production-fixes",
-  "control_tower_commit": "3d3d0dcc3addc869c624eb0682282caa74509b9a",
+  "control_tower_commit": "97ebf991a2346bbff84ba358a609de0c7da243ce",
   "engine_branch": "golden-run-001-engine",
   "engine_commit": "b276f15f874d051012f24e06208293bf18a44fd1",
   "environment_provenance": {

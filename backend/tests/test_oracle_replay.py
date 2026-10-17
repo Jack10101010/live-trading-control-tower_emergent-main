@@ -235,17 +235,24 @@ def test_order_blocks_extend_past_the_event_that_consumed_them():
     assert "i_replayTailBars * RP_BAR_MS" in body
     assert "blockEnd = tBlockEnd + i_replayTailBars * RP_BAR_MS" in body
     assert "tBlockEnd = fill > 0 ? fill : tEnd" in body
-    assert re.search(r"box\.new\(t0, obTop, boxEnd, obBot", body), \
+    # tLeft, not t0: the left edge is the ORIGIN candle since the export
+    # gained origin_ms; older recordings fall back to the detection bar.
+    assert re.search(r"box\.new\(tLeft, obTop, boxEnd, obBot", body), \
         "the lifecycle box runs to the consumed-plus-tail instant, capped"
+    assert "tLeft = orig > 0 ? orig : t0" in body
 
 
 def test_the_setup_marker_stays_compact_and_puts_detail_in_the_tooltip():
     """Pine has no click handler on a box, so the tooltip IS the detail view —
     but the visible text has to stay short or the chart is unreadable."""
     body = _frag("67_replay_visuals")
-    visible = re.search(r'"OB " \+ str\.tostring\(array\.get\(RP_OBID, i\)\) \+ '
+    # "P", not "OB" — the visible prefix is the replay layer's namespace mark.
+    # Four id systems share this chart (production-export seq, s5 detection
+    # ids, companion sc_seq, production trade ids); the one on a visible label
+    # must not read as any of the others.
+    visible = re.search(r'"P" \+ str\.tostring\(array\.get\(RP_OBID, i\)\) \+ '
                         r'" · " \+\s*f_statusChip', body)
-    assert visible, "the visible marker should be `OB <id> · <chip>`"
+    assert visible, "the visible marker should be `P<id> · <chip>`"
     for field in ("detected", "state", "session", "cohort", "entry", "stop",
                   "target", "planned", "status", "armed", "filled", "exited",
                   "gross R", "net R"):

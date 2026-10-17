@@ -417,11 +417,15 @@ def test_the_risk_reward_tool_is_anchored_to_the_block_end():
 
 
 def test_the_live_label_separates_context_from_decision():
-    """Two lines: WHEN the statement applies and under what context, then the
-    decision. A single line cannot distinguish 'would trade' from 'did trade'."""
+    """LIVE previews carry two lines — WHEN the statement applies and under
+    what context, then the decision — because 'would trade' is meaningless
+    without its context. TERMINAL states are one-line chips: their context is
+    frozen history and lives in the tooltip (which the unknown-news tests
+    still hold to the ' · unconfirmed' qualifier)."""
     body = _frag("68_live_setups")
     assert 'head := (o.phase == LS_PH_ARMED ? "ARMED · " : "NOW · ")' in body
-    assert 'head := "FINAL · " + sess + " · " + state' in body
+    # Terminal setups no longer restate session/state in a banner.
+    assert '"FINAL · "' not in body, "terminal states must be one-line chips"
     assert r'head + "\n" + body' in body
 
 

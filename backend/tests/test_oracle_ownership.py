@@ -330,8 +330,11 @@ def test_the_box_ends_where_the_block_was_consumed_not_where_the_trade_exited():
     body = _frag("67_replay_visuals")
     assert "tBlockEnd = fill > 0 ? fill : tEnd" in body
     assert "blockEnd = tBlockEnd + i_replayTailBars * RP_BAR_MS" in body
-    assert "box.new(t0, obTop, boxEnd, obBot," in body
-    assert "box.new(t0, obTop, tTail, obBot," not in body, \
+    # tLeft, not t0: the left edge is the ORIGIN candle (origin_ms in the
+    # export), falling back to the detection bar for older recordings.
+    assert "box.new(tLeft, obTop, boxEnd, obBot," in body
+    assert "tLeft = orig > 0 ? orig : t0" in body
+    assert "obTop, tTail, obBot," not in body, \
         "the box must not run to the trade's exit"
 
 
@@ -348,9 +351,12 @@ def test_a_capped_box_still_marks_its_true_end():
 
 def test_the_cap_is_an_operator_setting_with_a_sane_floor():
     body = _frag("10_inputs")
-    assert 'i_obMaxBars       = input.int(120, "Order-block box length (bars)"' \
+    # 4000: long enough that every recorded block except the 4,052-bar outlier
+    # reaches the bar that consumed it — the 120 default stopped boxes ~30
+    # hours in and read as blocks dying long before price interacted.
+    assert 'i_obMaxBars       = input.int(4000, "Order-block box length (bars)"' \
         in body
-    assert "minval = 20, maxval = 2000" in body
+    assert "minval = 20, maxval = 5000" in body
     assert "not a claim" in body, "the tooltip must say the cap is a draw limit"
 
 

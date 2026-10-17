@@ -504,39 +504,50 @@ f_rrPaint(LiveOb o, bool visible, bool provisional, bool muted) =>
 // FINAL) and the context it applies under; the second says the decision. A
 // single-line label cannot distinguish "would trade" from "did trade", and that
 // distinction is the entire point of this fragment.
-f_liveText(LiveOb o, float rr, bool ok, int news, string sess, string state) =>
+f_liveText(LiveOb o, float rr, bool ok, int news, string sess, string state,
+     bool bigNow) =>
     string head = ""
     string body = ""
     if f_phLive(o.phase)
-        // ARMED is still a preview, not a decision: production has an armed
-        // order and has not filled it, so session/state/RR are still whatever
-        // the CURRENT bar says and can still move before the fill.
-        head := (o.phase == LS_PH_ARMED ? "ARMED · " : "NOW · ")
-             + sess + " · " + state
-        tail = o.phase == LS_PH_ARMED ? " · awaiting fill" : " · provisional"
-        body := not TGT_PRESENT ? "NO TABLE" :
-             news == LS_NEWS_BLOCKED ? "NEWS BLOCKED" + tail :
-             not ok ? "BLOCK" + tail :
-             na(rr) ? "NO TARGET" + tail :
-             str.tostring(rr, "0.00") + "R" +
-                 (news == LS_NEWS_UNKNOWN ? " · NEWS UNKNOWN, not confirmed"
-                                          : tail)
+        if bigNow
+            // ARMED is still a preview, not a decision: production has an armed
+            // order and has not filled it, so session/state/RR are still
+            // whatever the CURRENT bar says and can still move before the fill.
+            head := (o.phase == LS_PH_ARMED ? "ARMED · " : "NOW · ")
+                 + sess + " · " + state
+            tail = o.phase == LS_PH_ARMED ? " · awaiting fill" : " · provisional"
+            body := not TGT_PRESENT ? "NO TABLE" :
+                 news == LS_NEWS_BLOCKED ? "NEWS BLOCKED" + tail :
+                 not ok ? "BLOCK" + tail :
+                 na(rr) ? "NO TARGET" + tail :
+                 str.tostring(rr, "0.00") + "R" +
+                     (news == LS_NEWS_UNKNOWN ? " · NEWS UNKNOWN, not confirmed"
+                                              : tail)
+        else
+            // COMPACT. Only the newest i_liveNowTags live setups carry the full
+            // banner — every banner is a paragraph on the chart, and one per
+            // tracked block was the chart. The box, arm line and tooltip stay.
+            body := o.phase == LS_PH_ARMED ? "ARMED" : "RESTING"
     else
-        head := "FINAL · " + sess + " · " + state
+        // ONE-LINE TERMINAL CHIPS. A finished setup's context is frozen
+        // history: session, state, RR provenance and the (chart)-not-production
+        // qualifier all live in the tooltip. The banner form spent two lines
+        // restating context nobody needs at a glance for a setup that is over.
+        //
         // The news qualification is a SUFFIX, never the verdict. It says the
         // chart could not check that gate — not what production did.
         string q = o.finalNews == LS_NEWS_UNKNOWN ? " · unconfirmed" : ""
-        body := o.phase == LS_PH_UNDECID ? "UNDECIDABLE · " + o.finalWhy :
-             o.phase == LS_PH_WIN ? "WIN (chart) +" +
+        body := o.phase == LS_PH_UNDECID ? "UNDECIDABLE" :
+             o.phase == LS_PH_WIN ? "WIN +" +
                      str.tostring(o.finalRr, "0.00") + "R" + q :
-             o.phase == LS_PH_LOSS ? "LOSS (chart) -1.00R" + q :
+             o.phase == LS_PH_LOSS ? "LOSS -1.00R" + q :
              o.phase == LS_PH_TRADE ? "TRADE " +
                      str.tostring(o.finalRr, "0.00") + "R · open" + q :
-             o.finalWhy == "invalidated" ? "INVALIDATED · no trade" :
-             o.finalWhy == "never armed" ? "NEVER ARMED · no trade" :
-             o.finalNews == LS_NEWS_BLOCKED ? "NEWS BLOCKED · no trade" :
-             "BLOCK · no trade"
-    head + "\n" + body
+             o.finalWhy == "invalidated" ? "INVALIDATED" :
+             o.finalWhy == "never armed" ? "NEVER ARMED" :
+             o.finalNews == LS_NEWS_BLOCKED ? "NEWS BLOCKED" :
+             "BLOCK"
+    head == "" ? body : head + "\n" + body
 
 f_liveTip(LiveOb o, float prodRr, float rr, int src, int ovSrc, bool ok,
      string why, int news, string sess, string state, string cellKey) =>
@@ -705,6 +716,16 @@ if CTX_OK and barClosed and i_showLive and array.size(lo_all) > 0
     nowSess  = sessKey
     nowState = f_stateName()
 
+    // Ranked from the END: `lo_all` is chronological, so a live setup carries
+    // the full NOW banner only when it is among the newest i_liveNowTags
+    // non-terminal entries. Counted before the pass — a setup that resolves
+    // DURING it becomes terminal and takes a chip anyway.
+    int lo_nLive = 0
+    for j = 0 to array.size(lo_all) - 1
+        if f_phLive(array.get(lo_all, j).phase)
+            lo_nLive += 1
+    int lo_liveSeen = 0
+
     for i = 0 to array.size(lo_all) - 1
         LiveOb o = array.get(lo_all, i)
 
@@ -741,6 +762,11 @@ if CTX_OK and barClosed and i_showLive and array.size(lo_all) > 0
         // extension with `bar_index <= box.get_right(...)`, which never stops:
         // the right edge is always `bar_index + tail`.
         wasLive = f_phLive(o.phase)
+        if wasLive
+            lo_liveSeen += 1
+        // Fixed at loop entry, BEFORE this bar's lifecycle transitions: a
+        // setup that resolves below repaints as a terminal chip regardless.
+        bigNow = wasLive and lo_liveSeen > lo_nLive - i_liveNowTags
         justArmed = false
         justFilled = false
         justAmbiguous = false
@@ -948,7 +974,7 @@ if CTX_OK and barClosed and i_showLive and array.size(lo_all) > 0
                  " | " + (o.isChoch ? "CHoCH" : "BOS") + " " +
                  (o.isLong ? "Long" : "Short")
             label.set_text(o.tag, f_liveText(o, useRr, useOk, useNews, useSess,
-                 useState))
+                 useState, bigNow))
             label.set_tooltip(o.tag, f_liveTip(o, prodRr, useRr, cellSrc, ovSrc,
                  useOk, useWhy, useNews, useSess, useState, cellKey))
             if i == array.size(lo_all) - 1

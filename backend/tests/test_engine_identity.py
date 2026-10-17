@@ -273,6 +273,11 @@ def test_recorded_manifest_covers_the_production_import_closure():
     assert closure <= governed, f"ungoverned production modules: {sorted(closure - governed)}"
 
 
+# lux-write-audited: every write below targets `mirror / rel`, anchored at
+# the pytest `tmp_path` argument; `rel` is merely DERIVED from the live tree
+# via `relative_to`. The repository guard grades that "tree-derived" and this
+# marker excuses THIS FUNCTION ONLY — it cannot excuse a write anchored at
+# LUX_ROOT, here or anywhere.
 def _mirror_governed_tree(tmp_path: Path) -> Path:
     """Copy every governed file from the live Lux tree into an isolated mirror.
 

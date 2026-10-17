@@ -22,6 +22,9 @@ The Live Trading Control Tower is an **institutional trading-operations platform
 - `_fixtures/contracts.md` — Track B Canonical Contracts (entities, identifiers, command vocabulary, number-format canon).
 - `_fixtures/world.v1.json` = `frontend/src/data/world.v1.json` = `backend/fixtures/world.v1.json` — the Fixture World (three copies, must stay byte-identical).
 - `AUDIT-AND-ROADMAP.md` — first-pass audit + the phased roadmap being followed.
+- `docs/tradingview_visual_oracle_parity_audit.md` — Phase 0 production parity audit for the TradingView Visual Oracle (canonical runtime, engine pin, execution order, blocking matrix, Pine limitation register), §21 Phase 0.5 evolution/versioning design, §22 Stage S1 implementation record.
+- `docs/tradingview_visual_oracle_maintenance.md` — operational runbook: how to update the Pine oracle after a Python change (`tools/oracle/*`, `contracts/tradingview_oracle_*`), incl. the S1 build/verify workflow.
+- `pine/generated/tradingview_visual_oracle.pine` — **generated** Stage-S1 indicator (data/time/session only). Never hand-edit; regenerate with `python -m tools.oracle.generate_pine --write`. Status: S1 UNVERIFIED, global PARTIAL until the TradingView checklist is recorded.
 - `memory/PRD.md` — product requirements memory.
 - Full set (Master Report, UI Blueprints R1/R2, Design System Spec, R3 Review, Claude Design Prompt) lives in the separate `FX-OB-Research-Lab/live-tower/` repository.
 

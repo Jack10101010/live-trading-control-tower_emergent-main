@@ -209,7 +209,12 @@ def build(engine, cfg, start=None, end=None, limit=DEFAULT_LIMIT,
         trades = engine.core.simulate_trades(pd.DataFrame(records), obs, **kwargs)
 
     rows = trades.to_dict("records") if hasattr(trades, "to_dict") else list(trades)
-    ob_bounds = {r.get("ob_id"): (float(r["top"]), float(r["bottom"]))
+    # origin_time rides along with the bounds: the box a chart draws for a
+    # block should START where the block geometrically formed (the origin
+    # candle), not at the break bar that detected it — the live layer already
+    # anchors there, and the replay layer could not until this field existed.
+    ob_bounds = {r.get("ob_id"): (float(r["top"]), float(r["bottom"]),
+                                  _ms(r.get("origin_time")))
                  for r in (obs.to_dict("records") if hasattr(obs, "to_dict")
                            else obs)}
 
@@ -219,9 +224,12 @@ def build(engine, cfg, start=None, end=None, limit=DEFAULT_LIMIT,
         if not detected:
             continue
         status, outcome = _status(row)
-        top, bottom = ob_bounds.get(row.get("ob_id"), (0.0, 0.0))
+        top, bottom, origin = ob_bounds.get(row.get("ob_id"), (0.0, 0.0, 0))
         setups.append({
             "detected_ms": detected,
+            # The ORIGIN candle — where the block formed, always at or before
+            # detection. 0 when the detector row carried none.
+            "origin_ms": origin,
             "ob_id": int(_num(row.get("ob_id"))),
             "direction": 1 if row.get("direction") == "bullish" else 2,
             "structure": 2 if "choch" in str(row.get("structure_tag", "")).lower()

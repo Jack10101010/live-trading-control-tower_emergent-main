@@ -11,7 +11,7 @@
 // Engine manifest   : 196acb79847f6d8bdab045b868d1b53ade7bb5a4493ffc298f7eef20e113dedf
 // Resolved config   : 998c82c6fc9d1eab18fda1409efb20dcdaa176a7dc610b6efb15c8ba3c9cfe83
 // Policy version    : 2026-07-09.te-v1.2-surgical-disable
-// Source hash       : 1ebd866c387b56d7
+// Source hash       : fc433070fad61573
 //
 // Build target      : detection_15m  (Detection oracle (15m))
 // Chart timeframe   : 15min  — this build is REFUSED on any other
@@ -46,7 +46,7 @@ indicator("TV Visual Oracle S1 — EURUSD", "TVO-S1",
 // The assembled-source identifier, as a CONSTANT (the debug panel renders it).
 // It lives in this fragment rather than 05 because it is the one value that
 // depends on the assembled body, and the two-pass assembly resolves it here.
-ORACLE_SOURCE_HASH_SHORT     = "1ebd866c387b56d7"
+ORACLE_SOURCE_HASH_SHORT     = "fc433070fad61573"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 05 — GENERATED CONTRACT CONSTANTS. DO NOT EDIT.
@@ -394,6 +394,7 @@ RP_OUT_BREAKEVEN   = 3
 RP_OUT_OPEN        = 4
 
 var array<int> RP_DETECTED = array.from(1759300200000, 1759336200000, 1759413600000, 1759735800000, 1759865400000, 1760016600000, 1760510700000, 1760625900000, 1760959800000, 1761120000000, 1761309000000, 1761590700000, 1761762600000, 1761827400000, 1761894000000, 1762158600000, 1762388100000, 1762514100000, 1762866900000, 1763019000000, 1763460900000, 1763544600000, 1763719200000, 1764076500000, 1764316800000, 1764344700000, 1764756000000, 1764839700000, 1764950400000, 1765206900000, 1765352700000, 1765800000000, 1765889100000, 1765940400000, 1766125800000, 1766406600000, 1766538900000, 1766766600000, 1767108600000, 1767348000000, 1767861000000, 1768385700000, 1768450500000, 1768561200000, 1768577400000, 1769184900000, 1769516100000, 1769785200000, 1770037200000, 1770327000000, 1770616800000, 1770727500000, 1770805800000, 1770816600000, 1770966000000, 1771287300000, 1771437600000, 1771499700000, 1771599600000, 1771895700000, 1772038800000, 1772402400000, 1772515800000, 1772798400000, 1773084600000, 1773374400000, 1773752400000, 1773864000000, 1773940500000, 1774247400000, 1774265400000, 1774485000000, 1775437200000, 1775461500000, 1775551500000, 1775826900000, 1776027600000, 1776105000000, 1776306600000, 1776350700000, 1776429900000, 1776790800000, 1776869100000, 1777026600000, 1777485600000, 1777560300000, 1778064300000, 1778181300000, 1778247000000, 1778572800000, 1778654700000, 1778764500000, 1779196500000, 1779264000000, 1779287400000, 1779370200000, 1779656400000, 1779884100000, 1779931800000, 1780065900000, 1780320600000, 1780475400000, 1780662600000, 1780995600000, 1781132400000, 1781204400000, 1781471700000, 1781719200000, 1781773200000, 1782199800000, 1782460800000, 1782830700000, 1782908100000, 1782979200000, 1783324800000, 1783458000000, 1783648800000, 1783689300000, 1783969200000, 1784032200000, 1784109600000, 1784136600000, 1784205000000, 1784285100000, 1784548800000, 1784656800000, 1784773800000, 1784803500000, 1785110400000, 1785214800000, 1785348000000, 1785495600000, 1785528900000, 1785953700000, 1786093200000)
+var array<int> RP_ORIGIN = array.from(1759239000000, 1759302000000, 1759406400000, 1759500900000, 1759762800000, 1759986000000, 1760427900000, 1760599800000, 1760938200000, 1761062400000, 1761218100000, 1761552000000, 1761670800000, 1761800400000, 1761873300000, 1762152300000, 1762351200000, 1762496100000, 1762794000000, 1762996500000, 1763453700000, 1763537400000, 1763712900000, 1764003600000, 1764288000000, 1764326700000, 1764694800000, 1764828900000, 1764919800000, 1765177200000, 1765304100000, 1765785600000, 1765826100000, 1765895400000, 1766106900000, 1766360700000, 1766501100000, 1766541600000, 1767075300000, 1767325500000, 1767797100000, 1768356000000, 1768406400000, 1768525200000, 1768575600000, 1769156100000, 1769502600000, 1769774400000, 1769991300000, 1770192000000, 1770336900000, 1770665400000, 1770768000000, 1770806700000, 1770911100000, 1771002900000, 1771369200000, 1771491600000, 1771573500000, 1771858800000, 1771946100000, 1772211600000, 1772480700000, 1772771400000, 1773020700000, 1773162900000, 1773727200000, 1773834300000, 1773907200000, 1774039500000, 1774262700000, 1774398600000, 1775142000000, 1775439900000, 1775527200000, 1775808000000, 1775834100000, 1776035700000, 1776249000000, 1776308400000, 1776358800000, 1776726000000, 1776845700000, 1777001400000, 1777420800000, 1777523400000, 1777957200000, 1778147100000, 1778186700000, 1778509800000, 1778614200000, 1778741100000, 1779141600000, 1779213600000, 1779285600000, 1779302700000, 1779459300000, 1779809400000, 1779885000000, 1780047000000, 1780067700000, 1780403400000, 1780650900000, 1780963200000, 1781100000000, 1781197200000, 1781249400000, 1781626500000, 1781764200000, 1781894700000, 1782440100000, 1782799200000, 1782831600000, 1782938700000, 1783060200000, 1783378800000, 1783593900000, 1783651500000, 1783930500000, 1783973700000, 1784096100000, 1784116800000, 1784187900000, 1784271600000, 1784532600000, 1784629800000, 1784755800000, 1784781000000, 1784898000000, 1785133800000, 1785327300000, 1785438000000, 1785505500000, 1785771000000, 1786086000000)
 var array<int> RP_OBID = array.from(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136)
 var array<int> RP_DIRECTION = array.from(1, 2, 2, 2, 2, 2, 1, 1, 2, 2, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1, 2, 2, 2, 1, 2, 1, 1, 1, 2, 2, 1, 1, 1, 2, 2, 1, 1, 2, 2, 2, 2, 1, 2, 1, 2, 1, 1, 2, 2, 2, 1, 2, 1, 2, 2, 2, 2, 2, 1, 2, 1, 2, 2, 2, 1, 2, 1, 2, 1, 2, 1, 2, 2, 1, 1, 1, 2, 1, 1, 2, 1, 2, 2, 1, 2, 1, 1, 2, 1, 2, 2, 2, 2, 2, 1, 2, 1, 1, 2, 1, 2, 2, 2, 1, 2, 1, 1, 2, 2, 2, 1, 1, 2, 1, 2, 2, 1, 2, 2, 1, 2, 1, 2, 2, 2, 2, 1, 2, 1, 2, 1, 2, 1, 1, 1)
 var array<int> RP_STATUS = array.from(5, 5, 5, 6, 5, 6, 3, 3, 6, 6, 6, 6, 6, 5, 6, 5, 3, 5, 5, 3, 6, 6, 6, 5, 5, 5, 6, 3, 5, 5, 6, 3, 5, 6, 5, 5, 6, 5, 5, 5, 3, 5, 6, 5, 6, 6, 6, 1, 6, 6, 3, 3, 5, 1, 3, 1, 1, 3, 3, 3, 5, 6, 6, 5, 3, 5, 6, 6, 5, 5, 6, 6, 5, 3, 5, 5, 5, 6, 6, 5, 5, 6, 6, 5, 6, 6, 5, 6, 3, 1, 1, 1, 6, 5, 3, 6, 5, 3, 6, 5, 1, 1, 1, 3, 6, 3, 5, 1, 5, 6, 5, 6, 5, 6, 6, 5, 3, 5, 5, 5, 6, 6, 6, 3, 5, 5, 3, 5, 6, 5, 1, 5, 1, 1, 1)
@@ -579,7 +580,11 @@ i_showStructLabels = input.bool(true, "  with BOS / CH chips",
                "know the colour convention: teal broke a swing high, red broke " +
                "a swing low.", group = grpStruct)
 i_showStructLines = input.bool(false, "Broken-level lines",         group = grpStruct)
-i_showOrderBlocks = input.bool(true,  "Order-block boxes (S5)",     group = grpStruct)
+// DEFAULT OFF — the live-setups lifecycle box is the canonical OB drawing.
+// This layer drew a SECOND box per block (origin -> detection bar, never
+// extended), so every OB appeared twice with different right edges. The raw
+// S5 geometry stays available here as an explicit debug layer.
+i_showOrderBlocks = input.bool(false, "S5 detector boxes (debug)",  group = grpStruct)
 i_showRegime      = input.bool(true,  "Market-state band (S6)",     group = grpStruct)
 
 // ── setup replay (entry / stop / target / RR / status) ───────────────────────
@@ -606,8 +611,14 @@ i_replayTailBars  = input.int(6, "Tail beyond the terminal event (bars)",
                "the box does not stop dead on the candle and you can see where " +
                "it finished.",
      group = grpReplay)
-i_obMaxBars       = input.int(120, "Order-block box length (bars)",
-     minval = 20, maxval = 2000,
+// DEFAULT 4000 — long enough that every recorded block except the single
+// 4,052-bar outlier reaches the bar that actually consumed it. The old 120
+// default stopped boxes ~30 hours in, which read as blocks ending long before
+// price ever interacted with them. The band-overlap concern the low default
+// guarded against is gone now that plan lines and markers default off and 25
+// setups are drawn instead of 50.
+i_obMaxBars       = input.int(4000, "Order-block box length (bars)",
+     minval = 20, maxval = 5000,
      tooltip = "How far a recorded block's BOX is drawn. It is a drawing " +
                "limit, not a claim: a block that outlived the cap still shows " +
                "its dotted terminal tick at the instant it really ended, so " +
@@ -615,6 +626,17 @@ i_obMaxBars       = input.int(120, "Order-block box length (bars)",
                "recording, 44% of blocks last more than 200 bars and the " +
                "longest is 4,052 — at full length fifty of those overlap into " +
                "a solid band.",
+     group = grpReplay)
+// DEFAULT OFF — the plan lines span detection to end (median 313 bars on the
+// current recording) and most recorded setups never filled, so the default
+// chart dragged hundreds-of-bars hairlines for trades that never existed.
+// The entry/stop/target numbers remain in every P-chip tooltip.
+i_replayPlanLines = input.bool(false, "Replay plan lines (entry/stop/target)",
+     group = grpReplay)
+// DEFAULT OFF — forensic evidence, one click away. The P-chip tooltip carries
+// the fill/exit instants as text and the dotted terminal tick marks where the
+// block ended, so the default chart loses no verdict by hiding these.
+i_replayMarks     = input.bool(false, "Replay fill/exit markers (▲ / ✕)",
      group = grpReplay)
 i_obSource        = input.string("Both", "Order-block boxes",
      options = ["Both", "Production lifecycle", "Chart-derived"],
@@ -655,7 +677,17 @@ i_liveTailBars    = input.int(4, "  tail past mitigation (bars)",
                "invalidated it, so it does not end exactly on the candle and " +
                "you can see where price met it.",
      group = grpLive)
-i_liveMaxObs      = input.int(40, "  max tracked order blocks",
+// 50 — the input's own ceiling, and the deepest uniform lifecycle horizon the
+// budget allows: 50 blocks x 4 lines = 200, + replay 150 + marker pool <= 120
+// + 2 swing lines = 472 of Pine's 500 per type, WITH the S5 debug layer
+// re-enabled. 60 would read nicer but busts the line budget in debug mode.
+// The full two-line NOW banner is a paragraph on the chart, and one per
+// tracked block WAS the chart. Only the newest few genuinely live setups
+// carry it; older RESTING/ARMED blocks keep box, arm line and tooltip with a
+// one-word chip.
+i_liveNowTags     = input.int(3, "  NOW banners (most recent live setups)",
+     minval = 0, maxval = 10, group = grpLive)
+i_liveMaxObs      = input.int(50, "  max tracked order blocks",
      minval = 5, maxval = 50,
      tooltip = "Oldest retired first. Each tracked block holds 3 boxes, 4 lines " +
                "and 1 label, so 60 is 240 lines — and Pine's ceiling is 500 per " +
@@ -1676,7 +1708,8 @@ if s4_bull_break
                      math.max(t, b), "OB#" + str.tostring(s5_last_ob_id) + " " +
                      (s4_bull_code == CODE_EV_CHOCH_BULL ? "CHoCH" : "BOS"),
                      style = label.style_label_down, size = size.tiny,
-                     color = color.new(COL_OB_BULL, 30), textcolor = color.black))
+                     color = color.new(COL_OB_BULL, 30), textcolor = color.black,
+                     tooltip = "source: DETECTOR · raw S5 geometry (debug layer)"))
 
 // ── bearish candidate (NOT `else` — both can fire on one bar) ───────────────
 if s4_bear_break
@@ -1722,7 +1755,8 @@ if s4_bear_break
                      math.min(t2, b2), "OB#" + str.tostring(s5_last_ob_id) + " " +
                      (s4_bear_code_out == CODE_EV_CHOCH_BEAR ? "CHoCH" : "BOS"),
                      style = label.style_label_up, size = size.tiny,
-                     color = color.new(COL_OB_BEAR, 30), textcolor = color.black))
+                     color = color.new(COL_OB_BEAR, 30), textcolor = color.black,
+                     tooltip = "source: DETECTOR · raw S5 geometry (debug layer)"))
 
 // Retention. Deleting the OLDEST keeps the most recent structure legible; the
 // HUD reports the horizon so a reader knows the chart is not the whole history.
@@ -2200,14 +2234,20 @@ if CTX_OK and barstate.isconfirmed and i_showReplay and RP_COUNT > 0
                     blockEnd = tBlockEnd + i_replayTailBars * RP_BAR_MS
                     capEnd = t0 + i_obMaxBars * RP_BAR_MS
                     boxEnd = math.min(blockEnd, capEnd)
-                    f_keepBox(box.new(t0, obTop, boxEnd, obBot,
+                    // LEFT EDGE = THE ORIGIN CANDLE, where the block formed —
+                    // matching the live layer, which always anchored there.
+                    // Recordings older than the origin_ms field carry 0 and
+                    // fall back to the detection bar, which is what this box
+                    // drew for its whole life before the field existed.
+                    orig = array.get(RP_ORIGIN, i)
+                    tLeft = orig > 0 ? orig : t0
+                    f_keepBox(box.new(tLeft, obTop, boxEnd, obBot,
                          xloc = xloc.bar_time,
                          border_color = color.new(col, 25), border_width = 1,
                          bgcolor = color.new(col, 88)))
-                    // Creation marker. On a replay box this coincides with
-                    // the left edge, because `t0` IS `detection_time` — the
-                    // export carries no origin-candle timestamp. Drawn anyway
-                    // so the same line means the same thing on every layer.
+                    // Creation marker at the DETECTION bar — now genuinely
+                    // distinct from the left edge, same meaning as on the live
+                    // layer: where the structure break confirmed the block.
                     f_keepLine(line.new(t0, obTop, t0, obBot,
                          xloc = xloc.bar_time, color = COL_OB_MARK, width = 2))
                     // Terminal tick: where the BLOCK finished, at its true
@@ -2254,47 +2294,73 @@ if CTX_OK and barstate.isconfirmed and i_showReplay and RP_COUNT > 0
                                  border_width = 1,
                                  border_color = color.new(COL_TARGET, 60)))
 
-                    f_keepLine(line.new(t0, entry, tEnd, entry,
-                         xloc = xloc.bar_time, color = color.new(COL_ENTRY, 25)))
-                    if stop > 0
-                        // SOLID. Broken edges read as uncertainty about the
-                        // level, which is the opposite of what these are.
-                        f_keepLine(line.new(t0, stop, tEnd, stop,
+                    // DEFAULT OFF (i_replayPlanLines). The plan lines span
+                    // detection to end — median 313 bars on the current
+                    // recording — and most recorded setups never filled, so
+                    // the default chart dragged hundreds-of-bars hairlines
+                    // for trades that never existed. The numbers stay in the
+                    // P-chip tooltip; this is the plan's DRAWING, not the plan.
+                    if i_replayPlanLines
+                        f_keepLine(line.new(t0, entry, tEnd, entry,
                              xloc = xloc.bar_time,
-                             color = color.new(COL_STOP, 30)))
-                    if target > 0
-                        f_keepLine(line.new(t0, target, tEnd, target,
-                             xloc = xloc.bar_time,
-                             color = color.new(COL_TARGET, 30)))
+                             color = color.new(COL_ENTRY, 25)))
+                        if stop > 0
+                            // SOLID. Broken edges read as uncertainty about the
+                            // level, which is the opposite of what these are.
+                            f_keepLine(line.new(t0, stop, tEnd, stop,
+                                 xloc = xloc.bar_time,
+                                 color = color.new(COL_STOP, 30)))
+                        if target > 0
+                            f_keepLine(line.new(t0, target, tEnd, target,
+                                 xloc = xloc.bar_time,
+                                 color = color.new(COL_TARGET, 30)))
 
                     // Fill and terminal markers. On a 15-minute chart the exact
                     // minute is not resolvable (L-21), so these mark the BAR.
-                    if fill > 0
+                    // OPT-IN (i_replayMarks, default off). These are the replay
+                    // layer's fill/exit points — production evidence — but they
+                    // sit on top of the live lifecycle box and read as loud as
+                    // the verdict itself. The P-chip tooltip carries the same
+                    // instants as text, and the dotted terminal tick already
+                    // marks where the block ended.
+                    if i_replayMarks and fill > 0
                         f_keepLabel(label.new(fill, entry, "",
                              xloc = xloc.bar_time, yloc = yloc.price,
                              style = label.style_triangleup,
-                             color = color.new(COL_ENTRY, 30), size = size.tiny))
-                    if exitT > 0
+                             color = color.new(COL_ENTRY, 60), size = size.tiny,
+                             tooltip = "source: REPLAY · production fill bar"))
+                    if i_replayMarks and exitT > 0
                         f_keepLabel(label.new(exitT,
                              outc == RP_OUT_WIN ? target : stop, "",
                              xloc = xloc.bar_time, yloc = yloc.price,
                              style = label.style_xcross,
-                             color = color.new(col, 20), size = size.tiny))
+                             color = color.new(col, 60), size = size.tiny,
+                             tooltip = "source: REPLAY · production exit " +
+                                  "(bar the target/stop was reached)"))
 
                 // ── the compact marker, with everything in the tooltip ──────
                 // Pine has no click handler on a box, so the tooltip IS the
                 // detail view. The visible text stays at "OB 34 · WIN".
                 f_keepLabel(label.new(t0, bull ? math.max(obTop, entry)
                                               : math.min(obBot, entry),
-                     "OB " + str.tostring(array.get(RP_OBID, i)) + " · " +
+                     // "P", not "OB": FOUR id namespaces exist on this chart
+                     // (production-export seq here, s5 detection ids in the
+                     // live tooltips, the companion's sc_seq in the tester's
+                     // Signal column, and production trade ids). This is the
+                     // only one visible on a label, and it must not read as
+                     // any of the others.
+                     "P" + str.tostring(array.get(RP_OBID, i)) + " · " +
                          f_statusChip(status, outc, reason),
                      xloc = xloc.bar_time, yloc = yloc.price,
                      style = bull ? label.style_label_down : label.style_label_up,
-                     color = color.new(col, 20), textcolor = color.black,
+                     // 45, not 20: SECONDARY. The live lifecycle chip keeps 20,
+                     // so opacity is what ranks the two verdicts on one OB.
+                     color = color.new(col, 45), textcolor = color.black,
                      size = size.tiny,
                      tooltip =
-                         "source: REPLAY · M1 authority\n\n" +
-                         "OB " + str.tostring(array.get(RP_OBID, i)) + "  " +
+                         "source: REPLAY · M1 authority\n" +
+                         "P<n> is the production export's own sequence\n\n" +
+                         "P" + str.tostring(array.get(RP_OBID, i)) + "  " +
                          (bull ? "bullish" : "bearish") + "  " +
                          array.get(RP_STRUCT, i) +
                          "\ndetected  " + str.format_time(t0,
@@ -2829,39 +2895,50 @@ f_rrPaint(LiveOb o, bool visible, bool provisional, bool muted) =>
 // FINAL) and the context it applies under; the second says the decision. A
 // single-line label cannot distinguish "would trade" from "did trade", and that
 // distinction is the entire point of this fragment.
-f_liveText(LiveOb o, float rr, bool ok, int news, string sess, string state) =>
+f_liveText(LiveOb o, float rr, bool ok, int news, string sess, string state,
+     bool bigNow) =>
     string head = ""
     string body = ""
     if f_phLive(o.phase)
-        // ARMED is still a preview, not a decision: production has an armed
-        // order and has not filled it, so session/state/RR are still whatever
-        // the CURRENT bar says and can still move before the fill.
-        head := (o.phase == LS_PH_ARMED ? "ARMED · " : "NOW · ")
-             + sess + " · " + state
-        tail = o.phase == LS_PH_ARMED ? " · awaiting fill" : " · provisional"
-        body := not TGT_PRESENT ? "NO TABLE" :
-             news == LS_NEWS_BLOCKED ? "NEWS BLOCKED" + tail :
-             not ok ? "BLOCK" + tail :
-             na(rr) ? "NO TARGET" + tail :
-             str.tostring(rr, "0.00") + "R" +
-                 (news == LS_NEWS_UNKNOWN ? " · NEWS UNKNOWN, not confirmed"
-                                          : tail)
+        if bigNow
+            // ARMED is still a preview, not a decision: production has an armed
+            // order and has not filled it, so session/state/RR are still
+            // whatever the CURRENT bar says and can still move before the fill.
+            head := (o.phase == LS_PH_ARMED ? "ARMED · " : "NOW · ")
+                 + sess + " · " + state
+            tail = o.phase == LS_PH_ARMED ? " · awaiting fill" : " · provisional"
+            body := not TGT_PRESENT ? "NO TABLE" :
+                 news == LS_NEWS_BLOCKED ? "NEWS BLOCKED" + tail :
+                 not ok ? "BLOCK" + tail :
+                 na(rr) ? "NO TARGET" + tail :
+                 str.tostring(rr, "0.00") + "R" +
+                     (news == LS_NEWS_UNKNOWN ? " · NEWS UNKNOWN, not confirmed"
+                                              : tail)
+        else
+            // COMPACT. Only the newest i_liveNowTags live setups carry the full
+            // banner — every banner is a paragraph on the chart, and one per
+            // tracked block was the chart. The box, arm line and tooltip stay.
+            body := o.phase == LS_PH_ARMED ? "ARMED" : "RESTING"
     else
-        head := "FINAL · " + sess + " · " + state
+        // ONE-LINE TERMINAL CHIPS. A finished setup's context is frozen
+        // history: session, state, RR provenance and the (chart)-not-production
+        // qualifier all live in the tooltip. The banner form spent two lines
+        // restating context nobody needs at a glance for a setup that is over.
+        //
         // The news qualification is a SUFFIX, never the verdict. It says the
         // chart could not check that gate — not what production did.
         string q = o.finalNews == LS_NEWS_UNKNOWN ? " · unconfirmed" : ""
-        body := o.phase == LS_PH_UNDECID ? "UNDECIDABLE · " + o.finalWhy :
-             o.phase == LS_PH_WIN ? "WIN (chart) +" +
+        body := o.phase == LS_PH_UNDECID ? "UNDECIDABLE" :
+             o.phase == LS_PH_WIN ? "WIN +" +
                      str.tostring(o.finalRr, "0.00") + "R" + q :
-             o.phase == LS_PH_LOSS ? "LOSS (chart) -1.00R" + q :
+             o.phase == LS_PH_LOSS ? "LOSS -1.00R" + q :
              o.phase == LS_PH_TRADE ? "TRADE " +
                      str.tostring(o.finalRr, "0.00") + "R · open" + q :
-             o.finalWhy == "invalidated" ? "INVALIDATED · no trade" :
-             o.finalWhy == "never armed" ? "NEVER ARMED · no trade" :
-             o.finalNews == LS_NEWS_BLOCKED ? "NEWS BLOCKED · no trade" :
-             "BLOCK · no trade"
-    head + "\n" + body
+             o.finalWhy == "invalidated" ? "INVALIDATED" :
+             o.finalWhy == "never armed" ? "NEVER ARMED" :
+             o.finalNews == LS_NEWS_BLOCKED ? "NEWS BLOCKED" :
+             "BLOCK"
+    head == "" ? body : head + "\n" + body
 
 f_liveTip(LiveOb o, float prodRr, float rr, int src, int ovSrc, bool ok,
      string why, int news, string sess, string state, string cellKey) =>
@@ -3030,6 +3107,16 @@ if CTX_OK and barClosed and i_showLive and array.size(lo_all) > 0
     nowSess  = sessKey
     nowState = f_stateName()
 
+    // Ranked from the END: `lo_all` is chronological, so a live setup carries
+    // the full NOW banner only when it is among the newest i_liveNowTags
+    // non-terminal entries. Counted before the pass — a setup that resolves
+    // DURING it becomes terminal and takes a chip anyway.
+    int lo_nLive = 0
+    for j = 0 to array.size(lo_all) - 1
+        if f_phLive(array.get(lo_all, j).phase)
+            lo_nLive += 1
+    int lo_liveSeen = 0
+
     for i = 0 to array.size(lo_all) - 1
         LiveOb o = array.get(lo_all, i)
 
@@ -3066,6 +3153,11 @@ if CTX_OK and barClosed and i_showLive and array.size(lo_all) > 0
         // extension with `bar_index <= box.get_right(...)`, which never stops:
         // the right edge is always `bar_index + tail`.
         wasLive = f_phLive(o.phase)
+        if wasLive
+            lo_liveSeen += 1
+        // Fixed at loop entry, BEFORE this bar's lifecycle transitions: a
+        // setup that resolves below repaints as a terminal chip regardless.
+        bigNow = wasLive and lo_liveSeen > lo_nLive - i_liveNowTags
         justArmed = false
         justFilled = false
         justAmbiguous = false
@@ -3273,7 +3365,7 @@ if CTX_OK and barClosed and i_showLive and array.size(lo_all) > 0
                  " | " + (o.isChoch ? "CHoCH" : "BOS") + " " +
                  (o.isLong ? "Long" : "Short")
             label.set_text(o.tag, f_liveText(o, useRr, useOk, useNews, useSess,
-                 useState))
+                 useState, bigNow))
             label.set_tooltip(o.tag, f_liveTip(o, prodRr, useRr, cellSrc, ovSrc,
                  useOk, useWhy, useNews, useSess, useState, cellKey))
             if i == array.size(lo_all) - 1

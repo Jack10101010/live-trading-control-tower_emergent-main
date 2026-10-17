@@ -330,12 +330,12 @@
  ],
  "oracle_version": "0.1.0",
  "pine_source": {
-  "line_count": 2130,
+  "line_count": 2132,
   "module_sources": [
    {
     "generated": true,
     "path": "<generated>/00_generated_header.pinefrag",
-    "sha256": "2ee8e674eaea7ca6fc7d1e35ef6b1b7f921011291d08f5ebaacbe17012823df0"
+    "sha256": "c28f68182e0b9b473c0c0eb237be3788d4775cf9abc8ea6db79dc6068f65a268"
    },
    {
     "generated": true,
@@ -395,7 +395,7 @@
    {
     "generated": false,
     "path": "pine/src/65_order_blocks.pinefrag",
-    "sha256": "06ec9e19bd080557084ce5bfca6d80c0977d9065a123a3f64626a4490f49917a"
+    "sha256": "ed96f029eec7fc36b0c7003dbd03e4cb16c19abb84bf1d335a713bb95e0087dd"
    },
    {
     "generated": false,
@@ -409,11 +409,11 @@
    }
   ],
   "path": "pine/generated/tradingview_strategy_companion_15m.pine",
-  "sha256": "671788cbd0d50529703c17193ee8298465e6f0f7da1cb71e62b188a1e8e5c082"
+  "sha256": "e8a455094d23a7d1a442516281899a5a468e741b0bf309b34ced110e0d6fadf8"
  },
  "production": {
   "control_tower_branch": "hardening/m3-p1-production-fixes",
-  "control_tower_commit": "3d3d0dcc3addc869c624eb0682282caa74509b9a",
+  "control_tower_commit": "97ebf991a2346bbff84ba358a609de0c7da243ce",
   "engine_branch": "golden-run-001-engine",
   "engine_commit": "b276f15f874d051012f24e06208293bf18a44fd1",
   "environment_provenance": {

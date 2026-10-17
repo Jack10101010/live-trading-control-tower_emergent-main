@@ -75,7 +75,11 @@ i_showStructLabels = input.bool(true, "  with BOS / CH chips",
                "know the colour convention: teal broke a swing high, red broke " +
                "a swing low.", group = grpStruct)
 i_showStructLines = input.bool(false, "Broken-level lines",         group = grpStruct)
-i_showOrderBlocks = input.bool(true,  "Order-block boxes (S5)",     group = grpStruct)
+// DEFAULT OFF — the live-setups lifecycle box is the canonical OB drawing.
+// This layer drew a SECOND box per block (origin -> detection bar, never
+// extended), so every OB appeared twice with different right edges. The raw
+// S5 geometry stays available here as an explicit debug layer.
+i_showOrderBlocks = input.bool(false, "S5 detector boxes (debug)",  group = grpStruct)
 i_showRegime      = input.bool(true,  "Market-state band (S6)",     group = grpStruct)
 
 // ── setup replay (entry / stop / target / RR / status) ───────────────────────
@@ -102,8 +106,14 @@ i_replayTailBars  = input.int(6, "Tail beyond the terminal event (bars)",
                "the box does not stop dead on the candle and you can see where " +
                "it finished.",
      group = grpReplay)
-i_obMaxBars       = input.int(120, "Order-block box length (bars)",
-     minval = 20, maxval = 2000,
+// DEFAULT 4000 — long enough that every recorded block except the single
+// 4,052-bar outlier reaches the bar that actually consumed it. The old 120
+// default stopped boxes ~30 hours in, which read as blocks ending long before
+// price ever interacted with them. The band-overlap concern the low default
+// guarded against is gone now that plan lines and markers default off and 25
+// setups are drawn instead of 50.
+i_obMaxBars       = input.int(4000, "Order-block box length (bars)",
+     minval = 20, maxval = 5000,
      tooltip = "How far a recorded block's BOX is drawn. It is a drawing " +
                "limit, not a claim: a block that outlived the cap still shows " +
                "its dotted terminal tick at the instant it really ended, so " +
@@ -111,6 +121,17 @@ i_obMaxBars       = input.int(120, "Order-block box length (bars)",
                "recording, 44% of blocks last more than 200 bars and the " +
                "longest is 4,052 — at full length fifty of those overlap into " +
                "a solid band.",
+     group = grpReplay)
+// DEFAULT OFF — the plan lines span detection to end (median 313 bars on the
+// current recording) and most recorded setups never filled, so the default
+// chart dragged hundreds-of-bars hairlines for trades that never existed.
+// The entry/stop/target numbers remain in every P-chip tooltip.
+i_replayPlanLines = input.bool(false, "Replay plan lines (entry/stop/target)",
+     group = grpReplay)
+// DEFAULT OFF — forensic evidence, one click away. The P-chip tooltip carries
+// the fill/exit instants as text and the dotted terminal tick marks where the
+// block ended, so the default chart loses no verdict by hiding these.
+i_replayMarks     = input.bool(false, "Replay fill/exit markers (▲ / ✕)",
      group = grpReplay)
 i_obSource        = input.string("Both", "Order-block boxes",
      options = ["Both", "Production lifecycle", "Chart-derived"],
@@ -151,7 +172,17 @@ i_liveTailBars    = input.int(4, "  tail past mitigation (bars)",
                "invalidated it, so it does not end exactly on the candle and " +
                "you can see where price met it.",
      group = grpLive)
-i_liveMaxObs      = input.int(40, "  max tracked order blocks",
+// 50 — the input's own ceiling, and the deepest uniform lifecycle horizon the
+// budget allows: 50 blocks x 4 lines = 200, + replay 150 + marker pool <= 120
+// + 2 swing lines = 472 of Pine's 500 per type, WITH the S5 debug layer
+// re-enabled. 60 would read nicer but busts the line budget in debug mode.
+// The full two-line NOW banner is a paragraph on the chart, and one per
+// tracked block WAS the chart. Only the newest few genuinely live setups
+// carry it; older RESTING/ARMED blocks keep box, arm line and tooltip with a
+// one-word chip.
+i_liveNowTags     = input.int(3, "  NOW banners (most recent live setups)",
+     minval = 0, maxval = 10, group = grpLive)
+i_liveMaxObs      = input.int(50, "  max tracked order blocks",
      minval = 5, maxval = 50,
      tooltip = "Oldest retired first. Each tracked block holds 3 boxes, 4 lines " +
                "and 1 label, so 60 is 240 lines — and Pine's ceiling is 500 per " +

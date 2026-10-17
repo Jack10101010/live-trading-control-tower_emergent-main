@@ -987,6 +987,10 @@ def build_generated_replay(spec=None) -> str:
     ] + [
         "",
         _pine_int_array_safe("RP_DETECTED", [s["detected_ms"] for s in setups]),
+        # Origin candle, for the box's LEFT edge. `.get` with 0: recordings made
+        # before the field existed still generate, and fragment 67 falls back to
+        # the detection bar exactly as it always drew.
+        _pine_int_array_safe("RP_ORIGIN", [s.get("origin_ms", 0) for s in setups]),
         _pine_int_array_safe("RP_OBID", [s["ob_id"] for s in setups]),
         _pine_int_array_safe("RP_DIRECTION", [s["direction"] for s in setups]),
         _pine_int_array_safe("RP_STATUS",
