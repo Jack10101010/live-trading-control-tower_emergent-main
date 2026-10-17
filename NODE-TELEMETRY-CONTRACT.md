@@ -98,6 +98,59 @@ executor, and its outcome is published through `execution.blocks[].rail` when an
 OPEN is actually evaluated. Telemetry deliberately does not run a second health
 evaluation, because two evaluations of one safety question can disagree.
 
+## Freshness — server-observed, phase-aware
+
+Freshness is a read-side verdict computed by the backend. It is **not** part of the
+snapshot and adds no node claim, so this section changes no payload the node sends.
+
+### Age is measured from arrival, not from the node's clock
+
+`age_seconds` measures the interval since **this backend received** the snapshot
+(`received_at`, stamped at ingest), not since the node's self-declared
+`published_at`. A node cannot advance its own freshness by stamping "now": the only
+clock that can move the verdict is the one the node does not control. `published_at`
+is retained verbatim for diagnostics, and `clock_skew_seconds`
+(`published_at - received_at`, positive when the node's clock runs ahead) surfaces
+the disagreement instead of absorbing it.
+
+`age_source` reports which basis was used. Records persisted before this rule
+existed carry no `received_at` and fall back to `published_at`, so they stay
+readable rather than reading as uniformly stale.
+
+### Two questions, both must hold
+
+A snapshot is current only if the node is **alive** *and* its content is **about
+now**:
+
+| question | measured by | fails when |
+| --- | --- | --- |
+| liveness | `age_seconds` (arrival) | the node goes silent |
+| data currency | `clock_skew_seconds` | the node punctually delivers hours-old observations |
+
+Judging liveness alone would let stale content read as fresh merely because the
+POST was on time.
+
+### The window depends on the cycle phase
+
+One flat window cannot describe both states, and using one was a defect: a healthy
+node was reported stale roughly two minutes into legitimate work.
+
+| `cycle.status` | window | why |
+| --- | --- | --- |
+| `no_new_bar` | `DEFAULT_STALE_AFTER_S` = 120s | caught up; the cycle finishes in ~1s and republishes within ~10s |
+| anything else | `RECOMPUTE_STALE_AFTER_S` = 900s | work in flight; 900s is the 15m bar interval already fixed as `live/shadow_report.BAR_INTERVAL_S` |
+
+An unrecognised status takes the **longer** window. Mislabelling a working node as
+dead is worse than reporting a dead one late, and an unknown status must not be
+assumed idle.
+
+900s is a budget, not an allowance. A recompute still silent past one bar interval
+has overrun its own budget and **is** late; reporting it stale is correct. Note the
+measured warm recompute (~1119s median) exceeds 900s, so such a node will read
+stale near the end of every cycle — that is an honest signal of a known execution
+capacity problem, not a telemetry fault, and must not be papered over by widening
+the window.
+
 ## Redaction — the safety-critical rule
 
 **Publishable:** hashed account fingerprint, broker server name, currency, trade

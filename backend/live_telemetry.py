@@ -55,7 +55,30 @@ _REQUIRED_MAPPINGS = ("cycle", "runtime", "engine", "account", "arming", "market
 
 # Freshness policy for the read side. Purely an observation age; it never implies
 # anything about whether the node is healthy — the node says that itself.
-DEFAULT_STALE_AFTER_S = 120.0
+#
+# PHASE-AWARE, because one flat window cannot describe both states. A caught-up
+# node finishes a `no_new_bar` cycle in about a second and publishes again within
+# ~10s, so 120s is generous. A node running a full recompute publishes once at the
+# start of the work and once at the end, and that work was MEASURED at ~1119s warm
+# median — so a flat 120s marked a healthy recomputing node stale, verified in
+# production at age_seconds=941. The recompute window reuses the 15m bar interval
+# already fixed in `live/shadow_report.py` (BAR_INTERVAL_S) rather than inventing a
+# number: past one bar interval a recompute has overrun its own budget and IS late.
+DEFAULT_STALE_AFTER_S = 120.0            # idle / caught-up
+RECOMPUTE_STALE_AFTER_S = 900.0          # == live/shadow_report.BAR_INTERVAL_S
+#: `cycle.status` values that mean "caught up, nothing to do". Anything else is
+#: treated as work-in-flight and gets the longer window — the conservative
+#: direction, since mislabelling a working node dead is worse than reporting a
+#: dead one late, and an unknown status must not be assumed idle.
+IDLE_CYCLE_STATUSES = ("no_new_bar",)
+
+
+def stale_after_for(snapshot: dict) -> float:
+    """Freshness window implied by the snapshot's own cycle phase."""
+    cycle = snapshot.get("cycle")
+    status = cycle.get("status") if isinstance(cycle, dict) else None
+    return (DEFAULT_STALE_AFTER_S if status in IDLE_CYCLE_STATUSES
+            else RECOMPUTE_STALE_AFTER_S)
 
 
 class TelemetryError(ValueError):
@@ -337,22 +360,54 @@ def coerce_snapshot(payload: Any) -> tuple[dict, bool]:
 
 
 def observation(snapshot: dict, *, now: datetime | None = None,
-                stale_after_s: float = DEFAULT_STALE_AFTER_S) -> dict:
-    """Read-side freshness envelope. Pure; adds no node claims."""
+                stale_after_s: float | None = None,
+                received_at: str | None = None) -> dict:
+    """Read-side freshness envelope. Pure; adds no node claims.
+
+    Age is measured from `received_at` — when THIS backend actually received the
+    snapshot — not from the node's self-declared `published_at`. A node cannot
+    make itself look fresh by stamping "now": the only clock that can advance
+    freshness is the one the node does not control. `published_at` is retained
+    verbatim for diagnostics and is what `clock_skew_seconds` is derived from.
+
+    Falls back to `published_at` when `received_at` is absent, which keeps records
+    persisted before this change readable rather than silently all-stale.
+    """
     now = now or datetime.now(timezone.utc)
+    if stale_after_s is None:
+        stale_after_s = stale_after_for(snapshot)
     published = parse_iso(snapshot.get("published_at"))
-    if published is None:
+    observed = parse_iso(received_at)
+
+    # Server-observed arrival is the source of truth; node time is a fallback only.
+    basis, age_source = (observed, "received_at") if observed is not None else (published, "published_at")
+    if basis is None:
         age: float | None = None
         stale = True
+    elif age_source == "received_at":
+        # Arrival time is stamped by this process, so it can never be in the
+        # future and needs no signed-delta guard.
+        age = max((now - basis).total_seconds(), 0.0)
+        # TWO distinct questions, and a snapshot is only current if both hold:
+        #   liveness      — has the node contacted us recently?      (age)
+        #   data currency — is what it sent actually about now?      (skew)
+        # A node that goes silent fails the first; a node that dutifully delivers
+        # hours-old observations fails the second. Judging liveness alone would
+        # let stale CONTENT read as fresh merely because the POST was punctual.
+        _p, _o = published, observed
+        drift = None if _p is None else abs((_p - _o).total_seconds())
+        stale = age > stale_after_s or (drift is not None and drift > stale_after_s)
     else:
-        delta = (now - published).total_seconds()
-        # Displayed age is never negative. Freshness, however, is judged on the
-        # SIGNED delta: a snapshot dated implausibly in the FUTURE (beyond the stale
-        # window, e.g. from clock skew or a malformed node clock) is not a current
-        # observation and must not read as maximally fresh. Small skew within the
-        # window still clamps to fresh — symmetric tolerance, one threshold.
+        # Legacy path, node-declared time. Judge on the SIGNED delta: a snapshot
+        # dated implausibly in the FUTURE is not a current observation and must
+        # not read as maximally fresh.
+        delta = (now - basis).total_seconds()
         age = max(delta, 0.0)
         stale = abs(delta) > stale_after_s
+
+    # Positive => the node's clock runs AHEAD of this backend's.
+    skew = (None if (published is None or observed is None)
+            else round((published - observed).total_seconds(), 3))
     return {
         "instance_id": snapshot.get("instance_id"),
         "schema_version": snapshot.get("schema_version"),
@@ -360,6 +415,8 @@ def observation(snapshot: dict, *, now: datetime | None = None,
         "published_at": snapshot.get("published_at"),
         "observed_at": now.isoformat().replace("+00:00", "Z"),
         "age_seconds": None if age is None else round(age, 3),
+        "age_source": age_source if basis is not None else None,
+        "clock_skew_seconds": skew,
         "stale": stale,
         "stale_after_seconds": stale_after_s,
         "snapshot": snapshot,

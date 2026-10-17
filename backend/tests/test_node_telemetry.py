@@ -707,7 +707,11 @@ def test_old_snapshot_is_reported_stale_not_hidden(clean_store):
     assert client.post("/api/live/ingest", json=snap).status_code == 200
     entry = client.get("/api/live/status?instance_id=ui2-test-node").json()
     assert entry["stale"] is True
-    assert entry["age_seconds"] > 3600
+    # `age_seconds` now measures time since THIS backend received the snapshot,
+    # not the age of the node's claim, so a punctual POST carrying hours-old data
+    # has a small age. The staleness itself is preserved -- it is detected through
+    # clock skew instead, and the skew is surfaced rather than absorbed.
+    assert entry["clock_skew_seconds"] is not None and entry["clock_skew_seconds"] < -3600
     # The snapshot is still returned: an operator must be able to see WHAT went
     # stale, not just that something did.
     assert entry["snapshot"]["reconciliation"] is not None
@@ -1165,3 +1169,114 @@ def test_superseded_snapshot_does_not_narrate_a_backwards_transition(clean_store
     assert _event_rows(iso_events) == [], "stale arrival narrated a false transition"
     entry = client.get("/api/live/status?instance_id=ui2-test-node").json()
     assert entry["snapshot"]["runtime"]["mode"] == "live"
+
+
+# ── 12b. freshness: server-observed, phase-aware, skew-honest ────────────────
+# Regression cover for a defect verified in production: a healthy node 941s into a
+# legitimate recompute was reported stale, because the window was a flat 120s while
+# a warm recompute was MEASURED at ~1119s median.
+
+def _ingest(snap):
+    assert client.post("/api/live/ingest", json=snap).status_code == 200
+    return client.get("/api/live/status?instance_id=ui2-test-node").json()
+
+
+def _age_arrival_by(seconds, instance="ui2-test-node"):
+    """Rewind the SERVER-recorded arrival, which is what freshness now measures."""
+    rec = server._LIVE_STATUS[instance]
+    moved = datetime.fromisoformat(rec["received_at"].replace("Z", "+00:00")) - timedelta(seconds=seconds)
+    rec["received_at"] = moved.isoformat().replace("+00:00", "Z")
+
+
+def _cycle(snap, status, at=None):
+    at = at or datetime.now(timezone.utc)
+    snap["published_at"] = at.isoformat().replace("+00:00", "Z")
+    snap["cycle"]["status"] = status
+    return snap
+
+
+def test_idle_node_uses_the_short_window_and_goes_stale(clean_store):
+    entry = _ingest(_cycle(build(), "no_new_bar"))
+    assert entry["stale_after_seconds"] == bt.DEFAULT_STALE_AFTER_S == 120.0
+    assert entry["stale"] is False
+    _age_arrival_by(119)
+    assert client.get("/api/live/status?instance_id=ui2-test-node").json()["stale"] is False
+    _age_arrival_by(2)                                    # 121s
+    assert client.get("/api/live/status?instance_id=ui2-test-node").json()["stale"] is True
+
+
+def test_recomputing_node_survives_a_legitimate_long_recompute(clean_store):
+    """THE defect: under the old flat 120s window a healthy node was stale ~2
+    minutes into legitimate work. Anywhere inside the bar budget must read fresh.
+
+    Note 941s -- the value observed in production -- is NOT asserted fresh here: it
+    exceeds the 900s bar interval, so that node had genuinely overrun its budget.
+    Telemetry reporting it late is correct; the underlying M15 capacity problem
+    (~1119s median recompute vs a 900s bar) is a separate, documented issue."""
+    entry = _ingest(_cycle(build(), "ok"))
+    assert entry["stale_after_seconds"] == bt.RECOMPUTE_STALE_AFTER_S == 900.0
+    _age_arrival_by(899)                                  # inside the 900s budget
+    after = client.get("/api/live/status?instance_id=ui2-test-node").json()
+    assert after["stale"] is False, "healthy recompute reported stale — defect returned"
+    assert after["age_seconds"] > 800
+
+
+def test_recompute_past_the_bar_budget_is_stale(clean_store):
+    """Beyond one 15m bar interval a recompute HAS overrun; that is genuinely late."""
+    _ingest(_cycle(build(), "ok"))
+    _age_arrival_by(901)
+    assert client.get("/api/live/status?instance_id=ui2-test-node").json()["stale"] is True
+
+
+def test_returning_to_idle_restores_the_short_window(clean_store):
+    _ingest(_cycle(build(), "ok"))
+    entry = _ingest(_cycle(build(), "no_new_bar"))
+    assert entry["stale_after_seconds"] == 120.0 and entry["stale"] is False
+
+
+def test_unknown_cycle_status_gets_the_conservative_window(clean_store):
+    """An unrecognised status must not be assumed idle."""
+    assert _ingest(_cycle(build(), "something_new"))["stale_after_seconds"] == 900.0
+
+
+def test_node_cannot_assert_its_own_freshness(clean_store):
+    """A silent node that restamps published_at must still read stale: age comes
+    from the arrival this backend recorded, which the node does not control."""
+    _ingest(_cycle(build(), "no_new_bar"))
+    _age_arrival_by(3600)
+    server._LIVE_STATUS["ui2-test-node"]["snapshot"]["published_at"] = \
+        datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    entry = client.get("/api/live/status?instance_id=ui2-test-node").json()
+    assert entry["stale"] is True
+    assert entry["age_source"] == "received_at"
+
+
+def test_large_clock_skew_is_reported_honestly(clean_store):
+    """Skew is surfaced, not silently absorbed."""
+    past = datetime.now(timezone.utc) - timedelta(seconds=3600)
+    entry = _ingest(_cycle(build(), "no_new_bar", at=past))
+    assert entry["clock_skew_seconds"] is not None
+    assert entry["clock_skew_seconds"] < -3000          # node clock behind ours
+    assert entry["stale"] is True                       # stale CONTENT, punctual POST
+
+
+def test_records_without_received_at_fall_back_to_published_at(clean_store):
+    """Snapshots persisted before this change must stay readable, not all-stale."""
+    _ingest(_cycle(build(), "no_new_bar"))
+    server._LIVE_STATUS["ui2-test-node"].pop("received_at", None)
+    entry = client.get("/api/live/status?instance_id=ui2-test-node").json()
+    assert entry["age_source"] == "published_at"
+    assert entry["stale"] is False and entry["clock_skew_seconds"] is None
+
+
+def test_persistence_across_restart_keeps_freshness_semantics(clean_store):
+    """A restart drops the hot cache; the durable record must still be judged by
+    its own recorded arrival, not by when the backend happened to come back."""
+    _ingest(_cycle(build(), "no_new_bar"))
+    stored = dict(server._LIVE_STATUS["ui2-test-node"])
+    server._LIVE_STATUS.clear()                              # simulate restart
+    entry = server._live_status_entry("ui2-test-node", stored, datetime.now(timezone.utc))
+    assert entry["stale"] is False and entry["age_source"] == "received_at"
+    old = datetime.fromisoformat(stored["received_at"].replace("Z", "+00:00")) - timedelta(seconds=4000)
+    stored["received_at"] = old.isoformat().replace("+00:00", "Z")
+    assert server._live_status_entry("ui2-test-node", stored, datetime.now(timezone.utc))["stale"] is True
