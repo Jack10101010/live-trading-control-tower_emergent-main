@@ -1,7 +1,42 @@
 # VPS-MIGRATION-HANDOVER-20261017
 
 **Status: project PAUSED, migration-ready. This VPS is being retired; the
-trading bot project is NOT.** This document + GitHub + the cold migration
+trading bot project is NOT.**
+
+## 0. FINAL FREEZE STATE (recorded at shutdown, 2026-10-17)
+
+- **Controlled shutdown completed 2026-10-17 10:50:20 UTC** via the governed
+  `stop-live-shadow.ps1 -Wait` path (CTRL_BREAK, end-of-cycle):
+  `lifecycle.json` records `phase=STOPPED, stop_reason=SIGBREAK,
+  last_clean_shutdown=2026-10-17T10:50:20.849728+00:00`.
+- **Broker state immediately before stop (10:47 UTC telemetry):** flat —
+  0/6 positions, 0 OPEN rows in the authority frame, reconciliation
+  complete/clean, daily loss 0.00R, newest execution-ledger entry
+  2026-08-27 (nothing in flight for 7 weeks). No broker contact after stop.
+- **Relaunch suppression:** scheduled task
+  `\Live Trading Control Tower - Dry Run Shadow` could NOT be disabled from
+  the available shell (UAC-limited token, Access denied). It remains
+  REGISTERED AND ENABLED, neutralised by the project's own fail-closed
+  **MAINTENANCE marker** (`live_state/ops/MAINTENANCE`, reason text states
+  the migration freeze). Verified: launcher fires at 10:50:02 and 10:55:01
+  UTC both logged "MAINTENANCE active — not starting node"; python process
+  count 0. To disable the task properly, run once from an ELEVATED shell:
+  `schtasks /change /tn "\Live Trading Control Tower - Dry Run Shadow" /DISABLE`
+  (irrelevant once the VPS is destroyed; the task XML is preserved in
+  `rebuild/`). On a future machine, REMOVE the MAINTENANCE marker only as a
+  deliberate bring-up step.
+- **Node run ending at freeze:** PID 5652, started 2026-09-26 10:45 UTC.
+  The node had been in `identity_frozen` refusal since **2026-09-03 09:19 UTC**
+  (3,942 consecutive cycles: identity guard refused to advance; no intents,
+  no staging, executor unreachable — diagnosis is an OPEN item for after
+  migration; the guard chain is in the archived `identity_witness.json`).
+  Two further ledger entries on 2026-08-27 (S_2113 entry stale-blocked at
+  22.2 min; manage blocked unknown_position) are additional confirmation of
+  the §7 structural-latency finding.
+- **Final live_state snapshot:** archive directory
+  `live_state-snapshot-20261017-FINAL-postshutdown/` (post-shutdown,
+  quiescent; `arm_token.json` and `ops/runtime.lock` excluded).
+- **The project is paused for migration, not retired.** Resume per §11. This document + GitHub + the cold migration
 archive (`migration-archive-20261017`) are sufficient to reconstruct the
 development environment on a new Windows machine and resume from the exact
 unfinished milestones. Written 2026-10-17 against the live system.
